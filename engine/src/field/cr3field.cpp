@@ -71,7 +71,7 @@ void Cr3GomCamera::turn(float dyaw, float dpitch) {
     pitch = std::clamp(pitch + dpitch, 0.05f, 1.3f);
 }
 
-void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt) {
+void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls, const CollisionWorld* walls) {
     const V3 t = targetOf(player);
     const float frames = dt * 60; // (its rates are a 1/60 s step's)
     // GomAction: the spring to 3 away along where it is, accelerating 0.005 a step and braking to stop there
@@ -111,6 +111,25 @@ void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt
     const float across3 = dist3 * std::cos(pitch);
     eye = {t[0] + std::sin(base) * across3, t[1] + std::max(dist3 * std::sin(pitch), 3 * std::sin(pitch)), t[2] + std::cos(base) * across3};
     at = t;
+    // CheckCollision: the first wall from the target to the camera stops it (HitTestNearest; mask
+    // 0x80 - camhit - where there is some within 20 below the target, else 0x180 - the walls too)
+    playerAlpha = 1;
+    if (cameraWalls) {
+        CollisionWorld::Hit below;
+        const bool camOnly = cameraWalls->sweep(t, {t[0], t[1] - 20, t[2]}, 0.01f, {0, 1, 0}, -1.0f, below);
+        const V3 back = t - eye;
+        float f = 1;
+        for (const CollisionWorld* w : {cameraWalls, camOnly ? nullptr : walls}) {
+            CollisionWorld::Hit h;
+            if (w && w->sweep(t, eye, 0.01f, back, -1.0f, h)) f = std::min(f, h.fraction);
+        }
+        if (f < 1) {
+            eye = t + (eye - t) * f;
+            const float d = std::hypot(eye[0] - t[0], eye[2] - t[2]);
+            if (d < 2) eye[1] += 2 - d; // (raised as it comes in)
+            if (d < 1) playerAlpha = 0.3f;
+        }
+    }
 }
 
 const char* cr3MotionName(Cr3Motion m) {

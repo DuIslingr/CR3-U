@@ -74,7 +74,21 @@ public:
 
     // the message windows (Cr3Event's: 0 cut-in, 1 vista, 2 / 3 announcements, 4 tutorial, 5 system,
     // 6 narration): which are open (EvtWindow.Open), which the message is on (SetMessage's first)
-    enum Window { CutIn = 0, Vista = 1, AnnounceA = 2, AnnounceB = 3, Tutorial = 4, System = 5, Narration = 6 };
+    enum Window { CutIn = 0, Vista = 1, AnnounceA = 2, AnnounceB = 3, Tutorial = 4, System = 5, Narration = 6, TutorialMenu = 8 };
+    // CR3's tutorial menu (InterfaceWindow.CreateTutorialMenuNum(n): TutorialMenu - ttlMnlMenu - with
+    // message/AnnounceTutorialTxt's announcement n, its pages turned as a window's; its picture
+    // SetPictureTutorialMenu(id) - tuto_ss<(id - 1) / 8 + 1>, frame (id - 1) % 8 -;
+    // EndCheckTutorialMenu true once read, EndTutorialMenu closes it)
+    bool tutorialMenuOpen() const { return tutorialMenuOpen_; }
+    // CR3's map name (EvtIntroduction.SetDungeonNum(n) / SetDungeonLevel(lv): MapNameMenu - the
+    // dungeon's name, frame n, and "World Lv" (lv - 1) x 10 + 1 -> lv x 10; in over 0.967 s, 2 s
+    // held, out to 1.333 s; GetVisible while it shows). -1: none
+    static constexpr float kMapNameSeconds = 0.96666664f + 2.0f + (1.3333334f - 0.96666664f);
+    int mapName() const { return mapName_; }
+    int mapNameLevel() const { return mapNameLevel_; }
+    float mapNameAge() const { return mapNameAge_; }
+    int dungeonLevel = 0; // (Cr3System.SetDungeonLevel / GetDungeonLevel)
+    int tutorialMenuPicture() const { return tutorialMenuPicture_; }
     bool windowOpen() const { return !openWindows_.empty(); }
     bool windowOpen(int w) const { return openWindows_.count(w) != 0; }
     // how long a window has been open, or (closing) since it closed - its in / out animations'
@@ -238,6 +252,11 @@ private:
     bool inputOpen_ = false, inputOk_ = true;
     float inputAge_ = 0;
     std::string inputText_;
+    bool tutorialMenuOpen_ = false;
+    int mapName_ = -1, mapNameLevel_ = 0;
+    float mapNameAge_ = 0;
+    int tutorialMenuPicture_ = 0;
+    TextData tutorialTexts_;
     std::vector<std::pair<int, std::string>> cutInImages_; // (id, image: the first of an id counts)
     int messageWindow_ = Vista;
     int message_ = 0, page_ = 0, revealed_ = 0, messagesSet_ = 0;

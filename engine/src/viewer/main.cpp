@@ -2348,6 +2348,7 @@ struct Viewer {
         if (titleMenu.stage && titleEvents) return titleEvents.get(); // (title.nut's)
         if ((battleMode || campOpen) && manualStage == 2 && manualEvents) return manualEvents.get(); // (the manual's tutorial)
         if (battleMode && battleScript) return &battleScript->events(); // (the battle's talks)
+        if (!eventMode && areaMode && areaEvents) return areaEvents.get(); // (CR3's field: its area script's)
         return eventMode ? event.get() : script ? &script->events() : nullptr;
     }
 
@@ -5331,6 +5332,10 @@ struct Viewer {
     float areaYaw = 0, areaClock = 0, areaMotionAge = 0;
     cr3::Cr3Motion areaMotion = cr3::Cr3Motion::Idle;
     bool areaMotionSet = false;
+    // the area's script (Fld2Main::StartScript: its evt000 as the area is entered - d01's for
+    // d0101 -, stepped with the game's updates)
+    std::unique_ptr<cr3::EventRuntime> areaEvents;
+    float areaEventClock = 0;
 
     bool loadArea(const std::string& name, const std::string& player) {
         std::string err;
@@ -5350,6 +5355,7 @@ struct Viewer {
             areaFigures.push_back(std::move(f));
         }
         if (loadLights(name + "c")) SDL_Log("lights: %sc", name.c_str());
+        initEventDrawing(); // (the area's script's windows and fades)
         // the player: Fld2TaskPlayer::CreatePlayer (Fld2CharaNameTbl's model; a hero's body b01)
         areaPlayerName = player.empty() ? (name.compare(0, 1, "t") == 0 ? "j001" : "c101") : player;
         if (areaPlayerName[0] == 'j' && areaPlayerName.size() == 4) areaPlayerName += "b01";
@@ -5365,7 +5371,16 @@ struct Viewer {
         setAreaMotion(cr3::Cr3Motion::Idle);
         const cr3::Vec3 p = areaWalker->position();
         areaCamera.reset({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw);
+        areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, false, 0, &area.cameraWalls, &area.walls);
         areaMode = true, areaClock = 0;
+        // (Cr3System.GetDungeonNum / GetAreaNum: the dungeon - a town 0 - and the area from 0)
+        game.dungeon = name[0] == 't' ? 0 : std::atoi(name.substr(1, 2).c_str());
+        game.area = std::atoi(name.substr(3, 2).c_str()) - 1;
+        areaEvents = std::make_unique<cr3::EventRuntime>(archive, game);
+        areaEvents->language = optionLanguage, areaEvents->autoPage = pageSeconds, areaEvents->askYesNo = true;
+        areaEventClock = 0;
+        if (!areaEvents->start(name.substr(0, 3), "evt000")) SDL_Log("area %s: evt000 - %s", name.c_str(), areaEvents->error().c_str());
+        else SDL_Log("area %s: evt000 running", name.c_str());
         SDL_Log("area %s: %zu figures, player %s at defaultPos (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
                 area.spawn[0], area.spawn[1], area.spawn[2]);
         return true;
@@ -5389,6 +5404,18 @@ struct Viewer {
     // (SM_Run 4.8, SM_Walk 1.2 a second, as far as it's pushed), the camera's Q / E and R / V
     void updateArea(float dt, float sx, float sy, bool run) {
         areaClock += dt, areaMotionAge += dt;
+        if (areaEvents && areaEvents->running()) { // (the area's script at the game's updates)
+            areaEventClock = std::min(areaEventClock + dt, 0.25f);
+            for (; areaEventClock >= cr3::EventRuntime::kTick; areaEventClock -= cr3::EventRuntime::kTick)
+                if (!areaEvents->tick()) {
+                    SDL_Log("area script: %s", areaEvents->error().c_str());
+                    break;
+                }
+            if (!areaEvents->running()) {
+                SDL_Log("area script: evt000 ended at frame %d", areaEvents->frame());
+                for (const auto& [n, k] : areaEvents->stubCalls()) SDL_Log("  stub %s x%d", n.c_str(), k);
+            }
+        }
         const bool* keys = SDL_GetKeyboardState(nullptr);
         if (keys) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
         const float fx = areaCamera.at[0] - areaCamera.eye[0], fz = areaCamera.at[2] - areaCamera.eye[2];
@@ -5413,7 +5440,7 @@ struct Viewer {
         }
         setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
         const cr3::Vec3 p = areaWalker->position();
-        areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, moving, dt);
+        areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, moving, dt, &area.cameraWalls, &area.walls);
     }
 
     void drawArea(int w, int h) {
@@ -5453,6 +5480,7 @@ struct Viewer {
             const float c = std::cos(areaYaw), s = std::sin(areaYaw);
             f.place.m[0] = c, f.place.m[2] = s, f.place.m[8] = -s, f.place.m[10] = c;
             f.place.m[3] = p[0], f.place.m[7] = p[1] - areaWalker->radius, f.place.m[11] = p[2];
+            f.tint[3] = areaCamera.playerAlpha; // (Fld2TaskPlayer::SetAlpha: the camera too near)
             f.blendWeight = f.blendLoaded ? std::min(areaMotionAge * 6.0f, 1.0f) : 1.0f; // (SetAnimationBlend 1/6 s)
             f.blendTime += 0; // (the motion it fades from, held where it was)
             pose(f, areaMotionAge, true);
@@ -5719,6 +5747,10 @@ struct Viewer {
         bool blockLines = false;
     };
     WindowLayout vistaWindow, vistaName, narrationWindow, conversationWindow;
+    // CR3's tutorial menu (TutorialMenu): ttlMnlMenu at ttlMnlPositon's call_ttlMnlMenu_fit8, four
+    // lines at typeM_L01..L04 (SetMenuText: size 30, white, left), its picture ttlMnlImg_fr00 at
+    // call_ttlMnlImg_fr00 - tuto_ss<n>, the frame its animation's (id - 1) % 8 / 30 s
+    WindowLayout tutorialMenuWindow;
     // the tutorials' windows (HelpWindowMenu - SetHelpWindowParameter 0, interface 0x1a: annoWin,
     // the tutorial's - EvtTutoWindow, window 4 -; 1, 0xe: helpWin - EvtAnnounceBWindow, window 3):
     // white text, three lines a page at typeM_L01..L03, centred ones at typeM_C11..C13, their in /
@@ -5815,6 +5847,14 @@ struct Viewer {
             conversationWindow.inAnim = "msgwin_in.anim", conversationWindow.outAnim = "msgwin_out.anim";
         }
         loadCutIns();
+        if (archive.contains("ttlMnlMenu.geom")) {
+            loadWindow(tutorialMenuWindow, "ttlmnlmenu");
+            tutorialMenuWindow.slots = {"01", "02", "03", "04"}, tutorialMenuWindow.linesPerPage = 4, tutorialMenuWindow.uiUnit = 10;
+            tutorialMenuWindow.nameSize = tutorialMenuWindow.lineSize = 30, tutorialMenuWindow.window = cr3::EventRuntime::TutorialMenu;
+            loadPosition(tutorialMenuWindow, "ttlmnlpositon", "call_ttlMnlMenu", 0);
+            tutorialMenuWindow.fig.absolute = true;
+            loadCr3Part(tutorialMenuPicture, "ttlmnlpositon", "ttlmnlimg_fr00", "call_ttlMnlImg_fr00", "");
+        }
         for (auto [wl, name, window] : {std::tuple<WindowLayout*, const char*, int>{&helpWindow, "helpwin", cr3::EventRuntime::AnnounceB},
                                          {&annoWindow, "annowin", cr3::EventRuntime::Tutorial},
                                          {&announceWindow, "annowin", cr3::EventRuntime::AnnounceA}}) {
@@ -6267,6 +6307,7 @@ struct Viewer {
     // call_comMsgPBtnMenu_fit3 - reopened once the page is typed, fading in over 1/6 s (Pose:
     // alpha the time * 30 / 5)
     Cr3Part messageButton, vistaPageCursor;
+    Cr3Part tutorialMenuPicture; // (the tutorial menu's: tutorialMenuWindow's)
     int vistaTypedFrame = -1; // (the event update the vista's page was typed by: the cursor's fade)
 
     bool loadCr3Part(Cr3Part& p, const std::string& position, const std::string& figure, const std::string& call, const std::string& loop) {
@@ -6422,6 +6463,83 @@ struct Viewer {
             const Mat4 id = cr3::mat4Identity();
             const float rgba[4] = {c, c, c, std::min(a, 1.0f)};
             dev->drawQuad(white, kScreen, id.data(), rgba);
+        }
+    }
+
+    // CR3's map name (MapNameMenu): feNameMenu at feNamePosition's call_feNameMenu_fit3, its _in
+    // animator (slot 1, over its base) 0 .. 0.967 s in, held 2 s, then on to 1.333 s out; on it
+    // feNameList_fr00 (the dungeon's name: frame n) at call_feNameList_fr00 and six feNameNum_fr00
+    // digits (the level's range: 3 + 3) at its call_feNameNum_fr00.. - each turned 30 degrees
+    // about z; all faded in over 0.667 s, out over 0.1 (SetAllFade)
+    struct MapNameParts {
+        ViewFigure position, menu, name;
+        std::array<ViewFigure, 6> digits;
+        std::vector<std::string> positionJoints, menuJoints;
+        bool loaded = false;
+    } mapNameParts;
+
+    void loadMapNameParts() {
+        MapNameParts& m = mapNameParts;
+        std::string err;
+        if (!loadFigure("fenameposition.geom", m.position, &err) || !loadFigure("fenamemenu.geom", m.menu, &err) ||
+            !loadFigure("fenamelist_fr00.geom", m.name, &err))
+            return;
+        for (ViewFigure& d : m.digits)
+            if (!loadFigure("fenamenum_fr00.geom", d, &err)) return;
+        std::vector<uint8_t> data;
+        if (archive.read("fenameposition.name", data)) m.positionJoints = cr3::parseJointNames(data);
+        if (archive.read("fenamemenu.name", data)) m.menuJoints = cr3::parseJointNames(data);
+        const float keep = time;
+        const auto in = std::find(m.menu.anims.begin(), m.menu.anims.end(), "fenamemenu_in.anim");
+        if (in != m.menu.anims.end()) loadAnim(m.menu, size_t(in - m.menu.anims.begin()));
+        m.menu.absolute = false; // (slot 1: over its base)
+        m.name.absolute = true;
+        for (ViewFigure& d : m.digits) d.absolute = true;
+        time = keep;
+        m.loaded = true;
+    }
+
+    void drawMapName(const cr3::EventRuntime& ev, int w, int h) {
+        MapNameParts& m = mapNameParts;
+        if (ev.mapName() < 0) return;
+        if (!m.loaded) loadMapNameParts();
+        if (!m.loaded) return;
+        const float age = ev.mapNameAge() + eventLead(), unit = 10;
+        const float in = 0.96666664f, hold = 2.0f;
+        const float t = age < in ? age : age < in + hold ? in : std::min(in + (age - in - hold), 1.3333334f);
+        const float alpha = age < in + hold ? std::min(age / 0.6666667f, 1.0f) : std::max(1.0f - (age - in - hold) / 0.1f, 0.0f);
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, unit), [&] { Mat4 c = cr3::mat4Identity(); c[14] = -0.881f * unit; return c; }());
+        // the menu at the position's call joint, fitted
+        const std::vector<cr3::Mat34> pw = m.position.skeleton.world(m.position.skeleton.basePose);
+        m.menu.place = cr3::Mat34();
+        for (size_t j = 0; j < m.positionJoints.size() && j < pw.size(); ++j)
+            if (m.positionJoints[j].compare(0, 15, "call_feNameMenu") == 0) {
+                float fx, fy;
+                fitOffset(m.positionJoints[j], w, h, unit, fx, fy);
+                m.menu.place.m[3] = pw[j].m[3] + fx, m.menu.place.m[7] = pw[j].m[7] + fy;
+            }
+        pose(m.menu, t, false);
+        m.menu.tint[3] = alpha;
+        cr3::SceneLighting l;
+        dev->setLighting(l);
+        drawFigure(m.menu, view.data());
+        const std::vector<cr3::Mat34> mw = m.menu.skeleton.world(m.menu.posed.empty() ? m.menu.skeleton.basePose : m.menu.posed, m.menu.place);
+        const float c30 = 0.96592583f, s30 = 0.25881904f; // (the 30 degrees about z: SetRotation)
+        auto placeAt = [&](ViewFigure& f, const cr3::Mat34& at, float frame) {
+            f.place = cr3::Mat34();
+            f.place.m[0] = c30, f.place.m[1] = -s30, f.place.m[4] = s30, f.place.m[5] = c30;
+            f.place.m[3] = at.m[3], f.place.m[7] = at.m[7], f.place.m[11] = at.m[11];
+            pose(f, frame / 30.0f, false); // (ChangeAnimeTime: its frame)
+            f.tint[3] = alpha;
+            drawFigure(f, view.data());
+        };
+        const int lv = std::max(ev.mapNameLevel(), 1);
+        const int lo = (lv - 1) * 10 + 1, hi = lv * 10;
+        const int digits[6] = {lo % 1000 / 100, lo % 100 / 10, lo % 10, hi % 1000 / 100, hi % 100 / 10, hi % 10};
+        int k = 0;
+        for (size_t j = 0; j < m.menuJoints.size() && j < mw.size(); ++j) {
+            if (m.menuJoints[j] == "call_feNameList_fr00") placeAt(m.name, mw[j], float(ev.mapName()));
+            else if (m.menuJoints[j].compare(0, 19, "call_feNameNum_fr00") == 0 && k < 6) placeAt(m.digits[size_t(k)], mw[j], float(digits[k])), ++k;
         }
     }
 
@@ -10573,6 +10691,17 @@ struct Viewer {
             drawWindow(conversationWindow, onConversation, screenW, screenH);
             if (onConversation && !ev->windowClosing(cr3::EventRuntime::CutIn)) drawCr3Part(messageButton, screenW, screenH, 0, 1);
         }
+        if (ev->mapName() >= 0) drawMapName(*ev, screenW, screenH); // (CR3's map name)
+        if (ev->tutorialMenuOpen() && !tutorialMenuWindow.fig.meshes.empty()) { // (CR3's tutorial menu)
+            drawWindow(tutorialMenuWindow, message && ev->messageWindow() == cr3::EventRuntime::TutorialMenu, screenW, screenH);
+            if (const int id = ev->tutorialMenuPicture(); id > 0 && tutorialMenuPicture.loaded) {
+                char tex[16];
+                std::snprintf(tex, sizeof tex, "tuto_ss%03d", (id - 1) / 8 + 1);
+                cr3::Texture* t = texture(tex);
+                for (ViewMesh& vm : tutorialMenuPicture.fig.meshes) vm.texture = t ? t : texture(vm.baseMaterial.diffuse());
+                drawCr3Part(tutorialMenuPicture, screenW, screenH, float((id - 1) % 8) / 30.0f, 1); // (ChangeAnimeTime: the frame)
+            }
+        }
         if (ev->windowOpen(cr3::EventRuntime::Narration))
             drawWindow(narrationWindow, message && ev->messageWindow() == cr3::EventRuntime::Narration, screenW, screenH);
         // the tutorials': the picture (tutorialPic, its PRG_rep the image shown), the windows over it
@@ -10987,7 +11116,7 @@ int main(int argc, char** argv) {
     v.scriptSaves = (!playFrom.empty() || continueSave) && capture.empty();
     if (continueSave && fieldName.empty()) fieldName = "d1020"; // (the windows and fonts set up for the field)
     v.skipBattles = skipBattlesOpt; // (a new game: every flag clear)
-    if (!fieldName.empty() || !eventName.empty() || battleId > 0 || cr3Title) {
+    if (!fieldName.empty() || !eventName.empty() || battleId > 0 || cr3Title || !areaName.empty()) {
         // the font: --font, CR3_FONT, the Vita's beside its archive, the Android release's APK beside
         // its OBB (assets/00001: the Regular face it draws English in), else the system's
         std::string dataDir = data.substr(0, data.find_last_of("/\\") == std::string::npos ? 0 : data.find_last_of("/\\") + 1);
@@ -11527,6 +11656,8 @@ int main(int argc, char** argv) {
     for (ViewFigure& f : v.cutInFigures) v.unload(f);
     v.unload(v.pageCursor);
     for (auto& c : v.cr3CutIns) v.unload(c.position), v.unload(c.portrait), v.unload(c.menu), v.unload(c.effect);
+    v.unload(v.mapNameParts.position), v.unload(v.mapNameParts.menu), v.unload(v.mapNameParts.name);
+    for (auto& d : v.mapNameParts.digits) v.unload(d);
     for (auto* p : {&v.messageButton, &v.vistaPageCursor}) v.unload(p->position), v.unload(p->fig);
     for (auto& q : v.textQuads) dev->destroy(q.tex);
     for (auto& q : v.nameQuads) dev->destroy(q.tex);

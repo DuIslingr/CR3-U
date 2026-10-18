@@ -245,6 +245,26 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (tutorialPicture_.images.size() < 5) tutorialPicture_.images.push_back(c.string(0));
     };
     auto pictureShow = [this](NativeCall& c) { tutorialPicture_.shown = c.integer(0, -1); };
+    vm.setNative("InterfaceWindow", "CreateTutorialMenuNum", [this](NativeCall& c) {
+        if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
+        parsed_ = parseMessage(filterMessage(tutorialTexts_.message(c.integer(0), language)));
+        messageWindow_ = TutorialMenu, message_ = parsed_.pages.empty() ? 0 : c.integer(0);
+        page_ = 0, pageTime_ = 0, revealed_ = 0;
+        tutorialMenuOpen_ = message_ > 0, tutorialMenuPicture_ = 0;
+        if (message_ > 0) ++messagesSet_;
+    });
+    vm.setNative("EvtIntroduction", "SetDungeonNum", [this](NativeCall& c) { mapName_ = c.integer(0), mapNameAge_ = 0; });
+    vm.setNative("EvtIntroduction", "SetDungeonLevel", [this](NativeCall& c) { mapNameLevel_ = c.integer(0); });
+    vm.setNative("EvtIntroduction", "GetVisible", [this](NativeCall& c) { c.result(mapName_ >= 0); });
+    vm.setNative("Cr3System", "SetDungeonLevel", [this](NativeCall& c) { dungeonLevel = c.integer(0); });
+    vm.setNative("Cr3System", "GetDungeonLevel", [this](NativeCall& c) { c.result(dungeonLevel); });
+    vm.setNative("InterfaceWindow", "SetPictureTutorialMenu", [this](NativeCall& c) { tutorialMenuPicture_ = c.integer(0); });
+    vm.setNative("InterfaceWindow", "EndCheckTutorialMenu", [this](NativeCall& c) { c.result(!(message_ > 0 && messageWindow_ == TutorialMenu)); });
+    vm.setNative("InterfaceWindow", "EndTutorialMenu", [this](NativeCall&) {
+        tutorialMenuOpen_ = false;
+        if (messageWindow_ == TutorialMenu) message_ = 0;
+    });
+    vm.setNative("InterfaceWindow", "CheckAliveTutorialMenu", [this](NativeCall& c) { c.result(tutorialMenuOpen_); });
     vm.setNative("Cr3FieldTutorial", "Create", [this](NativeCall&) { tutorialPicture_ = TutorialPicture(); });
     vm.setNative("Cr3FieldTutorial", "Delete", [this](NativeCall&) { tutorialPicture_ = TutorialPicture(); });
     vm.setNative("Cr3FieldTutorial", "LoadTexture", pictureAdd);
@@ -504,6 +524,7 @@ bool EventRuntime::update(ScriptVM* vm) {
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
     for (auto& [w, t] : opened_) t += kTick;
+    if (mapName_ >= 0 && (mapNameAge_ += kTick) >= kMapNameSeconds) mapName_ = -1;
     for (auto it = closing_.begin(); it != closing_.end();) // (out animations: a second at most)
         it = (it->second += kTick) > 1.0f ? closing_.erase(it) : std::next(it);
     for (Portrait& c : cutIns_) {

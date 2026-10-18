@@ -34,7 +34,11 @@ struct Cr3Area {
 class Cr3GomCamera {
 public:
     void reset(const std::array<float, 3>& player, float playerYaw);
-    void step(const std::array<float, 3>& player, float playerYaw, bool moving, float dt);
+    // (with walls: CheckCollision - the camera stopped at the first it meets from the target; the
+    // camera's own bodies (camhit) alone where there are some below the target, else the walls too)
+    void step(const std::array<float, 3>& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls = nullptr,
+              const CollisionWorld* walls = nullptr);
+    float playerAlpha = 1; // (the camera within 1 of the target across: the player drawn at 0.3)
     void turn(float yawRadians, float pitchRadians); // (the player's own turning of it)
     std::array<float, 3> eye{}, at{};
     float fovY = 45, zNear = 0.1f, zFar = 5000; // (MVGL::Draw::Camera's 45 degrees; Fld2CameraGom::Initialize's)

@@ -184,6 +184,21 @@ shapes (a u64 each), names (64 bytes each) and the scene's name. A mesh: kind 2,
 triangle counts at +8 / +0xc, its bounds, then u64 offsets to its triangles (3 u32), vertices (3
 floats) and two u16s a triangle - its surface, and 1 on camhit bodies.
 
+Entering an area runs its script's `evt000` (the area's first three letters: d0101's d01): the
+gimmicks, the music, the map name (EvtIntroduction - MapNameMenu: `feNameMenu` at
+`feNamePosition`'s `call_feNameMenu_fit3`, its `_in` animator 0..0.967 s in, 2 s held, on to 1.333 s
+out; `feNameList_fr00` the dungeon's name at frame n and six `feNameNum_fr00` digits - the level's
+range, (lv - 1) x 10 + 1 to lv x 10 - each turned 30 degrees about z; faded in over 0.667 s, out
+over 0.1), then the tutorials (InterfaceWindow.CreateTutorialMenuNum(n): TutorialMenu -
+`ttlMnlMenu` at `ttlMnlPositon`'s `call_ttlMnlMenu_fit8`, announcement n of
+`message\AnnounceTutorialTxt.dat` at `typeM_L01`..`L04` (30, white, left), paged as a window's;
+SetPictureTutorialMenu(id): `ttlMnlImg_fr00` at `call_ttlMnlImg_fr00` with `tuto_ss<(id - 1) / 8 +
+1>`, frame (id - 1) % 8; EndCheckTutorialMenu true once read). The player stays where the area put
+him after a vista (Fld2Main::Setup moves him only coming from a battle or a pop point: the field's
+saved place, Fld2SaveData's, as he left it). The camera stops at the first wall from the target
+(CheckCollision: camhit bodies alone where there are some within 20 below the target, else the walls
+too), raised by 2 - d within 2 across and the player drawn at 0.3 within 1.
+
 `cr3view --area <area> [--player <model>]` walks one (WASD / the stick, Shift a walk; Q / E turn
 the camera, R / V tilt it); `--walk x,y,s --run s` for captures.
 
