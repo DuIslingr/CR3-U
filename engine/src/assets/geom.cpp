@@ -226,7 +226,10 @@ bool parseGeom(const std::vector<uint8_t>& f, Geom& out, std::string* error) {
             else if (kind == 100) {
                 std::array<uint32_t, 4> v;
                 std::memcpy(v.data(), value, 16);
-                mat.states[id] = v;
+                // (the render states follow the shader parameters' table: the 64-bit builds' grew to
+                // put them at 0xa0.., the Vita's (version 0x50) still CR2's 0x78..: one numbering)
+                const int at = out.version == 0x50 && id >= 0x78 && id < 0xa0 ? id + 0x28 : id;
+                mat.states[at] = v;
             } else if (kind >= 1 && kind <= 4) {
                 std::vector<float> v(static_cast<size_t>(kind));
                 std::memcpy(v.data(), value, 4 * size_t(kind));

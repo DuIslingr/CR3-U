@@ -97,7 +97,8 @@ ids start at 0xa0 (CR2's 0x78) - 0xa0 alpha_func, 0xa1 alpha_test_enable, 0xa2 b
 blend_equation, 0xa4 blend_enable, 0xa5 cull_face, 0xa6 cull_face_enable, 0xa7 depth_func, 0xa8
 depth_mask, 0xa9 depth_test_enable, ... 0xb0 stencil_test_enable (the names' table at 0x111f424 in
 `libcrx.so`, 0x5c bytes an entry; the parameters' at 0x111fa40, 0x38 bytes, ColorSampler 0x32 as
-before).
+before). The Vita's figures (geom version 0x50) keep CR2's numbering, 0x78..; read, they are moved
+up by 0x28 to the one numbering.
 
 ## Event scenes
 

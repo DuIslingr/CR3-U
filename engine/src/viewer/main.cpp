@@ -2066,6 +2066,7 @@ struct Viewer {
         actionMark = ActionMark(), sprint = Sprint(), iai = Iai(), aim = Aim(), hakkei = Hakkei(), mystic = Mystic();
         // the dungeon's script sets the area up (evt000: which gimmicks show, which collide)
         if (!script) script = std::make_unique<cr3::FieldScript>(archive, game), script->onSave = [this](int k) { scriptSave(k); };
+        script->events().language = optionLanguage; // (the release's language's slot)
         script->events().autoPage = pageSeconds, script->events().askYesNo = true;
         if (!script->enter(map, field.gimmicks(), entry)) SDL_Log("%s's script: %s", map.c_str(), script->error().c_str());
         if (!playMode && script->running() && !script->runToEnd()) // (--field: the area as its set-up leaves it; --play: as it runs)
@@ -5289,6 +5290,7 @@ struct Viewer {
         vistaMapTime = 0;
         event = std::make_unique<cr3::EventRuntime>(archive, game);
         event->autoPage = pageSeconds, event->askYesNo = true;
+        event->language = optionLanguage; // (the release's language's slot: the Vita's Japanese is 0)
         // CR3: an area script's event, "<script>:<function>" (t01:s000_t01_00101_evt)
         const size_t colon = function.find(':');
         if (colon != std::string::npos ? !event->start(function.substr(0, colon), function.substr(colon + 1)) : !event->start(function)) {
