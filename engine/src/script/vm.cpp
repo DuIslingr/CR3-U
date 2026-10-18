@@ -376,6 +376,21 @@ std::string ScriptVM::findFunction(const std::string& name) const {
     return found;
 }
 
+std::vector<std::string> ScriptVM::rootFunctions() const {
+    std::vector<std::string> out;
+    const SQInteger top = sq_gettop(vm_);
+    sq_pushroottable(vm_);
+    sq_pushnull(vm_);
+    while (SQ_SUCCEEDED(sq_next(vm_, -2))) { // key at -2, value at -1
+        const SQChar* k = nullptr;
+        if (sq_gettype(vm_, -1) == OT_CLOSURE && SQ_SUCCEEDED(sq_getstring(vm_, -2, &k)) && k) out.emplace_back(k);
+        sq_pop(vm_, 2);
+    }
+    sq_settop(vm_, top);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 bool ScriptVM::call(const std::string& function, const std::vector<int>& args) {
     const SQInteger top = sq_gettop(vm_);
     sq_pushroottable(vm_);

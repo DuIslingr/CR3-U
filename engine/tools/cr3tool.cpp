@@ -45,6 +45,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -159,11 +160,78 @@ int sound(const char* path, bool full) {
     return bad ? 1 : 0;
 }
 
+// CR3's events: every area script's event functions (named for their message files:
+// s212_d08_01501, c111_s102_t01_00510 ...), each played by the runtime from its start; how many end,
+// fail, or are still waiting at the budget - and on which native the waiting ones wait
+int events(const char* path, const char* only, int seconds) {
+    cr3::Database a;
+    if (!openArchive(a, path)) return 1;
+    const std::regex eventName("^([a-z][0-9]{3}_)+[a-z][0-9]{2}_[0-9]{5}.*$");
+    std::map<std::string, int> outcomes, waitingOn;
+    int total = 0;
+    std::vector<uint8_t> data;
+    for (const auto& e : a.entries()) {
+        const std::string k = cr3::Database::key(e.name);
+        if (k.compare(0, 7, "script\\") != 0 || k.size() < 5 || k.compare(k.size() - 4, 4, ".nut") != 0) continue;
+        const std::string script = k.substr(7, k.size() - 11);
+        if (script.compare(0, 7, "battle_") == 0 || script.compare(0, 5, "test_") == 0) continue;
+        if (only && script != only) continue;
+        cr3::ScriptVM vm;
+        if (!a.read(*a.find(e.name), data) || !vm.load(data, e.name) || !vm.runMain()) continue;
+        for (const std::string& fn : vm.rootFunctions()) {
+            if (!std::regex_match(fn, eventName)) continue;
+            ++total;
+            cr3::GameState state;
+            cr3::EventRuntime rt(a, state);
+            rt.autoPage = 1.0f;
+            if (!rt.start(script, fn)) {
+                ++outcomes["failed to start"];
+                continue;
+            }
+            bool ok = true;
+            std::map<std::string, int> before; // (the stubs called by its last second's start)
+            while (ok && rt.running() && rt.frame() < 20 * seconds) {
+                if (rt.frame() == 20 * seconds - 20) before = rt.stubCalls();
+                ok = rt.tick();
+            }
+            if (!ok) {
+                ++outcomes["failed"];
+                std::string err = rt.error();
+                const size_t mark = err.find("AN ERROR HAS OCCURED");
+                const size_t at = err.find('[', mark == std::string::npos ? 0 : mark);
+                ++waitingOn["error: " + (at != std::string::npos ? err.substr(at, err.find(']', at) - at + 1) : err.substr(0, 60))];
+            } else if (rt.running()) {
+                ++outcomes["still waiting"];
+                // (the wait: the stub its last second called most)
+                std::string most;
+                int n = 0;
+                for (const auto& [name, c] : rt.stubCalls()) {
+                    const auto b = before.find(name);
+                    const int d = c - (b == before.end() ? 0 : b->second);
+                    if (d > n) most = name, n = d;
+                }
+                ++waitingOn["waits on " + (most.empty() ? std::string("(no stub in its last second)") : most)];
+            } else {
+                ++outcomes["ended"];
+            }
+        }
+    }
+    std::printf("%d events:", total);
+    for (const auto& [k, n] : outcomes) std::printf(" %s %d", k.c_str(), n);
+    std::printf("\n");
+    std::vector<std::pair<int, std::string>> top;
+    for (const auto& [k, n] : waitingOn) top.emplace_back(n, k);
+    std::sort(top.rbegin(), top.rend());
+    for (size_t i = 0; i < top.size() && i < 25; ++i) std::printf("  %5d  %s\n", top[i].first, top[i].second.c_str());
+    return 0;
+}
+
 int usage() {
     std::fprintf(stderr,
                  "cr3tool [--patch <fan translation>] <command> ...\n"
                  "cr3tool release <release>\n"
                  "cr3tool texts <release>\n"
+                 "cr3tool events <release> [script | all] [seconds]\n"
                  "cr3tool check <archive>\n"
                  "cr3tool scripts <archive> [name]\n"
                  "cr3tool run <archive> <script> [function]\n"
@@ -389,7 +457,9 @@ int playEvent(const cr3::MvglArchive& a, const std::string& event, bool quiet, s
     cr3::GameState state;
     cr3::EventRuntime rt(a, state);
     rt.autoPage = 1.0f;
-    if (!rt.start(event)) {
+    // CR3 keeps an area's events in one script: "<script>:<function>" (t01:s212_d08_01501)
+    const size_t colon = event.find(':');
+    if (colon != std::string::npos ? !rt.start(event.substr(0, colon), event.substr(colon + 1)) : !rt.start(event)) {
         if (outcome) *outcome = "failed: " + rt.error();
         if (!quiet) std::printf("%s: %s\n", event.c_str(), rt.error().c_str());
         return 1;
@@ -1278,6 +1348,7 @@ int main(int argc, char** argv) {
     if (argc < 3) return usage();
     if (!std::strcmp(argv[1], "release")) return release(argv[2]);
     if (!std::strcmp(argv[1], "texts")) return texts(argv[2]);
+    if (!std::strcmp(argv[1], "events")) return events(argv[2], argc > 3 && std::strcmp(argv[3], "all") ? argv[3] : nullptr, argc > 4 ? std::atoi(argv[4]) : 300);
     if (!std::strcmp(argv[1], "check")) return check(argv[2]);
     if (!std::strcmp(argv[1], "scripts")) return scripts(argv[2], argc > 3 ? argv[3] : nullptr);
     if (!std::strcmp(argv[1], "models")) return models(argv[2]);

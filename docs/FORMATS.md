@@ -94,6 +94,26 @@ packed, 4-byte slots (`char_name.mbe`: rows 0x18 against 0xc). The columns' type
 file - the game reads each table with its own code, by its name; the CHNK entries show which slots
 are strings. 63 files, 109 tables, 27,884 rows, the same in every release (`tools/mbe.py`).
 
+## Scripts (`script\*.nut`, `script64\*.nut`)
+
+Compiled Squirrel 2.2.4, as CR2's. Every release has the 32-bit `script\` set (194 files); iOS and
+Android also carry a 64-bit `script64\` set of the same scripts, which a 32-bit VM can't read -
+CR3-U runs `script\` everywhere. iOS and Android's are identical; the Vita's differ in 36 (the
+dungeon and town scripts, `chapter_jump`), and the fan translation replaces 20 of those.
+
+Unlike CR2 (a script per event), CR3 keeps an area's events in one script: `t01.nut` defines 1,946
+event functions, named for their message files (`s212_d08_01501`, `q066_t01_00201`,
+`c111_s102_t01_00510`), with the shared helpers (`Msg`, `Cutin_Start`, `FadeIn`, `PlayBGM`, ...)
+before them. Also `battle_NNNN` (per battle), `vs`, `chapter_jump` and debug `test_*` scripts.
+
+The natives: 600 functions in 32 tables, from the Android library's `Cr3Bind*` functions (arm64:
+`Sqrat::Object::BindFunc(table, "Name", &fn, 8, closure, false)`; `tools/sq_bindings.py --base
+0x100000`, `tools/gen_native_api.py` -> `engine/src/script/native_api.inc`). Beside CR2's tables
+(Cr3System 127, EvtScene 50, Cr3GimmickData 59, EvtWindow 26, ...) CR3 has `InterfaceWindow` (106),
+the battle classes (`Battle`, `BattleUnit`, `BattleStatus`, ...) and `LunchEvent`.
+`cr3tool events <release> [script | all]` plays every event from its start through the event
+runtime and counts those that end.
+
 ## Sound
 
 Files `sound\<name>.<ext>` in the sound archives (iOS `CRDBbgm_mNN` / `CRDBse_*` / `CRDBvo_*`,

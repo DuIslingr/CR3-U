@@ -223,6 +223,13 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     };
     vm.setNative("EvtFace", "Delete", [endCutIn](NativeCall& c) { endCutIn(c.integer(0, -1)); });
     vm.setNative("EvtFace", "DispOff", [endCutIn](NativeCall&) { endCutIn(3); });
+    // CR3's Cr3FaceCheckInScreen: !InterfaceMain::CheckCutInNoScreen - a cut-in still on screen
+    // (open, or sliding out); Cutin_Delete waits on it turning false
+    vm.setNative("EvtFace", "CheckInScreen", [this](NativeCall& c) {
+        bool any = false;
+        for (const Portrait& p : cutIns_) any = any || p.open;
+        c.result(any);
+    });
     vm.setNative("EvtFace", "ChangeTexture", [this](NativeCall& c) {
         const int k = c.integer(0, -1), id = c.integer(1, -1);
         if (k >= 0 && k < kCutIns && !cutInImage(id).empty()) cutIns_[size_t(k)].texture = id;

@@ -9,17 +9,21 @@ tables of Sqrat closures -
     ...
     sq_pushstring(vm, "Cr3Flag", -1); ... sq_newslot   the table's name, into the root table
 
-  sq_bindings.py <decomp.c> <libChaosRings2.so (armv7)> [--tsv]
+  sq_bindings.py <decomp.c> <the library> [--tsv] [--base 0x100000]
 
 prints, per table, script name -> native (return type, argument types). Names Ghidra left as
-DAT_xxxxxxxx are read from the library (Ghidra's addresses are the file's + 0x10000).
+DAT_xxxxxxxx are read from the library (Ghidra's addresses are the file's + --base: CR2's armv7
+library 0x10000, the default; CR3's arm64 libcrx.so 0x100000).
 """
 import re
 import sys
 
 
+BASE = 0x10000
+
+
 def lib_string(lib, addr):
-    o = addr - 0x10000
+    o = addr - BASE
     if not 0 <= o < len(lib):
         return None
     end = lib.find(b'\0', o)
@@ -49,6 +53,9 @@ def main(argv):
     text = open(argv[1], encoding='utf-8', errors='replace').read()
     lib = open(argv[2], 'rb').read()
     tsv = '--tsv' in argv
+    global BASE
+    if '--base' in argv:
+        BASE = int(argv[argv.index('--base') + 1], 0)
     funcs = re.split(r'^// ---- ', text, flags=re.M)
     out = []
     for body in funcs:
@@ -62,12 +69,17 @@ def main(argv):
         for raw in body.splitlines():   # Ghidra wraps long calls: join until the brackets close
             acc = (acc + ' ' + raw.strip()).strip() if acc else raw.strip()
             if acc.count('(') <= acc.count(')'):
-                lines.append(acc)
+                # (arm64: a call's name alone on its line, its arguments on the next)
+                if lines and acc.startswith('(') and not lines[-1].endswith((';', '{', '}')):
+                    lines[-1] += acc
+                else:
+                    lines.append(acc)
                 acc = ''
         for line in lines:
-            if line.startswith(('sq_newclosure', 'FUN_')):
+            if line.startswith(('sq_newclosure', 'FUN_', 'Sqrat::Object::BindFunc')):
                 line = re.sub(r'\s*(,|::)\s*', r'\1', line)
-            m = re.match(r'local_\w+ = (?:\(code \*\))?&?([A-Za-z_][\w:~<>,]*);$', line)
+            # (arm64: "local_a8 = (undefined **)Cr3UtilFlagSet;")
+            m = re.match(r'local_\w+ = (?:\([\w ]+\*+\))?&?([A-Za-z_][\w:~<>,]*);$', line)
             if m and not m.group(1).startswith(('local_', 'PTR_', 'puVar', 'pvVar', 'pSVar', 'DAT_')):
                 native = m.group(1)
                 continue
@@ -78,7 +90,14 @@ def main(argv):
                 pending.append((nm, native, signature(m.group(3)) if m.group(3) else '(as the previous)'))
                 native = None
                 continue
-            m = re.match(r'sq_pushstring\(\w+,(?:"([^"]*)"|&DAT_([0-9a-f]+)),0xffffffff\);?$', line)
+            # CR3's arm64: Sqrat::Object::BindFunc((Object *)&t,"Set",&fn,8,<closure>,false)
+            m = re.match(r'Sqrat::Object::BindFunc\s*\(\(Object \*\)&\w+,(?:"([^"]*)"|&DAT_([0-9a-f]+)),&\w+,\d+,(.*),(?:false|true)\s*\);?$', line)
+            if m and native:
+                nm = m.group(1) or lib_string(lib, int(m.group(2), 16)) or 'DAT_' + m.group(2)
+                pending.append((nm, native, signature(m.group(3))))
+                native = None
+                continue
+            m = re.match(r'sq_pushstring\(\w+,(?:"([^"]*)"|&DAT_([0-9a-f]+)),0xffffffff(?:ffffffff)?\);?$', line)
             if m:
                 name = m.group(1) or lib_string(lib, int(m.group(2), 16)) or 'DAT_' + m.group(2)
                 continue
