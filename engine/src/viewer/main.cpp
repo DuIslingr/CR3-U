@@ -607,6 +607,11 @@ struct Viewer {
     // A tap (Return, a click): the vista's page; the field's - its event's page, else the nearest
     // balloon's function (FldMain::CheckTouchEventExec_Tap, EventExecute), the leader turned to it
     void tap() {
+        if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
+            if (areaEvents->running()) areaEvents->touch();
+            else if (areaCheckNear >= 0) runAreaFunction(areaGimmicks[size_t(areaCheckNear)].function);
+            return;
+        }
         if (cr3Title.stage) {
             cr3TitleTap();
             return;
@@ -5326,7 +5331,7 @@ struct Viewer {
     cr3::Cr3Area area;
     std::vector<ViewFigure> areaFigures;
     ViewFigure areaPlayer;
-    std::string areaPlayerName;
+    std::string areaPlayerName, areaPlayerArgName;
     std::unique_ptr<cr3::CharacterController> areaWalker;
     cr3::Cr3GomCamera areaCamera;
     float areaYaw = 0, areaClock = 0, areaMotionAge = 0;
@@ -5336,6 +5341,22 @@ struct Viewer {
     // d0101 -, stepped with the game's updates)
     std::unique_ptr<cr3::EventRuntime> areaEvents;
     float areaEventClock = 0;
+    // the area's gimmicks (Fld2TaskGimmick::SetGimmick: <area>p's joints ragdoll_<kind>..): event
+    // boxes (evt..: Fld2Event - a box the joint's scale x 0.05 each way; walked into, its function
+    // runs) and check objects (cobj..: Fld2CheckObject - within it, a tap runs its function: the
+    // doors' DoorJump)
+    struct AreaGimmick {
+        std::string function;
+        bool eventBox = false;
+        cr3::Mat34 world;
+        bool inside = false;
+    };
+    std::vector<AreaGimmick> areaGimmicks;
+    int areaCheckNear = -1; // (the check object the player is within: a tap's)
+    // where the player was as the field was left for a vista (Fld2SaveData), to stand there again
+    std::string savedArea;
+    std::array<float, 3> savedPos{};
+    float savedYaw = 0;
 
     bool loadArea(const std::string& name, const std::string& player) {
         std::string err;
@@ -5357,6 +5378,7 @@ struct Viewer {
         if (loadLights(name + "c")) SDL_Log("lights: %sc", name.c_str());
         initEventDrawing(); // (the area's script's windows and fades)
         // the player: Fld2TaskPlayer::CreatePlayer (Fld2CharaNameTbl's model; a hero's body b01)
+        areaPlayerArgName = player;
         areaPlayerName = player.empty() ? (name.compare(0, 1, "t") == 0 ? "j001" : "c101") : player;
         if (areaPlayerName[0] == 'j' && areaPlayerName.size() == 4) areaPlayerName += "b01";
         unload(areaPlayer);
@@ -5379,8 +5401,30 @@ struct Viewer {
         areaEvents = std::make_unique<cr3::EventRuntime>(archive, game);
         areaEvents->language = optionLanguage, areaEvents->autoPage = pageSeconds, areaEvents->askYesNo = true;
         areaEventClock = 0;
+        areaGimmicks.clear(), areaCheckNear = -1;
+        {
+            std::vector<uint8_t> d;
+            cr3::Skeleton sk;
+            if (archive.read(name + "p.skel", d) && cr3::parseSkeleton(d, sk)) {
+                std::vector<std::string> names;
+                if (archive.read(name + "p.name", d)) names = cr3::parseJointNames(d);
+                const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
+                for (size_t j = 0; j < names.size() && j < w.size(); ++j)
+                    if (names[j].compare(0, 11, "ragdoll_evt") == 0 || names[j].compare(0, 12, "ragdoll_cobj") == 0)
+                        areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false});
+            }
+        }
+        // (standing where it was left for a vista, coming back to it)
+        if (savedArea == name) {
+            areaWalker->setPosition({savedPos[0], savedPos[1], savedPos[2]});
+            areaYaw = savedYaw;
+            const cr3::Vec3 q = areaWalker->position();
+            areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
+            for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g); // (no box set off by standing in it)
+        }
+        savedArea.clear();
         if (!areaEvents->start(name.substr(0, 3), "evt000")) SDL_Log("area %s: evt000 - %s", name.c_str(), areaEvents->error().c_str());
-        else SDL_Log("area %s: evt000 running", name.c_str());
+        else SDL_Log("area %s: evt000 running, %zu gimmicks", name.c_str(), areaGimmicks.size());
         SDL_Log("area %s: %zu figures, player %s at defaultPos (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
                 area.spawn[0], area.spawn[1], area.spawn[2]);
         return true;
@@ -5400,22 +5444,94 @@ struct Viewer {
         areaMotion = m, areaMotionSet = true, areaMotionAge = 0;
     }
 
+    // the player within a gimmick's box (its joint's axes; the box 0.05 of each, the player's
+    // sphere counted)
+    bool gimmickHolds(const AreaGimmick& g) const {
+        const cr3::Vec3 p = areaWalker->position();
+        const float d[3] = {p[0] - g.world.m[3], p[1] - g.world.m[7], p[2] - g.world.m[11]};
+        for (int a = 0; a < 3; ++a) {
+            const float ax[3] = {g.world.m[a], g.world.m[4 + a], g.world.m[8 + a]};
+            const float len = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+            if (len < 1e-6f) return false;
+            const float along = (d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]) / len;
+            if (std::fabs(along) > len * 0.05f + areaWalker->radius) return false;
+        }
+        return true;
+    }
+
+    // the area's script calling a gimmick's function (Fld2TaskGimmick::SetNextEvent -> Fld2Main::StartScript)
+    void runAreaFunction(const std::string& fn) {
+        if (!areaEvents) return;
+        SDL_Log("area %s: %s", area.name.c_str(), fn.c_str());
+        if (!areaEvents->start(area.name.substr(0, 3), fn)) SDL_Log("area %s: %s - %s", area.name.c_str(), fn.c_str(), areaEvents->error().c_str());
+        else if (!areaEvents->running()) afterAreaScript(); // (over at once: no wait in it)
+    }
+
+    // a script over: what it reserved (Fld2Main::BranchAfterEvent) - a vista (the field left, the
+    // player's place kept), another area at a pop point (SetPopPoint: the pop point's map its
+    // first five letters, the player at that joint of its <map>p), a battle
+    void afterAreaScript() {
+        cr3::GameState::Next& n = game.next;
+        if (n.vista && !n.vistaFunction.empty()) {
+            const cr3::GameState::Next keep = n;
+            n = cr3::GameState::Next();
+            const cr3::Vec3 p = areaWalker->position();
+            savedArea = area.name, savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
+            SDL_Log("area %s: vista %s in %s", area.name.c_str(), keep.vistaFunction.c_str(), keep.vistaMap.c_str());
+            startEvent(eventScriptOf(keep.vistaFunction).empty() ? area.name.substr(0, 3) + ":" + keep.vistaFunction
+                                                                 : eventScriptOf(keep.vistaFunction) + ":" + keep.vistaFunction,
+                       keep.vistaMap.empty() ? "null" : keep.vistaMap, pageSeconds);
+            return;
+        }
+        if (!n.popPoint.empty() && n.popPoint.size() > 5) {
+            const std::string pop = n.popPoint, map = pop.substr(0, 5);
+            n.popPoint.clear();
+            SDL_Log("area %s: to %s at %s", area.name.c_str(), map.c_str(), pop.c_str());
+            if (!loadArea(map, areaPlayerArgName)) return;
+            std::vector<uint8_t> d;
+            cr3::Skeleton sk;
+            if (archive.read(map + "p.skel", d) && cr3::parseSkeleton(d, sk)) {
+                std::vector<std::string> names;
+                if (archive.read(map + "p.name", d)) names = cr3::parseJointNames(d);
+                const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
+                for (size_t j = 0; j < names.size() && j < w.size(); ++j)
+                    if (names[j] == pop) {
+                        areaWalker->setPosition({w[j].m[3], w[j].m[7] + areaWalker->radius, w[j].m[11]});
+                        for (int k = 0; k < 30; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
+                        areaYaw = std::atan2(w[j].m[2], w[j].m[10]);
+                        const cr3::Vec3 q = areaWalker->position();
+                        areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
+                    }
+            }
+            for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g);
+            return;
+        }
+        if (n.battle >= 0) {
+            SDL_Log("area %s: battle %d (not yet)", area.name.c_str(), n.battle);
+            n.battle = -1;
+        }
+    }
+
     // one frame: the stick in the camera's frame (FldPlayer::CalcPlayerMoveDir), a run or a walk
     // (SM_Run 4.8, SM_Walk 1.2 a second, as far as it's pushed), the camera's Q / E and R / V
     void updateArea(float dt, float sx, float sy, bool run) {
         areaClock += dt, areaMotionAge += dt;
-        if (areaEvents && areaEvents->running()) { // (the area's script at the game's updates)
+        if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
+            const bool wasRunning = areaEvents->running();
             areaEventClock = std::min(areaEventClock + dt, 0.25f);
             for (; areaEventClock >= cr3::EventRuntime::kTick; areaEventClock -= cr3::EventRuntime::kTick)
                 if (!areaEvents->tick()) {
                     SDL_Log("area script: %s", areaEvents->error().c_str());
                     break;
                 }
-            if (!areaEvents->running()) {
-                SDL_Log("area script: evt000 ended at frame %d", areaEvents->frame());
-                for (const auto& [n, k] : areaEvents->stubCalls()) SDL_Log("  stub %s x%d", n.c_str(), k);
+            if (wasRunning && !areaEvents->running()) {
+                SDL_Log("area script: ended at frame %d", areaEvents->frame());
+                afterAreaScript();
+                if (eventMode || !areaMode) return;
             }
         }
+        const bool scripted = areaEvents && areaEvents->running();
+        if (scripted) sx = sy = 0; // (PauseMove: the player held while the area's script runs)
         const bool* keys = SDL_GetKeyboardState(nullptr);
         if (keys) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
         const float fx = areaCamera.at[0] - areaCamera.eye[0], fz = areaCamera.at[2] - areaCamera.eye[2];
@@ -5441,6 +5557,21 @@ struct Viewer {
         setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
         const cr3::Vec3 p = areaWalker->position();
         areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, moving, dt, &area.cameraWalls, &area.walls);
+        // the gimmicks: an event box walked into sets off its function; a check object near
+        areaCheckNear = -1;
+        for (size_t k = 0; k < areaGimmicks.size(); ++k) {
+            AreaGimmick& g = areaGimmicks[k];
+            const bool in = gimmickHolds(g);
+            if (g.eventBox && in && !g.inside && !scripted) runAreaFunction(g.function);
+            // (a check object: near it across - Fld2TaskPlayer's gimmick ghost, a sphere of 1.0,
+            // against its box; the walls keep the player from its own small one. An approximation)
+            if (!g.eventBox) {
+                const float across = std::hypot(p[0] - g.world.m[3], p[2] - g.world.m[11]);
+                const float half = std::sqrt(g.world.m[0] * g.world.m[0] + g.world.m[4] * g.world.m[4] + g.world.m[8] * g.world.m[8]) * 0.05f;
+                if (across <= 1.0f + half + 0.3f && std::fabs(p[1] - g.world.m[7]) < 2.5f) areaCheckNear = int(k);
+            }
+            g.inside = in;
+        }
     }
 
     void drawArea(int w, int h) {
@@ -11294,6 +11425,10 @@ int main(int argc, char** argv) {
             v.pose();
             v.draw(w, h);
             dev->endFrame(false);
+        }
+        if (v.areaMode && tapAfter && !v.cr3Title.stage) { // (CR3's field: --tap after --run, then 4 s on)
+            v.tap();
+            for (int k = 0; k < 240; ++k) v.time += 1.0f / 60.0f, v.advance(1.0f / 60.0f, 0, 0, false), v.pose();
         }
         v.draw(w, h);
         dev->endFrame(false);

@@ -199,6 +199,21 @@ saved place, Fld2SaveData's, as he left it). The camera stops at the first wall 
 (CheckCollision: camhit bodies alone where there are some within 20 below the target, else the walls
 too), raised by 2 - d within 2 across and the player drawn at 0.3 within 1.
 
+Gimmicks (Fld2TaskGimmick::SetGimmick, by `<area>p`'s joint names `ragdoll_<kind>..`): `ac`,
+`ldr` (ladders), `krock`, `tbox` / `kbox` / `gbox` (boxes), `fswc` / `bswc` (switches), `blk`
+(blocks), `jem`, `cobj` (check objects, 10), `door` (11), `fmove` (12), `cam` (18), `minimap` (22),
+`j` / `c` / `m` (people, 13), `evt` (event boxes, 14), `vc` (20), `adv_` (21). An event box
+(Fld2Event::Create) is a box the joint's scale x 0.05 each way at it; the player's gimmick ghost
+(CreateGhost's second: a sphere of 1.0) touching it queues its function (`ragdoll_evt103_00`:
+`evt103_00`) - Fld2TaskGimmick::SetNextEvent, run as the area script's. A check object (cobj) is
+the door itself, its function on a tap while the "!" shows: `cobj_00` is `DoorJump("fe_040",
+"d0102_p1")` - SetPopPoint, the fade out; the field then changes area to the pop point's (its
+first five letters) at that joint of `<map>p`. CR3-U takes "near" as within 1.3 + the box across
+(an approximation of the ghost against the box: the walls stop the player short of it). Leaving
+for a vista (an event box's `s000_d01_00401`, ...) keeps the player's place (Fld2SaveData) for the
+return. The ship (d01): d0101 -> d0102 (`evt101_00`) -> d0103 (`evt201_00`: BattleIn 551, the
+first battle) -> d0104 (`evt102_00`, `evt202_00`: BattleIn 552) -> d0105.
+
 `cr3view --area <area> [--player <model>]` walks one (WASD / the stick, Shift a walk; Q / E turn
 the camera, R / V tilt it); `--walk x,y,s --run s` for captures.
 
