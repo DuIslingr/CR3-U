@@ -1,0 +1,60 @@
+#include "battle/special.hpp"
+
+#include <cstring>
+#include <iterator>
+
+namespace cr3 {
+
+namespace {
+
+#include "battle/specialtable.inc"
+#include "battle/effecttable.inc"
+#include "battle/darwintable.inc"
+#include "battle/deadtable.inc"
+
+} // namespace
+
+const SpecialScene* specialScene(int command, bool own, bool* advent) {
+    for (const auto& e : kSpecialOf) {
+        if (e.command != command || e.own != own) continue;
+        const SpecialScene* s = nullptr;
+        if (e.advent && e.scene >= 0 && e.scene < int(std::size(kBuildAdventScenes))) s = &kBuildAdventScenes[e.scene];
+        else if (!e.advent && e.scene >= 0 && e.scene < int(std::size(kBuildAwakeScenes))) s = &kBuildAwakeScenes[e.scene];
+        if (!s || !s->steps) return nullptr;
+        if (advent) *advent = e.advent;
+        return s;
+    }
+    return nullptr;
+}
+
+const EffectSetting& effectSetting(const std::string& name) {
+    for (const EffectSetting& e : kEffectSettings)
+        if (e.name && name == e.name) return e;
+    return kEffectSettings[0]; // ("common")
+}
+
+const float* darwinFigureOffset(const std::string& figure) {
+    for (const DarwinOffset& e : kDarwinFigureOffsets) // (GetAwakeDawinLv3Offset: the first four characters' hash)
+        if (e.name && figure.compare(0, 4, e.name, 0, 4) == 0 && figure.size() >= 4) return e.v;
+    return nullptr;
+}
+
+float deadOffset(const std::string& figure) {
+    for (const auto& e : kDeadOffsets)
+        if (figure.size() >= 4 && figure.compare(0, 4, e.name, 0, 4) == 0) return e.height;
+    return 0;
+}
+
+const float* darwinPatternOffset(int key) {
+    for (const DarwinPatternOffset& e : kDarwinPatternOffsets)
+        if (e.key == key) return e.v;
+    return nullptr;
+}
+
+const char* tposJoint(int tpos) {
+    static const char* const kJoints[9] = {"RootLocator", "DummyEP01", "DummyEP02", "DummyEP03", "DummyEP04",
+                                           "DummyDP01", "DummyDP02", "DummyCPS", "DummyCP"};
+    return tpos >= 0 && tpos < 9 ? kJoints[tpos] : nullptr;
+}
+
+} // namespace cr3

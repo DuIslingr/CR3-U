@@ -1,0 +1,187 @@
+# Builds the port on Linux, Windows and macOS (no game data: the build, the packaging). The
+# binaries are the run's artifacts; nothing of the game is in them.
+name: build
+on:
+  push:
+    branches: [main, platforms]
+    tags: ['v*'] # (a version: the release job publishes the builds)
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, name: linux }
+          - { os: windows-2022, name: windows }
+          - { os: macos-14, name: macos }
+          # DLSS: built and linked to prove it, never uploaded - NVIDIA's NGX library is proprietary and
+          # these programs are GPL, so a DLSS build is for one's own use (THIRD_PARTY.md), not an artifact
+          - { os: ubuntu-24.04, name: linux-dlss, dlss: true }
+          - { os: windows-2022, name: windows-dlss, dlss: true }
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libvulkan-dev glslc libfaad-dev zlib1g-dev libfreetype-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
+            libpulse-dev libasound2-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev libdrm-dev libgbm-dev
+      - name: macOS packages
+        if: runner.os == 'macOS'
+        run: brew install ninja # (SDL3, FreeType: built here, static - the .app needs no Homebrew)
+      - name: MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Vulkan SDK
+        if: runner.os == 'Windows' || runner.os == 'macOS' # (macOS: MoltenVK, universal - bundled into the .app)
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.309.0
+          cache: true
+      - name: DLSS SDK
+        if: matrix.dlss
+        shell: bash
+        run: |
+          # (NVIDIA's public SDK, its headers and this platform's NGX library and runtime only)
+          git clone -q --depth 1 --filter=blob:none --sparse -b v310.9.1 https://github.com/NVIDIA/DLSS.git dlss-sdk
+          if [ "$RUNNER_OS" = Windows ]; then
+            git -C dlss-sdk sparse-checkout set include lib/Windows_x86_64/x64 lib/Windows_x86_64/rel
+            echo "CR_DLSS_ARG=-DCR_DLSS_SDK=$(cygpath -m "$PWD/dlss-sdk")" >> "$GITHUB_ENV"
+          else
+            git -C dlss-sdk sparse-checkout set --no-cone /include/ /lib/Linux_x86_64/rel/ /lib/Linux_x86_64/libnvsdk_ngx.a
+            echo "CR_DLSS_ARG=-DCR_DLSS_SDK=$PWD/dlss-sdk" >> "$GITHUB_ENV"
+          fi
+          ls dlss-sdk/lib/*
+
+      - name: Configure
+        if: runner.os != 'macOS'
+        run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${{ env.CR_DLSS_ARG }} ${{ matrix.dlss && '-DCR_DLSS_REQUIRED=ON' || '' }}
+      - name: Configure (macOS, universal)
+        if: runner.os == 'macOS'
+        run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON -DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Check (no data)
+        shell: bash
+        run: |
+          tool=build/cr3tool; [ -f build/cr3tool.exe ] && tool=build/cr3tool.exe
+          $tool glass 50
+      - name: Package (Linux)
+        if: runner.os == 'Linux' && !matrix.dlss
+        run: |
+          mkdir -p dist
+          cp build/cr3view build/cr3tool dist/
+          cp README.md LICENSE THIRD_PARTY.md dist/
+      - name: AppImage (Linux)
+        if: runner.os == 'Linux' && !matrix.dlss
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          wget -q -O linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+          ./linuxdeploy --appdir AppDir -e build/cr3view -d packaging/linux/chaosrings3.desktop -i packaging/linux/chaosrings3.svg --exclude-library "libvulkan.so*" --output appimage  # (the loader: the system's, with its drivers)
+          mv ./*.AppImage dist/
+      - name: Package (Windows)
+        if: runner.os == 'Windows' && !matrix.dlss
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/*.exe dist/
+          cp build/*.dll dist/ 2>/dev/null || true
+          cp README.md LICENSE THIRD_PARTY.md dist/
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          lipo -info build/cr3view.app/Contents/MacOS/cr3view
+          ! otool -L build/cr3view.app/Contents/MacOS/cr3view | grep -e /opt/homebrew -e /usr/local  # (nothing of Homebrew's)
+          lipo -info build/cr3view.app/Contents/Frameworks/libMoltenVK.dylib build/cr3view.app/Contents/Frameworks/libvulkan.1.dylib
+          test -f build/cr3view.app/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json
+          # (MoltenVK's and the loader's licences with them: Apache-2.0 - THIRD_PARTY.md)
+          lic=build/cr3view.app/Contents/Resources/licenses
+          mkdir -p "$lic"
+          find "$VULKAN_SDK/.." -maxdepth 5 \( -iname 'LICENSE*' -o -iname 'NOTICE*' \) | head -40
+          for n in MoltenVK Vulkan-Loader; do
+            f=$(find "$VULKAN_SDK/.." -maxdepth 6 -ipath "*$n*" -iname 'LICENSE*' | head -1)
+            if [ -n "$f" ]; then cp "$f" "$lic/$n-LICENSE.txt"; else curl -fsSL https://www.apache.org/licenses/LICENSE-2.0.txt -o "$lic/$n-LICENSE.txt"; fi
+          done
+          [ -f "$VULKAN_SDK/../Licenses/LICENSE.txt" ] && cp "$VULKAN_SDK/../Licenses/LICENSE.txt" "$lic/VulkanSDK-LICENSE.txt"  # (the SDK's: every component's)
+          cp LICENSE THIRD_PARTY.md "$lic/"
+          ls -la "$lic"
+          cp -R build/cr3view.app dist/
+          cp build/cr3tool dist/
+          cp README.md LICENSE THIRD_PARTY.md dist/
+      # (packed here: an artifact keeps no file modes - the binaries' and the .app's executables)
+      - name: Archive
+        if: ${{ !matrix.dlss }}
+        shell: bash
+        run: |
+          mkdir -p upload
+          n="${{ github.event.repository.name }}"
+          case "$RUNNER_OS" in
+            Linux) mv dist/*.AppImage "upload/$n-x86_64.AppImage"; tar -czf "upload/$n-linux-x86_64.tar.gz" -C dist . ;;
+            Windows) 7z a -tzip -bso0 "upload/$n-windows-x64.zip" ./dist/* ;;
+            macOS) (cd dist && zip -qry "../upload/$n-macos-universal.zip" .) ;;
+          esac
+          ls -la upload
+      - uses: actions/upload-artifact@v4
+        if: ${{ !matrix.dlss }}
+        with:
+          name: ${{ github.event.repository.name }}-${{ matrix.name }}
+          path: upload
+  android:
+    runs-on: ubuntu-24.04
+    name: android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: SDL3 source (its Java glue and the engine's SDL)
+        run: git clone --depth 1 -b release-3.2.0 https://github.com/libsdl-org/SDL.git android/SDL
+      - name: Build
+        working-directory: android
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;3.22.1" > /dev/null
+          gradle assembleRelease --no-daemon -PndkVersion=$(basename "$ANDROID_NDK_LATEST_HOME")
+      - name: Archive
+        run: mkdir -p upload && cp android/app/build/outputs/apk/release/app-release.apk "upload/${{ github.event.repository.name }}-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-android
+          path: upload
+
+  # A version tag (v*): every platform's build - none with DLSS - on a GitHub release, its notes
+  # packaging/release-notes.md
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [desktop, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la artifacts
+          gh release create "$GITHUB_REF_NAME" artifacts/* --title "${{ github.event.repository.name }} $GITHUB_REF_NAME" \
+            --notes-file packaging/release-notes.md

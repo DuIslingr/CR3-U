@@ -1,0 +1,142 @@
+#pragma once
+// An event's scene (EvtScene, EvtModel, the vista camera / light; docs/SCRIPTS.md): three animated
+// figures named after the event - `<event>` (its joints `ev_<model>` the models' locators),
+// `<event>_camera` (an animated camera) and `<event>_light` (its lights) - and the models placed
+// on the locators. The scripts drive their timelines in the scene's frames (20 a second: x 0.05
+// is seconds): VistaEvent.SetMove(model, from, to) moves a model along its locator, CameraMove /
+// LightMove the camera and the lights; EvtScene.ChangeAnimator(model, "e826", loop) plays the
+// model's animation <figure>e826.
+
+#include <map>
+#include <string>
+#include <vector>
+
+#include "assets/geom.hpp"
+#include "assets/mvgl.hpp"
+#include "assets/skeleton.hpp"
+#include "gfx/render_device.hpp"
+
+namespace cr3 {
+
+struct EventModel {
+    std::string name;     // the locator's ("v206_00")
+    std::string figure;   // the figure it shows ("v206": the name up to its "_NN")
+    bool visible = false;
+    // its animation (<figure><suffix>.anim; "" the figure's own) and where it is in it
+    std::string animation;
+    bool loop = true;
+    float animTime = 0;
+    // ChangeAnimatorBlend: the motion it fades from (its animation, how far into it) over
+    // blendSeconds (EvtMotionManager's two slots, linear)
+    std::string blendFrom;
+    float blendFromTime = 0, blendSeconds = 0;
+    // its place on its locator: the scene's time, and where a move ends (SetMove)
+    float sceneTime = 0, moveEnd = 0;
+    bool moving = false;
+    Mat34 place;          // the locator's world matrix at sceneTime
+    int face = -1;        // ChangeModelFace: the face texture slot (EvtScene.SetFaceTexture) on its
+                          // j<NNN>face material; -1 its own
+    // ChangeAlpha(model, from, to, frames) (EvtModel::SetAlpha): its alpha from .. to over the frames
+    float alphaFrom = 1, alphaTo = 1, alphaSeconds = 0, alphaTime = 0;
+    float alpha(float lead = 0) const {
+        const float t = alphaTime + lead;
+        return alphaSeconds <= 0 || t >= alphaSeconds ? alphaTo : alphaFrom + (alphaTo - alphaFrom) * t / alphaSeconds;
+    }
+    // SetPosDirect / SetPosLocator: held at a point (its figure's position), not where its locator is
+    bool pinned = false;
+    float pin[3] = {0, 0, 0};
+    // Move(model, frame, updates) (Cr3EvtSceneMove - EvtMoveParam): from where it is to where its
+    // locator is at that frame, a step each update
+    int slideUpdates = 0, slideTick = 0;
+    float slideFrom[3] = {0, 0, 0}, slideTo[3] = {0, 0, 0};
+    // ChangeDirection(model, other, frames) (EvtModel::ChangeDirection - FldDirectionManager): turned
+    // about y to face the other over the frames, then held so
+    bool turned = false;
+    float turnFrom = 0, turnTo = 0, turnSeconds = 0, turnTime = 0;
+    // its shadow (EvtModel::Init: a FldShadow for a c / v model, shown; EvtScene.ShadowVisible)
+    bool shadow = true;
+    // ChangeModelColor(model, n) (Cr3UtilMakeChangeTextureName: m<its number><a .. d>01 and its
+    // normal map "n", on every material); -1 its own
+    int color = -1;
+    bool hasShadow() const { return !figure.empty() && (figure[0] == 'c' || figure[0] == 'v'); }
+};
+
+class EventScene {
+public:
+    // the event's three figures (the camera and the lights optional); false: no scene figure
+    bool load(const MvglArchive& archive, const std::string& event, std::string* error = nullptr);
+    bool loaded() const { return loaded_; }
+
+    std::vector<EventModel>& models() { return models_; }
+    EventModel* model(const std::string& name); // (case-insensitive, as the game's names vary)
+
+    // the script's controls (times in the scene's frames)
+    void setMove(const std::string& model, float from, float to);
+    // SetPosDirect: the model held at a point; SetPosLocator: at another model's place
+    void pin(const std::string& model, float x, float y, float z);
+    void pinTo(const std::string& model, const std::string& other);
+    void turnTo(const std::string& model, const std::string& other, int frames);
+    void slide(const std::string& model, int frame, int updates);
+    void cameraMove(float from, float to);
+    // VistaEvent.CameraQuake(width, from %, to %, frames) (EvtUtilVistaCameraQuake; VistaMain::Pose):
+    // each update the camera moved along its up axis by width x the rate - from .. to over the
+    // frames, then the last, or stopped when that is 0 -, one way then back; CameraQuakeStop
+    void quake(float width, float fromPercent, float toPercent, int frames);
+    void quakeStop();
+    // VistaEvent's light colours (EvtUtilVista*LightColor*; VistaMain::Update / Draw): the
+    // directional light's intensity and colour, the hemisphere's sky and ground, animated from ..
+    // to over the frames (then the light figure's again) or held (DirectStart .. DirectStop)
+    struct LightColour {
+        bool anim = false, direct = false;
+        int frame = 0, frames = 0;
+        float from[4] = {0, 0, 0, 0}, to[4] = {0, 0, 0, 0}, now[4] = {0, 0, 0, 0}; // (directional: rgb, intensity; hemisphere: sky rgb)
+        float groundFrom[3] = {0, 0, 0}, groundTo[3] = {0, 0, 0}, ground[3] = {0, 0, 0};
+    };
+    LightColour& directional() { return directional_; }
+    LightColour& hemisphere() { return hemisphere_; }
+    void lightMove(float from, float to);
+
+    // a frame's time passing: the moves, the camera and the lights advance
+    void update(float dt);
+    // `lead` seconds on from the last update (a frame drawn between the game's updates: less
+    // than 0.05 s; the timelines are linear in time, so this is where they will be): a model's
+    // place, the camera, the lights
+    Mat34 placeAt(const EventModel& m, float lead) const;
+
+    // the camera now: its world matrix (looking down -Z), vertical field of view (degrees), near, far
+    // (VistaCamera::Init: near at least 0.05, far five times - at most 5000 - but for two events')
+    bool camera(Mat34& world, float& fovY, float& zn, float& zf, float lead = 0) const;
+    // the lights now (the light figure's, posed); false: none
+    bool lights(SceneLighting& out, float lead = 0) const;
+    // where the leader goes when the scene ends (its ev_p000 joint: EvtScene's +0x610, read by
+    // Cr3FieldMapCharacter.SetPos_p000 / SetRot_p000); false: no such joint
+    bool p000(Mat34& world) const;
+
+private:
+    struct Figure {
+        Geom geom;
+        Skeleton skel;
+        Animation anim;
+        bool animated = false;
+        std::vector<Mat34> world(float t) const;
+    };
+    void place(EventModel& m);
+    Mat34 locator(const std::string& name, float sceneTime) const;
+    bool loaded_ = false;
+    std::string name_;
+    struct Quake {
+        bool on = false;
+        float width = 0, from = 0, to = 0, seconds = 0, time = 0;
+        int parity = 0;
+        float offset[3] = {0, 0, 0};
+    } quake_;
+    LightColour directional_, hemisphere_;
+    Figure scene_, camera_, light_;
+    bool hasCamera_ = false, hasLight_ = false;
+    std::map<std::string, int> locators_; // ev_<name> -> joint
+    int p000_ = -1;
+    std::vector<EventModel> models_;
+    float cameraTime_ = 0, cameraEnd_ = 0, lightTime_ = 0, lightEnd_ = 0;
+};
+
+} // namespace cr3

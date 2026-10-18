@@ -1,0 +1,209 @@
+#pragma once
+// The battles' tables (`data\battledata.dat`; BtlData, docs/FORMATS.md): a header of table offsets
+// and counts, then the records - the characters (0x98 bytes), the party (0x18), the monsters
+// (0x110), the encounters ("couplings", 0x1c: what BattleIN(id) fights), the areas, the commands,
+// ... - and the strings. A record's names are offsets into the strings, one a language (the
+// option's: 0 Japanese, 1 English, ...).
+
+#include <cstdint>
+#include <array>
+#include <string>
+#include <vector>
+
+namespace cr3 {
+
+class BattleData {
+public:
+    bool parse(const std::vector<uint8_t>& file, std::string* error = nullptr);
+
+    // a character (BtlData::GetCharaDataPointer, from 1): Darwin 1, Orlando 2, Marie 3, ...
+    struct Character {
+        int id = 0;
+        std::string name[2]; // (Japanese, English)
+        std::string figure;  // +0x08 its battle figure ("j001")
+        int hp = 0, mp = 0, param[5] = {0, 0, 0, 0, 0}; // +0x10, +0x14, +0x16 at level 0
+        int hpGrowth = 0, mpGrowth = 0, paramGrowth[5] = {0, 0, 0, 0, 0}; // +0x21, +0x22, +0x23
+        int level = 1;       // +0x20 a new game's
+        int equip[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // +0x28 a new game's: weapon, armour, accessory, then
+                                                 // its five sopia (+0x2e..: Cr3InitWorkFromBattleData)
+        int specials[3] = {0, 0, 0}; // +0x38 its own skills (Darwin: Executioner ...)
+        int attack = 0, pairAttack = 0; // +0x44 the command "attack" gives, +0x46 the pair's
+    };
+    // a monster (GetMonsterDataPointer, from 1)
+    struct Monster {
+        int id = 0;
+        std::string name[2];
+        std::string figure; // +0x10: the figure's four characters and its colour ("m206a": m206,
+                            // the images m206a01...)
+        int hp = 0;         // +0x1c (GetMonsterHP: + 25 a level)
+        int param[5] = {0, 0, 0, 0, 0}; // +0x20 (GetMonsterParam: + 7, 6, 4, 6, 6 a level)
+        int exp = 0, sp = 0, oz = 0; // +0x2c, +0x30, +0x34 its rewards (GetMonsterEXP: + the level
+                                     // squared; GetMonsterSP; GetMonsterOZ: + 10 a level)
+        int sopia = 0, sopiaLevel = 0; // +0x18 the sopia it may leave, +0x52 the level it must be at
+        int drops[3] = {}, rareDrops[3] = {}; // +0xb4, +0xba: by its level - under 20, under 40, more
+        // its death (BtlActionCtrl::ActionDeadStart): +0x3a its motion 7 (bd02) and the size's
+        // defeat camera first (125 of them), +0x38 no eff201 / eff202 nor fading (34)
+        bool deathMotion = false, deathPlain = false;
+        int steals[3] = {}, rareSteals[3] = {}; // +0xa8, +0xae: what Steal Item takes, the same way (none: +0xa8 0)
+        int level = 0;      // +0x3b its own (0: the party's, BtlWork::SetupEnemy)
+        int resist[7] = {0, 0, 0, 0, 0, 0, 0}; // +0x3c: elements 1..5, physical, magic (1 weak, 2 resists)
+        int stateResist[5] = {0, 0, 0, 0, 0};  // +0x43
+        uint32_t skills = 0; // +0x48 (SetupEnemySkill: bit 0 armour, 1 first, ...)
+        int element = 0;    // +0x50
+        int counter = 0;    // +0x4c the command it counters with (BtlActionCtrl::CheckCounter) - its plain attack
+        int pairAttack = 0; // +0x54 its pair's attack (CreateAttackObject)
+        int actions = 1;    // +0x4e its actions a turn (BtlActionCtrl::SetActionQueue)
+        int size = 0;       // +0x53: 0 small, 1 medium, 2 large, 3 extra large, 4 human-sized
+        // its choice (BtlEnemy): ten commands, each with a condition, a target rule, a weight, a
+        // must-take flag and the condition's value
+        int commands[10] = {}, condition[10] = {}, targetRule[10] = {}, weight[10] = {}, must[10] = {}, conditionValue[10] = {};
+    };
+    // a command (GetCommandDataPointer, from 1)
+    struct Command {
+        int id = 0;
+        std::string name[2];
+        std::string text[2]; // +0x08, +0x0c: what it does (the lists' help; "\\n" a line break)
+        std::string motion;  // +0x38 ("bo01")
+        std::string hitEffect; // +0x18 the effect on the one hit ("eff101": BtlActionCtrl::HitEffect)
+        std::string launchEffect; // +0x20 on the one acting as it begins (ShowCommandLaunchEffect)
+        std::string shotEffect;   // +0x28 a shot's, flying to the one hit (CreateShotEffect)
+        std::string shotMark;     // +0x30 on the one a shot is for, as it flies
+        int shot = 0;             // +0x40: 3 the command shoots (CreateShotEffect)
+        int power = 0;       // +0x44
+        int magic = 0;       // +0x49: 0 physical, 1 magic
+        int spread = 0;      // +0x4a: +- percent
+        int awaken = 0;      // +0x48: 1..3 an awakening of that level, 4 an advent (they fill no charge)
+        int target = 0;      // +0x4b: 1 itself, 2 an ally, 3 the allies, 4 a foe, 6 the foes, 7 anyone
+        int element = 0;     // +0x4c
+        unsigned specials = 0; // +0x4e (CheckCommandSpecial's bits)
+        int kind = 0;        // +0x6f: 0 damage, 2 defend, ...
+        // its states (BtlCalc::CheckBadStatus / CheckCureStatus / CheckParamStatus /
+        // CheckSpecialStatus / CheckAttachTarget): +0x50 a byte each of poison, blind, seal, the
+        // action's cancel, its action cancelled the next turn (state 3), time stopped (21), attacks
+        // (22), sopia (23), items (25), defending (24) sealed (1 inflicts, 2 cures); +0x5c a byte each of Attack, Magic,
+        // Defense, Speed, Luck and three more (1 lowers, 2 raises); +0x64 the special states' bits
+        // (26 + the bit); +0x6c how long (1 one use, 2 one turn, 3 +0x6d turns, else for good);
+        // +0x70 an element it lends the one hit (1..3; 4 none)
+        int bad[10] = {}, change[8] = {}, durationMode = 0, turns = 0, attach = 0;
+        int attachSelf = 0; // +0x71 an element it lends the one acting (CheckAttachSelf: 1..3; 4 none)
+        // its sounds (BtlSound): +0x68 the voice's kind (Cr3VoiceTable; PlayVoiceCommand) after +0x6a
+        // updates (x 0.05 s); BtlSound::PlaySE numbers - +0x74 at the hit (-1 one of 12..14, 15 on a
+        // critical: PlayHitSE), +0x76 its launch's (PlayLaunchSE), +0x78 the shot's, +0x7a after it
+        int voice = 0, voiceDelay = 0, hitSe = 0, launchSe = 0, shotSe = 0, postSe = 0;
+        uint32_t special = 0;
+        int mp = 0;          // +0x42: its MP (BtlUtilStatus::CalcUseMp)
+        int icon = 0;        // +0x72: its icon (mainIcon_id's frame)
+        bool pairable = false; // +0x73: one the monster pair may take together (BtlEnemy +0x110)
+    };
+    // a sopia (GetSopiaDataPointer, from 1; 0x2c bytes): the command it gives at each of its five
+    // levels (+0x18, s16 each: the first `level` of them; 0 none), the auto skill at each (+0x22,
+    // BtlWork::SetupPlayerSkill), the element it lends (+0x16: the first of the five with one), the
+    // level it starts at (+0x12), its level-up table (+0x10: 0 the characters' own, 1 the others')
+    struct Sopia {
+        int id = 0;
+        std::string name[2];
+        int growth = 0, startLevel = 1, element = 0;
+        int advent = 0; // +0x14: the advent it lets the pair call (BtlCommand::CheckCommandAdventAvailable: 136..141)
+        int kind = 0;   // +0x11: its kind (Cr3UtilGetSopiaComboSkillID's combinations; the camp's icon); +0x10 0 a human's
+        int commands[5] = {}, skills[5] = {};
+    };
+    // an item (GetItemDataPointer, from 1): what it adds worn (Cr3UpdatePlayerData)
+    struct Item {
+        int id = 0;
+        std::string name[2];
+        std::string text[2]; // +0x08, +0x0c: what it does
+        int type = 0;        // +0x10 (a byte): 0 / 1 the camp's first list (CampItemListMenu::CategoryCheck), 4 its second
+        int hp = 0, mp = 0, param[5] = {0, 0, 0, 0, 0}; // +0x14, +0x18, +0x1a
+        int skills[2] = {-1, -1}; // +0x30, +0x32: auto skills it gives
+        bool battle = false;  // +0x11: usable in battle (BtlCommand::GetItem)
+        bool usedUp = false;  // +0x2d: one gone each use
+        int wearers = 0;      // +0x12: the characters who can equip it (bit c: character c + 1)
+        int command = 0;      // +0x2e: the command it is
+        int icon = 0;         // +0x34: its icon (mainIcon_id's frame)
+        int price = 0, sellPrice = 0; // +0x24, +0x28: the shop's (ShopItemBuyListMenu / SellListMenu)
+        int shopRank = 0;     // +0x2c (a byte): the shop's rank it is sold from (flags 1081.. set)
+    };
+    // the party's record (GetPartyDataPointer, the first): a new game's five items and their
+    // counts (+0, +0xa), its Oz (+0x14) - Cr3InitWorkFromBattleData
+    struct Party {
+        int items[5] = {}, counts[5] = {};
+        int oz = 0;
+    };
+    const Party& party() const { return party_; }
+    // an auto skill (GetAutoSkillDataPointer, from 1; BtlWork::SetupSkill)
+    struct AutoSkill {
+        int id = 0;
+        int rate[7] = {};    // +0x10..+0x16: the percent it adds to the most HP, MP and the five parameters (Cr3UpdatePlayerDataBySopia)
+        int resist[7] = {}, stateResist[5] = {}; // +0x17, +0x1e
+        unsigned groups[7] = {}; // +0x26..+0x32: the fighter's skill bits (+0xfac..+0xfb8)
+        int attach = 0;          // +0x34 the element it lends (GetAutoSkillAttach; 0 none)
+    };
+    // an encounter (GetCouplingDataPointer, from 1; FldEncount::SetBattle)
+    struct Coupling {
+        int id = 0;
+        int music = 0;       // +0x00 (cr3_battle_post +2)
+        int map = 0;         // +0x02 the battle map, from 1 (BtlMapTable)
+        bool flag = false;   // +0x04 (BtlWork +0x18: no first-time tutorials)
+        int resultKind = 0;  // +0x15 (3: no victory fanfare - BtlResult)
+        int monsters[3] = {0, 0, 0}; // +0x08 (0: none)
+    };
+
+    const Character* character(int id) const;
+    const Monster* monster(int id) const;
+    const Coupling* coupling(int id) const;
+    const Command* command(int id) const;
+    const Item* item(int id) const;
+    // a battle voice's choices (GetVoiceDataPointer: +0x2c, +0x46 of them, 8 bytes each - three
+    // Cr3VoiceTable kinds, one picked at random: BtlSound::PlayVoiceFromData); null: none
+    const std::array<int, 3>* voice(int kind) const {
+        return kind >= 1 && kind <= int(voices_.size()) ? &voices_[size_t(kind - 1)] : nullptr;
+    }
+    const AutoSkill* autoSkill(int id) const;
+    const Sopia* sopia(int id) const;
+    int sopias() const { return int(sopias_.size()); }
+    int couplings() const { return int(couplings_.size()); }
+
+private:
+    std::vector<Character> characters_;
+    std::vector<Monster> monsters_;
+    std::vector<Coupling> couplings_;
+    std::vector<Command> commands_;
+    std::vector<Item> items_;
+    std::vector<std::array<int, 3>> voices_;
+    std::vector<AutoSkill> autoSkills_;
+    std::vector<Sopia> sopias_;
+    Party party_;
+};
+
+// A battle's set-up (BtlMainCtrl::StepInit, BtlWork::SetStartWork): the map, the monsters' size
+// pattern (BtlWork::SetSizePattern, BtlCouplingTable) and so where each stands (a battledpos
+// joint: BtlModel::SetPosRot), the party's places, the camera the commands are chosen under
+struct BattleSetup {
+    int coupling = 0;
+    std::string map;     // BtlMapTable: "d0151b", ...
+    int pattern = -1;    // 0 S, 1 SS, 2 SSS, 3 M, 4 MS, 5 MSS, 6 MM, 7 L, 8 XL, 9 XLXL, 10 Hsolo,
+                         // 11 Hpair, 12 the boss m310's own (neron)
+    std::string patternName;
+    struct Unit {
+        int id = 0;          // the character's / monster's
+        std::string figure;  // "j001", "m206"
+        std::string colour;  // the monster's images' letter ("a"), "" its own
+        std::string position; // the battledpos joint ("dPos_pPairA", "dPos_sssL")
+        std::string idle;    // its motion as the battle starts (BtlMotionTable: bb02, then bb01)
+    };
+    std::vector<Unit> party, monsters;
+    std::string camera;      // "Cam_Getset_SSS_00"
+    std::string startCamera; // "Cam_Start_SSS_00"
+};
+
+// The EXP tables (BtlData's lvup_exp, chara_sopia_lvup_exp, mons_sopia_lvup_exp: tools/
+// gen_level_table.py -> leveltable.inc): the EXP a character has at a level (1..200, the most
+// Cr3UtilGetMaxCharaLevel allows), a sopia's at its levels 1..5
+const int* levelExpTable(); // (200 entries, level 1 first)
+int levelExp(int level);    // (level 1..200; past 200 the last's)
+int sopiaExp(bool monsters, int level);
+
+// `party`: the characters fighting (cr3_common_data 1, 2; 0 none)
+bool setupBattle(const BattleData& data, int coupling, const int party[2], BattleSetup& out, std::string* error = nullptr);
+
+} // namespace cr3

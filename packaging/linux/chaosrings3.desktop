@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Chaos Rings III
+Comment=A reimplementation of the game (needs your own copy of its data)
+Exec=cr3view
+Icon=chaosrings3
+Terminal=false
+Categories=Game;RolePlaying;
