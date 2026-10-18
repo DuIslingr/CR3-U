@@ -127,6 +127,23 @@ public:
     void answerYesNo(bool yes) {
         if (yesNoShown_) yesNo_ = yes ? 1 : 2;
     }
+    // CR3's choice menus (InterfaceWindow.CreateSelectTwo/ThreeChoiceMenu: GetTapSelect...Menu -1
+    // until one is tapped, then its index; Msg_Choice2/3 poll it) - answered by answerChoice (the
+    // viewer's), or with askYesNo and autoPage after that long - the first, then on each asking
+    // again the next (a quiz asks until it's answered right, as a player would try them)
+    int choiceShown() const { return choiceKind_; } // 0 none, 2 or 3 options
+    void answerChoice(int index) {
+        if (choiceKind_ && index >= 0 && index < choiceKind_) choiceAnswer_ = index;
+    }
+    // CR3's text entry (Cr3System.ShowInputDialog: the OS's keyboard dialog; CheckInputDialog while
+    // open; GetInputDialogText its text; Set<Name|TeamName|PetName|FoodName>FromInputDialogText keep
+    // it): closed by answerInput (the viewer's), or with askYesNo and autoPage after that long with
+    // the text it was given (SetInputDialogText), accepted
+    bool inputShown() const { return inputOpen_; }
+    void answerInput(const std::string& text, bool ok = true) {
+        if (inputOpen_) inputOpen_ = false, inputText_ = text, inputOk_ = ok;
+    }
+    std::map<std::string, std::string> enteredNames; // ("name", "team", "pet", "food" -> text)
     int language = 1; // (Cr3UtilOptionLanguage: 1 English)
 
     // The cut-ins' portraits (EvtFace over InterfaceMain's CutInWindowMenus): five layouts -
@@ -188,6 +205,17 @@ private:
     float touchWait_ = 0;
     std::map<int, float> opened_, closing_; // (window -> seconds since)
     std::array<Portrait, kCutIns> cutIns_;
+    // the field camera as an event on the field moves it (Cr3FieldMapCamera: SetPos / CalcParameter's
+    // end; GetPos_X / _Y) - where no field runtime (field/fieldscript) is attached to answer
+    float fieldCameraX_ = 0, fieldCameraY_ = 0;
+    // CR3's gift synthesis effect (GiftSynthesizeEffect: its figure ue003gift01's animation; ends
+    // with it): the frame it ends at, -1 none
+    int giftEffectEnd_ = -1;
+    int choiceKind_ = 0, choiceAnswer_ = -1, choicesAsked_ = 0;
+    float choiceAge_ = 0;
+    bool inputOpen_ = false, inputOk_ = true;
+    float inputAge_ = 0;
+    std::string inputText_;
     std::vector<std::pair<int, std::string>> cutInImages_; // (id, image: the first of an id counts)
     int messageWindow_ = Vista;
     int message_ = 0, page_ = 0, revealed_ = 0, messagesSet_ = 0;

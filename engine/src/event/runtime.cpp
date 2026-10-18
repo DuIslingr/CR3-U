@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 
+#include "assets/skeleton.hpp"
 #include "audio/sounddata.hpp"
 
 namespace cr3 {
@@ -223,6 +224,44 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     };
     vm.setNative("EvtFace", "Delete", [endCutIn](NativeCall& c) { endCutIn(c.integer(0, -1)); });
     vm.setNative("EvtFace", "DispOff", [endCutIn](NativeCall&) { endCutIn(3); });
+    vm.setNative("Cr3FieldMapCamera", "SetPos", [this](NativeCall& c) { fieldCameraX_ = c.number(0), fieldCameraY_ = c.number(1); });
+    vm.setNative("Cr3FieldMapCamera", "CalcParameter", [this](NativeCall& c) { fieldCameraX_ = c.number(3), fieldCameraY_ = c.number(4); });
+    vm.setNative("Cr3FieldMapCamera", "GetPos_X", [this](NativeCall& c) { c.result(fieldCameraX_); });
+    vm.setNative("Cr3FieldMapCamera", "GetPos_Y", [this](NativeCall& c) { c.result(fieldCameraY_); });
+    // CR3's gift synthesis (InterfaceWindow.CreateGiftSynthesizeEffectData -> GiftSynthesizeEffect,
+    // figure ue003gift01): over when its animation ends (the game: PartsBase::IsEndCurrentAnime);
+    // CheckEndGiftSynthesizeEffect true from then (and with no effect: InterfaceMain finds none)
+    vm.setNative("InterfaceWindow", "CreateGiftSynthesizeEffectData", [this](NativeCall&) {
+        float seconds = 6.0f;
+        std::vector<uint8_t> d;
+        Animation a;
+        if (archive_.read("ue003gift01.anim", d) && a.parse(d)) seconds = a.duration();
+        giftEffectEnd_ = frame_ + int(seconds / kTick + 0.999f);
+    });
+    vm.setNative("InterfaceWindow", "CheckEndGiftSynthesizeEffect", [this](NativeCall& c) { c.result(giftEffectEnd_ < 0 || frame_ >= giftEffectEnd_); });
+    vm.setNative("InterfaceWindow", "EndGiftSynthesizeEffect", [this](NativeCall&) { giftEffectEnd_ = -1; });
+    // The staff roll (StaffrollMenu): its scrolling is the UI's to come; InterfaceMain answers
+    // CheckToBeContinueStaffrollMenu true where no staff roll menu is up - as here
+    vm.setNative("InterfaceWindow", "CheckToBeContinueStaffrollMenu", [](NativeCall& c) { c.result(true); });
+    // CR3's choice menus and text entry (runtime.hpp)
+    for (int kind : {2, 3}) {
+        const std::string n = kind == 2 ? "Two" : "Three";
+        vm.setNative("InterfaceWindow", "CreateSelect" + n + "ChoiceMenu", [this, kind](NativeCall&) { choiceKind_ = kind, choiceAnswer_ = -1, choiceAge_ = 0, ++choicesAsked_; });
+        vm.setNative("InterfaceWindow", "GetTapSelect" + n + "ChoiceMenu", [this](NativeCall& c) { c.result(choiceAnswer_); });
+        vm.setNative("InterfaceWindow", "DeleteSelect" + n + "ChoiceMenu", [this](NativeCall&) { choiceKind_ = 0; });
+        vm.setNative("InterfaceWindow", "GetAliveSelect" + n + "ChoiceMenu", [this, kind](NativeCall& c) { c.result(choiceKind_ == kind); });
+    }
+    vm.setNative("Cr3System", "SetInputDialogText", [this](NativeCall& c) { inputText_ = c.string(0); });
+    vm.setNative("Cr3System", "ShowInputDialog", [this](NativeCall&) { inputOpen_ = true, inputOk_ = true, inputAge_ = 0; });
+    vm.setNative("Cr3System", "CheckInputDialog", [this](NativeCall& c) { c.result(inputOpen_); });
+    vm.setNative("Cr3System", "GetInputDialogResult", [this](NativeCall& c) { c.result(inputOk_); });
+    vm.setNative("Cr3System", "GetInputDialogResultNG", [this](NativeCall& c) { c.result(!inputOk_); });
+    vm.setNative("Cr3System", "GetInputDialogText", [this](NativeCall& c) { c.result(inputText_); });
+    for (const auto& [native, key] : {std::pair<const char*, const char*>{"SetNameFromInputDialogText", "name"}, {"SetTeamNameFromInputDialogText", "team"},
+                                      {"SetPetNameFromInputDialogText", "pet"}, {"SetFoodNameFromInputDialogText", "food"}}) {
+        const std::string k = key;
+        vm.setNative("Cr3System", native, [this, k](NativeCall&) { enteredNames[k] = inputText_; });
+    }
     // CR3's Cr3FaceCheckInScreen: !InterfaceMain::CheckCutInNoScreen - a cut-in still on screen
     // (open, or sliding out); Cutin_Delete waits on it turning false
     vm.setNative("EvtFace", "CheckInScreen", [this](NativeCall& c) {
@@ -393,6 +432,8 @@ bool EventRuntime::update(ScriptVM* vm) {
     else if ((message_ > 0 || execution_) && autoPage > 0 && (pageTime_ += kTick) >= autoPage) advance();
     fade_.update();
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
+    if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
+    if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
     for (auto& [w, t] : opened_) t += kTick;
     for (auto it = closing_.begin(); it != closing_.end();) // (out animations: a second at most)
         it = (it->second += kTick) > 1.0f ? closing_.erase(it) : std::next(it);

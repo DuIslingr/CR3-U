@@ -46,6 +46,7 @@
 #include <cstring>
 #include <map>
 #include <regex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -170,6 +171,17 @@ int events(const char* path, const char* only, int seconds) {
     std::map<std::string, int> outcomes, waitingOn;
     int total = 0;
     std::vector<uint8_t> data;
+    // vs.nut repeats many of the areas' events without their helpers; the game loads it only for
+    // VStuto_Clear (DBSystem::SM_SkipVSTuto) and runs an area's events from the area's own script
+    // (EvtSystem::LoadScript with the area's name): those copies are not entry points
+    std::set<std::string> elsewhere;
+    for (const auto& e : a.entries()) {
+        const std::string k = cr3::Database::key(e.name);
+        if (k.compare(0, 7, "script\\") != 0 || k.size() < 5 || k.compare(k.size() - 4, 4, ".nut") != 0 || k == "script\\vs.nut") continue;
+        cr3::ScriptVM vm;
+        if (a.read(*a.find(e.name), data) && vm.load(data, e.name) && vm.runMain())
+            for (const std::string& fn : vm.rootFunctions()) elsewhere.insert(fn);
+    }
     for (const auto& e : a.entries()) {
         const std::string k = cr3::Database::key(e.name);
         if (k.compare(0, 7, "script\\") != 0 || k.size() < 5 || k.compare(k.size() - 4, 4, ".nut") != 0) continue;
@@ -179,11 +191,12 @@ int events(const char* path, const char* only, int seconds) {
         cr3::ScriptVM vm;
         if (!a.read(*a.find(e.name), data) || !vm.load(data, e.name) || !vm.runMain()) continue;
         for (const std::string& fn : vm.rootFunctions()) {
-            if (!std::regex_match(fn, eventName)) continue;
+            if (!std::regex_match(fn, eventName) || (script == "vs" && elsewhere.count(fn))) continue;
             ++total;
             cr3::GameState state;
             cr3::EventRuntime rt(a, state);
             rt.autoPage = 1.0f;
+    rt.askYesNo = true; // (questions, choices and text entry answered as a player confirming would)
             if (!rt.start(script, fn)) {
                 ++outcomes["failed to start"];
                 continue;
@@ -194,12 +207,14 @@ int events(const char* path, const char* only, int seconds) {
                 if (rt.frame() == 20 * seconds - 20) before = rt.stubCalls();
                 ok = rt.tick();
             }
+            std::string why;
             if (!ok) {
                 ++outcomes["failed"];
                 std::string err = rt.error();
                 const size_t mark = err.find("AN ERROR HAS OCCURED");
                 const size_t at = err.find('[', mark == std::string::npos ? 0 : mark);
-                ++waitingOn["error: " + (at != std::string::npos ? err.substr(at, err.find(']', at) - at + 1) : err.substr(0, 60))];
+                why = "error: " + (at != std::string::npos ? err.substr(at, err.find(']', at) - at + 1) : err.substr(0, 60));
+                ++waitingOn[why];
             } else if (rt.running()) {
                 ++outcomes["still waiting"];
                 // (the wait: the stub its last second called most)
@@ -210,10 +225,12 @@ int events(const char* path, const char* only, int seconds) {
                     const int d = c - (b == before.end() ? 0 : b->second);
                     if (d > n) most = name, n = d;
                 }
-                ++waitingOn["waits on " + (most.empty() ? std::string("(no stub in its last second)") : most)];
+                why = "waits on " + (most.empty() ? std::string("(no stub in its last second)") : most);
+                ++waitingOn[why];
             } else {
                 ++outcomes["ended"];
             }
+            if (!why.empty() && std::getenv("CR3_EVENTS_LIST")) std::printf("%s:%s  %s\n", script.c_str(), fn.c_str(), why.c_str());
         }
     }
     std::printf("%d events:", total);
@@ -457,6 +474,7 @@ int playEvent(const cr3::MvglArchive& a, const std::string& event, bool quiet, s
     cr3::GameState state;
     cr3::EventRuntime rt(a, state);
     rt.autoPage = 1.0f;
+    rt.askYesNo = true; // (questions, choices and text entry answered as a player confirming would)
     // CR3 keeps an area's events in one script: "<script>:<function>" (t01:s212_d08_01501)
     const size_t colon = event.find(':');
     if (colon != std::string::npos ? !rt.start(event.substr(0, colon), event.substr(colon + 1)) : !rt.start(event)) {

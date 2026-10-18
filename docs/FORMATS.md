@@ -112,10 +112,23 @@ The natives: 600 functions in 32 tables, from the Android library's `Cr3Bind*` f
 (Cr3System 127, EvtScene 50, Cr3GimmickData 59, EvtWindow 26, ...) CR3 has `InterfaceWindow` (106),
 the battle classes (`Battle`, `BattleUnit`, `BattleStatus`, ...) and `LunchEvent`.
 `cr3tool events <release> [script | all] [seconds]` plays every event from its start through the
-event runtime and counts those that end: of 4,858 events, 4,814 end within 600 s of game time on
-iOS and on the Vita (every native the runtime doesn't answer a stub). The 44 left wait on CR3's own
-natives - online sync results (`Cr3System.GetSyncResult`), the staff roll's "to be continued", name
-input, three-way choices - or stop on a script error.
+event runtime: all 4,127 end within 600 s of game time on iOS, the Vita, and the Vita with the fan
+translation (Android's scripts are iOS's). `vs.nut` repeats 731 of the areas' events without the
+helpers they call (`NPCTalkReset`, `quest_complete`): the game loads it only to run `VStuto_Clear`
+(`DBSystem::SM_SkipVSTuto`) and runs every event from its own area's script (`EvtSystem::LoadScript`
+with the area's name, even the debug event list), so those copies are not counted.
+
+CR3 natives the runtime answers so far (`engine/src/event/runtime.cpp`, `script/gamestate.cpp`):
+`EvtFace.CheckInScreen` (a cut-in on screen: `!InterfaceMain::CheckCutInNoScreen`),
+`Cr3System.WaitSync` / `GetSyncResult` (`DBSystem::IsIdle` and its last request's result: the port
+has no server - idle, 200), `Cr3FieldMapCamera.SetPos` / `CalcParameter` / `GetPos_X` / `GetPos_Y`
+(the field camera as an event moves it), the gift synthesis effect (over when its figure
+`ue003gift01`'s animation ends), the staff roll's "to be continued" (true with no staff roll menu,
+as `InterfaceMain` answers - its scrolling is the UI's to come), the two- and three-way choice
+menus (`GetTapSelect...ChoiceMenu` -1 until tapped) and the text entry (`ShowInputDialog`,
+`CheckInputDialog`, `GetInputDialogText`, `Set...NameFromInputDialogText`). Headless runs answer
+questions as a player confirming would (`askYesNo` with `autoPage`): yes, the first choice - then
+the next each time the same menu is asked again (the quizzes) - and the text entry as given.
 
 ## Sound
 

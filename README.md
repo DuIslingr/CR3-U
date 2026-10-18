@@ -40,8 +40,8 @@ This is the start of the port. What works today:
   <name>` plays them)
 - **Tables**: the game's parameter tables (`data\*.mbe`) read in every release (`tools/mbe.py`)
 - **Scripts**: all 194 of CR3's compiled scripts load in the game's own Squirrel 2.2.4 in every
-  release, with CR3's 600 natives bound; 4,814 of its 4,858 events play through to their end
-  (`cr3tool events`), most of the natives still stubs
+  release, with CR3's 600 natives bound; every one of its 4,127 events plays through to its end
+  (`cr3tool events`), on iOS, the Vita and the fan translation - many natives still stubs
 
 The rest - fields, events, battles, menus - is CR2-U's game layer still, and does not run CR3 yet:
 CR3's own (its `Fld2` field, the gene system, its scripts' natives) is the work ahead.

@@ -26,6 +26,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     // FldUtilSetVistaFuncName: the event, and that a vista is to come; its map ("null": none)
     // CR3's utils::WaitSync: DBSystem::IsIdle - its save / online sync not busy; the port has none
     vm.setNative("Cr3System", "WaitSync", [](NativeCall& c) { c.result(true); });
+    // utils::GetSyncResult: DBSystem's last request's result (+0x1bc) - an HTTP-like code the
+    // scripts compare: 200 done, 1006 a ticket quest's error, ... The port answers its requests
+    // itself: done
+    vm.setNative("Cr3System", "GetSyncResult", [](NativeCall& c) { c.result(200); });
     vm.setNative("Cr3System", "SetVistaFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.vista = true; });
     vm.setNative("Cr3System", "SetVistaMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });
     vm.setNative("Cr3System", "BattleIN", [&next](NativeCall& c) { next.battle = c.integer(0); }); // (FldUtilReserveBattleIN)
