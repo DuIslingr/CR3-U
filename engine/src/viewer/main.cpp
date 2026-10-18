@@ -84,6 +84,7 @@
 #include "event/runtime.hpp"
 #include "viewer/audio.hpp"
 #include "field/character.hpp"
+#include "field/cr3field.hpp"
 #include "field/fieldmap.hpp"
 #include "field/fieldscript.hpp"
 #include "gfx/material.hpp"
@@ -1872,6 +1873,10 @@ struct Viewer {
             drawEvent(w, h);
             return;
         }
+        if (areaMode) {
+            drawArea(w, h);
+            return;
+        }
         if (fieldMode) {
             // FldMain's order: the background (and midground), the 3D figures, the foreground
             // the scroll: following the leader, else the script's camera (a slide drawn on between updates)
@@ -2282,6 +2287,7 @@ struct Viewer {
         optionsWasOpen = optionsOpen;
         if (credits.stage) return updateCredits(dt);
         if (titleMenu.stage) return updateTitle(dt);
+        if (areaMode && !eventMode) return updateArea(dt, sx, sy, run);
         if (playMode && (fieldMode || eventMode || battleMode) && !paused) playSeconds += dt; // (the save's play time)
         if (battleMode) {
             battleClock += dt;
@@ -5290,6 +5296,147 @@ struct Viewer {
         px.width = px.height = 1;
         px.rgba = {255, 255, 255, 255};
         white = dev->upload(px);
+    }
+
+    // CR3's field (--area <area> [--player <model>]: field/cr3field.hpp) - the area's figures,
+    // the player walking its floors as Fld2TaskPlayer does, the camera following (Fld2CameraGom)
+    bool areaMode = false;
+    cr3::Cr3Area area;
+    std::vector<ViewFigure> areaFigures;
+    ViewFigure areaPlayer;
+    std::string areaPlayerName;
+    std::unique_ptr<cr3::CharacterController> areaWalker;
+    cr3::Cr3GomCamera areaCamera;
+    float areaYaw = 0, areaClock = 0, areaMotionAge = 0;
+    cr3::Cr3Motion areaMotion = cr3::Cr3Motion::Idle;
+    bool areaMotionSet = false;
+
+    bool loadArea(const std::string& name, const std::string& player) {
+        std::string err;
+        if (!area.load(archive, name, &err)) {
+            SDL_Log("area %s: %s", name.c_str(), err.c_str());
+            return false;
+        }
+        for (ViewFigure& f : areaFigures) unload(f);
+        areaFigures.clear();
+        for (const std::string& n : area.figures) {
+            ViewFigure f;
+            if (!loadFigure(n + ".geom", f, &err)) {
+                SDL_Log("area %s: %s", n.c_str(), err.c_str());
+                continue;
+            }
+            f.absolute = true; // (CrxSimpleModel: its own animation, looped)
+            areaFigures.push_back(std::move(f));
+        }
+        if (loadLights(name + "c")) SDL_Log("lights: %sc", name.c_str());
+        // the player: Fld2TaskPlayer::CreatePlayer (Fld2CharaNameTbl's model; a hero's body b01)
+        areaPlayerName = player.empty() ? (name.compare(0, 1, "t") == 0 ? "j001" : "c101") : player;
+        if (areaPlayerName[0] == 'j' && areaPlayerName.size() == 4) areaPlayerName += "b01";
+        unload(areaPlayer);
+        areaPlayer = ViewFigure();
+        if (!loadFigure(areaPlayerName + ".geom", areaPlayer, &err)) SDL_Log("player %s: %s", areaPlayerName.c_str(), err.c_str());
+        areaWalker = std::make_unique<cr3::CharacterController>(area.walls);
+        areaWalker->radius = 0.2f, areaWalker->stepHeight = 0.1f; // (Fld2TaskPlayer::CreateGhost: a 0.2 sphere; Setup(0.1); SetMaxSlope 45 degrees)
+        areaWalker->setPosition({area.spawn[0], area.spawn[1] + 0.2f, area.spawn[2]});
+        for (int k = 0; k < 60; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step(); // (down onto the floor)
+        areaYaw = area.spawnYaw;
+        areaMotionSet = false;
+        setAreaMotion(cr3::Cr3Motion::Idle);
+        const cr3::Vec3 p = areaWalker->position();
+        areaCamera.reset({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw);
+        areaMode = true, areaClock = 0;
+        SDL_Log("area %s: %zu figures, player %s at defaultPos (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
+                area.spawn[0], area.spawn[1], area.spawn[2]);
+        return true;
+    }
+
+    // Fld2TaskPlayer::SetMotion: the motion, blended in over 1/6 s
+    void setAreaMotion(cr3::Cr3Motion m) {
+        if (areaMotionSet && m == areaMotion) return;
+        const std::string want = areaPlayerName + "_" + cr3::cr3MotionName(m) + ".anim";
+        const auto it = std::find(areaPlayer.anims.begin(), areaPlayer.anims.end(), want);
+        if (it == areaPlayer.anims.end()) return;
+        ViewFigure& f = areaPlayer;
+        if (f.animLoaded) f.blendAnim = f.anim, f.blendLoaded = true, f.blendAbsolute = f.absolute, f.blendTime = areaMotionAge, f.blendLoop = true;
+        const float keep = time;
+        loadAnim(f, size_t(it - f.anims.begin()));
+        time = keep;
+        areaMotion = m, areaMotionSet = true, areaMotionAge = 0;
+    }
+
+    // one frame: the stick in the camera's frame (FldPlayer::CalcPlayerMoveDir), a run or a walk
+    // (SM_Run 4.8, SM_Walk 1.2 a second, as far as it's pushed), the camera's Q / E and R / V
+    void updateArea(float dt, float sx, float sy, bool run) {
+        areaClock += dt, areaMotionAge += dt;
+        const bool* keys = SDL_GetKeyboardState(nullptr);
+        if (keys) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
+        const float fx = areaCamera.at[0] - areaCamera.eye[0], fz = areaCamera.at[2] - areaCamera.eye[2];
+        const float fl = std::max(std::hypot(fx, fz), 1e-4f);
+        const float forward[2] = {fx / fl, fz / fl}, right[2] = {-forward[1], forward[0]};
+        float dx = forward[0] * sy + right[0] * sx, dz = forward[1] * sy + right[1] * sx;
+        const float push = std::min(std::hypot(sx, sy), 1.0f);
+        const bool moving = push > 0.01f;
+        const float speed = moving ? (run ? 4.8f : 1.2f) * push : 0.0f;
+        if (moving) {
+            const float dl = std::hypot(dx, dz);
+            dx /= dl, dz /= dl;
+            // (RotateToMoveDir: turning to face the way it goes)
+            const float want = std::atan2(dx, dz);
+            const float diff = std::remainder(want - areaYaw, 6.2831853f);
+            areaYaw += std::copysign(std::min(std::fabs(diff), 12.0f * dt), diff);
+        }
+        const int steps = std::max(1, int(std::ceil(dt * 60 - 1e-3f)));
+        for (int k = 0; k < steps; ++k) {
+            areaWalker->setVelocity({dx * speed, 0, dz * speed});
+            areaWalker->step(dt / float(steps));
+        }
+        setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
+        const cr3::Vec3 p = areaWalker->position();
+        areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, moving, dt);
+    }
+
+    void drawArea(int w, int h) {
+        // the camera: at its eye, looking at the player (its z axis back from the target)
+        const auto& e = areaCamera.eye;
+        const auto& t = areaCamera.at;
+        float z[3] = {e[0] - t[0], e[1] - t[1], e[2] - t[2]};
+        const float zl = std::max(std::sqrt(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]), 1e-5f);
+        for (float& c : z) c /= zl;
+        float x[3] = {z[2], 0, -z[0]}; // (up x z)
+        const float xl = std::max(std::hypot(x[0], x[2]), 1e-5f);
+        x[0] /= xl, x[2] /= xl;
+        const float y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]};
+        cr3::Mat34 cw;
+        for (int r = 0; r < 3; ++r) cw.m[r * 4 + 0] = x[r], cw.m[r * 4 + 1] = y[r], cw.m[r * 4 + 2] = z[r], cw.m[r * 4 + 3] = e[r];
+        const float fov = areaCamera.fovY * 3.14159265f / 180;
+        dev->setCamera(areaCamera.zNear, areaCamera.zFar, fov);
+        const Mat4 world = cr3::mat4FromMat34(cw);
+        const Mat4 vp = cr3::mat4Multiply(perspective(fov, float(w) / float(std::max(h, 1)), areaCamera.zNear, areaCamera.zFar), cr3::mat4RigidInverse(world));
+        cr3::SceneLighting l = lighting;
+        l.camera[0] = e[0], l.camera[1] = e[1], l.camera[2] = e[2];
+        l.time = time;
+        dev->setLighting(l);
+        // the area (Fld2TaskMap::OnDraw: <area>f, <area>s 0.01 up, <area>m1), its animations looping
+        for (size_t k = 0; k < areaFigures.size(); ++k) {
+            ViewFigure& f = areaFigures[k];
+            f.place = cr3::Mat34();
+            if (k < area.figures.size() && area.figures[k] == area.name + "s") f.place.m[7] = 0.01f;
+            pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(areaClock, f.anim.duration()) : 0.0f, false);
+            drawFigure(f, vp.data());
+        }
+        // the player: where it walks, facing its way
+        if (!areaPlayer.meshes.empty()) {
+            const cr3::Vec3 p = areaWalker->position();
+            ViewFigure& f = areaPlayer;
+            f.place = cr3::Mat34();
+            const float c = std::cos(areaYaw), s = std::sin(areaYaw);
+            f.place.m[0] = c, f.place.m[2] = s, f.place.m[8] = -s, f.place.m[10] = c;
+            f.place.m[3] = p[0], f.place.m[7] = p[1] - areaWalker->radius, f.place.m[11] = p[2];
+            f.blendWeight = f.blendLoaded ? std::min(areaMotionAge * 6.0f, 1.0f) : 1.0f; // (SetAnimationBlend 1/6 s)
+            f.blendTime += 0; // (the motion it fades from, held where it was)
+            pose(f, areaMotionAge, true);
+            drawFigure(f, vp.data());
+        }
     }
 
     // VistaMain: the map's figure, the event's script (its scene's figures follow it)
@@ -10387,6 +10534,7 @@ int main(int argc, char** argv) {
     int hdArg = -1;        // --hd-textures / --no-hd-textures (-1: the settings')
     std::string exportDir; // --export-textures <dir>: every image as <hash>.crraw, for tools/hd_textures.py
     std::string eventName, vista = "null", fontPath, playFrom, callEntry = "evt000";
+    std::string areaName, areaPlayerArg; // --area <area> [--player <model>]: CR3's field
     int creditsArg = -1;
     int fightMode = 0;
     std::string inputArg; // (--input: the commands chosen, as tokens)
@@ -10436,6 +10584,8 @@ int main(int argc, char** argv) {
         else if (a == "--binary" && next) binary = next, ++i;
         else if (a == "--walk" && next) std::sscanf(next, "%f,%f,%f", &walkX, &walkY, &walkSeconds), ++i;
         else if (a == "--event" && next) eventName = next, ++i;
+        else if (a == "--area" && next) areaName = next, ++i;
+        else if (a == "--player" && next) areaPlayerArg = next, ++i;
         else if (a == "--battle" && next) battleId = std::atoi(next), ++i;
         else if (a == "--skip-battles") skipBattlesOpt = true;
         else if (a == "--fight" && next) fightMode = !std::strcmp(next, "pair") ? 2 : !std::strcmp(next, "manual") ? 3 : 1, ++i;
@@ -10750,6 +10900,7 @@ int main(int argc, char** argv) {
         else SDL_Log("lights: %s has none (the engine's defaults)", lights.c_str());
     }
     v.load(start);
+    if (!areaName.empty() && !v.loadArea(areaName, areaPlayerArg)) return 1;
     if (model == "c001" && leaderDefaulted) v.leaderFollows = true, v.refreshLeader();
     v.stateArg = stateArg;
     v.chargeArg = chargeArg, v.gaugeArg = gaugeArg;
@@ -11176,7 +11327,7 @@ int main(int argc, char** argv) {
             if (!v.paused) v.time += dt;
             last = now;
             if (!v.paused && v.battleMode && !v.fieldMode && !v.eventMode) v.advance(dt, 0, 0, false);
-            if (!v.paused && (v.eventMode || v.fieldMode || v.credits.stage || v.titleMenu.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
+            if (!v.paused && (v.eventMode || v.fieldMode || v.areaMode || v.credits.stage || v.titleMenu.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
                 const bool* keys = SDL_GetKeyboardState(nullptr);
                 if (keys[SDL_SCANCODE_F] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST))) v.fastHeld = true; // (F or □ held: the fast-forward button's)
                 else if (!(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK)) v.fastHeld = false;

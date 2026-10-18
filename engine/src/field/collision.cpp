@@ -92,18 +92,44 @@ bool parsePhys(const std::vector<uint8_t>& f, PhysScene& out, std::string* error
     auto u32 = [&](size_t at) { uint32_t v = 0; if (has(at, 4)) std::memcpy(&v, &f[at], 4); return v; };
     auto f32 = [&](size_t at) { float v = 0; if (has(at, 4)) std::memcpy(&v, &f[at], 4); return v; };
     if (!has(0, 0x20) || std::memcmp(f.data(), "SYHP", 4) != 0) return fail(error, "not a PHYS scene"); // ("PHYS" as a u32)
+    auto u64 = [&](size_t at) { uint64_t v = 0; if (has(at, 8)) std::memcpy(&v, &f[at], 8); return v; };
+    auto u16 = [&](size_t at) { uint16_t v = 0; if (has(at, 2)) std::memcpy(&v, &f[at], 2); return v; };
     const uint32_t bodies = u32(8), shapes = u32(0xc), names = u32(0x10);
-    const size_t bodyAt = u32(0x14), shapeAt = u32(0x18), nameAt = u32(0x1c);
-    if (!has(bodyAt, size_t(bodies) * 0x4c) || !has(shapeAt, size_t(shapes) * 4) || !has(nameAt, size_t(names) * 64))
+    // CR3's 64-bit files (iOS / Android): the tables' offsets u64s from 0x18 (the bodies' first,
+    // right after the 0x38-byte header), the shapes' a u64 each; a mesh's counts at +8 / +0xc,
+    // its bounds, then u64 offsets to its triangles, vertices and two u16s a triangle - its
+    // surface, and 1 on the camera's bodies (camhit) - 0 else
+    // (CR3's 32-bit ones - the Vita's - the same with u32 offsets from 0x18, the header 0x28 long;
+    // CR2's from 0x14, their meshes' surfaces a u32 a triangle)
+    const bool wide = u32(0x18) == 0x38 && u32(0x1c) == 0, cr3 = wide || u32(0x18) == 0x28;
+    const size_t bodyAt = wide ? size_t(u64(0x18)) : cr3 ? u32(0x18) : u32(0x14),
+                 shapeAt = wide ? size_t(u64(0x20)) : cr3 ? u32(0x1c) : u32(0x18),
+                 nameAt = wide ? size_t(u64(0x28)) : cr3 ? u32(0x20) : u32(0x1c);
+    if (!has(bodyAt, size_t(bodies) * 0x4c) || !has(shapeAt, size_t(shapes) * (wide ? 8 : 4)) || !has(nameAt, size_t(names) * 64))
         return fail(error, "PHYS tables outside the file");
     for (uint32_t k = 0; k < names; ++k) {
         const char* s = reinterpret_cast<const char*>(&f[nameAt + 64 * size_t(k)]);
         out.surfaces.emplace_back(s, strnlen(s, 64));
     }
     for (uint32_t k = 0; k < shapes; ++k) {
-        const size_t at = u32(shapeAt + 4 * size_t(k));
+        const size_t at = wide ? size_t(u64(shapeAt + 8 * size_t(k))) : u32(shapeAt + 4 * size_t(k));
         PhysShape s;
         s.kind = PhysShape::Kind(u32(at));
+        if (wide && s.kind == PhysShape::Mesh) {
+            const uint32_t nv = u32(at + 8), nt = u32(at + 0xc);
+            const size_t io = size_t(u64(at + 0x28)), vo = size_t(u64(at + 0x30)), so = size_t(u64(at + 0x38));
+            if (!has(io, size_t(nt) * 12) || !has(vo, size_t(nv) * 12) || !has(so, size_t(nt) * 2))
+                return fail(error, "PHYS mesh outside the file");
+            for (uint32_t v = 0; v < nv; ++v) s.vertices.push_back({f32(vo + 12 * v), f32(vo + 12 * v + 4), f32(vo + 12 * v + 8)});
+            for (uint32_t t = 0; t < nt; ++t) {
+                const std::array<uint32_t, 3> tri{u32(io + 12 * t), u32(io + 12 * t + 4), u32(io + 12 * t + 8)};
+                if (tri[0] >= nv || tri[1] >= nv || tri[2] >= nv) return fail(error, "PHYS triangle past the vertices");
+                s.triangles.push_back(tri);
+                s.surfaces.push_back(u16(so + 2 * t));
+            }
+            out.shapes.push_back(std::move(s));
+            continue;
+        }
         if (s.kind == PhysShape::Box) {
             for (int c = 0; c < 3; ++c) s.halfExtents[size_t(c)] = f32(at + 4 + 4 * size_t(c));
             s.surfaces.push_back(u32(at + 0x10));
@@ -113,14 +139,14 @@ bool parsePhys(const std::vector<uint8_t>& f, PhysScene& out, std::string* error
         } else if (s.kind == PhysShape::Mesh) {
             const uint32_t nv = u32(at + 4), nt = u32(at + 8);
             const size_t io = u32(at + 0x24), vo = u32(at + 0x28), so = u32(at + 0x2c);
-            if (!has(io, size_t(nt) * 12) || !has(vo, size_t(nv) * 12) || !has(so, size_t(nt) * 4))
+            if (!has(io, size_t(nt) * 12) || !has(vo, size_t(nv) * 12) || !has(so, size_t(nt) * (cr3 ? 2 : 4)))
                 return fail(error, "PHYS mesh outside the file");
             for (uint32_t v = 0; v < nv; ++v) s.vertices.push_back({f32(vo + 12 * v), f32(vo + 12 * v + 4), f32(vo + 12 * v + 8)});
             for (uint32_t t = 0; t < nt; ++t) {
                 const std::array<uint32_t, 3> tri{u32(io + 12 * t), u32(io + 12 * t + 4), u32(io + 12 * t + 8)};
                 if (tri[0] >= nv || tri[1] >= nv || tri[2] >= nv) return fail(error, "PHYS triangle past the vertices");
                 s.triangles.push_back(tri);
-                s.surfaces.push_back(u32(so + 4 * t));
+                s.surfaces.push_back(cr3 ? u16(so + 2 * t) : u32(so + 4 * t));
             }
         } else {
             return fail(error, "PHYS shape of an unknown kind");

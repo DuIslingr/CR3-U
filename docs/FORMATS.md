@@ -133,6 +133,39 @@ As CR2's: `<event>.geom` (locators), `<event>_camera`, `<event>_light`. New in C
   flipped). `s000_t01_00103_evt` loads "" and flips: no map at all, the scene's own sky
   (`t0100star01` / `03`) showing.
 
+## Fields (CR3)
+
+Fld2, not CR2's painted FldMap: every area is 3D. Fld2TaskMap::CreateArea(n) takes its name from
+a table of 12-byte names in the executable (`t0101` first: 41 towns, then `d0101` at 41 ...; 463
+in all, 0x5e.. and 0x153.. the random floors) and builds `<area>c` (not drawn: its lights, its
+joints - `defaultPos` where the player starts - and `<area>c.phys`, the walls and floors; bodies
+named `...camhit` are the camera's alone), `<area>f` (the field, its animation looped), `<area>s`
+(0.01 above it) and `<area>m1` (if there is one) - drawn f, s, m1 (OnDraw's passes 6-8, 8, 10).
+
+The player (Fld2TaskPlayer::CreatePlayer): a Fld2CharaNameTbl model - `j001`..`j005` (the heroes:
+body `j<NNN>b01` + head, motions `j<NNN>b01_<motion>`) or `c101` (`c101_<motion>`) - in the towns
+always j001 (areas below 41). Motions (Fld2AnimeNameTbl): `fn01` idle, `ff01` run, `ff02` walk,
+`fn02`, `ff03`, `fg31`, `fh01`..`fh07`, `fr01`..`fr03`; switched with a 1/6 s blend. Moving
+(SM_Walk / SM_Run): the stick's direction in the camera's frame at 1.2 (walk) or 4.8 (run) a
+second as far as it's pushed, a sphere of 0.2 (CreateGhost; Fld2CharaCtrl::Setup 0.1 the step,
+SetMaxSlope 45 degrees).
+
+The camera (Fld2CameraGom, MVGL's default 45 degrees, near 0.1, far 5000): it looks at the player
+1.2 up; a spring holds it 3 away (accelerating 0.005 a 1/60 s step, braking to stop there), 0.5
+above that point and never nearer than 2 across; the view pitched 0.3 rad (at least 3 sin 0.3 up)
+and turned by the player's own turning; moving 30..150 degrees across the view, it swings round
+behind the player at (1 - angle / 180) x 1.5 x 60 degrees a second (GomRotate); a tap swings it
+behind over 0.3 s (GomBehind).
+
+PHYS (`.phys`) in the 64-bit builds: the counts as before (bodies, shapes, surface names at 8),
+then u64 offsets from 0x18 - bodies (0x38, right after the header; 0x4c bytes each as before),
+shapes (a u64 each), names (64 bytes each) and the scene's name. A mesh: kind 2, its vertex and
+triangle counts at +8 / +0xc, its bounds, then u64 offsets to its triangles (3 u32), vertices (3
+floats) and two u16s a triangle - its surface, and 1 on camhit bodies.
+
+`cr3view --area <area> [--player <model>]` walks one (WASD / the stick, Shift a walk; Q / E turn
+the camera, R / V tilt it); `--walk x,y,s --run s` for captures.
+
 ## Interface (CR3)
 
 The menus (CRXPartsBase) are laid out in a 960 x 640 space at 100 pixels a unit - ten times CR2's

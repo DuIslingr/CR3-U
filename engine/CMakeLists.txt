@@ -37,6 +37,7 @@ add_library(cr3core STATIC
     src/assets/text.cpp
     src/assets/language.cpp
     src/field/fieldmap.cpp
+    src/field/cr3field.cpp
     src/field/collision.cpp
     src/field/character.cpp
     src/field/gimmicks.cpp
