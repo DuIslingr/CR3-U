@@ -138,12 +138,21 @@ public:
     // CR3's text entry (Cr3System.ShowInputDialog: the OS's keyboard dialog; CheckInputDialog while
     // open; GetInputDialogText its text; Set<Name|TeamName|PetName|FoodName>FromInputDialogText keep
     // it): closed by answerInput (the viewer's), or with askYesNo and autoPage after that long with
-    // the text it was given (SetInputDialogText), accepted
+    // the text it holds (ShowInputDialog starts it with the current name; SetInputDialogText), accepted
     bool inputShown() const { return inputOpen_; }
     void answerInput(const std::string& text, bool ok = true) {
         if (inputOpen_) inputOpen_ = false, inputText_ = text, inputOk_ = ok;
     }
-    std::map<std::string, std::string> enteredNames; // ("name", "team", "pet", "food" -> text)
+    // ("name", "team", "pet", "food" -> text): GameMain::SM_Startup's utils::SetDefaultName /
+    // SetDefaultTeamName - "プレイヤー", "ケイオスチーム" in every release and language -, the
+    // pet's and food's empty till entered
+    std::map<std::string, std::string> enteredNames{{"name", "\u30d7\u30ec\u30a4\u30e4\u30fc"},
+                                                    {"team", "\u30b1\u30a4\u30aa\u30b9\u30c1\u30fc\u30e0"},
+                                                    {"pet", ""},
+                                                    {"food", ""}};
+    // utils::FilterMessage (both message windows' SetStringData, the name too): {name}, {team},
+    // {pet}, {food} the entered names ({goldkey}, a count the port doesn't keep, stays)
+    std::string filterMessage(std::string text) const;
     int language = 1; // (Cr3UtilOptionLanguage: 1 English)
 
     // The cut-ins' portraits (EvtFace over InterfaceMain's CutInWindowMenus): five layouts -

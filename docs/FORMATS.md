@@ -32,6 +32,14 @@ As CR2's, but two languages: a record is `(strings - records) / count` bytes - C
 Japanese, 1 English), CR2's 0x20 (8 languages). iOS and Android have both. The Vita's slot 1 holds
 short placeholders, not a translation.
 
+Placeholders: the message windows run each line and the speaker's name through
+utils::FilterMessage, which replaces `{name}`, `{team}`, `{pet}` and `{food}` with the save's
+entered names and `{goldkey}` with a count (`{name}`: 1,165 in slot 0, 1,088 in slot 1). Before
+any entry, GameMain::SM_Startup's utils::SetDefaultName / SetDefaultTeamName set "プレイヤー" and
+"ケイオスチーム" - in every release and language (iOS's the same bytes); the pet and food start
+empty. ShowInputDialog(kind) starts its dialog with the current value (0 name, 1 team, 3 pet, else
+food). The other `{...}` (`{target}`, `{gold}`, `{item_cnt}`, ...) are the menus' own.
+
 ### The fan translation
 
 The Chaos Rings III Translation Project's patch (`rePatch/PCSG00500/CR3/resources`) replaces whole

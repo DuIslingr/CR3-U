@@ -309,7 +309,13 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         vm.setNative("InterfaceWindow", "GetAliveSelect" + n + "ChoiceMenu", [this, kind](NativeCall& c) { c.result(choiceKind_ == kind); });
     }
     vm.setNative("Cr3System", "SetInputDialogText", [this](NativeCall& c) { inputText_ = c.string(0); });
-    vm.setNative("Cr3System", "ShowInputDialog", [this](NativeCall&) { inputOpen_ = true, inputOk_ = true, inputAge_ = 0; });
+    // (utils::ShowInputDialog(kind): the dialog starts with what's there - 0 the name, 1 the team, 3
+    // the pet, else the food)
+    vm.setNative("Cr3System", "ShowInputDialog", [this](NativeCall& c) {
+        const int kind = c.integer(0, 0);
+        inputText_ = enteredNames[kind == 0 ? "name" : kind == 1 ? "team" : kind == 3 ? "pet" : "food"];
+        inputOpen_ = true, inputOk_ = true, inputAge_ = 0;
+    });
     vm.setNative("Cr3System", "CheckInputDialog", [this](NativeCall& c) { c.result(inputOpen_); });
     vm.setNative("Cr3System", "GetInputDialogResult", [this](NativeCall& c) { c.result(inputOk_); });
     vm.setNative("Cr3System", "GetInputDialogResultNG", [this](NativeCall& c) { c.result(!inputOk_); });
@@ -339,7 +345,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         message_ = c.integer(1);
         const auto own = windowText_.find(messageWindow_);
         const TextData& td = own != windowText_.end() ? own->second : text_;
-        parsed_ = parseMessage(td.message(message_, language));
+        parsed_ = parseMessage(filterMessage(td.message(message_, language)));
         // (its voice - the text's trailer: EvtWindow::PlayVoice as its page starts, the last one stopped)
         if (const int v = td.voice(message_); v >= 0 && soundHooks().playVoice) {
             if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
@@ -352,7 +358,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     // SetMessageText(window, text): the text itself as the message (EvtWindow::SetMessage(char*))
     vm.setNative("EvtWindow", "SetMessageText", [this](NativeCall& c) {
         messageWindow_ = c.integer(0, Vista), message_ = 0x7fff;
-        parsed_ = parseMessage(c.string(1));
+        parsed_ = parseMessage(filterMessage(c.string(1)));
         page_ = 0, pageTime_ = 0, revealed_ = 0;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
@@ -374,7 +380,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         std::string t = (own != windowText_.end() ? own->second : announce).message(0x75, language);
         if (const size_t p = t.find("%s"); p != std::string::npos) t.replace(p, 2, itemNames_.message(id, language));
         messageWindow_ = w, message_ = 0x75, itemShown_ = id;
-        parsed_ = parseMessage(t);
+        parsed_ = parseMessage(filterMessage(t));
         page_ = 0, pageTime_ = 0, revealed_ = 0;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
@@ -539,9 +545,19 @@ bool EventRuntime::typed() const {
     return revealed_ >= n;
 }
 
+std::string EventRuntime::filterMessage(std::string text) const {
+    for (const char* key : {"name", "team", "pet", "food"}) {
+        const std::string tag = std::string("{") + key + "}";
+        const auto it = enteredNames.find(key);
+        const std::string with = it != enteredNames.end() ? it->second : std::string();
+        for (size_t at = text.find(tag); at != std::string::npos; at = text.find(tag, at + with.size())) text.replace(at, tag.size(), with);
+    }
+    return text;
+}
+
 std::string EventRuntime::speakerName() const {
     if (parsed_.speaker < 0) return {};
-    const ParsedMessage n = parseMessage(names_.message(parsed_.speaker + 1, language));
+    const ParsedMessage n = parseMessage(filterMessage(names_.message(parsed_.speaker + 1, language)));
     return n.pages.empty() || n.pages[0].lines.empty() ? std::string() : n.pages[0].lines[0].text;
 }
 
