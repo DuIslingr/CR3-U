@@ -81,6 +81,7 @@
 #include "battle/special.hpp"
 #include "battle/glass.hpp"
 #include "battle/cr3battle.hpp"
+#include "battle/cr3rules.hpp"
 #include "script/gamesave.hpp"
 #include "event/runtime.hpp"
 #include "viewer/audio.hpp"
@@ -1861,6 +1862,7 @@ struct Viewer {
     // upscaler is on), then the UI over the resolved frame at full size.
     void draw(int fw, int fh) {
         if (battleMode && glassPending) grabGlass(fw, fh);
+        if (cr3BattleRequest.active) startRequestedCr3Battle(fw, fh);
         dev->beginFrame(fw, fh);
         placeScreen(fw, fh);
         if ((game.bgColor[0] > 0 || game.bgColor[1] > 0 || game.bgColor[2] > 0) && white.id) { // (SetBGColor: GameMain::Draw's clear colour)
@@ -2368,6 +2370,7 @@ struct Viewer {
         if (titleMenu.stage && titleEvents) return titleEvents.get(); // (title.nut's)
         if ((battleMode || campOpen) && manualStage == 2 && manualEvents) return manualEvents.get(); // (the manual's tutorial)
         if (battleMode && battleScript) return &battleScript->events(); // (the battle's talks)
+        if (cr3BattleMode && cr3BattleEvents) return cr3BattleEvents.get(); // (CR3's battle: its script's)
         if (!eventMode && areaMode && areaEvents) return areaEvents.get(); // (CR3's field: its area script's)
         return eventMode ? event.get() : script ? &script->events() : nullptr;
     }
@@ -5542,7 +5545,7 @@ struct Viewer {
             const cr3::Vec3 p = areaWalker->position();
             savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
             SDL_Log("area %s: battle %d on field %d", area.name.c_str(), id, fieldId);
-            if (startCr3Battle(id, fieldId)) areaMode = false;
+            requestCr3Battle(id, fieldId);
         }
     }
 
@@ -5669,10 +5672,33 @@ struct Viewer {
     struct Cr3BattleUnitView {
         ViewFigure body, head;
         float phase = 0; // (BtlUnitList::Standby: the monsters' stances started apart)
+        // its motion (BtlUnit::PlayAnimation: an AnimCommon suffix - bb01 its stance, looped),
+        // from when; held at its end (a fall: bd03), hidden once down
+        std::string motion = "bb01";
+        float motionStart = 0;
+        bool motionLoop = true, motionHold = false;
     };
     std::vector<Cr3BattleUnitView> cr3BattleUnits;
     cr3::Cr3BattleCamera cr3BattleCam, cr3BattleOwnCam; // (Cam_bt; a camera figure of its own: Cam_human_getset ...)
-    enum class Cr3BattleStage { In, GetSet, Command };
+    // BtlSysStateStart's battle-in and get-set; BtlSysStateSelect's command and target selection;
+    // BtlSysStateAction's actions; the end (won: Battle_Victory_Base, then on; lost)
+    enum class Cr3BattleStage { In, GetSet, Command, Target, Action, Won, Lost };
+    // its script (BtlScriptSystem: battle_NNNN run through the event system - Battle_Boot_Base as
+    // it boots, Battle_Start_Base once the get-set camera holds: the tutorials)
+    std::unique_ptr<cr3::EventRuntime> cr3BattleEvents;
+    float cr3BattleEventClock = 0;
+    bool cr3BattleStarted = false; // (Battle_Start_Base called)
+    bool runCr3BattleScript(const char* fn) {
+        cr3BattleEvents = std::make_unique<cr3::EventRuntime>(archive, game);
+        cr3BattleEvents->language = optionLanguage, cr3BattleEvents->autoPage = pageSeconds, cr3BattleEvents->askYesNo = true;
+        cr3BattleEventClock = 0;
+        if (!cr3BattleEvents->start(cr3Battle.script(), fn)) {
+            SDL_Log("battle script %s: %s", fn, cr3BattleEvents->error().c_str());
+            return false;
+        }
+        SDL_Log("battle script %s:%s", cr3Battle.script().c_str(), fn);
+        return true;
+    }
     Cr3BattleStage cr3BattleStage = Cr3BattleStage::In;
     float cr3BattleClock = 0;
     struct Cr3BattleCamPlay {
@@ -5681,6 +5707,10 @@ struct Viewer {
         bool loop = false, held = false;
         std::array<float, 3> actor{}; // (BtlCameraActor: where it rides, turned by yaw)
         float actorYaw = 0, screenShift = 0; // (the shift in NDC: -1/3 for the command camera)
+        // (BtlCameraActor::SetTarget: the view turned toward a point by this much - a slerp of
+        // the motion's rotation toward facing it; 0 none)
+        std::array<float, 3> lookAt{};
+        float lookWeight = 0;
     } cr3Cam;
 
     // BtlCameraSystem::Load / changeMotion: a Cam_bt camera, else a figure of its own
@@ -5691,6 +5721,67 @@ struct Viewer {
         cr3Cam.actor = actor, cr3Cam.actorYaw = yaw, cr3Cam.screenShift = shift;
         if (cr3Cam.name.find("Cam_bt") == std::string::npos && !cr3BattleOwnCam.load(archive, cr3Cam.name))
             SDL_Log("battle camera %s: not found", cr3Cam.name.c_str());
+    }
+
+    // The screen breaking into the battle (GameMain::SetGlassEffect at the reservation: the next
+    // frame caught - PostEffectGlassFragment's capture - and held; StartGlassEffect as the battle
+    // starts: the shards, SE 0x253): a battle asked for is started by the next draw, after it
+    // has drawn and caught the frame as it was
+    struct {
+        bool active = false;
+        int coupling = -1, field = -1;
+    } cr3BattleRequest;
+    cr3::Cr3Glass cr3Glass;
+    cr3::Rand48 cr3GlassRng;
+    cr3::Texture cr3GlassTexture;
+    float cr3GlassStart = 0;
+    void requestCr3Battle(int coupling, int fieldId) { cr3BattleRequest.active = true, cr3BattleRequest.coupling = coupling, cr3BattleRequest.field = fieldId; }
+
+    void startRequestedCr3Battle(int fw, int fh) {
+        cr3BattleRequest.active = false;
+        draw(fw, fh); // (the frame as it was)
+        dev->endFrame(false);
+        std::vector<uint8_t> px;
+        int w = 0, h = 0;
+        const bool caught = dev->readPixels(px, w, h) && screenW > 0 && screenH > 0 && screenX + screenW <= w && screenY + screenH <= h;
+        if (caught) {
+            cr3::Image img;
+            img.width = screenW, img.height = screenH;
+            img.rgba.resize(size_t(screenW) * screenH * 4);
+            for (int y = 0; y < screenH; ++y) { // (bottom-up: a render target's v = 0 its bottom)
+                const uint8_t* row = &px[(size_t(screenY + screenH - 1 - y) * w + screenX) * 4];
+                std::memcpy(&img.rgba[size_t(y) * screenW * 4], row, size_t(screenW) * 4);
+            }
+            for (size_t k = 3; k < img.rgba.size(); k += 4) img.rgba[k] = 255;
+            if (cr3GlassTexture.id) dev->destroy(cr3GlassTexture);
+            cr3GlassTexture = dev->upload(img);
+        }
+        if (!startCr3Battle(cr3BattleRequest.coupling, cr3BattleRequest.field)) return;
+        eventMode = areaMode = false;
+        if (caught) {
+            int hw = 0, hh = 0;
+            glassSize(hw, hh);
+            cr3GlassRng.seed(uint32_t(SDL_GetTicks()));
+            cr3Glass.build(hw, hh, cr3GlassRng);
+            cr3GlassStart = cr3BattleClock;
+            audio.playSe(0x253, false); // (GameMain::StartGlassEffect)
+            SDL_Log("the screen breaks away: %zu shards", cr3Glass.shards.size());
+        }
+    }
+
+    void drawCr3Glass() {
+        if (!cr3Glass.running() || !cr3GlassTexture.id) return;
+        Mat4 proj = cr3::mat4Identity();
+        proj[0] = 1.0f / float(cr3Glass.w), proj[5] = 1.0f / float(cr3Glass.h);
+        const float rgba[4] = {1, 1, 1, cr3Glass.alpha()};
+        for (const cr3::GlassShard& sh : cr3Glass.shards) {
+            float v[24];
+            for (int k = 0; k < 6; ++k) { // (the triangle, then its last corner thrice: nothing)
+                const int c = k < 3 ? k : 2;
+                v[k * 4 + 0] = sh.x[c], v[k * 4 + 1] = sh.y[c], v[k * 4 + 2] = sh.u[c], v[k * 4 + 3] = sh.v[c];
+            }
+            dev->drawQuad(cr3GlassTexture, v, proj.data(), rgba);
+        }
     }
 
     bool startCr3Battle(int coupling, int fieldId) {
@@ -5731,7 +5822,23 @@ struct Viewer {
             if (!bu.player) u.phase = float(monsters++) + 0.25f; // (Standby: its slot's 0 / 1 / 2, + up to 0.5 at random)
         }
         if (!cr3BattleCam.load(archive, "Cam_bt")) SDL_Log("battle: no Cam_bt");
-        cr3BattleClock = 0, cr3BattleStage = Cr3BattleStage::In;
+        cr3BattleClock = 0, cr3BattleStage = Cr3BattleStage::In, cr3BattleStarted = false;
+        if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, uint32_t(SDL_GetTicks()) | 1u, &err)) SDL_Log("battle rules: %s", err.c_str());
+        cr3HpShown.clear();
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp);
+        cr3AnimCommon.clear();
+        if (const cr3::MbeFile::Table* t = cr3BattleTables.model.table("AnimCommon"))
+            for (size_t r = 0; r < t->rows.size(); ++r) {
+                cr3::MbeFile::Row row;
+                if (!cr3BattleTables.model.row(*t, r, "ip", row)) continue;
+                if (size_t(row.i(0)) >= cr3AnimCommon.size()) cr3AnimCommon.resize(size_t(row.i(0)) + 1);
+                cr3AnimCommon[size_t(row.i(0))] = row.s(1);
+            }
+        cr3Choices.clear(), cr3Actions.clear(), cr3Popups.clear(), cr3Taps.clear();
+        cr3Chooser = -1, cr3Focus = 0;
+        initEventDrawing(); // (its script's windows: the tutorials)
+        if (runCr3BattleScript("Battle_Boot_Base")) // (BtlSysStateStart::phaseBoot: CallBoot, to its end)
+            for (int k = 0; k < 600 && cr3BattleEvents->running(); ++k) cr3BattleEvents->tick();
         playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0); // (PlayBattleIn)
         cr3BattleMode = true;
         dev->resetHistory();
@@ -5743,21 +5850,291 @@ struct Viewer {
 
     void updateCr3Battle(float dt) {
         cr3BattleClock += dt;
+        if (cr3Glass.running()) cr3Glass.advanceTo(cr3BattleClock - cr3GlassStart);
+        if (cr3BattleEvents) { // (at the game's updates)
+            cr3BattleEventClock = std::min(cr3BattleEventClock + dt, 0.25f);
+            for (; cr3BattleEventClock >= cr3::EventRuntime::kTick; cr3BattleEventClock -= cr3::EventRuntime::kTick)
+                if (!cr3BattleEvents->tick()) {
+                    SDL_Log("battle script: %s", cr3BattleEvents->error().c_str());
+                    break;
+                }
+        }
+        const bool scripted = cr3BattleEvents && cr3BattleEvents->running();
         const float camT = cr3BattleClock - cr3Cam.start;
         // BtlSysStateStart::phaseBattleIn: the battle-in camera over (or a tap) - PlayGetSet, its
         // end held; then (the battle's start script, the announcements: not yet) the first
         // command's camera on the party's first
-        if (cr3BattleStage == Cr3BattleStage::In && camT >= cr3Cam.end) {
+        if (cr3BattleStage == Cr3BattleStage::In && camT >= cr3Cam.end && !cr3Glass.running()) { // (and the glass: CheckGlassEffect)
             cr3BattleStage = Cr3BattleStage::GetSet;
             cr3Cam.held = true;
-        } else if (cr3BattleStage == Cr3BattleStage::GetSet && camT >= cr3Cam.end + 1.0f) {
-            cr3BattleStage = Cr3BattleStage::Command;
+        } else if (cr3BattleStage == Cr3BattleStage::GetSet && !cr3BattleStarted) {
+            cr3BattleStarted = true; // (phaseBattleIn: PlayGetSet, then CallStart)
+            runCr3BattleScript("Battle_Start_Base");
+        } else if (cr3BattleStage == Cr3BattleStage::GetSet && !scripted && camT >= cr3Cam.end + 0.5f) {
+            beginCr3Turn();
+        } else if (cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target) {
+            // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive)
+            if (!inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
+                const std::string tok = inputScript.front();
+                if (cr3BattleStage == Cr3BattleStage::Command && (tok == "attack" || tok == "guard")) {
+                    inputScript.pop_front();
+                    chooseCr3Command(tok == "attack" ? 0 : 3);
+                } else if (cr3BattleStage == Cr3BattleStage::Target && tok.size() > 1 && tok[0] == 't') {
+                    inputScript.pop_front();
+                    chooseCr3Target(std::atoi(tok.c_str() + 1));
+                }
+            }
+        } else if (cr3BattleStage == Cr3BattleStage::Action) {
+            stepCr3Action();
+        } else if (cr3BattleStage == Cr3BattleStage::Won) {
+            if (!scripted && cr3BattleClock - cr3StageStart > 2.5f) endCr3Battle();
+        } else if (cr3BattleStage == Cr3BattleStage::Lost) {
+            if (cr3BattleClock - cr3StageStart > 2.5f) endCr3Battle();
+        }
+        // the units' motions: one played out goes back to the stance (a fall's held)
+        for (size_t k = 0; k < cr3BattleUnits.size(); ++k) {
+            Cr3BattleUnitView& u = cr3BattleUnits[k];
+            if (u.motionLoop || u.motionHold || !u.body.animLoaded) continue;
+            if (cr3BattleClock - u.motionStart >= u.body.anim.duration()) setCr3Motion(k, "bb01", true);
+        }
+    }
+
+    // ---- the turn (BtlSysStateSelect / BtlSysStateAction, battle/cr3rules.hpp) ----
+    cr3::Cr3BattleRules cr3Rules;
+    std::vector<int> cr3HpShown;            // (each fighter's HP as shown: the hits land one by one)
+    std::vector<std::string> cr3AnimCommon; // (model.mbe AnimCommon: a motion type's suffix)
+    std::vector<std::array<int, 3>> cr3Choices;
+    std::vector<cr3::Cr3Action> cr3Actions;
+    size_t cr3ActionAt = 0;
+    float cr3ActionStart = 0, cr3StageStart = 0, cr3MenuStart = 0;
+    int cr3Chooser = -1, cr3Focus = 0;
+    struct Cr3ActionPlay {
+        float hitAt = 0.5f, hitGap = 0.15f, end = 1.5f;
+        int hitsShown = 0;
+    } cr3ActionPlay;
+    // the damage shown (DamageInfo: btNumMenu over the target, btNumMenu_in)
+    struct Cr3Popup {
+        int value = 0;
+        std::array<float, 3> at{};
+        float start = 0;
+    };
+    std::vector<Cr3Popup> cr3Popups;
+    struct Cr3Tap {
+        float x0, y0, x1, y1;
+        int id;
+    };
+    std::vector<Cr3Tap> cr3Taps; // (the menu's buttons as last drawn, UI units)
+    Mat4 cr3BattleVP = cr3::mat4Identity();
+    // the command buttons (BtlInterfaceSystem::EntryCommandSelect: 6 Attack, 7 Gene, 8 Item, 9
+    // Guard - comBtn's name, icon frames; Gene and Item not in yet)
+    static constexpr int kCr3Buttons[4] = {6, 7, 8, 9};
+
+    void setCr3Motion(size_t k, const std::string& suffix, bool loop, bool hold = false) {
+        if (k >= cr3BattleUnits.size()) return;
+        Cr3BattleUnitView& u = cr3BattleUnits[k];
+        bool found = false;
+        for (ViewFigure* part : {&u.body, &u.head}) {
+            if (part->meshes.empty()) continue;
+            const std::string base = part->name.substr(0, part->name.size() - 5);
+            const auto it = std::find(part->anims.begin(), part->anims.end(), base + "_" + suffix + ".anim");
+            if (it == part->anims.end()) continue;
+            const float keep = time;
+            loadAnim(*part, size_t(it - part->anims.begin()));
+            time = keep;
+            found = found || part == &u.body;
+        }
+        if (!found) return;
+        u.motion = suffix, u.motionStart = cr3BattleClock, u.motionLoop = loop, u.motionHold = hold;
+    }
+    std::string cr3MotionOf(int type) const {
+        return type >= 0 && size_t(type) < cr3AnimCommon.size() ? cr3AnimCommon[size_t(type)] : std::string();
+    }
+    // a unit's joint as last posed (DummyCP its camera point, DummyDP01 where its damage shows)
+    std::array<float, 3> unitPoint(size_t k, const char* joint, float up) {
+        const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
+        ViewFigure& f = cr3BattleUnits[k].body;
+        std::vector<uint8_t> d;
+        if (f.skinned && archive.read(bu.figure + ".name", d)) {
+            const std::vector<std::string> names = cr3::parseJointNames(d);
+            const auto it = std::find(names.begin(), names.end(), joint);
+            const std::vector<cr3::JointTransform>& p = f.posed.empty() ? f.skeleton.basePose : f.posed;
+            const std::vector<cr3::Mat34> w = f.skeleton.world(p, f.place);
+            const size_t j = size_t(it - names.begin());
+            if (it != names.end() && j < w.size()) return {w[j].m[3], w[j].m[7], w[j].m[11]};
+        }
+        return {bu.home[0], bu.home[1] + up, bu.home[2]};
+    }
+    int cr3FighterOfUnit(size_t k) const {
+        for (size_t f = 0; f < cr3Rules.fighters.size(); ++f)
+            if (size_t(cr3Rules.fighters[f].unit) == k) return int(f);
+        return -1;
+    }
+
+    // a turn begins: the party's first able member chooses (PlayCommandSelect on it)
+    void beginCr3Turn() {
+        cr3Choices.clear();
+        cr3Chooser = -1;
+        nextCr3Chooser();
+    }
+    void nextCr3Chooser() {
+        for (size_t f = size_t(cr3Chooser + 1); f < cr3Rules.fighters.size(); ++f)
+            if (cr3Rules.fighters[f].player && !cr3Rules.fighters[f].dead()) {
+                cr3Chooser = int(f);
+                cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+                SDL_Log("battle %.2f s: fighter %zu chooses", cr3BattleClock, f);
+                const size_t k = size_t(cr3Rules.fighters[f].unit);
+                playCr3Camera("Cam_bt_command_PC_00", 26.6667f, true, unitPoint(k, "DummyCP", 1.2f), cr3Battle.units[k].yaw, -1.0f / 3.0f);
+                return;
+            }
+        // (all chosen: BtlSysStateSelect::phaseCalculate - the turn worked out, then played)
+        cr3Actions = cr3Rules.turn(cr3Choices);
+        cr3ActionAt = 0;
+        cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
+        startCr3Action();
+    }
+    void chooseCr3Command(int button) {
+        if (cr3Chooser < 0) return;
+        audio.playSe(0x153, false);
+        if (button == 3) { // (Guard)
+            cr3Choices.push_back({cr3Chooser, -1, -1});
+            nextCr3Chooser();
+        } else if (button == 0) { // (Attack: its target next)
+            cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+        }
+    }
+    std::vector<int> cr3LivingMonsters() const {
+        std::vector<int> out;
+        for (size_t f = 0; f < cr3Rules.fighters.size(); ++f)
+            if (!cr3Rules.fighters[f].player && !cr3Rules.fighters[f].dead()) out.push_back(int(f));
+        return out;
+    }
+    void chooseCr3Target(int n) {
+        const std::vector<int> alive = cr3LivingMonsters();
+        if (alive.empty() || cr3Chooser < 0) return;
+        audio.playSe(0x153, false);
+        const int target = alive[size_t(std::clamp(n, 0, int(alive.size()) - 1))];
+        cr3Choices.push_back({cr3Chooser, cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, target});
+        nextCr3Chooser();
+    }
+
+    // an action played (BtlDirection: the source's motion - its command's CommandDirection +8 -
+    // under the attack camera on it, the hits landing on the target - its bd01, the numbers -, a
+    // fall bd03)
+    void startCr3Action() {
+        if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
+        const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
+        cr3ActionStart = cr3BattleClock;
+        cr3ActionPlay = Cr3ActionPlay();
+        {
+            int sum = 0;
+            for (const cr3::Cr3Action& x : {cr3Actions[cr3ActionAt]})
+                for (int h : x.hits) sum += h;
+            SDL_Log("battle %.2f s: action %zu - %d -> %d, command %d, %zu hits, %d", cr3BattleClock, cr3ActionAt, cr3Actions[cr3ActionAt].source,
+                    cr3Actions[cr3ActionAt].target, cr3Actions[cr3ActionAt].command, cr3Actions[cr3ActionAt].hits.size(), sum);
+        }
+        const cr3::Cr3Fighter& s = cr3Rules.fighters[size_t(a.source)];
+        const size_t su = size_t(s.unit);
+        const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
+        if (a.command < 0) { // (Guard: bg01)
+            setCr3Motion(su, "bg01", false);
+            cr3ActionPlay.end = 1.0f;
+            return;
+        }
+        cr3::Cr3Command c;
+        cr3Rules.command(a.command, c);
+        std::string motion = cr3MotionOf(c.motion);
+        if (motion.empty() || motion == "bb01") motion = "bs01"; // (a shot's: BtlShotDirection plays 0xf)
+        setCr3Motion(su, motion, false);
+        const ViewFigure& f = cr3BattleUnits[su].body;
+        const float length = f.animLoaded && cr3BattleUnits[su].motion == motion ? f.anim.duration() : 1.2f;
+        cr3ActionPlay.hitAt = std::max(length * 0.45f, 0.3f);
+        cr3ActionPlay.hitGap = a.hits.size() > 1 ? std::min(0.15f, length * 0.4f / float(a.hits.size())) : 0.15f;
+        cr3ActionPlay.end = std::max(length, cr3ActionPlay.hitAt + cr3ActionPlay.hitGap * float(a.hits.size()) + 0.9f);
+        // (the attack camera of the size's set: the party's attack_PC, the monsters' attack_<size>,
+        // on the attacker)
+        // (BtlCameraSystem::PlayPlayerMelee: the target's size's attack_PC, riding (the target's x,
+        // 0, 0) unturned, looking 0.2 of the way to the actor target; PlayEnemyMelee: the
+        // attacker's size's attack_<size> at the target's front - (x, 0, Battle +0 / 10) -,
+        // looking 0.4 of the way)
+        const cr3::Cr3BattleUnit& tu = cr3Battle.units[size_t(cr3Rules.fighters[size_t(std::max(a.target, 0))].unit)];
+        const int size = s.player ? tu.cameraSize : bu.cameraSize;
+        std::string cam = s.player ? cr3Battle.cameras[2] : cr3Battle.cameras[3];
+        cr3::MbeFile::Row row;
+        if (cr3BattleTables.model.find("Camera", size, "ifpppppppppp", row)) cam = row.s(s.player ? 4 : 5);
+        const std::array<float, 3> at = s.player ? std::array<float, 3>{tu.home[0], 0, 0} : std::array<float, 3>{tu.home[0], 0, 2.15f};
+        playCr3Camera(cam, cr3ActionPlay.end, false, at, 0, 0);
+        cr3Cam.lookAt = unitPoint(size_t(cr3Rules.fighters[size_t(std::max(a.target, 0))].unit), "DummyCP", 1.2f);
+        cr3Cam.lookWeight = s.player ? 0.2f : 0.4f;
+    }
+    void stepCr3Action() {
+        if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
+        const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
+        const float t = cr3BattleClock - cr3ActionStart;
+        while (a.target >= 0 && cr3ActionPlay.hitsShown < int(a.hits.size()) &&
+               t >= cr3ActionPlay.hitAt + cr3ActionPlay.hitGap * float(cr3ActionPlay.hitsShown)) {
+            const int d = a.hits[size_t(cr3ActionPlay.hitsShown++)];
+            const size_t tu = size_t(cr3Rules.fighters[size_t(a.target)].unit);
+            int& shown = cr3HpShown[size_t(a.target)];
+            shown = std::max(shown - d, 0);
+            cr3Popups.push_back({d, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock});
+            const bool last = cr3ActionPlay.hitsShown == int(a.hits.size());
+            if (last && a.killed) setCr3Motion(tu, "bd03", false, true);
+            else setCr3Motion(tu, "bd01", false);
+            audio.playSe(0x164, false);
+        }
+        if (t >= cr3ActionPlay.end) {
+            if (a.target >= 0) cr3HpShown[size_t(a.target)] = a.hpAfter;
+            ++cr3ActionAt;
+            startCr3Action();
+        }
+    }
+    void endCr3Actions() {
+        const int outcome = cr3Rules.outcome();
+        if (outcome == 1) { // (BtlSysStateAction::phaseVictoryEventStart: Battle_Victory_Base)
+            cr3BattleStage = Cr3BattleStage::Won, cr3StageStart = cr3BattleClock;
+            runCr3BattleScript("Battle_Victory_Base");
             for (size_t k = 0; k < cr3Battle.units.size(); ++k)
                 if (cr3Battle.units[k].player) {
-                    playCr3Camera("Cam_bt_command_PC_00", 26.6667f, true, cameraPoint(k), cr3Battle.units[k].yaw, -1.0f / 3.0f);
+                    playCr3Camera(cr3Battle.cameras[7], 4.0f, false, {0, 0, 0}, 0, 0); // (the all camera)
                     break;
                 }
+            SDL_Log("battle %d: won", cr3Battle.coupling);
+        } else if (outcome == 2) {
+            cr3BattleStage = Cr3BattleStage::Lost, cr3StageStart = cr3BattleClock;
+            SDL_Log("battle %d: lost (no game over yet: on as if won)", cr3Battle.coupling);
+        } else {
+            beginCr3Turn();
         }
+    }
+
+    // the keys: up / down the focus, Return chooses, Backspace back from the targets
+    bool cr3BattleKey(SDL_Keycode k) {
+        if (cr3BattleEvents && cr3BattleEvents->running()) return false;
+        const int n = cr3BattleStage == Cr3BattleStage::Command ? 4 : cr3BattleStage == Cr3BattleStage::Target ? int(cr3LivingMonsters().size()) : 0;
+        if (n == 0) return false;
+        if (k == SDLK_UP) cr3Focus = (cr3Focus + n - 1) % n;
+        else if (k == SDLK_DOWN) cr3Focus = (cr3Focus + 1) % n;
+        else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+            if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
+            else chooseCr3Target(cr3Focus);
+        } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Target) {
+            cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+        } else return false;
+        return true;
+    }
+    // a click (fx, fy: the screen's fractions) on a button
+    bool cr3BattleClick(float fx, float fy) {
+        if (cr3BattleStage != Cr3BattleStage::Command && cr3BattleStage != Cr3BattleStage::Target) return false;
+        if (cr3BattleEvents && cr3BattleEvents->running()) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (const Cr3Tap& t : cr3Taps)
+            if (ux >= std::min(t.x0, t.x1) && ux <= std::max(t.x0, t.x1) && uy >= std::min(t.y0, t.y1) && uy <= std::max(t.y0, t.y1)) {
+                if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(t.id);
+                else chooseCr3Target(t.id);
+                return true;
+            }
+        return false;
     }
 
     // BtlUnit::VGetCameraPoint: its figure's DummyCP joint as last posed (CrxModel::GetPosition),
@@ -5778,8 +6155,10 @@ struct Viewer {
     }
 
     void cr3BattleTap() {
+        if (cr3BattleEvents && cr3BattleEvents->running()) return cr3BattleEvents->touch(); // (its window's page)
         if (cr3BattleStage == Cr3BattleStage::In) cr3Cam.start = cr3BattleClock - cr3Cam.end; // (phaseBattleIn: a tap ends it)
-        else if (cr3BattleStage == Cr3BattleStage::Command) endCr3Battle(); // (the turns aren't in yet: a tap takes it as won)
+        else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
+        else if (cr3BattleStage == Cr3BattleStage::Target) chooseCr3Target(cr3Focus);
     }
 
     // the battle over (won): where SetBattleNext sent it - the vista SetVistaFuncName2 named
@@ -5789,7 +6168,7 @@ struct Viewer {
         cr3::GameState::Next& n = game.next;
         const int next = n.battleNext;
         n.battleNext = 1;
-        SDL_Log("battle %d: taken as won (the turns not in yet)", cr3Battle.coupling);
+        cr3BattleEvents.reset();
         if (next == 14 && !n.vistaFunction.empty()) {
             const std::string fn = n.vistaFunction, map = n.vistaMap.empty() ? "null" : n.vistaMap;
             n = cr3::GameState::Next();
@@ -5819,6 +6198,22 @@ struct Viewer {
         actor.m[0] = c, actor.m[2] = s, actor.m[8] = -s, actor.m[10] = c;
         actor.m[3] = cr3Cam.actor[0], actor.m[7] = cr3Cam.actor[1], actor.m[11] = cr3Cam.actor[2];
         cw = actor * cw;
+        if (cr3Cam.lookWeight > 0) { // (turned part of the way toward its target: forward blended, up kept)
+            float f[3] = {-cw.m[2], -cw.m[6], -cw.m[10]};
+            float d[3] = {cr3Cam.lookAt[0] - cw.m[3], cr3Cam.lookAt[1] - cw.m[7], cr3Cam.lookAt[2] - cw.m[11]};
+            const float dl = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (dl > 1e-4f) {
+                for (int i = 0; i < 3; ++i) f[i] += (d[i] / dl - f[i]) * cr3Cam.lookWeight;
+                const float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+                for (float& c : f) c /= fl;
+                float x[3] = {-f[2], 0, f[0]}; // (forward x up)
+                const float xl = std::max(std::hypot(x[0], x[2]), 1e-5f);
+                x[0] /= xl, x[2] /= xl;
+                const float z[3] = {-f[0], -f[1], -f[2]};
+                const float y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]}; // (z x x)
+                for (int r = 0; r < 3; ++r) cw.m[r * 4 + 0] = x[r], cw.m[r * 4 + 1] = y[r], cw.m[r * 4 + 2] = -f[r];
+            }
+        }
         const float fov = fovDeg * 3.14159265f / 180;
         dev->setCamera(zn, zf, fov);
         const Mat4 world = cr3::mat4FromMat34(cw);
@@ -5830,6 +6225,7 @@ struct Viewer {
             proj = cr3::mat4Multiply(shift, proj);
         }
         const Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
+        cr3BattleVP = vp;
         cr3::SceneLighting l = lighting;
         l.camera[0] = cw.m[3], l.camera[1] = cw.m[7], l.camera[2] = cw.m[11];
         l.time = time;
@@ -5847,10 +6243,12 @@ struct Viewer {
                 part->place = cr3::Mat34();
                 part->place.m[0] = yc, part->place.m[2] = ys, part->place.m[8] = -ys, part->place.m[10] = yc, part->place.m[5] = bu.scale;
                 part->place.m[3] = bu.home[0], part->place.m[7] = bu.home[1], part->place.m[11] = bu.home[2];
-                pose(*part, cr3BattleClock + u.phase, true);
+                const float mt = u.motionLoop ? cr3BattleClock + u.phase : cr3BattleClock - u.motionStart;
+                pose(*part, mt, u.motionLoop);
                 drawFigure(*part, vp.data());
             }
         }
+        drawCr3Glass();
     }
 
     // VistaMain: the map's figure, the event's script (its scene's figures follow it)
@@ -5904,7 +6302,7 @@ struct Viewer {
                 const int id = game.next.battle, fieldId = game.next.battleField;
                 game.next.battle = -1;
                 SDL_Log("event: battle %d on field %d", id, fieldId);
-                if (startCr3Battle(id, fieldId)) eventMode = false;
+                requestCr3Battle(id, fieldId);
                 return;
             }
             // (--event: an event that hands over to the next vista - SetVistaEvent at its end, as the
@@ -10996,6 +11394,231 @@ struct Viewer {
             drawFigure(h.fig, view.data());
         }
     }
+
+    // ---- the battle's interface (CR3: CRXParts figures at 100 pixels a unit) ----
+    // a figure posed (its own animation - or `anim`, an animator beside it - at t) at (x, y)
+    UiFig& cr3UiPut(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, float alpha = 1, bool loop = false) {
+        UiFig& u = uiFig(name);
+        u.fig.place = cr3::Mat34();
+        u.fig.place.m[3] = x, u.fig.place.m[7] = y;
+        poseUi(u, anim.empty() ? name : anim, t, loop);
+        u.fig.tint[3] = alpha;
+        drawFigure(u.fig, view.data());
+        return u;
+    }
+    // its first joint named so, posed (fitted where it says _fitN: CRXPartsBase's)
+    bool cr3UiCall(const UiFig& u, const std::string& prefix, float& x, float& y, int w = 0, int h = 0) {
+        for (const std::string& j : u.joints)
+            if (j.compare(0, prefix.size(), prefix) == 0 && uiJoint(u, j, x, y)) {
+                if (w > 0) {
+                    float fx = 0, fy = 0;
+                    fitOffset(j, w, h, 10, fx, fy);
+                    x += fx, y += fy;
+                }
+                return true;
+            }
+        return false;
+    }
+    // a figure's meshes drawn with another texture (a portrait's, an icon's)
+    void cr3UiTexture(UiFig& u, const std::string& image, const std::string& mask = {}) {
+        cr3::Texture* t = texture(image);
+        if (!t) return;
+        cr3::Texture* a = mask.empty() ? nullptr : texture(mask);
+        for (ViewMesh& m : u.fig.meshes) {
+            m.texture = t;
+            if (a) m.extraMap = a; // (its alpha mask: the material's second sampler)
+        }
+    }
+    // SpriteNumId (set 1: SpriteNumberParamPackTable's - com_num_01's digits 0.046875 apart from
+    // u 0.00195, v 0.46875; 0.244 x 0.264 units, 0.193 apart): `places` digits from (x, y) on, the
+    // last the ones, leading zeros blank
+    void cr3SpriteNum(int value, int places, float x, float y, int w, int h, const float rgb[3]) {
+        cr3::Texture* t = texture("com_num_01");
+        if (!t) return;
+        const float gw = 0.046875f / 0.192f, gh = 0.050781f / 0.192f, adv = 0.037109f / 0.192f;
+        const Mat4 proj = uiProjection(w, h, 10);
+        const float rgba[4] = {rgb[0], rgb[1], rgb[2], 1};
+        for (int s = 0; s < places; ++s) {
+            int p = 1;
+            for (int k = 0; k < places - 1 - s; ++k) p *= 10;
+            if (value < p && s != places - 1) continue; // (blank)
+            const int d = value / p % 10;
+            // (its v from the sheet's foot, GL's: the image's rows 1 - v - dv .. 1 - v, the top the last)
+            const float u0 = 0.0019531f + 0.046875f * float(d), u1 = u0 + 0.046875f, vb = 1.0f - 0.46875f - 0.050781f, vt = 1.0f - 0.46875f;
+            const float x0 = x + adv * float(s) - gw / 2, x1 = x0 + gw, y0 = y - gh / 2, y1 = y + gh / 2;
+            const float v[24] = {x0, y0, u0, vb, x1, y0, u1, vb, x1, y1, u1, vt, x0, y0, u0, vb, x1, y1, u1, vt, x0, y1, u0, vt};
+            dev->drawQuad(*t, v, proj.data(), rgba);
+        }
+    }
+    std::string cr3MonsterName(int id) {
+        cr3::MbeFile::Row r;
+        std::vector<uint8_t> d;
+        static cr3::MbeFile names;
+        static bool loaded = false;
+        if (!loaded) loaded = archive.read("data\\mon_name.mbe", d) && names.parse(d);
+        if (!names.find("MonsterName", id, "ipp", r)) return {};
+        const std::string en = r.s(2), jp = r.s(1);
+        return optionLanguage == 0 || en.empty() ? jp : en; // (the text slot: 0 Japanese)
+    }
+
+    void drawCr3BattleHud(int w, int h) {
+        if (!cr3BattleMode) return;
+        const bool hud = cr3BattleStage >= Cr3BattleStage::Command && cr3BattleStage <= Cr3BattleStage::Action;
+        if (!hud && cr3Popups.empty()) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        float x, y;
+        if (hud) {
+            // the party's status (btStMenu: btStPanel each - the portrait bt_chaIcon_j<char>, the HP and
+            // MP bars posed at their percent / 30 s, the numbers - SpriteNumId 5 and 4 places; HP under
+            // 20% reddened)
+            UiFig& pos = cr3UiPut("btstposition", "", 0, 0, 0, view);
+            if (cr3UiCall(pos, "call_btStMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("btstmenu", "", 0, x, y, view);
+                int slot = 0;
+                for (size_t f = 0; f < cr3Rules.fighters.size(); ++f) {
+                    const cr3::Cr3Fighter& ft = cr3Rules.fighters[f];
+                    if (!ft.player) continue;
+                    float px, py;
+                    if (!cr3UiCall(menu, "call_btStPanel_00" + std::to_string(++slot), px, py)) continue;
+                    UiFig& panel = cr3UiPut("btstpanel", "", 0, px, py, view);
+                    float cx, cy;
+                    if (cr3UiCall(panel, "call_btStChara_id", cx, cy)) {
+                        char icon[32];
+                        std::snprintf(icon, sizeof icon, "bt_chaicon_j%03d", ft.id);
+                        UiFig& face = uiFig("btstchara_id00");
+                        cr3UiTexture(face, icon);
+                        cr3UiPut("btstchara_id00", "", 0, cx - 0.1f, cy, view);
+                    }
+                    const int hp = f < cr3HpShown.size() ? cr3HpShown[f] : ft.hp;
+                    const float hpPct = ft.maxHp > 0 ? float(hp) * 100 / float(ft.maxHp) : 0;
+                    const float mpPct = ft.maxMp > 0 ? float(ft.mp) * 100 / float(ft.maxMp) : 0;
+                    if (cr3UiCall(panel, "call_btStHp_per", cx, cy)) cr3UiPut("btsthp_per", "", hpPct / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_btStMp_per", cx, cy)) cr3UiPut("btstmp_per", "", mpPct / 30, cx, cy, view);
+                    const float white[3] = {1, 1, 1}, low[3] = {1, 0.5f, 0.5f}, out[3] = {1, 0.25f, 0.25f};
+                    if (cr3UiCall(panel, "btStHpno", cx, cy)) cr3SpriteNum(hp, 5, cx, cy, w, h, hpPct <= 0 ? out : hpPct < 20 ? low : white);
+                    if (cr3UiCall(panel, "btStMpno", cx, cy)) cr3SpriteNum(ft.mp, 4, cx, cy, w, h, white);
+                }
+            }
+            // the break gauge (btBrkMenu: btBrkWinPanel looping, btBrkGauge at ((v + 1000) / 20) / 30 s -
+            // even 1.6333 -, btBrkName_fr00's frame: 0 Player, 1 Enemy, 2 Even, 3 a full break)
+            UiFig& bpos = cr3UiPut("btbrkposition", "", 0, 0, 0, view);
+            if (cr3UiCall(bpos, "call_btBrkMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("btbrkmenu", "", 0, x, y, view);
+                float cx, cy;
+                if (cr3UiCall(menu, "call_btBrkWinPanel", cx, cy)) {
+                    UiFig& win = uiFig("btbrkwinpanel");
+                    const float len = win.fig.animLoaded ? std::max(win.fig.anim.duration(), 0.01f) : 1.0f;
+                    UiFig& wp = cr3UiPut("btbrkwinpanel", "", std::fmod(cr3BattleClock, len), cx, cy, view);
+                    float gx, gy;
+                    if (cr3UiCall(wp, "call_btBrkGauge", gx, gy)) cr3UiPut("btbrkgauge", "", 1.6333333f, gx, gy, view);
+                }
+                if (cr3UiCall(menu, "call_btBrkNamePanel", cx, cy)) {
+                    UiFig& np = cr3UiPut("btbrknamepanel", "btbrknamepanel_io", std::min(cr3BattleClock - cr3StageStart, 1.0f), cx, cy, view);
+                    float nx, ny;
+                    if (cr3UiCall(np, "call_btBrkName_fr00", nx, ny)) {
+                        dev->clearDepth(); // (over the ring: its display priority's)
+                        cr3UiPut("btbrkname_fr00", "", 2.0f / 30.0f, nx, ny, view);
+                    }
+                }
+            }
+        }
+        cr3Taps.clear();
+        const bool waiting = !(cr3BattleEvents && cr3BattleEvents->running());
+        if (cr3BattleStage == Cr3BattleStage::Command && waiting) {
+            // the command buttons (comBtnMenu, its io animator as it opens; four at panels 004..007 -
+            // comBtnMenu::SetParamNumber 5 - each comBtnPanel with comBtnBg_fr00 (its slot's frame),
+            // comBtnIcon_fr00 and comBtnText_fr00 (the button's), comBtnR; the focused one's text
+            // comBtnTextTap_fr00)
+            UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
+            if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", cr3BattleClock - cr3MenuStart, x, y, view);
+                for (int b = 0; b < 4; ++b) {
+                    float px, py;
+                    if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(4 + b), px, py)) continue;
+                    UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
+                    const int id = kCr3Buttons[b];
+                    float cx, cy;
+                    if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
+                    const float textAlpha = (b == 1 || b == 2) ? 0.4f : 1.0f; // (Gene, Item: not in yet)
+                    if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy))
+                        cr3UiPut(b == cr3Focus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view, textAlpha);
+                    if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
+                    float ax, ay, bx, by;
+                    if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, b});
+                }
+            }
+        } else if (cr3BattleStage == Cr3BattleStage::Target && waiting) {
+            // the targets (btTgtMenu, btTgtMenu_in; a btTgtPanel each at call_btTgtPanel_001..: the
+            // name at typeM_C01, the HP bar btTgtBar_per, the icon bt_targIcon_<model><variant>)
+            UiFig& pos = cr3UiPut("bttgtposition", "", 0, 0, 0, view);
+            if (cr3UiCall(pos, "call_btTgtMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("bttgtmenu", "bttgtmenu_in", cr3BattleClock - cr3MenuStart, x, y, view);
+                const std::vector<int> alive = cr3LivingMonsters();
+                for (size_t i = 0; i < alive.size() && i < 3; ++i) {
+                    const cr3::Cr3Fighter& ft = cr3Rules.fighters[size_t(alive[i])];
+                    const cr3::Cr3BattleUnit& bu = cr3Battle.units[size_t(ft.unit)];
+                    float px, py;
+                    if (!cr3UiCall(menu, "call_btTgtPanel_00" + std::to_string(i + 1), px, py)) continue;
+                    UiFig& panel = cr3UiPut("bttgtpanel", "", 0, px, py, view, int(i) == cr3Focus ? 1.0f : 0.85f);
+                    float cx, cy;
+                    const float pct = ft.maxHp > 0 ? float(cr3HpShown[size_t(alive[i])]) * 100 / float(ft.maxHp) : 0;
+                    if (cr3UiCall(panel, "call_btTgtBar_per", cx, cy)) cr3UiPut("bttgtbar_per", "", pct / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(i) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_btTgtChara_id00", cx, cy)) {
+                        UiFig& icon = uiFig("bttgtchara_id00");
+                        cr3UiTexture(icon, "bt_targicon_" + bu.name + (bu.variant.empty() ? std::string("a") : bu.variant), "bt_targicon_" + bu.name + "_a");
+                        cr3UiPut("bttgtchara_id00", "", 0, cx, cy, view);
+                    }
+                    if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
+                    if (cr3UiCall(panel, "typeM_C01", cx, cy)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        drawUiText(cr3MonsterName(ft.id), 30, cx / 10, cy / 10, w, h, false, 0.3f); // (dark on the panel)
+                    }
+                    float ax, ay, bx, by;
+                    if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(i)});
+                }
+            }
+        }
+        // the damage (DamageInfo: btNumMenu - btNumMenu_in over its first 0.53 s - the digits'
+        // layout btNum_num0N, a btNum_fr00 frame each), over the target where it was hit
+        for (auto it = cr3Popups.begin(); it != cr3Popups.end();) {
+            const float age = cr3BattleClock - it->start;
+            if (age > 1.3f) {
+                it = cr3Popups.erase(it);
+                continue;
+            }
+            const float* m = cr3BattleVP.data();
+            const float* p = it->at.data();
+            const float cw = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+            if (cw > 0) {
+                const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+                const float sx = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / cw * float(screenW) * 0.5f / k;
+                const float sy = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / cw * float(screenH) * 0.5f / k;
+                const int n = int(std::to_string(std::max(it->value, 0)).size());
+                const float alpha = age > 1.0f ? 1.0f - (age - 1.0f) / 0.3f : 1.0f;
+                UiFig& menu = cr3UiPut("btnummenu", "btnummenu_in", std::min(age, 0.5333f), sx, sy, view, alpha);
+                float lx, ly;
+                if (cr3UiCall(menu, "call_btNum_num", lx, ly)) {
+                    char lay[16];
+                    std::snprintf(lay, sizeof lay, "btnum_num%02d", std::clamp(n, 1, 6));
+                    UiFig& layout = cr3UiPut(lay, "", 0, lx, ly, view, alpha);
+                    const std::string digits = std::to_string(std::max(it->value, 0));
+                    for (int d = 0; d < n; ++d) {
+                        float dx, dy;
+                        if (cr3UiCall(layout, "call_btNum_fr00_00" + std::to_string(d + 1), dx, dy))
+                            cr3UiPut("btnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view, alpha);
+                    }
+                }
+            }
+            ++it;
+        }
+    }
+
     void drawEventUi() {
         dev->clearDepth(); // (the scene's depths behind all of it: a near camera's ground too)
         if (credits.stage) return drawCredits();
@@ -11017,6 +11640,7 @@ struct Viewer {
                 dev->drawQuad(white, kScreen, id.data(), rgba);
             }
         }
+        drawCr3BattleHud(screenW, screenH);
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)
@@ -11604,7 +12228,7 @@ int main(int argc, char** argv) {
         if (dev->offscreen() && v.resW > 0 && v.resH > 0) w = v.resW, h = v.resH;
     };
     auto catchGlass = [&]() { // (frames not drawn: drawn as the screen breaks, to catch it)
-        if (!v.glassPending) return;
+        if (!v.glassPending && !v.cr3BattleRequest.active) return;
         int w = 0, h = 0;
         frameSize(w, h);
         v.draw(w, h);
@@ -11789,6 +12413,7 @@ int main(int argc, char** argv) {
                         SDL_Log("output: %s", describe().c_str());
                         continue;
                     }
+                    if (v.cr3BattleMode && v.cr3BattleKey(k)) continue; // (CR3's battle menus)
                     if (v.yesNoShown()) { // (an event's yes / no: Y or Return yes, N or Backspace no)
                         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_Y) v.answerYesNo(true);
                         else if (k == SDLK_BACKSPACE || k == SDLK_N) v.answerYesNo(false);
@@ -11884,6 +12509,7 @@ int main(int argc, char** argv) {
                     else if (v.titleMenu.stage) v.titleClick(fx, fy);
                     else if (v.yesNoClick(fx, fy)) {}
                     else if (v.battleMode && v.choosing) v.battleClick(fx, fy);
+                    else if (v.cr3BattleMode && v.cr3BattleClick(fx, fy)) {}
                     else if (v.vslash.stage == 1) v.vslashPointer(fx, fy, 0);
                     else if (v.fieldMode && !v.eventMode && v.keyLock.stage != 0) v.unlockPointer(fx, fy, 0);
                     else if (v.fieldMode && !v.eventMode && v.iai.stage) v.iaiPointer(fx, fy, 0);
@@ -11892,7 +12518,7 @@ int main(int argc, char** argv) {
                     else if (v.fieldMode && !v.eventMode && v.mystic.stage) v.mysticPointer(fx, fy);
                     else if (v.fieldMode && !v.eventMode && (v.sprintTap(fx, fy) || v.actionTap(fx, fy))) {}
                     else if (v.fieldMode && !v.eventMode && v.fieldClick(fx, fy)) {
-                    } else if (v.eventMode || v.fieldMode || v.battleMode) v.tap();
+                    } else if (v.eventMode || v.fieldMode || v.battleMode || v.cr3BattleMode || v.areaMode) v.tap();
                 }
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
                     dragging = false;

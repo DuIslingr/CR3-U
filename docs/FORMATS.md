@@ -318,9 +318,67 @@ its figure's `DummyCP` joint (BtlUnit::VGetCameraPoint) - turned as the unit is,
 moved left by a sixth of the screen (BtlCamera::SetScreenOffsetX(-width / 3): Camera::Render
 adds offset / width to clip x).
 
-`cr3view --battle <coupling> [--battle-field <n>]` (44 unless given) shows one; `cr3tool cr3battle
-<release> <coupling> <field> [party]` prints its set-up. The turns, commands and damage are not in
-yet: in the command stage a tap ends the battle as won.
+The way in (GameMain::SetGlassEffect at the reservation, StartGlassEffect as the battle starts:
+Framework::PostEffectGlassFragment): the frame as it was caught and held, then broken -
+GlassFragmentParam pattern 0 (RadialCenter, what the scripts' BattleIn sets; the patterns' table at
+lib 0xf3ca78): the screen's four corners and 230 points at random on its half size, Delaunay
+triangles (fixEdge only snaps hull points between corners to the border), each flying from the
+middle at 8.7 + 0.06 d pixels a frame (d its distance from the middle), gaining 1.1 + 0.4 d a
+second, turning (0.18 + 0.0003 d) x random about each axis, growing from 1 + up to 0.004 by 0.08 a
+second; the whole fading out over 0.8 s (+0xe0), SE 0x253. CR2's had other gains (0.55 + 0.02 d,
+0.004) and lasted 1.5 s.
+
+The scripts (BtlScriptSystem): `battle_<coupling>` where the coupling's +0x44 bit 0 is set, else
+`battle_0000`, run through the event system: Battle_Boot_Base as it boots (battle_0001's gives the
+hero status effects 40, 65, 66, 67), Battle_Start_Base once the get-set camera holds (battle_0001's
+Battle_Tuto_051: the combat tutorial in the field's tutorial menu - the reference's 286-296 s),
+Battle_Victory_Base when won. battle_2006's Battle_Start_Base calls a Battle_Start it lacks (the
+game's call fails the same way). 470 of the 471 boot / start / victory calls end
+(`cr3tool battlescripts <release>`).
+
+The rules (battle/cr3rules.hpp): a character's numbers from char_para (+0x48 HP, +0x4c MP, +0x50
+attack | defence, +0x54 speed | luck as s16 pairs, +0x58.. their growth: base + (level - 1) x
+growth / 100), a monster's from mon_para (+0x1c HP .. +0x28 speed | luck, +0x2c.. growth) at the
+reservation's level. A command (command_para Command, 64-bit layout `iiiiiiffiii` + `_ip` x 7 +
+15 ints + `_pi`): +0x14 power, +0x18 multiplier, +0x21 hits (below 0 the unit's own), +0xa8 spread
+(a percentage either way), +0xc0 its formula row (CommandFomula: action, damage, chain - BtlCalculator's
+table: 1 physical, 2 magic, 3 / 4 their chain bonuses, ...); its direction (direction.mbe
+CommandDirection: +4 the kind, +8 the motion - an AnimCommon type: 10 bi01, 15 bs01). The hero's
+attack is 501 (power 360, magic), Gunner's 1102 (power 10, 4 hits), Axer's 1010 / 1615. A monster
+picks among its mode-0 MonsterCommand row's eight (command, ratio, count) by ratio. Damage
+(calculateBasicDamage), a hit's: clamp(attack / defence, 0.2, 5) x power x 0.5, then "Status" (x
+1.5 with the gauge's advantage), "Element" (rate + corrections), "Resistance" ((r + 100) / 100),
+"Level" (gene level / 20 + 1: a monster's its level), "Command" (+0x18), "Status Effect", then the
+spread. CR3-U has the base, the level, the command multiplier and the spread; not yet skills,
+status effects, elements, equipment, criticals, misses or the gauge - its first hit is 423 where
+the reference's is 352. A turn: the party's choices, then the monsters' (each side's list in
+order - BtlCommandManager - the side ahead on the gauge first; the party here).
+
+The interface (BtlInterfaceSystem, CRXParts at 100 pixels a unit): the party's status (btStMenu at
+btStPosition's call_btStMenu_fit1: a btStPanel each - the portrait btStChara_id00 with
+bt_chaIcon_j<char>, the HP / MP bars btStHp_per / btStMp_per posed at percent / 30 s, the numbers
+SpriteNumId - set 1 of SpriteNumberParamPackTable: com_num_01's digits, v from the sheet's foot -,
+HP reddened under 20%); the break gauge (btBrkMenu at call_btBrkMenu_fit7: btBrkWinPanel looping,
+btBrkGauge at ((v + 1000) / 20) / 30 s, btBrkName_fr00's frame 0 Player, 1 Enemy, 2 Even, 3 a full
+break); the commands (comBtnMenu, InterfaceMain interface 0x2c - comBtnPosition's
+call_comBtnMenu_fit6, comBtnMenu_io as it opens; EntryCommandSelect's four buttons 6 Attack, 7
+Gene, 8 Item, 9 Guard on panels 004..007, each comBtnPanel with comBtnBg_fr00 (its slot), and
+comBtnIcon_fr00 / comBtnText_fr00 at the button's frame - the labels images, images_eng's in
+English); the targets (btTgtMenu, btTgtMenu_in, a btTgtPanel each: the name at typeM_C01, the bar
+btTgtBar_per, the icon bt_targIcon_<model><variant> masked by bt_targIcon_<model>_a); the damage
+(DamageInfo: btNumMenu with btNumMenu_in over 0.53 s, the layout btNum_num0N for N digits, a
+btNum_fr00 frame each - digit + 10 x the set).
+
+The cameras of an action (BtlCameraSystem::PlayPlayerMelee: the target's size's attack_PC riding
+(target x, 0, 0) unturned, turned 0.2 of the way toward its actor target; PlayEnemyMelee: the
+attacker's size's attack_<size> at the target's front (x, 0, Battle +0 / 10), 0.4 of the way).
+
+`cr3view --battle <coupling> [--battle-field <n>]` (44 unless given) plays one: Up / Down, Return
+(or a click on a button), Backspace back from the targets; `--input attack,t0,guard,...` chooses
+for captures. `cr3tool cr3battle <release> <coupling> <field> [party]` prints its set-up and
+simulates it. Not in yet: Gene and Item (greyed), the get-set menu, the gauge's play, escape, the
+result screen (EXP, drops), a lost battle's game over, the approach / return of melee attacks,
+effects (eff### figures), voices.
 
 ## Parameter tables (`data\*.mbe`, EXPA)
 

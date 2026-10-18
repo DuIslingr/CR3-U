@@ -138,4 +138,70 @@ void GlassFragments::advanceTo(float t) {
     }
 }
 
+
+void Cr3Glass::build(int halfW, int halfH, Rand48& rng) {
+    w = halfW, h = halfH;
+    const float fw = float(w), fh = float(h);
+    // (GlassFragmentEffect: the corners, then the points - on [0, w] x [0, h], y down)
+    std::vector<float> xs{0, fw, 0, fw}, ys{0, 0, fh, fh};
+    for (int k = 0; k < kPoints; ++k) {
+        xs.push_back(fw * rng.unit());
+        ys.push_back(fh * rng.unit());
+    }
+    const std::vector<int> tri = delaunay(xs, ys);
+    shards.clear();
+    for (size_t t = 0; t + 2 < tri.size(); t += 3) {
+        GlassShard s{};
+        float cx = 0, cy = 0;
+        for (int c = 0; c < 3; ++c) cx += xs[size_t(tri[t + c])], cy += ys[size_t(tri[t + c])];
+        cx = cx / 3 - fw * 0.5f, cy = cy / 3 - fh * 0.5f; // (from the middle: param +0x3c, +0x40 = 0.5)
+        const float d = std::sqrt(cx * cx + cy * cy), inv = d > 0 ? 1.0f / d : 0.0f;
+        const float speed = 8.7f + d * 0.06f, gain = 1.1f + d * 0.4f;
+        s.move[0] = cx * inv * speed, s.move[1] = -(cy * inv * speed), s.move[2] = 0;
+        s.moveGain[0] = cx * inv * gain, s.moveGain[1] = -(cy * inv * gain), s.moveGain[2] = 0;
+        const float turn = 0.18f + d * 0.0003f;
+        for (int c = 0; c < 3; ++c) s.turn[c] = turn * rng.unit();
+        const float grow = 1.0f + rng.unit() * 0.004f;
+        s.scale[0] = s.scale[1] = grow, s.scale[2] = 1;
+        s.scaleGain[0] = s.scaleGain[1] = 0.08f, s.scaleGain[2] = 0;
+        // (Setup: the screen's place, centred, y up; the texture's by it)
+        for (int c = 0; c < 3; ++c) {
+            const size_t i = size_t(tri[t + c]);
+            s.x[c] = xs[i] * 2 - fw, s.y[c] = fh - ys[i] * 2, s.z[c] = 0;
+            s.u[c] = (fw + s.x[c]) / (fw * 2), s.v[c] = (fh + s.y[c]) / (fh * 2);
+        }
+        shards.push_back(s);
+    }
+    clock = 0;
+    built = true;
+}
+
+void Cr3Glass::step(float dt) {
+    // (Update: about its middle - translate(c + move) x scale x turn x translate(-c) - then the
+    // move, turn and growth gain theirs x the frame's time)
+    for (GlassShard& s : shards) {
+        float c[3] = {0, 0, 0};
+        for (int k = 0; k < 3; ++k) c[0] += s.x[k], c[1] += s.y[k], c[2] += s.z[k];
+        for (float& v : c) v /= 3;
+        const float sx = std::sin(s.turn[0]), cx = std::cos(s.turn[0]);
+        const float sy = std::sin(s.turn[1]), cy = std::cos(s.turn[1]);
+        const float sz = std::sin(s.turn[2]), cz = std::cos(s.turn[2]);
+        const float r[3][3] = {{cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz},
+                               {cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz},
+                               {-sy, sx * cy, cx * cy}};
+        for (int k = 0; k < 3; ++k) {
+            const float p[3] = {s.x[k] - c[0], s.y[k] - c[1], s.z[k] - c[2]};
+            float q[3];
+            for (int i = 0; i < 3; ++i) q[i] = (r[i][0] * p[0] + r[i][1] * p[1] + r[i][2] * p[2]) * s.scale[i] + c[i] + s.move[i];
+            s.x[k] = q[0], s.y[k] = q[1], s.z[k] = q[2];
+        }
+        for (int i = 0; i < 3; ++i) s.move[i] += s.moveGain[i] * dt, s.scale[i] += s.scaleGain[i] * dt;
+    }
+    clock += dt;
+}
+
+void Cr3Glass::advanceTo(float t) {
+    while (built && clock <= kLength && clock + kFrame * 0.5f <= t) step(kFrame);
+}
+
 } // namespace cr3

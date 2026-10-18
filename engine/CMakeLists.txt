@@ -53,6 +53,7 @@ add_library(cr3core STATIC
     src/battle/battledata.cpp
     src/battle/rules.cpp
     src/battle/cr3battle.cpp
+    src/battle/cr3rules.cpp
     src/battle/motion.cpp
     src/battle/camera.cpp
     src/battle/script.cpp

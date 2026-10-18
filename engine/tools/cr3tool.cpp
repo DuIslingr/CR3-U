@@ -63,6 +63,7 @@
 #include "assets/release.hpp"
 #include "battle/script.hpp"
 #include "battle/cr3battle.hpp"
+#include "battle/cr3rules.hpp"
 #include "field/character.hpp"
 #include "field/fieldmap.hpp"
 #include "event/runtime.hpp"
@@ -530,6 +531,29 @@ int playEvent(const cr3::MvglArchive& a, const std::string& event, bool quiet, s
         std::printf("stubs:%s\n", stubs.c_str());
     }
     return ok && !rt.running() ? 0 : 1;
+}
+
+// CR3's battle scripts (script\battle_NNNN.nut, BtlScriptSystem): each one's Battle_Boot_Base,
+// Battle_Start_Base and Battle_Victory_Base played to their ends (pages turning by themselves)
+int battleScripts(const char* path) {
+    cr3::MvglArchive a;
+    if (!openArchive(a, path)) return 1;
+    std::map<std::string, int> stubs;
+    int n = 0, ended = 0;
+    for (const auto& e : a.entries()) {
+        const std::string& f = e.name;
+        if (f.compare(0, 14, "script\\battle_") != 0 || f.size() < 18 || f.compare(f.size() - 4, 4, ".nut") != 0) continue;
+        const std::string script = f.substr(7, f.size() - 11);
+        for (const char* fn : {"Battle_Boot_Base", "Battle_Start_Base", "Battle_Victory_Base"}) {
+            std::string outcome;
+            ++n;
+            const bool ok = playEvent(a, script + ":" + fn, true, &outcome, &stubs) == 0;
+            ended += ok;
+            if (!ok) std::printf("%s:%s: %s\n", script.c_str(), fn, outcome.c_str());
+        }
+    }
+    std::printf("%d battle script calls: %d ended\n", n, ended);
+    return ended == n ? 0 : 1;
 }
 
 int play(const char* path, const char* event) {
@@ -1118,6 +1142,27 @@ int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg)
                     u.player ? "party  " : "monster", u.name.c_str(), u.figure.c_str(), u.head.empty() ? "" : " + ", u.head.c_str(),
                     u.variant.empty() ? "-" : u.variant.c_str(), u.width, u.depth, u.scale, u.cameraSize, u.home[0], u.home[1], u.home[2],
                     u.yaw * 57.29578f, a.contains(u.figure + ".geom") ? "" : "  (figure MISSING)");
+    cr3::Cr3BattleRules rules;
+    if (rules.setup(t, b, 3, 1, &err)) {
+        for (const cr3::Cr3Fighter& f : rules.fighters) {
+            cr3::Cr3Command c;
+            rules.command(f.attackCommand, c);
+            std::printf("  fighter %d: HP %d MP %d atk %d def %d spd %d luck %d level %d; attack %d (power %d x%d, formula %d, spread %d, motion %d, direction %d)\n",
+                        f.id, f.maxHp, f.maxMp, f.attack, f.defence, f.speed, f.luck, f.level, f.attackCommand, c.power, c.hits, c.formula, c.spread,
+                        c.motion, c.direction);
+        }
+        for (int turn = 1; turn <= 8 && rules.outcome() == 0; ++turn) {
+            std::vector<std::array<int, 3>> choices;
+            for (size_t k = 0; k < rules.fighters.size(); ++k)
+                if (rules.fighters[k].player && !rules.fighters[k].dead()) choices.push_back({int(k), rules.fighters[k].attackCommand, -1});
+            for (const cr3::Cr3Action& x : rules.turn(choices)) {
+                int sum = 0;
+                for (int h : x.hits) sum += h;
+                std::printf("    turn %d: %d -> %d command %d: %zu hits, %d (HP %d%s)\n", turn, x.source, x.target, x.command, x.hits.size(), sum, x.hpAfter, x.killed ? ", down" : "");
+            }
+        }
+        std::printf("  outcome %d\n", rules.outcome());
+    }
     cr3::Cr3BattleCamera cam;
     const bool camLoaded = cam.load(a, "Cam_bt");
     std::printf("camera size %d, get-set end %.3f s; Cam_bt %s (%.2f s)\n", b.cameraSize, b.getSetEnd, camLoaded ? "loaded" : "MISSING", cam.duration());
@@ -1415,6 +1460,7 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "shaders")) return shaders(argv[2]);
     if (!std::strcmp(argv[1], "event") && argc > 3) return traceEvent(argv[2], argv[3], argc > 4 ? argv[4] : nullptr, 20 * 60 * 30);
     if (!std::strcmp(argv[1], "play") && argc > 3) return play(argv[2], argv[3]);
+    if (!std::strcmp(argv[1], "battlescripts")) return battleScripts(argv[2]);
     if (!std::strcmp(argv[1], "exits") && argc > 3) return exits(argv[2], argv[3]);
     if (!std::strcmp(argv[1], "fieldscript") && argc > 3) return fieldScripts(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "walk") && argc > 3) return walk(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);

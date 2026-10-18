@@ -12,7 +12,7 @@ namespace {
 constexpr const char* kModel = "iippffiffii";      // id, -, name, sub, width, depth, camera size, scale, -, -, flags (bit 0: parts)
 constexpr const char* kCamera = "ifpppppppppp";    // size, the get-set's end, ten camera names
 constexpr const char* kMonster = "iip";            // id, model, texture variation
-constexpr const char* kCoupling = "i_ip_ip_ip";    // id, then three slots: (count, the ids)
+constexpr const char* kCoupling = "i_ip_ip_ipiiii"; // id, three slots (count, the ids), the dead direction, -, -, flags
 constexpr const char* kField = "ipffff";           // id, figure, ...
 constexpr const char* kBattle = "ff";              // the party's line (x 1/10), the monsters'
 constexpr const char* kChar = "ii";                // id, model
@@ -32,7 +32,8 @@ bool readTable(const MvglArchive& a, const char* file, MbeFile& out, std::string
 bool Cr3BattleTables::load(const MvglArchive& a, std::string* error) {
     return readTable(a, "model.mbe", model, error) && readTable(a, "mon_para.mbe", monster, error) &&
            readTable(a, "mon_cop.mbe", coupling, error) && readTable(a, "battle_field.mbe", field, error) &&
-           readTable(a, "battle.mbe", battle, error) && readTable(a, "char_para.mbe", character, error);
+           readTable(a, "battle.mbe", battle, error) && readTable(a, "char_para.mbe", character, error) &&
+           readTable(a, "command_para.mbe", command, error) && readTable(a, "direction.mbe", direction, error);
 }
 
 bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, const std::vector<int>& party, uint32_t seed, std::string* error) {
@@ -71,6 +72,7 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
         if (error) *error = "coupling " + std::to_string(couplingId) + ": not in mon_cop";
         return false;
     }
+    couplingFlags = cp.i(10);
     uint32_t rng = seed ? seed : 1;
     for (size_t s = 0; s < 3; ++s) {
         const int count = cp.i(1 + s * 2);
@@ -111,6 +113,12 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
         return false;
     }
     return true;
+}
+
+std::string Cr3Battle::script() const {
+    char name[32];
+    std::snprintf(name, sizeof name, "battle_%04d", (couplingFlags & 1) ? coupling : 0);
+    return name;
 }
 
 bool Cr3BattleCamera::load(const MvglArchive& a, const std::string& figure) {

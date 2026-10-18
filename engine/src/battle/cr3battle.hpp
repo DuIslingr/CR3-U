@@ -21,7 +21,7 @@ namespace cr3 {
 
 // the battle's tables (data\*.mbe), read once
 struct Cr3BattleTables {
-    MbeFile model, monster, coupling, field, battle, character;
+    MbeFile model, monster, coupling, field, battle, character, command, direction;
     bool load(const MvglArchive& archive, std::string* error = nullptr);
 };
 
@@ -41,6 +41,9 @@ struct Cr3BattleUnit {
 
 struct Cr3Battle {
     int coupling = -1, fieldId = -1;
+    int couplingFlags = 0;             // (mon_cop +0x44: bit 0 - a script of its own)
+    // BtlScriptSystem::Initialize: battle_<coupling> where the coupling has its own, else battle_0000
+    std::string script() const;
     std::string field;                 // battle_field.mbe's figure (d1251b)
     std::array<float, 4> fieldColour{}; // (its +0x10 .. +0x1c)
     std::vector<Cr3BattleUnit> units;   // the party, then the monsters

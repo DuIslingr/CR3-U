@@ -54,6 +54,27 @@ public:
     bool built = false;
 };
 
+// CR3's (Framework::PostEffectGlassFragment / GlassFragmentEffect, GlassFragmentParam pattern 0 -
+// RadialCenter, what the scripts' BattleIn sets): the screen's corners and 230 points at random on
+// its half size, triangulated; each triangle flies from the middle - (8.7 + 0.06 d) pixels a
+// frame, gaining (1.1 + 0.4 d) a second -, turns ((0.18 + 0.0003 d) x random about each axis) and
+// grows (1 + up to 0.004, gaining 0.08 a second), d its distance from the middle; the whole fades
+// out over 0.8 s (Update: alpha 1 - t / 0.8; gone after). Its frames are the game's (60 a second).
+class Cr3Glass {
+public:
+    static constexpr int kPoints = 230;
+    static constexpr float kLength = 0.8f, kFrame = 1.0f / 60.0f;
+    void build(int w, int h, Rand48& rng); // (w, h: half the screen's size)
+    void step(float dt);
+    void advanceTo(float t);
+    float alpha() const { return std::max(1.0f - clock / kLength, 0.0f); }
+    bool running() const { return built && clock <= kLength; }
+    std::vector<GlassShard> shards;
+    float clock = 0;
+    int w = 0, h = 0;
+    bool built = false;
+};
+
 // Delaunay triangles of points (Bowyer-Watson, the points' hull covered): each three indices
 std::vector<int> delaunay(const std::vector<float>& xs, const std::vector<float>& ys);
 
