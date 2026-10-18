@@ -86,6 +86,7 @@ def generic(name):
     return name.startswith(('FUN_', 'thunk_FUN_', 'LAB_', 'entry'))
 
 
+sys.stdout.reconfigure(line_buffering=True)  # (progress shows in a log as it goes)
 A = load(sys.argv[1])  # the named build
 B = load(sys.argv[2])  # the stripped one
 a2b, b2a, how = {}, {}, {}
@@ -264,26 +265,43 @@ def hist(funcs, e):
     return f['hist']
 
 
+def keys(f):
+    """the constants, strings and imports a function uses (once per function)"""
+    if 'keys' not in f:
+        f['keys'] = frozenset(f['consts']) | frozenset(f['strings']) | frozenset(f['ext'])
+    return f['keys']
+
+
+# a key shared by more of the named build's functions than this says little (and makes the
+# candidate lists long): the global round looks candidates up only by the rarer ones
+RARE = 48
+key_count = Counter(k for f in A.values() for k in keys(f))
+
+
 def global_round(thr, margin, min_instr):
-    by_len = defaultdict(list)
+    """Unmatched pairs alike in size that share a rare constant, string or import, scored. (Every
+    pair of alike size was CR2's way; at CR3's 50,000 functions that never ends.)"""
+    index = defaultdict(list)
     for a in A:
         if a not in a2b:
-            by_len[A[a]['ninstr'].bit_length()].append(a)
+            for k in keys(A[a]):
+                if key_count[k] <= RARE:
+                    index[k].append(a)
     proposals = {}
     for b in B:
-        if b in b2a or B[b]['ninstr'] < min_instr:
+        fb = B[b]
+        if b in b2a or fb['ninstr'] < min_instr:
             continue
-        k = B[b]['ninstr'].bit_length()
-        cands = [a for kk in (k - 1, k, k + 1) for a in by_len.get(kk, [])]
-        if cross:  # alike in size and sharing a constant, string or import
-            fb = B[b]
-            kb = set(fb['consts']) | set(fb['strings']) | set(fb['ext'])
-            cands = [a for a in cands if min(A[a]['blocks'], fb['blocks']) / max(A[a]['blocks'], fb['blocks'], 1) >= 0.5
-                     and kb & (set(A[a]['consts']) | set(A[a]['strings']) | set(A[a]['ext']))]
+        k = fb['ninstr'].bit_length()
+        cands = {a for key in keys(fb) for a in index.get(key, ())}
+        cands = [a for a in cands if abs(A[a]['ninstr'].bit_length() - k) <= 1]
+        if cross:  # alike in shape too
+            cands = [a for a in cands if min(A[a]['blocks'], fb['blocks']) / max(A[a]['blocks'], fb['blocks'], 1) >= 0.5]
         else:
             hb = hist(B, b)
-            cands = [a for a in cands if sum((hist(A, a) & hb).values()) / max(A[a]['ninstr'], B[b]['ninstr']) >= 0.6]
-        proposals[b] = {a: s for a in cands if (s := score(a, b)) >= 0.3}
+            cands = [a for a in cands if sum((hist(A, a) & hb).values()) / max(A[a]['ninstr'], fb['ninstr']) >= 0.6]
+        if cands:
+            proposals[b] = {a: s for a in cands if (s := score(a, b)) >= 0.3}
     return pick(proposals, thr, margin)
 
 
@@ -328,6 +346,7 @@ for thr, margin in steps:
             n = global_round(max(thr, 0.7), 0.1, 16)
         if not n:
             n = vote_round()
+        print(f'round {rounds} (threshold {thr}): {n} more, {len(b2a)} matched', file=sys.stderr, flush=True)
         if not n:
             break
 report.append(('callgraph', sum(1 for h in how.values() if h == 'callgraph')))
