@@ -111,8 +111,11 @@ The natives: 600 functions in 32 tables, from the Android library's `Cr3Bind*` f
 0x100000`, `tools/gen_native_api.py` -> `engine/src/script/native_api.inc`). Beside CR2's tables
 (Cr3System 127, EvtScene 50, Cr3GimmickData 59, EvtWindow 26, ...) CR3 has `InterfaceWindow` (106),
 the battle classes (`Battle`, `BattleUnit`, `BattleStatus`, ...) and `LunchEvent`.
-`cr3tool events <release> [script | all]` plays every event from its start through the event
-runtime and counts those that end.
+`cr3tool events <release> [script | all] [seconds]` plays every event from its start through the
+event runtime and counts those that end: of 4,858 events, 4,814 end within 600 s of game time on
+iOS and on the Vita (every native the runtime doesn't answer a stub). The 44 left wait on CR3's own
+natives - online sync results (`Cr3System.GetSyncResult`), the staff roll's "to be continued", name
+input, three-way choices - or stop on a script error.
 
 ## Sound
 
