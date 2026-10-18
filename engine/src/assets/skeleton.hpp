@@ -43,7 +43,9 @@ struct Skeleton {
     };
     std::vector<UserChannel> userChannels;
     // world matrices for a pose (edgeAnimLocalJointsToWorldMatrices3x4): world = parent * local,
-    // with the parent's own scale undone for the child's rotation unless the link's 0x8000 is set
+    // with the parent's own scale undone for the child's rotation where the link's 0x8000 is set
+    // (scale compensation; CR3's ee101aura01 - a 0.183-scaled root over plain children - shows the
+    // children inherit it otherwise)
     std::vector<Mat34> world(const std::vector<JointTransform>& pose, const Mat34& root = Mat34()) const;
 };
 

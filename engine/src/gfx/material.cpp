@@ -148,7 +148,7 @@ void applyMaterial(const GeomMaterial& m, const ShaderFeatures& f, MeshShading& 
     if (sh.shade & SHADE_ALPHA_TEST) {
         sh.alphaRef = 0.5f;
         uint32_t bits = 0;
-        if (m.state(0x78, 0, bits, 1)) std::memcpy(&sh.alphaRef, &bits, 4);
+        if (m.state(0xa0, 0, bits, 1)) std::memcpy(&sh.alphaRef, &bits, 4);
     }
 }
 

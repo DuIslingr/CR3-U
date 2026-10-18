@@ -165,6 +165,7 @@ void EventScene::lightMove(float from, float to) {
 }
 
 void EventScene::update(float dt) {
+    for (EventSprite& sp : sprites) sp.alphaTime += dt;
     for (EventModel& m : models_) {
         if (m.moving) { // (EvtModel::Update: along its locator until the move's end)
             m.sceneTime += dt;
@@ -172,6 +173,7 @@ void EventScene::update(float dt) {
             place(m);
         }
         m.animTime += dt;
+        m.faceTime += dt;
         m.alphaTime += dt;
         if (m.slideUpdates > 0 && m.slideTick < m.slideUpdates) { // (an update's step of a Move)
             const float k = float(++m.slideTick) / float(m.slideUpdates);
@@ -234,6 +236,18 @@ bool EventScene::camera(Mat34& world, float& fovY, float& zn, float& zf, float l
     world = w[size_t(j)];
     if (quake_.on) world.m[3] += quake_.offset[0], world.m[7] += quake_.offset[1], world.m[11] += quake_.offset[2];
     fovY = c.fovY;
+    // CR3: the camera animation drives its field of view - a user channel bound to the camera's
+    // own hash (MVGL::Draw::Camera +0x258: an animated value in degrees over the record's; the
+    // prologue's zooms out 20.9 -> 35.5)
+    if (camera_.animated)
+        for (size_t k = 0; k < camera_.skel.userChannels.size(); ++k)
+            if (camera_.skel.userChannels[k].material == c.hash) {
+                const float frames = float(std::max(camera_.anim.frames() - 1, 1));
+                const float t = std::min(cameraTime_ + lead, std::max(cameraEnd_, cameraTime_));
+                std::vector<float> user;
+                camera_.anim.poseAbsolute(camera_.skel.basePose, std::clamp(t * camera_.anim.sampleRate(), 0.0f, frames), &user);
+                if (k < user.size() && user[k] > 0.5f && user[k] < 179) fovY = user[k];
+            }
     zn = c.near, zf = c.far;
     if (name_ != "d11_06_0102_evt" && name_ != "d12_03_0106a_evt") zn = std::max(zn, 0.05f), zf = std::min(zf * 5, 5000.0f);
     zn = std::max(zn, 0.001f), zf = std::max(zf, zn * 2);

@@ -82,6 +82,60 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
             m->animTime = 0;
         }
     });
+    // CR3's motions: LoadMotion(model, name) stages <figure>_<name> (CrxModel::LoadAnimation);
+    // SetMotion(model, loop) plays it from its start, SetBlendMotion(model, loop, frames) fades into
+    // it from the motion before; the face's (slot 1) the same, kept apart
+    vm.setNative("EvtScene", "LoadMotion", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->stagedMotion = m->figure + "_" + c.string(1);
+    });
+    vm.setNative("EvtScene", "SetMotion", [this](NativeCall& c) {
+        EventModel* m = scene_.model(c.string(0));
+        if (!m || m->stagedMotion.empty()) return;
+        m->animation = m->stagedMotion, m->loop = c.boolean(1, true), m->animTime = 0, m->blendSeconds = 0;
+    });
+    vm.setNative("EvtScene", "SetBlendMotion", [this](NativeCall& c) {
+        EventModel* m = scene_.model(c.string(0));
+        if (!m || m->stagedMotion.empty()) return;
+        m->blendFrom = m->animation.empty() ? m->figure : m->animation;
+        m->blendFromTime = m->animTime;
+        m->blendSeconds = float(std::max(c.integer(2), 0)) * kTick;
+        m->animation = m->stagedMotion, m->loop = c.boolean(1, true), m->animTime = 0;
+    });
+    vm.setNative("EvtScene", "LoadFaceMotion", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->stagedFace = m->figure + "_" + c.string(1);
+    });
+    auto faceMotion = [this](NativeCall& c) {
+        EventModel* m = scene_.model(c.string(0));
+        if (m && !m->stagedFace.empty()) m->faceMotion = m->stagedFace, m->faceLoop = c.boolean(1, true), m->faceTime = 0;
+    };
+    vm.setNative("EvtScene", "SetFaceMotion", faceMotion);
+    vm.setNative("EvtScene", "SetBlendFaceMotion", faceMotion);
+    vm.setNative("EvtScene", "SetModelLayer", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->layer = c.integer(1);
+    });
+    // CR3's full-screen sprites (EventSprite)
+    vm.setNative("EvtScene", "CreateSprite", [this](NativeCall& c) {
+        const int id = c.integer(0);
+        if (!scene_.sprite(id)) scene_.sprites.push_back(EventSprite{id});
+    });
+    vm.setNative("EvtScene", "DeleteSprite", [this](NativeCall& c) {
+        const int id = c.integer(0);
+        scene_.sprites.erase(std::remove_if(scene_.sprites.begin(), scene_.sprites.end(), [id](const EventSprite& sp) { return sp.id == id; }), scene_.sprites.end());
+    });
+    vm.setNative("EvtScene", "SetSpriteLayer", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0))) sp->layer = c.integer(1);
+    });
+    vm.setNative("EvtScene", "SetSpriteColor", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0)))
+            for (int k = 0; k < 3; ++k) sp->colour[k] = c.number(1 + k);
+    });
+    vm.setNative("EvtScene", "SetSpriteAlpha", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0))) sp->alphaFrom = sp->alphaTo = c.number(1), sp->alphaSeconds = 0;
+    });
+    vm.setNative("EvtScene", "SetSpriteAlphaAnimation", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0)))
+            sp->alphaFrom = c.number(1), sp->alphaTo = c.number(2), sp->alphaSeconds = float(std::max(c.integer(3), 0)) * kTick, sp->alphaTime = 0;
+    });
     // PlayEffect / PlayEffectLoop (Cr3EvtScenePlayEffect): shown, its own animation from the start,
     // once or looping
     auto effect = [this](NativeCall& c, bool loop) {

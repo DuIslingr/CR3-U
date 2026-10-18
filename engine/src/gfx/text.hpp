@@ -24,8 +24,9 @@ public:
 
     // a font file (OpenType / TrueType, face 0); false: none could be read
     bool load(const std::string& path, std::string* error = nullptr);
-    // the same from memory (the APK's fonts): `name` stands for its path
-    bool loadMemory(std::vector<uint8_t> bytes, const std::string& name, std::string* error = nullptr);
+    // the same from memory (the APK's fonts): `name` stands for its path; `face` a collection's
+    // (CR3's F0001.bin / TBGB_0KP.TTC: 0 TBGothic-B, 1 TBPGothic-B - proportional)
+    bool loadMemory(std::vector<uint8_t> bytes, const std::string& name, std::string* error = nullptr, int face = 0);
     bool loaded() const;
     // a font for the code points the first lacks (as Android's Paint falls back on the system's:
     // Hangul, simplified Chinese), tried in the order added; false: none could be read

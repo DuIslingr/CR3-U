@@ -83,6 +83,46 @@ frame sets' DMA list, set info, constant R / T / S / user at +0x30 .. +0x44 (the
 (`gWideAnimations`), and 13 of the iOS release's are the 32-bit form (the reader tries the other
 when one fails). Skeletons (ES02) are identical.
 
+## Skeletons: scale compensation
+
+A link's 0x8000 (the parent field's top bit) marks scale compensation - the parent's own scale
+undone for the child's rotation (Maya's segment scale compensate); without it a child inherits its
+parent's scale. CR2-U had it the other way, unseen until CR3's effects: `ee101aura01` hangs its
+globe on children of a 0.183-scaled root, small in the priestess's hands only this way round.
+
+## Render states
+
+The materials' render states (kind 100) follow MVGL's shader-parameter table, which grew: CR3's
+ids start at 0xa0 (CR2's 0x78) - 0xa0 alpha_func, 0xa1 alpha_test_enable, 0xa2 blend_func, 0xa3
+blend_equation, 0xa4 blend_enable, 0xa5 cull_face, 0xa6 cull_face_enable, 0xa7 depth_func, 0xa8
+depth_mask, 0xa9 depth_test_enable, ... 0xb0 stencil_test_enable (the names' table at 0x111f424 in
+`libcrx.so`, 0x5c bytes an entry; the parameters' at 0x111fa40, 0x38 bytes, ColorSampler 0x32 as
+before).
+
+## Event scenes
+
+As CR2's: `<event>.geom` (locators), `<event>_camera`, `<event>_light`. New in CR3:
+- the camera's field of view is animated: a user channel of the camera figure bound to the camera's
+  own hash (MVGL::Draw::Camera +0x258) carries it in degrees (the prologue zooms 20.9 -> 35.5)
+- motions: `EvtScene.LoadMotion(model, name)` loads `<figure>_<name>` (a body / head model's
+  `<figure>b01_` / `h01_`; CrxModel::LoadAnimation), `SetMotion(model, loop)` /
+  `SetBlendMotion(model, loop, frames)` play it; the face's the same in slot 1
+- draw layers (`SetModelLayer`) and full-screen colour sprites between them (`CreateSprite`,
+  `SetSpriteLayer`, `SetSpriteColor`, `SetSpriteAlpha`, `SetSpriteAlphaAnimation`)
+
+## Interface (CR3)
+
+The menus (CRXPartsBase) are laid out in a 960 x 640 space at 100 pixels a unit - ten times CR2's
+units, the same HUD camera. A menu figure is placed at a Position figure's `call_<menu>_fitN`
+joint: N a numpad anchor (1..3 the foot, 7..9 the top, 1 4 7 left, 3 6 9 right) moved by the
+screen's room beyond 9.6 x 6.4 (16:9: +-0.88 across; 4:3: +-0.4 up and down -
+CRXPartsBase::GetFitX/YOffset). Text sizes (SearchTextPosition): `typeM` 30, `typeS` 28, else 64.
+The event windows (EvtSystem::CreateWindows, CR2's order): 1 the vista's `comMsgVMenu` (two
+centred lines) at `comMsgVPosition` - 0.03, its speaker's name in `comMsgVNameMenu`; messages
+`comMsgMenu`, narration `comMsgNMenu`, system `comMsgSMenu`. Speaker tags: 144 (CR2: 21), in
+EvtWindowMessage::GetNameTagNumber's order (`tools/gen_nametags.py`). The font: `F0001.bin` (iOS,
+Android) / `font/TBGB_0KP.TTC` (Vita) - TB Gothic B, the proportional face (1) for English.
+
 ## Parameter tables (`data\*.mbe`, EXPA)
 
 `MbParameterManager::structParam`: `EXPA`, u32 table count; per table a u32 name length, the name

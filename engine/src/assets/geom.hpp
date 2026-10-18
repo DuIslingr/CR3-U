@@ -60,11 +60,12 @@ struct GeomMaterial {
     // DistortionStrength); textures the same (0x32 ColorSampler, 0x35 NormalSampler, 0x43
     // LightSampler, 0x44 OverlayColorSampler, 0x48 CLUTSampler)
     std::map<int, std::vector<float>> params;
-    // render states (kind 100; RenderContext's table): id -> 4 GL values. 0x78 alpha_func (func,
-    // ref as a float), 0x79 alpha_test_enable, 0x7a blend_func (src, dst), 0x7b blend_equation,
-    // 0x7c blend_enable, 0x7d cull_face, 0x7e cull_face_enable, 0x7f depth_func, 0x80 depth_mask,
-    // 0x81 depth_test_enable, ... 0x88; those absent keep the defaults (alpha test and blending
-    // off, back faces culled, depth test and writes on)
+    // render states (kind 100; RenderContext's table - after the shader parameters', which grew
+    // from CR2's: CR2's ids 0x78.., CR3's 0xa0..): id -> 4 GL values. 0xa0 alpha_func (func, ref as
+    // a float), 0xa1 alpha_test_enable, 0xa2 blend_func (src, dst), 0xa3 blend_equation, 0xa4
+    // blend_enable, 0xa5 cull_face, 0xa6 cull_face_enable, 0xa7 depth_func, 0xa8 depth_mask, 0xa9
+    // depth_test_enable, ... 0xb0 stencil_test_enable; those absent keep the defaults (alpha test
+    // and blending off, back faces culled, depth test and writes on)
     std::map<int, std::array<uint32_t, 4>> states;
     bool state(int id, uint32_t fallback, uint32_t& value, int k = 0) const {
         auto it = states.find(id);

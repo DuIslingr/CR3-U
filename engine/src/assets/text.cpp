@@ -11,9 +11,11 @@ uint32_t u32(const std::vector<uint8_t>& d, size_t at) {
     return at + 4 <= d.size() ? uint32_t(d[at]) | uint32_t(d[at + 1]) << 8 | uint32_t(d[at + 2]) << 16 | uint32_t(d[at + 3]) << 24 : 0;
 }
 
-// the speaker tags, in the game's order (EvtWindowMessage::GetNameTagNumber's table)
-const char* const kTags[] = {"d001", "d002", "d003", "d004", "d005", "d006", "d007", "d101", "d102", "d103", "d301",
-                             "d303", "d305", "d307", "d309", "d310", "d312", "d407", "d999", "d510", "d509"};
+// the speaker tags, in the game's order (CR3: EvtWindowMessage::GetNameTagNumber's 144 -
+// tools/gen_nametags.py)
+const char* const kTags[] = {
+#include "assets/nametags.inc"
+};
 
 } // namespace
 

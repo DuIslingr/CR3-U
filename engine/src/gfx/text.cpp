@@ -67,13 +67,13 @@ bool TextRasterizer::load(const std::string& path, std::string* error) {
     return true;
 }
 
-bool TextRasterizer::loadMemory(std::vector<uint8_t> bytes, const std::string& name, std::string* error) {
+bool TextRasterizer::loadMemory(std::vector<uint8_t> bytes, const std::string& name, std::string* error, int face) {
     if (!impl_->lib) {
         if (error) *error = "FreeType could not start";
         return false;
     }
     FT_Face f = nullptr;
-    if (bytes.empty() || FT_New_Memory_Face(impl_->lib, bytes.data(), FT_Long(bytes.size()), 0, &f)) {
+    if (bytes.empty() || FT_New_Memory_Face(impl_->lib, bytes.data(), FT_Long(bytes.size()), FT_Long(face), &f)) {
         if (error) *error = name + ": not a font FreeType reads";
         return false;
     }

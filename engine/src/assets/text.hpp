@@ -2,9 +2,9 @@
 // The game's text (`message\*.dat`: EvtTextData, EvtWindowMessage::ReadPage; docs/FORMATS.md,
 // tools/msg.py): numbered messages (from 1), each in the release's languages - CR3's two (0
 // Japanese, 1 English; CR2's had 8: the record's size tells), UTF-8 with backslash commands for the window - pages, lines, centring,
-// colours, the speaker's tag, waits. A message's speaker tag (`\d001`) names one of the 21
-// characters whose names are `message\name_tag.dat`'s (EvtWindowMessage::GetNameTagNumber: the
-// tag's place in the table, + 1).
+// colours, the speaker's tag, waits. A message's speaker tag (`\d001`) names one of the 144
+// (CR3; CR2 had 21) whose names are `message\name_tag.dat`'s (EvtWindowMessage::GetNameTagNumber:
+// the tag's place in the table, + 1).
 
 #include <cstdint>
 #include <string>
@@ -40,7 +40,7 @@ struct TextPage {
 };
 struct ParsedMessage {
     std::vector<TextPage> pages;
-    int speaker = -1; // the tag's index (0..20) in the game's table; -1 none
+    int speaker = -1; // the tag's index (0..143) in the game's table; -1 none
 };
 
 // a message's pages (\f ends one, \n a line, \* the message), its speaker

@@ -18,6 +18,19 @@
 
 namespace cr3 {
 
+// CR3's full-screen sprites (EvtScene.CreateSprite(id), SetSpriteLayer, SetSpriteColor (0..1),
+// SetSpriteAlpha, SetSpriteAlphaAnimation(id, from, to, frames)): a colour over the screen on a
+// draw layer
+struct EventSprite {
+    int id = 0, layer = 0;
+    float colour[3] = {0, 0, 0};
+    float alphaFrom = 1, alphaTo = 1, alphaSeconds = 0, alphaTime = 0;
+    float alpha(float lead = 0) const {
+        const float t = alphaTime + lead;
+        return alphaSeconds <= 0 || t >= alphaSeconds ? alphaTo : alphaFrom + (alphaTo - alphaFrom) * t / alphaSeconds;
+    }
+};
+
 struct EventModel {
     std::string name;     // the locator's ("v206_00")
     std::string figure;   // the figure it shows ("v206": the name up to its "_NN")
@@ -58,6 +71,14 @@ struct EventModel {
     // ChangeModelColor(model, n) (Cr3UtilMakeChangeTextureName: m<its number><a .. d>01 and its
     // normal map "n", on every material); -1 its own
     int color = -1;
+    // CR3: LoadMotion(model, name) stages <figure>_<name> (CrxModel::LoadAnimation, slot 0; a
+    // body / head model's <figure>b01_ / h01_), SetMotion / SetBlendMotion start it; the face's
+    // (LoadFaceMotion: slot 1) kept for its renderer
+    std::string stagedMotion, stagedFace, faceMotion;
+    bool faceLoop = true;
+    float faceTime = 0;
+    // CR3: EvtScene.SetModelLayer - its draw layer (layers draw in turn, the sprites between them)
+    int layer = 0;
     bool hasShadow() const { return !figure.empty() && (figure[0] == 'c' || figure[0] == 'v'); }
 };
 
@@ -68,6 +89,12 @@ public:
     bool loaded() const { return loaded_; }
 
     std::vector<EventModel>& models() { return models_; }
+    std::vector<EventSprite> sprites; // (CR3's: EvtScene.CreateSprite ...)
+    EventSprite* sprite(int id) {
+        for (EventSprite& sp : sprites)
+            if (sp.id == id) return &sp;
+        return nullptr;
+    }
     EventModel* model(const std::string& name); // (case-insensitive, as the game's names vary)
 
     // the script's controls (times in the scene's frames)

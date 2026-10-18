@@ -1762,8 +1762,8 @@ struct Viewer {
         for (const ViewMesh& m : f.meshes) order.push_back(&m);
         std::stable_sort(order.begin(), order.end(), [](const ViewMesh* a, const ViewMesh* b) {
             uint32_t ba = 0, bb = 0;
-            a->material.state(0x7c, 0, ba);
-            b->material.state(0x7c, 0, bb);
+            a->material.state(0xa4, 0, ba);
+            b->material.state(0xa4, 0, bb);
             return ba < bb;
         });
         const char* only = SDL_getenv("CR3_MESHES"); // (debugging: "1,3" draws meshes 1 and 3 only)
@@ -1776,23 +1776,23 @@ struct Viewer {
             cr3::DrawState st;
             cr3::MeshShading sh;
             uint32_t v = 0, v2 = 0;
-            if (m.material.state(0x79, 0, v) && v) { // alpha test: GREATER (the game's only func) than ref
+            if (m.material.state(0xa1, 0, v) && v) { // alpha test: GREATER (the game's only func) than ref
                 uint32_t bits = 0;
-                m.material.state(0x78, 0, bits, 1);
+                m.material.state(0xa0, 0, bits, 1);
                 std::memcpy(&sh.alphaRef, &bits, 4);
             }
-            m.material.state(0x7c, 0, v);
+            m.material.state(0xa4, 0, v);
             st.blend = v != 0;
-            m.material.state(0x7a, kGlSrcAlpha, v, 0);
-            m.material.state(0x7a, kGlOneMinusSrcAlpha, v2, 1);
+            m.material.state(0xa2, kGlSrcAlpha, v, 0);
+            m.material.state(0xa2, kGlOneMinusSrcAlpha, v2, 1);
             st.blendSrc = cr3::blendCode(v, false);
             st.blendDst = cr3::blendCode(v2, true);
-            m.material.state(0x7e, 1, v);
-            m.material.state(0x7d, kGlBack, v2);
+            m.material.state(0xa6, 1, v);
+            m.material.state(0xa5, kGlBack, v2);
             st.cull = v && !SDL_getenv("CR3_NO_CULL") ? (v2 == kGlFront ? 1 : 2) : 0;
-            m.material.state(0x80, 1, v);
+            m.material.state(0xa8, 1, v);
             st.depthWrite = v != 0;
-            m.material.state(0x81, 1, v);
+            m.material.state(0xa9, 1, v);
             st.depthTest = v != 0;
             // each texture with its own sampler (the material's texture entries)
             st.sampling = cr3::sampling(m.material.sampler(0x32));
@@ -5289,7 +5289,9 @@ struct Viewer {
         vistaMapTime = 0;
         event = std::make_unique<cr3::EventRuntime>(archive, game);
         event->autoPage = pageSeconds, event->askYesNo = true;
-        if (!event->start(function)) {
+        // CR3: an area script's event, "<script>:<function>" (t01:s000_t01_00101_evt)
+        const size_t colon = function.find(':');
+        if (colon != std::string::npos ? !event->start(function.substr(0, colon), function.substr(colon + 1)) : !event->start(function)) {
             SDL_Log("event %s: %s", function.c_str(), event->error().c_str());
             return false;
         }
@@ -5426,12 +5428,29 @@ struct Viewer {
             l.time = time;
             dev->setLighting(l);
             drawFigure(vistaMap, vp.data());
+            // the scene's models by their draw layer (CR3's EvtScene.SetModelLayer), each layer's
+            // full-screen sprites over it (EvtScene.CreateSprite ...: a colour, its alpha)
             const std::vector<cr3::EventModel>& models = event->scene().models();
-            for (size_t i = 0; i < models.size() && i < eventFigures.size(); ++i)
-                if (models[i].visible) {
-                    if (models[i].hasShadow() && models[i].shadow) drawShadow(eventFigures[i].place, vp.data());
-                    drawFigure(eventFigures[i], vp.data());
-                }
+            const std::vector<cr3::EventSprite>& sprites = event->scene().sprites;
+            int top = 0;
+            for (const cr3::EventModel& m : models) top = std::max(top, m.layer);
+            for (const cr3::EventSprite& sp : sprites) top = std::max(top, sp.layer);
+            for (int layer = 0; layer <= top; ++layer) {
+                for (size_t i = 0; i < models.size() && i < eventFigures.size(); ++i)
+                    if (models[i].visible && models[i].layer == layer) {
+                        if (models[i].hasShadow() && models[i].shadow) drawShadow(eventFigures[i].place, vp.data());
+                        drawFigure(eventFigures[i], vp.data());
+                    }
+                for (const cr3::EventSprite& sp : sprites)
+                    if (sp.layer == layer && white.id) {
+                        const float a = sp.alpha(eventLead());
+                        if (a <= 0) continue;
+                        static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+                        const Mat4 id = cr3::mat4Identity();
+                        const float rgba[4] = {sp.colour[0], sp.colour[1], sp.colour[2], std::min(a, 1.0f)};
+                        dev->drawQuad(white, kScreen, id.data(), rgba);
+                    }
+            }
         }
     }
 
@@ -5464,8 +5483,19 @@ struct Viewer {
         bool centredSlots = false;      // (no name tag: a centred page's lines in the slots after linesPerPage)
         float frame = 0;                // (where its animation was posed: its joints' places)
         bool outBackwards = false;      // (no out animator: the in one played back)
+        // CR3: placed by a Position figure (PartsBase::SetParameterDataBase "comMsgVPosition" ...):
+        // the window at its joint call_<window>... (SearchOffsetJointPositionAnyString), the
+        // Position figure itself SetPosition'd (0, positionY)
+        ViewFigure positionFig;
+        std::vector<std::string> positionJoints;
+        std::string positionCall;
+        float positionY = 0;
+        bool speakerOnly = false; // (CR3's name window: the speaker's name alone, shown while one speaks)
+        // CR3's interface space is ten times CR2's: 960 x 640 at 100 pixels a unit (CRXPartsBase::
+        // GetFitXOffset's (width - 960) / 2 / 100), its HUD camera the same - the units scale
+        float uiUnit = 1;
     };
-    WindowLayout vistaWindow, narrationWindow, conversationWindow;
+    WindowLayout vistaWindow, vistaName, narrationWindow, conversationWindow;
     // the tutorials' windows (HelpWindowMenu - SetHelpWindowParameter 0, interface 0x1a: annoWin,
     // the tutorial's - EvtTutoWindow, window 4 -; 1, 0xe: helpWin - EvtAnnounceBWindow, window 3):
     // white text, three lines a page at typeM_L01..L03, centred ones at typeM_C11..C13, their in /
@@ -5491,6 +5521,10 @@ struct Viewer {
     std::vector<TextQuad> textQuads;
     std::string shownText; // (what textQuads were made for)
     int shownPx = 0;
+    // (CR3's name window's own: drawn in the same frame as the vista window's text)
+    std::vector<TextQuad> nameQuads;
+    std::string nameText;
+    int namePx = 0;
 
     void loadWindow(WindowLayout& w, const char* figure) {
         std::string err;
@@ -5501,10 +5535,35 @@ struct Viewer {
             if (j.compare(0, 17, "call_sendCsr_loop") == 0 || j.compare(0, 16, "call_msgCsr_loop") == 0) w.cursorJoint = j;
     }
 
-    void loadMessageWindow(const std::string& fontPath, std::vector<uint8_t> fontBytes = {}, const std::string& fontName = {}) {
-        loadWindow(vistaWindow, "vstwin");
-        vistaWindow.stretch = vistaWindow.nameTag = true;
-        vistaWindow.slots = {"01", "11", "12", "21", "22"};
+    // a window's Position figure (CR3) and the joint it places the window at
+    void loadPosition(WindowLayout& w, const char* figure, const char* call, float y) {
+        std::string err;
+        if (!loadFigure(std::string(figure) + ".geom", w.positionFig, &err)) {
+            SDL_Log("window position %s: %s", figure, err.c_str());
+            return;
+        }
+        std::vector<uint8_t> d;
+        if (archive.read(std::string(figure) + ".name", d)) w.positionJoints = cr3::parseJointNames(d);
+        w.positionCall = call, w.positionY = y;
+    }
+
+    void loadMessageWindow(const std::string& fontPath, std::vector<uint8_t> fontBytes = {}, const std::string& fontName = {}, int fontFace = 0) {
+        if (archive.contains("comMsgVMenu.geom")) {
+            // CR3's vista window (EvtVistaWindow: VistaWindowMenu) - comMsgVMenu, two centred lines
+            // at typeM_C01 / C02, placed by comMsgVPosition; the speaker's name in comMsgVNameMenu
+            // (typeM_L01) by comMsgVNamePosition, shown while someone speaks
+            loadWindow(vistaWindow, "commsgvmenu");
+            vistaWindow.slots = {"01", "02"};
+            vistaWindow.uiUnit = vistaName.uiUnit = 10; // (its panel spans 12 units: wider than 16:9's, not stretched)
+            loadPosition(vistaWindow, "commsgvposition", "call_comMsgVMenu", -0.03f);
+            loadWindow(vistaName, "commsgvnamemenu");
+            vistaName.slots = {"01"}, vistaName.speakerOnly = true;
+            loadPosition(vistaName, "commsgvnameposition", "call_comMsgVNameMenu", -0.03f);
+        } else {
+            loadWindow(vistaWindow, "vstwin");
+            vistaWindow.stretch = vistaWindow.nameTag = true;
+            vistaWindow.slots = {"01", "11", "12", "21", "22"};
+        }
         // the cut-ins' message window (ConversationWindowMenu: msgWin, msgWin_in / msgWin_out; its
         // slots 01 the name, 02..04 a page's three lines - EvtCutinWindow::GetLinePerPage - and
         // 05..07 centred ones)
@@ -5541,7 +5600,7 @@ struct Viewer {
         if (!loadFigure("sendcsr_loop.geom", pageCursor, &err)) SDL_Log("page cursor: %s", err.c_str());
         if (!loadFigure("msgcsr_loop.geom", conversationCursor, &err)) SDL_Log("page cursor: %s", err.c_str());
         if (!fontPath.empty() && !font.load(fontPath, &err)) SDL_Log("font: %s", err.c_str());
-        else if (fontPath.empty() && !fontBytes.empty() && !font.loadMemory(std::move(fontBytes), fontName, &err)) SDL_Log("font: %s", err.c_str());
+        else if (fontPath.empty() && !fontBytes.empty() && !font.loadMemory(std::move(fontBytes), fontName, &err, fontFace)) SDL_Log("font: %s", err.c_str());
         // (the code points the game's font lacks - Hangul, simplified Chinese - from the system's, as
         // Android's: CR3_FONT_FALLBACK, else a Noto CJK where the distributions put it, else Windows'
         // or macOS's own - one for each script there)
@@ -5571,13 +5630,27 @@ struct Viewer {
 
     // the interface's projection over a w x h screen: UI units to clip space (z: the camera's
     // near / far, 2.56 either way)
-    static Mat4 uiProjection(int w, int h) {
-        const float k = std::min(float(w) / 0.96f, float(h) / 0.64f); // pixels a unit
+    static Mat4 uiProjection(int w, int h, float unit = 1) {
+        const float k = std::min(float(w) / (0.96f * unit), float(h) / (0.64f * unit)); // pixels a unit
         Mat4 m = cr3::mat4Identity();
         m[0] = k / (float(w) * 0.5f);
         m[5] = k / (float(h) * 0.5f);
-        m[10] = -1.0f / 2.56f;
+        m[10] = -1.0f / (2.56f * unit);
         return m;
+    }
+    // CR3's fit (a placement joint's _fitN, CRXPartsBase::SearchOffsetJointPositionAnyString): a
+    // numpad anchor - 1..3 the foot, 7..9 the top, 1 4 7 left, 3 6 9 right - moved by the screen's
+    // room beyond 9.6 x 6.4 (GetFitX/YOffset's tables: 16:9 +-0.88 across, 4:3 +-0.4 up and down)
+    static void fitOffset(const std::string& joint, int w, int h, float unit, float& dx, float& dy) {
+        dx = dy = 0;
+        const size_t at = joint.rfind("_fit");
+        if (at == std::string::npos || at + 4 >= joint.size() || !std::isdigit(static_cast<unsigned char>(joint[at + 4]))) return;
+        const int n = joint[at + 4] - '0';
+        if (n < 1 || n > 9) return;
+        const float k = std::min(float(w) / (0.96f * unit), float(h) / (0.64f * unit));
+        const float roomX = (float(w) / k - 0.96f * unit) / 2, roomY = (float(h) / k - 0.64f * unit) / 2;
+        dx = float((n - 1) % 3 - 1) * roomX;
+        dy = float((n - 1) / 3 - 1) * roomY;
     }
 
     // a joint of a window's figure, posed, in UI units
@@ -5609,9 +5682,27 @@ struct Viewer {
         wl.fig.place = cr3::Mat34();
         if (wl.stretch && aspect >= 1.5f) wl.fig.place.m[0] = aspect / 1.5f;
         else if (wl.lowerBelow3x2) wl.fig.place.m[7] = -0.0403125f;
+        if (!wl.positionCall.empty() && wl.positionFig.skinned) { // (CR3: at its Position figure's joint, fitted)
+            const std::vector<cr3::Mat34> pw = wl.positionFig.skeleton.world(wl.positionFig.skeleton.basePose);
+            for (size_t j = 0; j < wl.positionJoints.size() && j < pw.size(); ++j)
+                if (wl.positionJoints[j].compare(0, wl.positionCall.size(), wl.positionCall) == 0) {
+                    float fx, fy;
+                    fitOffset(wl.positionJoints[j], w, h, wl.uiUnit, fx, fy);
+                    wl.fig.place.m[3] += pw[j].m[3] + fx, wl.fig.place.m[7] += pw[j].m[7] + wl.positionY + fy;
+                    break;
+                }
+        }
         const bool closing = wl.window >= 0 && ev->windowClosing(wl.window);
         if (closing) showsMessage = false;
-        const std::string speaker = showsMessage && wl.nameTag ? ev->speakerName() : std::string();
+        if (wl.speakerOnly && (ev->speakerName().empty() || !showsMessage)) return; // (CR3's name window: only while someone speaks)
+        struct Swap { // (its own text cache while it draws)
+            Viewer* v;
+            bool on;
+            void swap() { std::swap(v->textQuads, v->nameQuads), std::swap(v->shownText, v->nameText), std::swap(v->shownPx, v->namePx); }
+            Swap(Viewer* v_, bool on_) : v(v_), on(on_) { if (on) swap(); }
+            ~Swap() { if (on) swap(); }
+        } own(this, wl.speakerOnly);
+        const std::string speaker = showsMessage && (wl.nameTag || wl.speakerOnly) ? ev->speakerName() : std::string();
         float at = 0; // (where in its animation)
         if (!wl.inAnim.empty()) { // (opening, then closing)
             const std::string want = closing && !wl.outBackwards ? wl.outAnim : wl.inAnim;
@@ -5634,16 +5725,18 @@ struct Viewer {
         }
         pose(wl.fig, at, false);
         wl.frame = wl.fig.animLoaded ? std::min(at * wl.fig.anim.sampleRate(), float(std::max(wl.fig.anim.frames() - 1, 1))) : 0;
-        const Mat4 proj = uiProjection(w, h);
+        const Mat4 proj = uiProjection(w, h, wl.uiUnit);
         Mat4 camera = cr3::mat4Identity();
-        camera[14] = -0.881f; // (CAM_hud2D's z)
+        camera[14] = -0.881f * wl.uiUnit; // (CAM_hud2D's z)
         const Mat4 view = cr3::mat4Multiply(proj, camera);
         cr3::SceneLighting l;
         dev->setLighting(l);
         if (!wl.fig.meshes.empty()) drawFigure(wl.fig, view.data());
         if (!showsMessage) return;
-        // the page's text: made again when it changes (or the screen's scale does)
-        const float k = std::min(float(w) / 0.96f, float(h) / 0.64f);
+        // the page's text: made again when it changes (or the screen's scale does); sizes in pixels
+        // of the interface's 960 x 640 (CR2's 1000 a unit, CR3's 100)
+        const float k = std::min(float(w) / (0.96f * wl.uiUnit), float(h) / (0.64f * wl.uiUnit));
+        const float pxUnit = 1000.0f / wl.uiUnit;
         const int px = int(k + 0.5f);
         std::string key = std::to_string(ev->messageWindow()) + "\n" + speaker + "\n" + std::to_string(ev->page()) + "\n";
         for (const cr3::TextLine& ln : ev->message().pages[size_t(ev->page())].lines) key += ln.text + "\n";
@@ -5660,10 +5753,11 @@ struct Viewer {
                 const std::string joint = slotJoint(wl, slot);
                 float jx, jy;
                 if (text.empty() || joint.empty() || !font.loaded() || !windowJoint(wl, joint, jx, jy)) return;
-                const int size = joint[4] == 'M' ? 32 : joint[4] == 'S' ? 28 : 64;
+                // (CR2: M 32, S 28; CR3's CRXPartsBase::SearchTextPosition: M 30, S 28; else 64)
+                const int size = joint[4] == 'M' ? (wl.uiUnit > 1 ? 30 : 32) : joint[4] == 'S' ? 28 : 64;
                 const bool centred = joint[6] == 'C', right = joint[6] == 'R';
                 const int drawn = size - 4; // (SetTextRender: the size less 4)
-                const int rasterPx = std::max(1, int(float(drawn) / 1000.0f * k + 0.5f));
+                const int rasterPx = std::max(1, int(float(drawn) / pxUnit * k + 0.5f));
                 int tw = 0, th = 0;
                 std::vector<float> pen;
                 cr3::Image img = font.render(text, rasterPx, tw, th, &pen);
@@ -5671,19 +5765,21 @@ struct Viewer {
                 TextQuad q;
                 q.tex = dev->upload(img);
                 q.from = from;
-                const float unitsPerPx = float(drawn) / 1000.0f / float(rasterPx);
+                const float unitsPerPx = float(drawn) / pxUnit / float(rasterPx);
                 for (float p : pen) q.pen.push_back(p * unitsPerPx);
                 q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx;
                 // SetTextOffsetData: left - the joint less half the size; centred - on it; right -
                 // ending there; the line's middle (size - height) / 2 from the joint
-                q.x = centred ? jx - q.w / 2 : right ? jx - q.w + float(drawn) / 2000.0f : jx - float(drawn) / 2000.0f;
-                q.y = jy + (float(drawn) / 1000.0f - q.h) / 2;
+                q.x = centred ? jx - q.w / 2 : right ? jx - q.w + float(drawn) / (2 * pxUnit) : jx - float(drawn) / (2 * pxUnit);
+                q.y = jy + (float(drawn) / pxUnit - q.h) / 2;
                 q.joint = joint, q.dx = q.x - jx, q.dy = q.y - jy;
                 cr3::textColour(colour, q.rgb);
                 textQuads.push_back(q);
             };
             const std::vector<cr3::TextLine>& lines = ev->message().pages[size_t(ev->page())].lines;
-            if (wl.nameTag) {
+            if (wl.speakerOnly) {
+                add(speaker, 0, 0, true);
+            } else if (wl.nameTag) {
                 add(speaker, 0, 0, true);
                 const bool centred = !lines.empty() && lines[0].centred;
                 for (size_t i = 0; i < lines.size() && i < size_t(wl.linesPerPage); ++i)
@@ -9854,6 +9950,7 @@ struct Viewer {
         const bool message = ev->messageShown() && ev->page() < int(ev->message().pages.size());
         if (ev->windowOpen(cr3::EventRuntime::Vista))
             drawWindow(vistaWindow, message && ev->messageWindow() == cr3::EventRuntime::Vista, screenW, screenH);
+            if (!vistaName.fig.meshes.empty()) drawWindow(vistaName, message && ev->messageWindow() == cr3::EventRuntime::Vista, screenW, screenH);
         drawCutIns(screenW, screenH);
         if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn))
             drawWindow(conversationWindow, message && ev->messageWindow() == cr3::EventRuntime::CutIn, screenW, screenH);
@@ -10274,7 +10371,16 @@ int main(int argc, char** argv) {
         std::string fp = cr3::TextRasterizer::firstFont({fontPath, envFont ? envFont : "", dataDir + "font/TBGoPro-Bold.otf"});
         std::vector<uint8_t> apkFont;
         std::string apkFontFrom;
-        if (fp.empty() && !cr3::androidFile(data, "assets/00001", apkFont, &apkFontFrom)) {
+        // CR3: the release's own (Database: F0001.bin - iOS, Android -, the Vita's font\TBGB_0KP.TTC):
+        // TB Gothic B, its proportional face (1) the English's
+        int fontFace = 0;
+        if (fp.empty())
+            for (const char* f : {"F0001.bin", "font\\TBGB_0KP.TTC"})
+                if (v.archive.read(f, apkFont)) {
+                    apkFontFrom = v.archive.sourceOf(f), fontFace = 1;
+                    break;
+                }
+        if (fp.empty() && apkFont.empty() && !cr3::androidFile(data, "assets/00001", apkFont, &apkFontFrom)) {
             const char* windir = SDL_getenv("WINDIR");
             const std::string winFonts = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
             fp = cr3::TextRasterizer::firstFont({"/usr/share/fonts/noto/NotoSans-Regular.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -10282,7 +10388,7 @@ int main(int argc, char** argv) {
                                                  winFonts + "arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf",
                                                  "/System/Library/Fonts/Helvetica.ttc"});
         }
-        v.loadMessageWindow(fp, std::move(apkFont), apkFontFrom);
+        v.loadMessageWindow(fp, std::move(apkFont), apkFontFrom, fontFace);
         v.initEventDrawing();
         v.pageSeconds = page;
     }
@@ -10782,12 +10888,14 @@ int main(int argc, char** argv) {
     v.unload(v.battleMap);
     for (auto& u : v.battleUnits) v.unload(u.fig);
     v.unload(v.vistaWindow.fig);
+    v.unload(v.vistaName.fig);
     v.unload(v.narrationWindow.fig);
     v.unload(v.conversationWindow.fig);
     v.unload(v.conversationCursor);
     for (ViewFigure& f : v.cutInFigures) v.unload(f);
     v.unload(v.pageCursor);
     for (auto& q : v.textQuads) dev->destroy(q.tex);
+    for (auto& q : v.nameQuads) dev->destroy(q.tex);
     for (ViewFigure& g : v.eventFigures) v.unload(g);
     if (v.white.id) dev->destroy(v.white);
     for (ViewFigure& g : v.gimmicks) v.unload(g);
