@@ -16,9 +16,7 @@ constexpr float kBgmAhead = 0.5f; // (seconds of the music kept queued)
 
 AudioPlayer::~AudioPlayer() { close(); }
 
-bool AudioPlayer::open(const std::string& archivePath, bool device, std::string* error) {
-    close();
-    if (!data_.open(archivePath, error)) return false;
+bool AudioPlayer::openDevice(bool device, std::string* error) {
     slots_.assign(kEffectSlots + kVoiceSlots, Voice());
     if (device) {
         if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
@@ -28,6 +26,19 @@ bool AudioPlayer::open(const std::string& archivePath, bool device, std::string*
             if (!device_ && error) *error = std::string("no audio device: ") + SDL_GetError();
         }
     }
+    return true;
+}
+
+bool AudioPlayer::openCr3(const Cr3Sound& sound, bool device, std::string* error) {
+    close();
+    cr3_ = &sound;
+    return openDevice(device, error);
+}
+
+bool AudioPlayer::open(const std::string& archivePath, bool device, std::string* error) {
+    close();
+    if (!data_.open(archivePath, error)) return false;
+    openDevice(device, error);
     SoundHooks& h = soundHooks();
     h.playBgm = [this](int t, int f) { playBgm(t, f); };
     h.stopBgm = [this](int f) { stopBgm(f); };
@@ -48,6 +59,7 @@ void AudioPlayer::close() {
     if (bgm_) SDL_DestroyAudioStream(bgm_), bgm_ = nullptr;
     music_.reset();
     if (device_) SDL_CloseAudioDevice(device_), device_ = 0;
+    cr3_ = nullptr;
 }
 
 void AudioPlayer::setVolumes(float bgm, float effects, float voices) {
@@ -71,8 +83,27 @@ void AudioPlayer::playBgm(int track, int fadeFrames) {
         SDL_Log("sound: bgm%02d - none to play (%s)", track, err.c_str());
         return;
     }
-    track_ = track, bgmPlaying_ = true, bgmPos_ = 0;
+    track_ = track;
     SDL_Log("sound: bgm%02d%s", track, device_ ? "" : " (silent)");
+    startMusic(std::move(o), fadeFrames);
+}
+
+void AudioPlayer::playBgm(const std::string& name, int fadeFrames) {
+    log.push_back("bgm " + name);
+    releaseBgm();
+    std::string err;
+    std::unique_ptr<MusicStream> o = cr3_ ? cr3_->openTrack(name, &err) : nullptr;
+    if (!o) {
+        SDL_Log("sound: %s - none to play (%s)", name.c_str(), cr3_ ? err.c_str() : "no CR3 sound");
+        return;
+    }
+    SDL_Log("sound: %s, %d Hz x%d, loop %lld..%lld%s", name.c_str(), o->rate(), o->channels(), static_cast<long long>(o->loopStart),
+            static_cast<long long>(o->loopEnd), device_ ? "" : " (silent)");
+    startMusic(std::move(o), fadeFrames);
+}
+
+void AudioPlayer::startMusic(std::unique_ptr<MusicStream> o, int fadeFrames) {
+    bgmPlaying_ = true, bgmPos_ = 0;
     bgmFade_ = fadeFrames > 0 ? 0.0f : 1.0f;
     bgmFadeStep_ = fadeFrames > 0 ? kUpdates / float(fadeFrames) : 0.0f;
     if (device_) {
@@ -137,9 +168,46 @@ void AudioPlayer::endVoice(Voice& v) {
 void AudioPlayer::startClip(Voice& v, SoundData::Bank bank, int clip, bool loop) {
     endVoice(v);
     SoundData::ClipFormat fmt;
-    if (!data_.clip(bank, clip, v.pcm, &fmt) || v.pcm.empty()) return;
-    v.rate = fmt.rate, v.channels = fmt.channels;
-    v.active = true, v.loop = loop, v.clip = clip, v.voice = bank == SoundData::Voices;
+    std::vector<int16_t> pcm;
+    if (!data_.clip(bank, clip, pcm, &fmt) || pcm.empty()) return;
+    startPcm(v, std::move(pcm), fmt.rate, fmt.channels, loop, bank == SoundData::Voices);
+    v.clip = clip;
+}
+
+int AudioPlayer::playSe(const std::string& name, bool loop) {
+    log.push_back("se " + name + (loop ? " (looping)" : ""));
+    if (!cr3_ || volume_[1] <= 0) return -1;
+    Cr3Sound::Clip c;
+    std::string err;
+    if (!cr3_->effect(name, c, &err)) return SDL_Log("sound: se %s - %s", name.c_str(), err.c_str()), -1;
+    for (int k = 0; k < kEffectSlots; ++k)
+        if (!slots_[size_t(k)].active) {
+            startPcm(slots_[size_t(k)], std::move(c.pcm), c.rate, c.channels, loop, false);
+            return slots_[size_t(k)].active ? k : -1;
+        }
+    return -1; // (all busy)
+}
+
+int AudioPlayer::playVoice(const std::string& name) {
+    log.push_back("voice " + name);
+    if (!cr3_ || volume_[2] <= 0) return -1;
+    Cr3Sound::Clip c;
+    std::string err;
+    if (!cr3_->voice(name, c, &err)) return SDL_Log("sound: voice %s - %s", name.c_str(), err.c_str()), -1;
+    for (int k = kEffectSlots; k < kEffectSlots + kVoiceSlots; ++k)
+        if (!slots_[size_t(k)].active) {
+            startPcm(slots_[size_t(k)], std::move(c.pcm), c.rate, c.channels, false, true);
+            return slots_[size_t(k)].active ? k : -1;
+        }
+    return -1;
+}
+
+void AudioPlayer::startPcm(Voice& v, std::vector<int16_t> pcm, int rate, int channels, bool loop, bool voice) {
+    endVoice(v);
+    if (pcm.empty()) return;
+    v.pcm = std::move(pcm);
+    v.rate = rate, v.channels = channels;
+    v.active = true, v.loop = loop, v.clip = -1, v.voice = voice;
     if (!device_) return;
     SDL_AudioSpec spec{};
     spec.format = SDL_AUDIO_S16, spec.channels = v.channels, spec.freq = v.rate;

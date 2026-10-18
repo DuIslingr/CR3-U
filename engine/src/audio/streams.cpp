@@ -4,6 +4,7 @@
 #include "audio/sounddata.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 #ifdef CR3_HAVE_FAAD2
@@ -21,6 +22,7 @@ namespace {
 
 uint32_t be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 uint64_t be64(const uint8_t* p) { return uint64_t(be32(p)) << 32 | be32(p + 4); }
+uint16_t be16(const uint8_t* p) { return uint16_t(p[0] << 8 | p[1]); }
 uint32_t le32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
 
 bool fail(std::string* error, const char* why) {
@@ -72,6 +74,11 @@ public:
     }
     bool open(std::vector<uint8_t> file, std::string* error) {
         if (!parseCafAac(file, caf_, error)) return false;
+        if (!reset()) return fail(error, "FAAD2 doesn't take its config");
+        return seek(0);
+    }
+    bool open(CafAac packets, std::string* error) {
+        caf_ = std::move(packets);
         if (!reset()) return fail(error, "FAAD2 doesn't take its config");
         return seek(0);
     }
@@ -147,12 +154,16 @@ public:
     ~At9Stream() override {
         if (h_) Atrac9ReleaseHandle(h_);
     }
-    bool open(std::vector<uint8_t> file, std::string* error) {
-        file_ = std::move(file);
+    bool open(std::vector<uint8_t> file, std::string* error) { return open(file, file, error); }
+    // `header`'s first wave, its stream in `data` - the file itself, or (a streamed wave: CR3's
+    // .snd1 over its .snd2) the other
+    bool open(const std::vector<uint8_t>& header, std::vector<uint8_t> data, std::string* error) {
         std::vector<SxdWave> waves;
-        if (!parseSxdWaves(file_, waves, error)) return false;
+        if (!parseSxdWaves(header, waves, error)) return false;
         if (waves.empty()) return fail(error, "no wave");
+        file_ = std::move(data);
         w_ = waves[0];
+        if (w_.at + w_.size > file_.size()) return fail(error, "the wave's stream past its file's end");
         if (!reset()) return fail(error, "LibAtrac9 doesn't take its config");
         loopStart = w_.loopStart, loopEnd = w_.loopEnd;
         return seek(0);
@@ -293,6 +304,7 @@ bool parseSxdWaves(const std::vector<uint8_t>& file, std::vector<SxdWave>& out, 
     if (size < 0x60 || std::memcmp(f, "SXDF", 4) != 0) return fail(error, "not an SXD file");
     out.clear();
     for (size_t p = 0x60; p + 8 <= size;) {
+        if (std::memcmp(f + p, "SXDS", 4) == 0) break; // (CR3's: the streams' own block, not a chunk)
         const uint32_t len = le32(f + p + 4);
         const uint8_t* c = f + p + 8;
         if (len > size - p - 8) return fail(error, "a chunk past the end");
@@ -310,6 +322,12 @@ bool parseSxdWaves(const std::vector<uint8_t>& file, std::vector<SxdWave>& out, 
                 w.size = le32(f + e + 0x20), w.at = w.streamed ? le32(f + e + 0x24) : e + 0x24 + le32(f + e + 0x24);
                 const uint32_t cfg = le32(f + e + 0x2c);
                 for (int b = 0; b < 4; ++b) w.config[b] = uint8_t(cfg >> (24 - 8 * b));
+                // (6 of CR3's Vita voices have no config there - 1 or 3 -, their streams the same mono
+                // 48 kHz ~72 kbit/s as the other 5,871, whose config they get; an ATRAC9 config starts 0xfe)
+                if (w.codec == 0x42 && w.config[0] != 0xfe && w.channels == 1 && w.rate == 48000) {
+                    static const uint8_t kMono48[4] = {0xfe, 0x70, 0x05, 0xf0};
+                    std::memcpy(w.config, kMono48, 4);
+                }
                 if ((!w.streamed && w.at + w.size > size) || w.channels <= 0) return fail(error, "a wave's stream past the end");
                 if (w.loopEnd <= w.loopStart || w.loopStart < 0) w.loopStart = w.loopEnd = -1;
                 out.push_back(w);
@@ -389,6 +407,132 @@ std::unique_ptr<MusicStream> openSxdAt9(std::vector<uint8_t> file, std::string* 
     fail(error, "built without LibAtrac9");
     return nullptr;
 #endif
+}
+
+std::unique_ptr<MusicStream> openSxdAt9(const std::vector<uint8_t>& header, std::vector<uint8_t> data, std::string* error) {
+#ifdef CR3_HAVE_ATRAC9
+    auto s = std::make_unique<At9Stream>();
+    if (!s->open(header, std::move(data), error)) return nullptr;
+    return s;
+#else
+    (void)header, (void)data;
+    fail(error, "built without LibAtrac9");
+    return nullptr;
+#endif
+}
+
+namespace {
+
+// an MP4 box's children: {type, body start, body length} for each, from `p` to `end`
+struct Box {
+    uint32_t type;
+    size_t at, len;
+};
+std::vector<Box> boxes(const uint8_t* f, size_t p, size_t end) {
+    std::vector<Box> out;
+    while (p + 8 <= end) {
+        uint64_t len = be32(f + p);
+        size_t head = 8;
+        if (len == 1 && p + 16 <= end) len = be64(f + p + 8), head = 16;
+        else if (len == 0) len = end - p;
+        if (len < head || len > end - p) break;
+        out.push_back({be32(f + p + 4), p + head, size_t(len) - head});
+        p += size_t(len);
+    }
+    return out;
+}
+constexpr uint32_t fourcc(const char* s) { return uint32_t(uint8_t(s[0])) << 24 | uint32_t(uint8_t(s[1])) << 16 | uint32_t(uint8_t(s[2])) << 8 | uint8_t(s[3]); }
+// the first box of `type` among `in`'s children (none: {0, 0, 0})
+Box child(const uint8_t* f, const Box& in, const char* type) {
+    for (const Box& b : boxes(f, in.at, in.at + in.len))
+        if (b.type == fourcc(type)) return b;
+    return {0, 0, 0};
+}
+
+} // namespace
+
+bool parseMp4Aac(const std::vector<uint8_t>& file, CafAac& out, std::string* error) {
+    const uint8_t* f = file.data();
+    out = CafAac();
+    Box moov{0, 0, 0};
+    for (const Box& b : boxes(f, 0, file.size()))
+        if (b.type == fourcc("moov")) moov = b;
+    if (!moov.type) return fail(error, "not an MP4 file (no moov)");
+    // the first track: its sample table
+    const Box trak = child(f, moov, "trak");
+    const Box mdia = child(f, trak, "mdia");
+    const Box stbl = child(f, child(f, mdia, "minf"), "stbl");
+    const Box mdhd = child(f, mdia, "mdhd");
+    const Box stsd = child(f, stbl, "stsd"), stsz = child(f, stbl, "stsz"), stsc = child(f, stbl, "stsc");
+    Box stco = child(f, stbl, "stco");
+    const bool co64 = !stco.type;
+    if (co64) stco = child(f, stbl, "co64");
+    if (!mdhd.type || !stsd.type || !stsz.type || !stsc.type || !stco.type) return fail(error, "no sample table");
+    if (stsd.len < 8 + 36 || be32(f + stsd.at + 12) != fourcc("mp4a")) return fail(error, "not AAC (mp4a)");
+    const size_t entry = stsd.at + 8; // (the first sample description: size, 'mp4a', then its fields)
+    out.channels = int(be16(f + entry + 8 + 16));
+    out.rate = int(be32(f + mdhd.at + (f[mdhd.at] == 1 ? 20 : 12))); // (the media's timescale: its rate)
+    // (its 'esds' after the 36 bytes of the entry's own fields: version / flags, then descriptors)
+    for (const Box& b : boxes(f, entry + 36, std::min<size_t>(entry + be32(f + entry), stsd.at + stsd.len)))
+        if (b.type == fourcc("esds") && b.len > 4) findAsc(f + b.at + 4, f + b.at + b.len, out.config);
+    if (out.config.empty()) return fail(error, "no AudioSpecificConfig");
+    // the samples' sizes, the chunks' offsets, and how many samples each chunk holds
+    const uint32_t fixed = be32(f + stsz.at + 4), count = be32(f + stsz.at + 8);
+    if (!fixed && stsz.len < 12 + size_t(count) * 4) return fail(error, "stsz short");
+    const uint32_t chunks = be32(f + stco.at + 4), runs = be32(f + stsc.at + 4);
+    if (stco.len < 8 + size_t(chunks) * (co64 ? 8 : 4) || stsc.len < 8 + size_t(runs) * 12) return fail(error, "stco / stsc short");
+    out.data = file; // (the packets where the file has them)
+    uint32_t sample = 0;
+    for (uint32_t r = 0; r < runs && sample < count; ++r) {
+        const uint32_t first = be32(f + stsc.at + 8 + 12 * r) - 1, per = be32(f + stsc.at + 12 + 12 * r);
+        const uint32_t last = r + 1 < runs ? be32(f + stsc.at + 8 + 12 * (r + 1)) - 1 : chunks;
+        for (uint32_t c = first; c < last && c < chunks && sample < count; ++c) {
+            uint64_t at = co64 ? be64(f + stco.at + 8 + 8 * size_t(c)) : be32(f + stco.at + 8 + 4 * size_t(c));
+            for (uint32_t k = 0; k < per && sample < count; ++k, ++sample) {
+                const uint32_t s = fixed ? fixed : be32(f + stsz.at + 12 + 4 * size_t(sample));
+                if (at + s > file.size()) return fail(error, "a packet past the end");
+                out.offset.push_back(uint32_t(at)), out.size.push_back(s);
+                at += s;
+            }
+        }
+    }
+    if (out.offset.empty() || out.config.empty()) return fail(error, "no packets");
+    // the encoder's priming and the valid frames: iTunes' iTunSMPB tag (" 00000000 <priming>
+    // <padding> <valid>"), else none
+    const int64_t total = int64_t(out.offset.size()) * out.framesPerPacket;
+    out.validFrames = total;
+    static const char kTag[] = "iTunSMPB";
+    const auto it = std::search(file.begin() + long(moov.at), file.begin() + long(moov.at + moov.len), kTag, kTag + 8);
+    if (it != file.begin() + long(moov.at + moov.len)) {
+        unsigned prime = 0, pad = 0;
+        unsigned long long valid = 0;
+        const size_t p = size_t(it - file.begin()) + 8 + 16; // (the tag, its data box's head and flags)
+        std::string text(reinterpret_cast<const char*>(f + p), std::min<size_t>(120, file.size() - p));
+        if (std::sscanf(text.c_str(), " %*x %x %x %llx", &prime, &pad, &valid) == 3 && valid > 0 && int64_t(valid) + prime <= total)
+            out.priming = int(prime), out.remainder = int(pad), out.validFrames = int64_t(valid);
+    }
+    return true;
+}
+
+std::unique_ptr<MusicStream> openMp4Aac(std::vector<uint8_t> file, std::string* error) {
+#ifdef CR3_HAVE_FAAD2
+    CafAac packets;
+    if (!parseMp4Aac(file, packets, error)) return nullptr;
+    auto s = std::make_unique<AacStream>();
+    if (!s->open(std::move(packets), error)) return nullptr;
+    return s;
+#else
+    (void)file;
+    fail(error, "built without FAAD2");
+    return nullptr;
+#endif
+}
+
+bool decodeWhole(MusicStream& s, std::vector<int16_t>& out) {
+    out.clear();
+    std::vector<int16_t> buf(4096 * size_t(std::max(s.channels(), 1)));
+    for (int n; (n = s.read(buf.data(), 4096)) > 0;) out.insert(out.end(), buf.begin(), buf.begin() + long(n) * s.channels());
+    return !out.empty();
 }
 
 } // namespace cr3

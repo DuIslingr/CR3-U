@@ -59,6 +59,7 @@ add_library(cr3core STATIC
     src/field/treasure.cpp
     src/audio/sounddata.cpp
     src/audio/streams.cpp
+    src/audio/cr3sound.cpp
     third_party/stb/stb_vorbis.c
 )
 # The iPad's music (AAC in CAF): FAAD2 - the system's when pkg-config finds it, else the copy in

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "audio/cr3sound.hpp"
 #include "audio/sounddata.hpp"
 
 struct SDL_AudioStream;
@@ -22,7 +23,13 @@ public:
     ~AudioPlayer();
     // `device`: SDL's default playback (else silent); installs soundHooks()
     bool open(const std::string& archivePath, bool device, std::string* error = nullptr);
-    bool opened() const { return data_.opened(); }
+    bool opened() const { return data_.opened() || cr3_ != nullptr; }
+    // CR3's sound (audio/cr3sound.hpp, `sound` must outlive this): its music, effects and voices
+    // by name - the device opened as open()'s
+    bool openCr3(const Cr3Sound& sound, bool device, std::string* error = nullptr);
+    void playBgm(const std::string& name, int fadeFrames);
+    int playSe(const std::string& name, bool loop);
+    int playVoice(const std::string& name);
     void close();
     // every frame: the music's stream topped up, fades on by `dt`, finished clips freed
     void update(float dt);
@@ -53,6 +60,10 @@ private:
         float fade = 1, fadeStep = 0; // (a stop's fade: its gain falling by fadeStep a second)
     };
     void startClip(Voice& v, SoundData::Bank bank, int clip, bool loop);
+    void startPcm(Voice& v, std::vector<int16_t> pcm, int rate, int channels, bool loop, bool voice);
+    void startMusic(std::unique_ptr<MusicStream> o, int fadeFrames);
+    bool openDevice(bool device, std::string* error);
+    const Cr3Sound* cr3_ = nullptr;
     void endVoice(Voice& v);
     void applyGains();
     SoundData data_;

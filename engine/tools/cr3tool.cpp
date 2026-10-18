@@ -66,52 +66,96 @@
 #include "field/fieldscript.hpp"
 #include "gfx/material.hpp"
 #include "script/vm.hpp"
+#include "audio/cr3sound.hpp"
 #include "audio/sounddata.hpp"
 
 namespace {
 
-// the release's sound (audio/sounddata.hpp): every track decoded whole, every clip read
-int sound(const char* path) {
-    cr3::SoundData sd;
+bool openArchive(cr3::MvglArchive& a, const char* path);
+
+// how alike two runs of a stream's frames are: 1 - the RMS of their difference over the RMS of
+// the first (1 the same; ~0 unrelated)
+double alike(cr3::MusicStream& s, int64_t a, int64_t b, int n) {
+    const int ch = s.channels();
+    std::vector<int16_t> x(size_t(n) * size_t(ch)), y(x.size());
+    if (!s.seek(uint32_t(a)) || s.read(x.data(), n) != n || !s.seek(uint32_t(b)) || s.read(y.data(), n) != n) return -1;
+    double e = 0, r = 0;
+    for (size_t i = 0; i < x.size(); ++i) e += double(x[i] - y[i]) * (x[i] - y[i]), r += double(x[i]) * x[i];
+    return r > 0 ? 1.0 - std::sqrt(e / r) : 1.0;
+}
+
+// where the frames after `b` best line up with those after `a`: the offset from b (within
+// +-range) and how alike (alike()'s measure) - 0 where the loop's points are exact
+std::pair<int, double> bestLag(cr3::MusicStream& s, int64_t a, int64_t b, int n, int range) {
+    const int ch = s.channels();
+    std::vector<int16_t> x(size_t(n) * size_t(ch)), y(size_t(n + 2 * range) * size_t(ch));
+    if (b - range < 0 || !s.seek(uint32_t(a)) || s.read(x.data(), n) != n || !s.seek(uint32_t(b - range)) || s.read(y.data(), n + 2 * range) != n + 2 * range)
+        return {0, -1};
+    double r = 0;
+    for (int16_t v : x) r += double(v) * v;
+    std::pair<int, double> best{0, -1e9};
+    for (int lag = -range; lag <= range; ++lag) {
+        double e = 0;
+        const int16_t* q = &y[size_t(lag + range) * size_t(ch)];
+        for (size_t i = 0; i < x.size(); ++i) e += double(x[i] - q[i]) * (x[i] - q[i]);
+        const double m = r > 0 ? 1.0 - std::sqrt(e / r) : 1.0;
+        if (m > best.second) best = {lag, m};
+    }
+    return best;
+}
+
+// the release's sound (audio/cr3sound.hpp): every track opens and its loop is seamless (the
+// frames after its end repeat those after its start), every effect decodes, voices too (a
+// sample of them; all with --full)
+int sound(const char* path, bool full) {
+    cr3::Database db;
+    if (!openArchive(db, path)) return 1;
+    cr3::Cr3Sound snd;
     std::string err;
-    if (!sd.open(path, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
-    std::printf("sound: %s\n", sd.describe().c_str());
-    int tracks = 0, bad = 0;
-    for (int t = 1; t <= cr3::SoundData::kTracks; ++t) {
-        std::string terr;
-        std::unique_ptr<cr3::MusicStream> o = sd.openTrack(t, &terr);
-        if (!o) {
-            std::printf("bgm%02d: %s\n", t, terr.c_str());
+    if (!snd.open(db, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    std::printf("%s release: %zu tracks, %zu effects, %zu voices\n", db.kindName(), snd.tracks().size(), snd.effects().size(), snd.voices().size());
+    int bad = 0, seamless = 0, looped = 0, opened = 0;
+    for (const cr3::BgmTrack& t : snd.tracks()) {
+        std::unique_ptr<cr3::MusicStream> s = snd.openTrack(t.name, &err);
+        if (!s) {
+            std::printf("%s: %s\n", t.name.c_str(), err.c_str());
             ++bad;
             continue;
         }
-        std::vector<int16_t> buf(4096 * size_t(o->channels()));
-        uint64_t n = 0;
-        for (int got; (got = o->read(buf.data(), 4096)) > 0;) n += uint64_t(got);
-        // (the loop: sought to and read on - the same frames as from the start?)
-        bool loopOk = true;
-        if (o->loopStart >= 0) {
-            std::vector<int16_t> a(1024 * size_t(o->channels()));
-            loopOk = o->seek(uint32_t(o->loopStart)) && o->read(a.data(), 1024) > 0;
+        ++opened;
+        std::string loop = "no loop";
+        if (s->loopStart >= 0) {
+            ++looped;
+            const int n = s->rate() / 10; // (0.1 s)
+            const double m = s->loopEnd + n <= int64_t(s->frames()) ? alike(*s, s->loopStart, s->loopEnd, n) : -2;
+            const auto lag = m == -2 ? std::pair<int, double>{0, -2} : bestLag(*s, s->loopStart, s->loopEnd, n / 4, 256);
+            char b[160];
+            std::snprintf(b, sizeof b, "loop %lld..%lld, %s %.3f (best %.3f at %+d)", static_cast<long long>(s->loopStart),
+                          static_cast<long long>(s->loopEnd), m == -2 ? "(ends at its loop)" : "repeat match", m, lag.second, lag.first);
+            loop = b;
+            if (m >= 0.9 || m == -2) ++seamless;
         }
-        std::printf("bgm%02d: %d Hz x%d, %.1f s (%llu frames, %u said), loops %lld .. %lld%s\n", t, o->rate(), o->channels(),
-                    double(n) / o->rate(), static_cast<unsigned long long>(n), o->frames(), static_cast<long long>(o->loopStart),
-                    static_cast<long long>(o->loopEnd), loopOk ? "" : " (its loop doesn't decode!)");
-        if (!loopOk || n == 0) ++bad;
-        else ++tracks;
+        std::printf("%s: %d Hz x%d, %.1f s, %s\n", t.name.c_str(), s->rate(), s->channels(), double(s->frames()) / s->rate(), loop.c_str());
     }
-    for (int b = 0; b < 2; ++b) {
-        const auto bank = cr3::SoundData::Bank(b);
-        int ok = 0;
-        double seconds = 0;
-        std::vector<int16_t> pcm;
-        for (int k = 0; k < sd.clips(bank); ++k) {
-            cr3::SoundData::ClipFormat fmt;
-            if (sd.clip(bank, k, pcm, &fmt)) ++ok, seconds += double(pcm.size()) / double(fmt.rate * fmt.channels);
-        }
-        std::printf("%s: %d / %d clips read, %.0f s\n", b == 0 ? "effects" : "voices", ok, sd.clips(bank), seconds);
+    int effects = 0;
+    double seconds = 0;
+    for (const std::string& e : snd.effects()) {
+        cr3::Cr3Sound::Clip c;
+        if (snd.effect(e, c, &err)) ++effects, seconds += double(c.pcm.size()) / double(c.rate * c.channels);
+        else ++bad, std::printf("effect %s: %s\n", e.c_str(), err.c_str());
     }
-    std::printf("%d tracks decode, %d don't\n", tracks, bad);
+    std::printf("effects: %d / %zu decode, %.0f s\n", effects, snd.effects().size(), seconds);
+    int voices = 0, tried = 0;
+    seconds = 0;
+    const size_t step = full ? 1 : std::max<size_t>(1, snd.voices().size() / 200);
+    for (size_t i = 0; i < snd.voices().size(); i += step) {
+        cr3::Cr3Sound::Clip c;
+        ++tried;
+        if (snd.voice(snd.voices()[i], c, &err)) ++voices, seconds += double(c.pcm.size()) / double(c.rate * c.channels);
+        else ++bad, std::printf("voice %s: %s\n", snd.voices()[i].c_str(), err.c_str());
+    }
+    std::printf("voices: %d / %d tried decode (%s), %.0f s\n", voices, tried, full ? "all" : "a sample", seconds);
+    std::printf("tracks: %d / %zu open, %d of %d loops seamless; %d failures\n", opened, snd.tracks().size(), seamless, looped, bad);
     return bad ? 1 : 0;
 }
 
@@ -135,7 +179,7 @@ int usage() {
                  "cr3tool play <archive> <event | all>\n"
                  "cr3tool battle <archive> <coupling | all>\n"
                  "cr3tool fight <archive> <coupling> [solo | pair] [seed] [a,b]\n"
-                 "cr3tool sound <archive>\n"
+                 "cr3tool sound <release> [--full]\n"
                  "cr3tool glass <seeds>\n"
                  "cr3tool save-import <game.dat | cont.dat> [system.dat]  (a CR3-U save on stdout)\n"
                  "cr3tool save-export <archive> <CR3-U save> <game.dat>\n");
@@ -1254,7 +1298,7 @@ int main(int argc, char** argv) {
         return fight(argv[2], std::atoi(argv[3]), argc > 4 && !std::strcmp(argv[4], "pair"), argc > 5 ? uint32_t(std::atoi(argv[5])) : 1, party);
     }
     if (!std::strcmp(argv[1], "run") && argc > 3) return run(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
-    if (!std::strcmp(argv[1], "sound")) return sound(argv[2]);
+    if (!std::strcmp(argv[1], "sound")) return sound(argv[2], argc > 3 && !std::strcmp(argv[3], "--full"));
     if (!std::strcmp(argv[1], "glass")) return glass(std::max(std::atoi(argv[2]), 1));
     if (!std::strcmp(argv[1], "save-import")) return saveImport(argv[2], argc > 3 ? argv[3] : nullptr);
     if (!std::strcmp(argv[1], "save-export") && argc > 4) return saveExport(argv[2], argv[3], argv[4]);

@@ -34,8 +34,14 @@ This is the start of the port. What works today:
 - **Models**: `cr3view --data <release> --model c101.geom` draws any figure skinned, textured and
   animated, the same from each release (`--capture` to a BMP)
 
-The rest - fields, events, battles, menus, sound - is CR2-U's game layer still, and does not run
-CR3 yet: CR3's own (its `Fld2` field, the gene system, its scripts' natives) is the work ahead.
+- **Sound**: the 54 music tracks with their loops, the 1,033 effects and every voice, in each
+  release's own format - iOS AAC in MP4, Android Ogg Vorbis, the Vita's ATRAC9 and HE-VAG
+  (`audio/cr3sound.hpp`; `cr3tool sound <release> [--full]`; `cr3view --bgm m01 --se bt_001 --voice
+  <name>` plays them)
+- **Tables**: the game's parameter tables (`data\*.mbe`) read in every release (`tools/mbe.py`)
+
+The rest - fields, events, battles, menus - is CR2-U's game layer still, and does not run CR3 yet:
+CR3's own (its `Fld2` field, the gene system, its scripts' natives) is the work ahead.
 
 ## Quick start
 

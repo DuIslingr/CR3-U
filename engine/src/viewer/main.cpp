@@ -9960,6 +9960,7 @@ int main(int argc, char** argv) {
     std::string data, model, capture, animName, renderer = "vulkan", lights = "d0101c", fieldName, at = "defaultPos", binary;
     // --patch: a fan translation over the release (Database::addOverlay); --language ja | en | fan-en
     std::string patch, languageArg;
+    std::string bgmArg, seArg, voiceArg; // --bgm m01, --se bt_001, --voice <name>: played at the start
     float walkX = 0, walkY = 0, walkSeconds = 0; // --walk: the field's character runs first (captures)
     bool tapAfter = false, mute = false, forceAudio = false;
     int hdArg = -1;        // --hd-textures / --no-hd-textures (-1: the settings')
@@ -9996,6 +9997,9 @@ int main(int argc, char** argv) {
         const char* next = i + 1 < argc ? argv[i + 1] : nullptr;
         if (a == "--data" && next) data = next, ++i;
         else if (a == "--patch" && next) patch = next, ++i;
+        else if (a == "--bgm" && next) bgmArg = next, ++i;
+        else if (a == "--se" && next) seArg = next, ++i;
+        else if (a == "--voice" && next) voiceArg = next, ++i;
         else if (a == "--language" && next) languageArg = next, ++i;
         else if (a == "--model" && next) model = next, ++i;
         else if (a == "--capture" && next) capture = next, ++i;
@@ -10186,7 +10190,16 @@ int main(int argc, char** argv) {
     }
     // the sound: played unless captured (or --mute) - then silent, its state kept all the same
     const bool device = (capture.empty() || forceAudio) && !mute;
-    if (!v.audio.open(data, device, &err)) SDL_Log("sound: %s", err.c_str());
+    // CR3's (audio/cr3sound.hpp: data\bgm.csv's tracks, sound\*), else CR2-U's numbered banks
+    static cr3::Cr3Sound cr3sound;
+    if (cr3sound.open(v.archive, &err)) {
+        v.audio.openCr3(cr3sound, device, &err);
+        SDL_Log("sound: %zu tracks, %zu effects, %zu voices%s", cr3sound.tracks().size(), cr3sound.effects().size(), cr3sound.voices().size(),
+                device ? "" : " (silent)");
+        if (!bgmArg.empty()) v.audio.playBgm(bgmArg, 0);
+        if (!seArg.empty()) v.audio.playSe(seArg, false);
+        if (!voiceArg.empty()) v.audio.playVoice(voiceArg);
+    } else if (!v.audio.open(data, device, &err)) SDL_Log("sound: %s", err.c_str());
     else SDL_Log("sound: on%s%s", device ? "" : " (silent)", err.empty() ? "" : (" - " + err).c_str());
     for (const auto& e : v.archive.entries())
         if (e.name.size() > 5 && e.name.compare(e.name.size() - 5, 5, ".geom") == 0) v.models.push_back(e.name);
@@ -10781,6 +10794,7 @@ int main(int argc, char** argv) {
     for (auto& [k, t] : v.textures) dev->destroy(t);
     dev->shutdown();
     SDL_DestroyWindow(win);
+    v.audio.close(); // (its SDL streams and device before SDL goes: the Viewer outlives SDL_Quit)
     SDL_Quit();
     return code;
 }

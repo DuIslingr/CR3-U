@@ -83,6 +83,44 @@ frame sets' DMA list, set info, constant R / T / S / user at +0x30 .. +0x44 (the
 (`gWideAnimations`), and 13 of the iOS release's are the 32-bit form (the reader tries the other
 when one fails). Skeletons (ES02) are identical.
 
+## Parameter tables (`data\*.mbe`, EXPA)
+
+`MbParameterManager::structParam`: `EXPA`, u32 table count; per table a u32 name length, the name
+(NUL-padded to it), u32 row size, u32 rows, then the rows. Then `CHNK`, u32 count, and per entry a
+u32 file offset, u32 size and the bytes (a NUL-terminated string): the pointer slot at that offset
+is pointed at them (`0xcccccccc` until then). The 64-bit builds start each table's rows and each row
+8-byte aligned (4 bytes skipped where not) and their pointer slots are 8 bytes; the Vita's are
+packed, 4-byte slots (`char_name.mbe`: rows 0x18 against 0xc). The columns' types are not in the
+file - the game reads each table with its own code, by its name; the CHNK entries show which slots
+are strings. 63 files, 109 tables, 27,884 rows, the same in every release (`tools/mbe.py`).
+
+## Sound
+
+Files `sound\<name>.<ext>` in the sound archives (iOS `CRDBbgm_mNN` / `CRDBse_*` / `CRDBvo_*`,
+Android's asset packs, the Vita's `bgm/`, `se/`, `voice/*/`). `audio/cr3sound.hpp`.
+
+| | iOS | Android | Vita |
+|---|---|---|---|
+| music (54, m01..m54) | `.snd`: AAC in MP4, 44.1 kHz stereo | `.snd`: Ogg Vorbis, 44.1 kHz | `.snd1` (an SXD header, its wave streamed) over `.snd2` (`SXDS`, ATRAC9 48 kHz) |
+| voices | `.snd` AAC in MP4 (3,550: s000..s180 only) | `.snd` Ogg Vorbis (5,877) | `.snd1` / `.snd2`, ATRAC9 48 kHz mono (5,877) |
+| effects (1,033) | `.sndl` s16 mono 22,050 Hz; `.sndm` s16 stereo 22,050 Hz; `.snds` s16 stereo 44,100 Hz | the same | `.snd3`: one SXD each (HE-VAG), its own rate, channels and loop |
+
+- `data\bgm.csv` (name, volume, pitch1, pitch2): "pitch1" / "pitch2" are each track's loop start and
+  end in 48 kHz frames - the Vita's own WAVE entries hold the same numbers; the iOS and Android
+  streams are the same length at 44.1 kHz, so the points scale by 44.1 / 48 (the loop's end lines up
+  with its start at offset 0, +-1 frame, on 53 of 54 tracks in every release; m53 loops whole).
+  `data\se.csv` gives the effects' volumes, `data\voice.csv` only a master volume. The first row of
+  each, `master`, is the kind's master volume.
+- MP4: the first track's `stsd` (`mp4a` + `esds`: the AudioSpecificConfig), `stsz` / `stsc` /
+  `stco`; the encoder's priming (2,112) and the valid frames are in iTunes' `iTunSMPB` tag (the edit
+  list says nothing).
+- SXD (CR2's, docs below): CR3's files end with an `SXDS` block holding the streams - not a chunk;
+  the chunk walk stops there. A streamed wave's offset is into the `.snd2`.
+- 6 Vita voices (`j004_147`, `s203_t01_00201001`, `..._003`, `s250_t01_00201001`,
+  `s250_t01_00301002`, `s271_t01_00101009`) have no ATRAC9 config in their WAVE entry (1 or 3);
+  their streams are the same mono 48 kHz ~72 kbit/s as the other 5,871 (config `fe 70 05 f0`), and
+  decode with it to the Android voices' lengths.
+
 ---
 
 # Chaos Rings II formats (CR2-U's notes, kept as the base CR3 builds on)

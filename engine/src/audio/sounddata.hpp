@@ -122,6 +122,15 @@ struct SxdWave {
 bool parseSxdWaves(const std::vector<uint8_t>& file, std::vector<SxdWave>& out, std::string* error = nullptr);
 // an SXD's first wave's ATRAC9 decoding (LibAtrac9); null without it
 std::unique_ptr<MusicStream> openSxdAt9(std::vector<uint8_t> file, std::string* error = nullptr);
+// the same, the wave streamed: its header (CR3's .snd1) over its stream (the .snd2)
+std::unique_ptr<MusicStream> openSxdAt9(const std::vector<uint8_t>& header, std::vector<uint8_t> data, std::string* error = nullptr);
+
+// AAC in MP4 (CR3's iPhone/iPad sound\*.snd): the first track's packets (stsz / stsc / stco), its
+// AudioSpecificConfig (esds), the encoder's priming and valid frames from iTunes' iTunSMPB tag
+bool parseMp4Aac(const std::vector<uint8_t>& file, CafAac& out, std::string* error = nullptr);
+std::unique_ptr<MusicStream> openMp4Aac(std::vector<uint8_t> file, std::string* error = nullptr);
+// a stream read to its end (interleaved s16)
+bool decodeWhole(MusicStream& s, std::vector<int16_t>& out);
 // a wave decoded whole (its stream's bytes `data`): HE-VAG, or ATRAC9 (false without LibAtrac9)
 bool decodeSxdWave(const SxdWave& w, const uint8_t* data, size_t size, std::vector<int16_t>& out);
 
