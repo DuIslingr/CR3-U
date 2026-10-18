@@ -449,7 +449,8 @@ int images(const char* path, const char* pattern, const char* outDir) {
     std::map<std::string, int> formats;
     size_t ok = 0, bad = 0, written = 0;
     std::vector<uint8_t> data;
-    for (const auto& e : a.entries()) {
+    for (const auto& base : a.entries()) {
+        const auto& e = *a.find(base.name); // (an overlay's where it has one)
         if (e.name.size() < 4 || e.name.compare(e.name.size() - 4, 4, ".img") != 0) continue;
         if (pattern && e.name.find(pattern) == std::string::npos) continue;
         cr3::Image img;

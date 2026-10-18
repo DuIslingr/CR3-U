@@ -69,6 +69,7 @@
 #include "assets/image.hpp"
 #include "assets/maptable.hpp"
 #include "assets/release.hpp"
+#include "assets/language.hpp"
 #include "assets/mvgl.hpp"
 #include "assets/skeleton.hpp"
 #include "battle/battledata.hpp"
@@ -9957,6 +9958,8 @@ std::vector<std::string> dataPlaces() {
 
 int main(int argc, char** argv) {
     std::string data, model, capture, animName, renderer = "vulkan", lights = "d0101c", fieldName, at = "defaultPos", binary;
+    // --patch: a fan translation over the release (Database::addOverlay); --language ja | en | fan-en
+    std::string patch, languageArg;
     float walkX = 0, walkY = 0, walkSeconds = 0; // --walk: the field's character runs first (captures)
     bool tapAfter = false, mute = false, forceAudio = false;
     int hdArg = -1;        // --hd-textures / --no-hd-textures (-1: the settings')
@@ -9992,6 +9995,8 @@ int main(int argc, char** argv) {
         const std::string a = argv[i];
         const char* next = i + 1 < argc ? argv[i + 1] : nullptr;
         if (a == "--data" && next) data = next, ++i;
+        else if (a == "--patch" && next) patch = next, ++i;
+        else if (a == "--language" && next) languageArg = next, ++i;
         else if (a == "--model" && next) model = next, ++i;
         else if (a == "--capture" && next) capture = next, ++i;
         else if (a == "--anim" && next) animName = next, ++i;
@@ -10135,6 +10140,17 @@ int main(int argc, char** argv) {
     if (!v.archive.open(data, &err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
         return 1;
+    }
+    if (!patch.empty() && !v.archive.addOverlay(patch, &err)) SDL_Log("fan translation: %s", err.c_str());
+    {
+        // the language: --language, else English where the release has one (the iPhone's, Android's,
+        // the fan translation's), else Japanese
+        cr3::Language want = cr3::Language::FanEnglish;
+        if (!languageArg.empty() && !cr3::parseLanguage(languageArg, want)) SDL_Log("--language %s: ja, en or fan-en", languageArg.c_str());
+        const cr3::LanguageChoice l = cr3::applyLanguage(v.archive, want);
+        v.optionLanguage = l.slot;
+        SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
+                l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
     }
     {
         const char* env = SDL_getenv("CR3_HD_TEXTURES");
