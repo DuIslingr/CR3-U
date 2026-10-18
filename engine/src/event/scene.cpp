@@ -8,6 +8,10 @@
 
 namespace cr3 {
 
+// a scene frame: its animations' (30 Hz in CR3 - CR2's 20), which the scripts' frames count
+constexpr float kFrame = 1.0f / 30.0f;
+
+
 namespace {
 
 std::string lower(std::string s) {
@@ -118,7 +122,7 @@ Mat34 EventScene::placeAt(const EventModel& m, float lead) const {
 void EventScene::slide(const std::string& name, int frame, int updates) {
     EventModel* m = model(name);
     if (!m || !locators_.count(lower(m->name))) return;
-    const Mat34 at = locator(m->name, float(frame) * 0.05f);
+    const Mat34 at = locator(m->name, float(frame) * kFrame);
     for (int k = 0; k < 3; ++k) m->slideFrom[k] = m->place.m[k * 4 + 3], m->slideTo[k] = at.m[k * 4 + 3];
     m->slideUpdates = std::max(updates, 1), m->slideTick = 0;
     m->pinned = true;
@@ -131,7 +135,7 @@ void EventScene::turnTo(const std::string& name, const std::string& other, int f
     if (!m || !o) return;
     m->turnFrom = std::atan2(m->place.m[2], m->place.m[10]);
     m->turnTo = std::atan2(o->place.m[3] - m->place.m[3], o->place.m[11] - m->place.m[11]);
-    m->turned = true, m->turnSeconds = float(std::max(frames, 0)) * 0.05f, m->turnTime = 0;
+    m->turned = true, m->turnSeconds = float(std::max(frames, 0)) * kFrame, m->turnTime = 0;
 }
 
 void EventScene::pin(const std::string& name, float x, float y, float z) {
@@ -148,20 +152,20 @@ void EventScene::pinTo(const std::string& name, const std::string& other) {
 void EventScene::setMove(const std::string& name, float from, float to) {
     if (EventModel* m = model(name)) {
         m->moving = true;
-        m->sceneTime = from * 0.05f;
-        m->moveEnd = to * 0.05f;
+        m->sceneTime = from * kFrame;
+        m->moveEnd = to * kFrame;
         place(*m);
     }
 }
 
 void EventScene::cameraMove(float from, float to) {
-    cameraTime_ = from * 0.05f;
-    cameraEnd_ = (to + 1) * 0.05f; // (EvtUtilVistaCameraMove: to + 1)
+    cameraTime_ = from * kFrame;
+    cameraEnd_ = (to + 1) * kFrame; // (EvtUtilVistaCameraMove: to + 1)
 }
 
 void EventScene::lightMove(float from, float to) {
-    lightTime_ = from * 0.05f;
-    lightEnd_ = (to + 1) * 0.05f;
+    lightTime_ = from * kFrame;
+    lightEnd_ = (to + 1) * kFrame;
 }
 
 void EventScene::update(float dt) {
@@ -220,7 +224,7 @@ void EventScene::update(float dt) {
 
 void EventScene::quake(float width, float fromPercent, float toPercent, int frames) {
     quake_.on = true, quake_.width = width, quake_.from = fromPercent * 0.01f, quake_.to = toPercent * 0.01f;
-    quake_.seconds = float(frames) * 0.05f, quake_.time = 0, quake_.parity = 0;
+    quake_.seconds = float(frames) * kFrame, quake_.time = 0, quake_.parity = 0;
 }
 
 void EventScene::quakeStop() {

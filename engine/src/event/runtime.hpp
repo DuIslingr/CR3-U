@@ -42,7 +42,9 @@ struct EventFade {
 
 class EventRuntime {
 public:
-    static constexpr float kTick = 0.05f; // (one update)
+    // one update: CR3's scripts count 30 a second (WaitProcessor::StartWait / ProcessWait: n frames
+    // are n / 30 s of elapsed time, whatever the display's rate) - CR2's were 20
+    static constexpr float kTick = 1.0f / 30.0f;
 
     EventRuntime(const MvglArchive& archive, GameState& state);
 
@@ -84,8 +86,9 @@ public:
     bool messageShown() const { return message_ > 0; }
     const ParsedMessage& message() const { return parsed_; }
     int page() const { return page_; }
-    // the page's characters shown so far (its lines' code points in turn): MenuText types a line
-    // a character an update (EvtWindow::UpdatePage: speed 1, unless skipping); typed() - all of it
+    // the page's characters shown so far (its lines' code points in turn): ProvisionalMenuText types
+    // a character a drawn frame (EvtWindow::ShowMessage: speed 1, unless skipping) - at the game's
+    // 60 frames a second, two an update; typed() - all of it
     int revealed() const { return revealed_; }
     bool typed() const;
     std::string speakerName() const; // the speaker's name tag (name data), "" none
@@ -113,6 +116,11 @@ public:
     // radiate_loop on its loop over the screen)
     bool effectLine = false;
     bool mapAnimPaused = false; // (VistaEvent.SetMapAnimPause: the viewer holds the vista map's animation)
+    // VistaMain's second map (VistaEvent.LoadSecondMap(name): built unless "null" or "") and which
+    // is drawn (ChangeMap flips it: the first while unflipped, the second while flipped - so a
+    // LoadSecondMap("") then ChangeMap leaves none, the scene's own sky showing)
+    std::string secondMap;
+    bool mapChanged = false;
     // the vista's skip button (EvtSkip: VistaFastButtonMenu - speedUp again; FldUtilGetVistaSkipEnable
     // is always on): from ButtonCreate till ButtonDelete, unless ButtonSetVisible(false). Held
     // (CheckButtonTouch: TestApp::onUpdate's), the game runs five updates a frame, the scripts'

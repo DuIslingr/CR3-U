@@ -2,8 +2,8 @@
 // An event's scene (EvtScene, EvtModel, the vista camera / light; docs/SCRIPTS.md): three animated
 // figures named after the event - `<event>` (its joints `ev_<model>` the models' locators),
 // `<event>_camera` (an animated camera) and `<event>_light` (its lights) - and the models placed
-// on the locators. The scripts drive their timelines in the scene's frames (20 a second: x 0.05
-// is seconds): VistaEvent.SetMove(model, from, to) moves a model along its locator, CameraMove /
+// on the locators. The scripts drive their timelines in the scene's frames (its animations' 30 a
+// second; CR2's were 20): VistaEvent.SetMove(model, from, to) moves a model along its locator, CameraMove /
 // LightMove the camera and the lights; EvtScene.ChangeAnimator(model, "e826", loop) plays the
 // model's animation <figure>e826.
 

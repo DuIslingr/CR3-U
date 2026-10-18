@@ -228,6 +228,12 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (touched_) touched_ = false, touchWait_ = 0;
     });
     vm.setNative("VistaEvent", "GetMapAnimPause", [this](NativeCall& c) { c.result(mapAnimPaused); });
+    vm.setNative("VistaEvent", "LoadSecondMap", [this](NativeCall& c) {
+        const std::string n = c.string(0);
+        if (!n.empty() && n != "null") secondMap = n;
+    });
+    vm.setNative("VistaEvent", "UnloadSecondMap", [this](NativeCall&) { secondMap.clear(), mapChanged = false; });
+    vm.setNative("VistaEvent", "ChangeMap", [this](NativeCall&) { mapChanged = !mapChanged; });
     // (LoadMessageData(name), or (window, name): the tutorials' AnnounceTutorialTxt for 3 / 4)
     vm.setNative("EvtWindow", "LoadMessageData", [this](NativeCall& c) {
         if (!c.string(0).empty() || c.count() < 2) loadText(c.string(0), text_);
@@ -491,7 +497,7 @@ bool EventRuntime::update(ScriptVM* vm) {
     if ((fastForward && fastForwardShown()) || (skipHeld() && message_ > 0)) { // (a button held: the page whole, then the next at once - EvtWindow::IsSkip)
         if (!typed()) revealed_ = 1 << 20;
         else advance();
-    } else if (message_ > 0 && !typed()) ++revealed_; // (a character an update; the page's time counts once it's typed)
+    } else if (message_ > 0 && !typed()) revealed_ += 2; // (ProvisionalMenuText::Step: speed 1 a drawn frame - the game's 60 a second, two of our updates' worth; the page's time counts once it's typed)
     else if ((message_ > 0 || execution_) && autoPage > 0 && (pageTime_ += kTick) >= autoPage) advance();
     fade_.update();
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)

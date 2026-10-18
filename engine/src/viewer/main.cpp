@@ -5244,6 +5244,9 @@ struct Viewer {
     std::unique_ptr<cr3::EventRuntime> event;
     bool eventMode = false;
     ViewFigure vistaMap;
+    std::string eventScript; // (CR3: the area script the event is in - the next vista's, too)
+    ViewFigure secondMap;      // (VistaEvent.LoadSecondMap's)
+    std::string secondMapName;
     float vistaMapTime = 0; // (its own animation's time: held while SetMapAnimPause says)
     std::vector<ViewFigure> eventFigures;
     std::vector<std::string> eventFigureNames; // (what eventFigures were made for)
@@ -5252,9 +5255,21 @@ struct Viewer {
     cr3::Texture white;
     bool eventEnded = false, messageLogged = false;
 
-    bool startEvent(const std::string& function, const std::string& map, float page) {
+    bool startEvent(const std::string& function, std::string map, float page) {
         initEventDrawing();
         pageSeconds = page;
+        // (CR3: a vista event's map is named by its caller - "<script>:X" calls SetVistaEvent("X_evt",
+        // "<map>"): Cr3System.SetVistaFuncName / SetVistaMapName. Without --vista, X run first as the
+        // game does, its map taken)
+        const size_t colon = function.find(':');
+        if (map == "null" && colon != std::string::npos && function.size() > 4 && function.compare(function.size() - 4, 4, "_evt") == 0) {
+            const std::string script = function.substr(0, colon), fn = function.substr(colon + 1);
+            game.next = cr3::GameState::Next();
+            cr3::EventRuntime caller(archive, game);
+            if (caller.start(script, fn.substr(0, fn.size() - 4)) && game.next.vistaFunction == fn) map = game.next.vistaMap;
+            game.next = cr3::GameState::Next();
+            if (map.empty()) map = "null"; // (the prologue's: "" - its scene is all the event's own)
+        }
         return startVista(function, map);
     }
 
@@ -5293,6 +5308,7 @@ struct Viewer {
         event->language = optionLanguage; // (the release's language's slot: the Vita's Japanese is 0)
         // CR3: an area script's event, "<script>:<function>" (t01:s000_t01_00101_evt)
         const size_t colon = function.find(':');
+        eventScript = colon != std::string::npos ? function.substr(0, colon) : std::string();
         if (colon != std::string::npos ? !event->start(function.substr(0, colon), function.substr(colon + 1)) : !event->start(function)) {
             SDL_Log("event %s: %s", function.c_str(), event->error().c_str());
             return false;
@@ -5318,6 +5334,15 @@ struct Viewer {
                     event->battle() >= 0 ? (": battle " + std::to_string(event->battle())).c_str() : "");
             if (playMode) {
                 branchAfterVista();
+                return;
+            }
+            // (--event: an event that hands over to the next vista - SetVistaEvent at its end, as the
+            // prologue's s000_t01_00101_evt to s000_t01_00103_evt - goes on into it, as the game does)
+            if (game.next.vista && !game.next.vistaFunction.empty() && !eventScript.empty()) {
+                const cr3::GameState::Next n = game.next;
+                game.next = cr3::GameState::Next();
+                SDL_Log("event: on to %s in %s", n.vistaFunction.c_str(), n.vistaMap.c_str());
+                startVista(eventScript + ":" + n.vistaFunction, n.vistaMap.empty() ? "null" : n.vistaMap);
                 return;
             }
         }
@@ -5358,6 +5383,15 @@ struct Viewer {
     // <figure><suffix>; else the figure's own), their faces as ChangeModelFace left them
     void poseEvent() {
         pose(vistaMap, vistaMapTime);
+        if (event->secondMap != secondMapName) { // (VistaEvent.LoadSecondMap: built as the first is)
+            unload(secondMap);
+            secondMap = ViewFigure();
+            secondMapName = event->secondMap;
+            std::string err;
+            if (!secondMapName.empty() && !loadFigure(secondMapName + ".geom", secondMap, &err)) SDL_Log("second map %s: %s", secondMapName.c_str(), err.c_str());
+            secondMap.absolute = true;
+        }
+        pose(secondMap, vistaMapTime);
         poseEventModels(*event);
     }
 
@@ -5429,7 +5463,7 @@ struct Viewer {
             l.camera[0] = world[12], l.camera[1] = world[13], l.camera[2] = world[14];
             l.time = time;
             dev->setLighting(l);
-            drawFigure(vistaMap, vp.data());
+            drawFigure(event->mapChanged ? secondMap : vistaMap, vp.data()); // (VistaMain::OnDraw: the first, or after ChangeMap the second)
             // the scene's models by their draw layer (CR3's EvtScene.SetModelLayer), each layer's
             // full-screen sprites over it (EvtScene.CreateSprite ...: a colour, its alpha)
             const std::vector<cr3::EventModel>& models = event->scene().models();
@@ -11175,6 +11209,7 @@ int main(int argc, char** argv) {
     v.unload(v.fig);
     v.unload(v.mapFigure);
     v.unload(v.vistaMap);
+    v.unload(v.secondMap);
     v.unload(v.battleMap);
     for (auto& u : v.battleUnits) v.unload(u.fig);
     v.unload(v.vistaWindow.fig);

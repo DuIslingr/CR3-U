@@ -118,6 +118,20 @@ As CR2's: `<event>.geom` (locators), `<event>_camera`, `<event>_light`. New in C
   `SetBlendMotion(model, loop, frames)` play it; the face's the same in slot 1
 - draw layers (`SetModelLayer`) and full-screen colour sprites between them (`CreateSprite`,
   `SetSpriteLayer`, `SetSpriteColor`, `SetSpriteAlpha`, `SetSpriteAlphaAnimation`)
+- timing: 30 frames a second, not CR2's 20. The scene's animations are 30 Hz (the ship's camera:
+  2,001 frames, 66.7 s) and the scripts' frame numbers (`vCameraMove(0, 185)`, `vMove_`) count
+  them; `WaitFrame(n)` waits n / 30 s of elapsed time (WaitProcessor::StartWait / ProcessWait),
+  whatever the display's rate. Text types one character per drawn frame
+  (ProvisionalMenuText::Step, speed 1 from EvtWindow::ShowMessage) at the game's 60 fps target
+  (nothing calls SetTargetFPS). With this the ship event (`s000_d01_00301_evt`) matches the
+  playthrough shot for shot, offset by its start.
+- the map: an event's caller names it - `X()` calls `SetVistaEvent("X_evt", "<map>")`
+  (Cr3System.SetVistaFuncName / SetVistaMapName); "" or "null" none. An event can hand over at
+  its end the same way (the prologue's `s000_t01_00101_evt` to `s000_t01_00103_evt` in `e0003f`).
+- a second map (VistaMain): `VistaEvent.LoadSecondMap(name)` builds it (not for "" / "null");
+  `ChangeMap()` flips which is drawn (OnDraw: the first while unflipped, the second while
+  flipped). `s000_t01_00103_evt` loads "" and flips: no map at all, the scene's own sky
+  (`t0100star01` / `03`) showing.
 
 ## Interface (CR3)
 
