@@ -82,6 +82,21 @@ struct EventModel {
     bool hasShadow() const { return !figure.empty() && (figure[0] == 'c' || figure[0] == 'v'); }
 };
 
+// A camera figure on its own (Fld2CameraDemo's f0000title01 ..): its camera joint posed by its
+// animation at a time, the field of view its user channel's where it animates one
+class CameraFigure {
+public:
+    bool load(const MvglArchive& archive, const std::string& name);
+    bool at(float t, Mat34& world, float& fovY, float& zn, float& zf) const;
+    float duration() const { return animated_ ? anim_.duration() : 0.0f; }
+
+private:
+    Geom geom_;
+    Skeleton skel_;
+    Animation anim_;
+    bool animated_ = false, loaded_ = false;
+};
+
 class EventScene {
 public:
     // the event's three figures (the camera and the lights optional); false: no scene figure

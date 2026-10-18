@@ -133,6 +133,27 @@ As CR2's: `<event>.geom` (locators), `<event>_camera`, `<event>_light`. New in C
   flipped). `s000_t01_00103_evt` loads "" and flips: no map at all, the scene's own sky
   (`t0100star01` / `03`) showing.
 
+## The title (CR3)
+
+GameMain boots BootCheck (mode 0x13), then TitleMain (5): its interface 0xd is TitleMenuMain -
+the logos (LogoMenu: `ttlLogoIncMenu`), then the title (CreateTitleMenu: TitleMenu, `ttlLogoMenu`
+- the logo, `textTouch` "Tap to play", `textInfo` the copyright - at `ttlLogoPositon`'s
+`call_ttlLogoMenu_fit0`, its own animation looping; music 33), behind it Fld2CameraDemo's reel: six
+shots (a table in the executable: seconds, map, camera, the fade in / out colour - 0 black, 1
+white, -1 none) of `t0209f`, `d0304f`, `d0704f`, `d0405f` through the camera figures
+`f0000title01`..`06`, each played from its start, fading over half a second. A tap (SE `com_001`)
+ends it; with saves it goes on to the save files (SaveFileMenu, `ttlData*`), the news, the mode
+select (ModeSelectMenu: `ttlModeMain` / `VS` / `Back`) and a yes / no; a first game goes through
+white into the prologue - TitleMain loads the save, runs `t01`'s `Login`, and the new game's first
+vista is `s000_t01_00101_evt`. From there the events hand over (SetVistaEvent - a name's second
+part its script: `s000_d01_00301_evt` is d01's) through `00103`, `00201` (the opening) and the ship
+(`s000_d01_00301_evt`), whose SetVistaToField returns to the field of its map: `d0101`.
+
+English textures: GameSystem::InitLang adds the texture folder `images_eng` for any language but
+Japanese, looked in before `images` - 314 of the interface's, the title's "Tap to play" among them.
+
+`cr3view --title` (no arguments: the same) plays it; `--time t --tap --run s` for captures.
+
 ## Fields (CR3)
 
 Fld2, not CR2's painted FldMap: every area is 3D. Fld2TaskMap::CreateArea(n) takes its name from

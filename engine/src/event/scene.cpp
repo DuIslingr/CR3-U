@@ -28,6 +28,32 @@ bool readFigure(const MvglArchive& a, const std::string& name, Geom& g, Skeleton
 
 } // namespace
 
+bool CameraFigure::load(const MvglArchive& a, const std::string& name) {
+    loaded_ = readFigure(a, name, geom_, skel_, anim_, animated_) && !geom_.cameras.empty();
+    return loaded_;
+}
+
+bool CameraFigure::at(float t, Mat34& world, float& fovY, float& zn, float& zf) const {
+    if (!loaded_) return false;
+    const GeomCamera& c = geom_.cameras[0];
+    const int j = skel_.joint(c.hash);
+    std::vector<float> user;
+    std::vector<JointTransform> pose = skel_.basePose;
+    if (animated_) {
+        const float frames = float(std::max(anim_.frames() - 1, 1));
+        pose = anim_.poseAbsolute(skel_.basePose, std::clamp(t * anim_.sampleRate(), 0.0f, frames), &user);
+    }
+    const std::vector<Mat34> w = skel_.world(pose);
+    if (j < 0 || size_t(j) >= w.size()) return false;
+    world = w[size_t(j)];
+    fovY = c.fovY;
+    for (size_t k = 0; k < skel_.userChannels.size() && k < user.size(); ++k) // (its field of view, animated: EventScene::camera's)
+        if (skel_.userChannels[k].material == c.hash && user[k] > 0.5f && user[k] < 179) fovY = user[k];
+    zn = std::max(c.near, 0.05f), zf = std::min(c.far * 5, 5000.0f);
+    zf = std::max(zf, zn * 2);
+    return true;
+}
+
 std::vector<Mat34> EventScene::Figure::world(float t) const {
     if (!animated) return skel.world(skel.basePose);
     const float frames = float(std::max(anim.frames() - 1, 1));

@@ -607,6 +607,10 @@ struct Viewer {
     // A tap (Return, a click): the vista's page; the field's - its event's page, else the nearest
     // balloon's function (FldMain::CheckTouchEventExec_Tap, EventExecute), the leader turned to it
     void tap() {
+        if (cr3Title.stage) {
+            cr3TitleTap();
+            return;
+        }
         if (titleMenu.stage) return titleTap();
         if (vslash.stage) return; // (the slash: a swipe, not a tap)
         if (battleMode) {
@@ -1277,9 +1281,13 @@ struct Viewer {
         for (int c = 0; c < 3; ++c) player[c] = playerPrev[c] + (playerCur[c] - playerPrev[c]) * a;
     }
 
+    // GameSystem::InitLang: a language other than Japanese adds the texture folder images_eng,
+    // looked in before images (the iPhone's and Android's English interface: 314 of them)
+    bool englishTextures = false;
     bool decode(const std::string& name, cr3::Image& img) {
         std::vector<uint8_t> data;
         std::string err;
+        if (englishTextures && archive.read("images_eng\\" + name + ".img", data) && cr3::decodeImg(data, img)) return true;
         if (archive.read("images\\" + name + ".img", data, &err) && cr3::decodeImg(data, img, &err)) return true;
         SDL_Log("texture %s: %s", name.c_str(), err.c_str());
         return false;
@@ -1864,6 +1872,7 @@ struct Viewer {
     }
 
     void drawScene(int w, int h) {
+        if (cr3Title.stage) return drawCr3TitleScene(w, h);
         if (credits.stage || titleMenu.stage) return; // (the staff roll: its figure over black, in the interface's pass; the title)
         if (battleMode) {
             drawBattle(w, h);
@@ -2287,6 +2296,7 @@ struct Viewer {
         optionsWasOpen = optionsOpen;
         if (credits.stage) return updateCredits(dt);
         if (titleMenu.stage) return updateTitle(dt);
+        if (cr3Title.stage) return updateCr3Title(dt);
         if (areaMode && !eventMode) return updateArea(dt, sx, sy, run);
         if (playMode && (fieldMode || eventMode || battleMode) && !paused) playSeconds += dt; // (the save's play time)
         if (battleMode) {
@@ -5251,6 +5261,17 @@ struct Viewer {
     bool eventMode = false;
     ViewFigure vistaMap;
     std::string eventScript; // (CR3: the area script the event is in - the next vista's, too)
+    std::string vistaMapName; // (the vista's map: "d0101f" - the field it returns to)
+    // the script an event is in: its name's second part where there's such a script
+    // (s000_d01_00301_evt: d01), else the one the last was in
+    std::string eventScriptOf(const std::string& fn) const {
+        const size_t a = fn.find('_'), b = a == std::string::npos ? a : fn.find('_', a + 1);
+        if (b != std::string::npos) {
+            const std::string s = fn.substr(a + 1, b - a - 1);
+            if (archive.contains("script\\" + s + ".nut")) return s;
+        }
+        return eventScript;
+    }
     ViewFigure secondMap;      // (VistaEvent.LoadSecondMap's)
     std::string secondMapName;
     float vistaMapTime = 0; // (its own animation's time: held while SetMapAnimPause says)
@@ -5447,6 +5468,7 @@ struct Viewer {
         for (ViewFigure& f : eventFigures) unload(f);
         eventFigures.clear(), eventFigureNames.clear();
         eventEnded = false, eventClock = 0, messageLogged = false;
+        vistaMapName = map;
         if (map != "null" && !loadFigure(map + ".geom", vistaMap, &err)) SDL_Log("vista %s: %s", map.c_str(), err.c_str());
         vistaMap.absolute = true; // (VistaMain::LoadMapData: slot 0)
         vistaMapTime = 0;
@@ -5489,7 +5511,17 @@ struct Viewer {
                 const cr3::GameState::Next n = game.next;
                 game.next = cr3::GameState::Next();
                 SDL_Log("event: on to %s in %s", n.vistaFunction.c_str(), n.vistaMap.c_str());
-                startVista(eventScript + ":" + n.vistaFunction, n.vistaMap.empty() ? "null" : n.vistaMap);
+                startVista(eventScriptOf(n.vistaFunction) + ":" + n.vistaFunction, n.vistaMap.empty() ? "null" : n.vistaMap);
+                return;
+            }
+            // (CR3: SetVistaToField - Cr3System.SetComeFromVistaToField - back to the field it's in:
+            // the area its map is of, d0101f's d0101)
+            if (game.next.fieldMode == 2 && !eventScript.empty() && vistaMapName.size() == 6 && vistaMapName.back() == 'f') {
+                const std::string a = vistaMapName.substr(0, 5);
+                game.next = cr3::GameState::Next();
+                SDL_Log("event: back to the field, %s", a.c_str());
+                eventMode = false;
+                if (!loadArea(a, "")) SDL_Log("area %s: not entered", a.c_str());
                 return;
             }
         }
@@ -6276,6 +6308,121 @@ struct Viewer {
         cr3::SceneLighting l;
         dev->setLighting(l);
         drawFigure(p.fig, view.data());
+    }
+
+    // CR3's title (TitleMenuMain, interface 0xd): behind it Fld2CameraDemo's reel - six shots of
+    // four areas (t0209f, d0304f, d0704f, d0405f; the boot archive's) seen through the cameras
+    // f0000title01..06, each shot's map and camera played from its start, faded in from / out to
+    // black or white over half a second (its table: seconds, map, camera, the colours in and out,
+    // -1 none) -; over it TitleMenu: ttlLogoMenu (the logo, "Tap to play", the copyright) at
+    // ttlLogoPositon's call_ttlLogoMenu_fit0, the title music (33) - a tap (SE com_001) takes it
+    // out (ttlLogoPositon_out) and, a first game's, on through white into the prologue
+    // (TitleMain: t01's Login, then the new game's first vista - s000_t01_00101_evt)
+    struct Cr3Title {
+        int stage = 0;  // 0 off, 1 fading in, 2 waiting for a tap, 3 leaving
+        float clock = 0, stageClock = 0;
+        int shot = 0;
+        float shotClock = 0;
+        std::array<ViewFigure, 4> maps;
+        std::array<cr3::CameraFigure, 6> cameras;
+        Cr3Part logo;
+        int lightsOf = -1; // (the map whose lights are on)
+    } cr3Title;
+    struct DemoShot {
+        float seconds;
+        int map, camera;
+        float in, out;
+    };
+    static constexpr DemoShot kDemoShots[6] = {{9.733f, 0, 0, 0, -1}, {6.467f, 0, 1, -1, 1}, {8.167f, 1, 2, 1, 1},
+                                               {10.0f, 2, 3, 1, 1},   {12.5f, 3, 4, 1, 1},  {11.0f, 0, 5, 1, 0}};
+    static constexpr const char* kDemoMaps[4] = {"t0209f", "d0304f", "d0704f", "d0405f"};
+
+    bool startCr3Title() {
+        Cr3Title& t = cr3Title;
+        std::string err;
+        for (int k = 0; k < 4; ++k) {
+            unload(t.maps[size_t(k)]);
+            t.maps[size_t(k)] = ViewFigure();
+            if (!loadFigure(std::string(kDemoMaps[k]) + ".geom", t.maps[size_t(k)], &err)) SDL_Log("title: %s", err.c_str());
+            t.maps[size_t(k)].absolute = true;
+        }
+        for (int k = 0; k < 6; ++k) {
+            char n[16];
+            std::snprintf(n, sizeof n, "f0000title%02d", k + 1);
+            if (!t.cameras[size_t(k)].load(archive, n)) SDL_Log("title: camera %s not in the release", n);
+        }
+        if (!loadCr3Part(t.logo, "ttllogopositon", "ttllogomenu", "call_ttlLogoMenu", "")) return false;
+        initEventDrawing();
+        t.stage = 1, t.clock = t.stageClock = 0, t.shot = 0, t.shotClock = 0, t.lightsOf = -1;
+        fieldMode = eventMode = areaMode = false;
+        audio.playBgm(33, 10); // (CrxSound::PlayBgm(0x21, 10, loop))
+        SDL_Log("title: CR3's");
+        return true;
+    }
+
+    void updateCr3Title(float dt) {
+        Cr3Title& t = cr3Title;
+        t.clock += dt, t.stageClock += dt, t.shotClock += dt;
+        if (t.shotClock >= kDemoShots[t.shot].seconds) t.shotClock -= kDemoShots[t.shot].seconds, t.shot = (t.shot + 1) % 6;
+        if (t.stage == 1 && t.stageClock >= 1.0f) t.stage = 2, t.stageClock = 0; // (Cr3FadeIn(1, 30): in over 30 frames)
+        if (t.stage == 3 && t.stageClock >= 1.0f) { // (out, then the game: a new one's prologue)
+            t.stage = 0;
+            for (ViewFigure& f : t.maps) unload(f);
+            unload(t.logo.position), unload(t.logo.fig);
+            game = cr3::GameState();
+            SDL_Log("title: a new game");
+            startEvent("t01:s000_t01_00101_evt", "null", pageSeconds);
+        }
+    }
+
+    bool cr3TitleTap() {
+        Cr3Title& t = cr3Title;
+        if (t.stage != 2) return true;
+        audio.playSe("com_001", false);
+        audio.stopBgm(15); // (TitleMain: StopBgm 0.5 s)
+        t.stage = 3, t.stageClock = 0;
+        return true;
+    }
+
+    void drawCr3TitleScene(int w, int h) {
+        Cr3Title& t = cr3Title;
+        const DemoShot& sh = kDemoShots[t.shot];
+        cr3::Mat34 cw;
+        float fov = 45, zn = 0.1f, zf = 5000;
+        if (!t.cameras[size_t(sh.camera)].at(t.shotClock, cw, fov, zn, zf)) return;
+        if (t.lightsOf != sh.map) t.lightsOf = sh.map, loadLights(kDemoMaps[sh.map]);
+        dev->setCamera(zn, zf, fov * 3.14159265f / 180);
+        const Mat4 vp = cr3::mat4Multiply(perspective(fov * 3.14159265f / 180, float(w) / float(std::max(h, 1)), zn, zf),
+                                          cr3::mat4RigidInverse(cr3::mat4FromMat34(cw)));
+        cr3::SceneLighting l = lighting;
+        l.camera[0] = cw.m[3], l.camera[1] = cw.m[7], l.camera[2] = cw.m[11];
+        l.time = time;
+        dev->setLighting(l);
+        ViewFigure& f = t.maps[size_t(sh.map)];
+        f.place = cr3::Mat34();
+        pose(f, t.shotClock, false);
+        drawFigure(f, vp.data());
+    }
+
+    void drawCr3TitleUi() {
+        Cr3Title& t = cr3Title;
+        drawCr3Part(t.logo, screenW, screenH, t.clock, 1);
+        // the shots' fades, then the title's own (in from black; out to white)
+        const DemoShot& sh = kDemoShots[t.shot];
+        float a = 0, c = 0;
+        if (t.shotClock < 0.5f && sh.in >= 0) a = 1 - 2 * t.shotClock, c = sh.in;
+        else if (t.shotClock > sh.seconds - 0.5f && sh.out >= 0) a = 2 * (t.shotClock - (sh.seconds - 0.5f)), c = sh.out;
+        if (t.stage == 1) { // (behind the title's own fade from black: that one over it)
+            const float b = 1 - std::min(t.stageClock, 1.0f);
+            a = std::max(a, b), c = a > b ? c : 0;
+        }
+        if (t.stage == 3) a = std::min(t.stageClock * 2, 1.0f), c = 1;
+        if (a > 0 && white.id) {
+            static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+            const Mat4 id = cr3::mat4Identity();
+            const float rgba[4] = {c, c, c, std::min(a, 1.0f)};
+            dev->drawQuad(white, kScreen, id.data(), rgba);
+        }
     }
 
     void loadCutIns() {
@@ -10360,6 +10507,7 @@ struct Viewer {
     void drawEventUi() {
         dev->clearDepth(); // (the scene's depths behind all of it: a near camera's ground too)
         if (credits.stage) return drawCredits();
+        if (cr3Title.stage) return drawCr3TitleUi();
         if (titleMenu.stage) drawTitle();
         else drawIntro(screenW, screenH);
         drawBalloons(screenW, screenH);
@@ -10724,6 +10872,7 @@ int main(int argc, char** argv) {
         if (!languageArg.empty() && !cr3::parseLanguage(languageArg, want)) SDL_Log("--language %s: ja, en or fan-en", languageArg.c_str());
         const cr3::LanguageChoice l = cr3::applyLanguage(v.archive, want);
         v.optionLanguage = l.slot;
+        v.englishTextures = l.slot == 1; // (the release's own English: its images_eng)
         SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
                 l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
     }
@@ -10832,12 +10981,13 @@ int main(int argc, char** argv) {
     v.settings.upscaler = int(upscale.mode); // (one that can't run here: off)
     v.applySettings();
     v.shaders = std::make_unique<cr3::ShaderLibrary>(v.archive);
-    if (titleScreen && playFrom.empty()) playFrom = "d1020"; // (the title's New Game: --play's start)
+    const bool cr3Title = titleScreen && v.archive.contains("ttlLogoMenu.geom"); // (CR3's title: its own flow, into the prologue)
+    if (titleScreen && playFrom.empty() && !cr3Title) playFrom = "d1020"; // (the title's New Game: --play's start)
     if (!playFrom.empty()) fieldName = playFrom, v.playMode = true;
     v.scriptSaves = (!playFrom.empty() || continueSave) && capture.empty();
     if (continueSave && fieldName.empty()) fieldName = "d1020"; // (the windows and fonts set up for the field)
     v.skipBattles = skipBattlesOpt; // (a new game: every flag clear)
-    if (!fieldName.empty() || !eventName.empty() || battleId > 0) {
+    if (!fieldName.empty() || !eventName.empty() || battleId > 0 || cr3Title) {
         // the font: --font, CR3_FONT, the Vita's beside its archive, the Android release's APK beside
         // its OBB (assets/00001: the Regular face it draws English in), else the system's
         std::string dataDir = data.substr(0, data.find_last_of("/\\") == std::string::npos ? 0 : data.find_last_of("/\\") + 1);
@@ -10883,7 +11033,9 @@ int main(int argc, char** argv) {
         if (n >= 0 && n < int(std::size(v.game.globalWork))) v.game.globalWork[size_t(n)] = val;
     }
     if (membersArg[0] > -2) v.game.party[0] = membersArg[0], v.game.party[1] = membersArg[1];
-    if (titleScreen) {
+    if (cr3Title) {
+        if (!v.startCr3Title()) return 1;
+    } else if (titleScreen) {
         v.playMode = true;
         v.startTitle();
     } else if (!gameSavePath.empty()) {
@@ -11002,6 +11154,10 @@ int main(int argc, char** argv) {
                 catchGlass(); // (the screen caught as it breaks)
                 if (!takeTitle()) return 1; // (a game over's "try again": its save loaded)
             }
+        }
+        if (v.cr3Title.stage && !v.playMode) { // (CR3's title: --time that long on it, --tap then a tap, then --run)
+            for (float t = 0; t + 0.5f / 60.0f < startTime; t += 1.0f / 60.0f) v.advance(1.0f / 60.0f, 0, 0, false), v.pose();
+            if (tapAfter) v.tap();
         }
         for (int k = 0; k < int(runSeconds * 60.0f + 0.5f); ++k) {
             v.time += 1.0f / 60.0f;
@@ -11327,7 +11483,7 @@ int main(int argc, char** argv) {
             if (!v.paused) v.time += dt;
             last = now;
             if (!v.paused && v.battleMode && !v.fieldMode && !v.eventMode) v.advance(dt, 0, 0, false);
-            if (!v.paused && (v.eventMode || v.fieldMode || v.areaMode || v.credits.stage || v.titleMenu.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
+            if (!v.paused && (v.eventMode || v.fieldMode || v.areaMode || v.credits.stage || v.titleMenu.stage || v.cr3Title.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
                 const bool* keys = SDL_GetKeyboardState(nullptr);
                 if (keys[SDL_SCANCODE_F] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST))) v.fastHeld = true; // (F or □ held: the fast-forward button's)
                 else if (!(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK)) v.fastHeld = false;
