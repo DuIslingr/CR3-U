@@ -123,6 +123,22 @@ centred lines) at `comMsgVPosition` - 0.03, its speaker's name in `comMsgVNameMe
 EvtWindowMessage::GetNameTagNumber's order (`tools/gen_nametags.py`). The font: `F0001.bin` (iOS,
 Android) / `font/TBGB_0KP.TTC` (Vita) - TB Gothic B, the proportional face (1) for English.
 
+### Cut-ins (CR3)
+
+`EvtFace.Create(n)` makes interface 0x3a - n (InterfaceMain::SetCutInMenu): 0 the right portrait,
+1 the centre (CutInCenterMenu), 2 the left. CutInMenu: a Position figure
+(`comMsgCut<R|L>Position`) slid in by its `_io` animator in slot 1 - relative to its base (the
+PartsBase's +0xc4 = 1: ChangeAnime puts it in the figure's slot 1 rather than 0) - so the right
+anchor ends at 10.24 - 10.56 = -0.32, the left at -10.24 + 5.44 = -4.8, then fitted (`_fit6` /
+`_fit4`); `comMsgCut<R|L>Menu` at its `call_` joint; the portrait `comMsgCut<R|L>_id00` (a 5.08
+square, its material the face: `EvtFace.SetTexture(image, id)`, `ChangeTexture(n, id)`) posed by its
+own animation, which for the right one turns the image joint 180 degrees about y - the left-facing
+faces mirrored. `SetColor(n, v)` its brightness. The conversation's box (EvtCutinWindow:
+MessageWindowMenu) is `comMsgMenu` at `comMsgPosition`'s `call_comMsgMenu_fit2`, its panel's parts
+placed by its own animation (absolute, played as it opens), the name at `typeM_L01`, three lines at
+L02..L04, drawn dark on the light panel. Open: the right portrait shows larger in the playthrough
+than this gives (the left matches), the page button `comMsgBtn`, the centre layout.
+
 ## Parameter tables (`data\*.mbe`, EXPA)
 
 `MbParameterManager::structParam`: `EXPA`, u32 table count; per table a u32 name length, the name

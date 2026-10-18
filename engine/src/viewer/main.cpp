@@ -5494,6 +5494,9 @@ struct Viewer {
         // CR3's interface space is ten times CR2's: 960 x 640 at 100 pixels a unit (CRXPartsBase::
         // GetFitXOffset's (width - 960) / 2 / 100), its HUD camera the same - the units scale
         float uiUnit = 1;
+        // a page's text where its colour is the default (0): CR2's windows white; CR3's message
+        // box draws dark slate on its light panel (measured from a playthrough: ~(76, 83, 91))
+        float lineRgb[3] = {1, 1, 1};
     };
     WindowLayout vistaWindow, vistaName, narrationWindow, conversationWindow;
     // the tutorials' windows (HelpWindowMenu - SetHelpWindowParameter 0, interface 0x1a: annoWin,
@@ -5567,12 +5570,27 @@ struct Viewer {
         // the cut-ins' message window (ConversationWindowMenu: msgWin, msgWin_in / msgWin_out; its
         // slots 01 the name, 02..04 a page's three lines - EvtCutinWindow::GetLinePerPage - and
         // 05..07 centred ones)
-        loadWindow(conversationWindow, "msgwin");
-        conversationWindow.stretch = conversationWindow.nameTag = conversationWindow.lowerBelow3x2 = true;
-        conversationWindow.linesPerPage = 3;
-        conversationWindow.slots = {"01", "02", "03", "04", "05", "06", "07"};
-        conversationWindow.window = cr3::EventRuntime::CutIn;
-        conversationWindow.inAnim = "msgwin_in.anim", conversationWindow.outAnim = "msgwin_out.anim";
+        if (archive.contains("comMsgMenu.geom")) {
+            // CR3's (EvtCutinWindow: MessageWindowMenu) - comMsgMenu at comMsgPosition's
+            // call_comMsgMenu_fit2: the speaker's name at typeM_L01, a page's three lines at L02..L04
+            loadWindow(conversationWindow, "commsgmenu");
+            conversationWindow.nameTag = true, conversationWindow.linesPerPage = 3, conversationWindow.uiUnit = 10;
+            conversationWindow.slots = {"01", "02", "03", "04"};
+            conversationWindow.window = cr3::EventRuntime::CutIn;
+            loadPosition(conversationWindow, "commsgposition", "call_comMsgMenu", 0);
+            // (its own animation places the panel's parts - absolute, slot 0 -, played as it opens:
+            // SetParameterDataBase(.., 0, 1/6 s, play); closing it back)
+            conversationWindow.inAnim = "commsgmenu.anim", conversationWindow.outBackwards = true;
+            conversationWindow.lineRgb[0] = 76 / 255.0f, conversationWindow.lineRgb[1] = 83 / 255.0f, conversationWindow.lineRgb[2] = 91 / 255.0f;
+            conversationWindow.fig.absolute = true;
+        } else {
+            loadWindow(conversationWindow, "msgwin");
+            conversationWindow.stretch = conversationWindow.nameTag = conversationWindow.lowerBelow3x2 = true;
+            conversationWindow.linesPerPage = 3;
+            conversationWindow.slots = {"01", "02", "03", "04", "05", "06", "07"};
+            conversationWindow.window = cr3::EventRuntime::CutIn;
+            conversationWindow.inAnim = "msgwin_in.anim", conversationWindow.outAnim = "msgwin_out.anim";
+        }
         loadCutIns();
         for (auto [wl, name, window] : {std::tuple<WindowLayout*, const char*, int>{&helpWindow, "helpwin", cr3::EventRuntime::AnnounceB},
                                          {&annoWindow, "annowin", cr3::EventRuntime::Tutorial},
@@ -5774,6 +5792,8 @@ struct Viewer {
                 q.y = jy + (float(drawn) / pxUnit - q.h) / 2;
                 q.joint = joint, q.dx = q.x - jx, q.dy = q.y - jy;
                 cr3::textColour(colour, q.rgb);
+                if (colour == 0 && !whole)
+                    for (int c = 0; c < 3; ++c) q.rgb[c] = wl.lineRgb[c]; // (the name stays white)
                 textQuads.push_back(q);
             };
             const std::vector<cr3::TextLine>& lines = ev->message().pages[size_t(ev->page())].lines;
@@ -5826,8 +5846,96 @@ struct Viewer {
     // parameter's side - 3 / 6 right, 1 / 4 left - the two-sided layout not moved), narrower ones
     // 0.0403125 lower. Behind the conversation window (their depths: -0.064 against -0.048).
     std::array<ViewFigure, cr3::EventRuntime::kCutIns> cutInFigures;
+    // CR3's (CutInMenu, interface 0x3a - n for EvtFace.Create(n): 0 right, 2 left): a Position
+    // figure slid in by its _io animator in slot 1 (relative to its base: +0xc4 = 1), the portrait
+    // (comMsgCut<R|L>_id00, its material the face) at its call_ joint's fit anchor, posed by its
+    // own animation (the right one's turns its image about y: the left-facing faces mirrored)
+    struct Cr3CutIn {
+        ViewFigure position, portrait;
+        std::vector<std::string> joints;
+        std::string call;
+        bool loaded = false;
+    };
+    std::array<Cr3CutIn, 3> cr3CutIns;
+    bool cr3CutInsLoaded = false;
+
+    void loadCr3CutIns() {
+        static const char* kSide[3] = {"R", "", "L"};
+        const float keep = time;
+        for (int k : {0, 2}) {
+            Cr3CutIn& c = cr3CutIns[size_t(k)];
+            const std::string side = kSide[k], pos = "commsgcut" + std::string(k == 0 ? "r" : "l") + "position";
+            std::string err;
+            if (!loadFigure(pos + ".geom", c.position, &err) || !loadFigure("commsgcut" + std::string(k == 0 ? "r" : "l") + "_id00.geom", c.portrait, &err)) {
+                SDL_Log("cut-in %s: %s", side.c_str(), err.c_str());
+                continue;
+            }
+            std::vector<uint8_t> d;
+            if (archive.read(pos + ".name", d)) c.joints = cr3::parseJointNames(d);
+            c.call = "call_comMsgCut" + side + "Menu";
+            const auto io = std::find(c.position.anims.begin(), c.position.anims.end(), pos + "_io.anim");
+            if (io != c.position.anims.end()) loadAnim(c.position, size_t(io - c.position.anims.begin()));
+            c.position.absolute = false; // (slot 1: over its base)
+            c.portrait.absolute = true;  // (its own, slot 0)
+            c.loaded = true;
+        }
+        time = keep;
+        cr3CutInsLoaded = cr3CutIns[0].loaded || cr3CutIns[2].loaded;
+    }
+
+    void drawCr3CutIns(int w, int h) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev) return;
+        const float unit = 10;
+        const Mat4 proj = uiProjection(w, h, unit);
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * unit;
+        const Mat4 view = cr3::mat4Multiply(proj, camera);
+        for (int k : {0, 2}) {
+            Cr3CutIn& c = cr3CutIns[size_t(k)];
+            const cr3::EventRuntime::Portrait& p = ev->cutIn(k);
+            if (!c.loaded || !p.open) continue;
+            // the slide: in over the animation, out the same backwards
+            const float dur = c.position.animLoaded ? c.position.anim.duration() : 0.0f;
+            const float age = p.closing ? std::max(p.time - eventLead(), 0.0f) : p.time + eventLead();
+            const float t = std::clamp(age / cr3::EventRuntime::kCutInSeconds * dur, 0.0f, dur);
+            pose(c.position, t, false);
+            float ax = 0, ay = 0;
+            std::string joint;
+            for (size_t j = 0; j < c.joints.size() && j < c.position.posed.size(); ++j)
+                if (c.joints[j].compare(0, c.call.size(), c.call) == 0) joint = c.joints[j];
+            {
+                std::vector<cr3::JointTransform> pz = c.position.skeleton.basePose;
+                if (c.position.animLoaded) pz = c.position.anim.poseOver(c.position.skeleton.basePose, std::min(t * c.position.anim.sampleRate(), float(std::max(c.position.anim.frames() - 1, 1))));
+                const std::vector<cr3::Mat34> wm = c.position.skeleton.world(pz);
+                for (size_t j = 0; j < c.joints.size() && j < wm.size(); ++j)
+                    if (c.joints[j] == joint) ax = wm[j].m[3], ay = wm[j].m[7];
+            }
+            float fx, fy;
+            fitOffset(joint, w, h, unit, fx, fy);
+            // (a taller screen's: CutInMenu takes 0.4 off for screen type 1 - the room above and below)
+            const float roomY = std::max(float(h) / std::min(float(w) / (0.96f * unit), float(h) / (0.64f * unit)) - 0.64f * unit, 0.0f) / 2;
+            c.portrait.place = cr3::Mat34();
+            c.portrait.place.m[3] = ax + fx, c.portrait.place.m[7] = ay + fy - roomY;
+            pose(c.portrait, 0, false);
+            cr3::Texture* face = texture(ev->cutInImage(p.texture));
+            for (ViewMesh& vm : c.portrait.meshes) {
+                vm.texture = face ? face : texture(vm.baseMaterial.diffuse());
+                std::vector<float>& dc = vm.material.params[0x33];
+                if (dc.size() < 4) dc.resize(4, 1.0f);
+                dc[0] = dc[1] = dc[2] = p.bright;
+            }
+            cr3::SceneLighting l;
+            dev->setLighting(l);
+            drawFigure(c.portrait, view.data());
+        }
+    }
 
     void loadCutIns() {
+        if (archive.contains("comMsgCutRPosition.geom")) {
+            loadCr3CutIns();
+            return;
+        }
         static const char* kAnim[cr3::EventRuntime::kCutIns] = {"cutinr_io.anim", "cutinlr_io.anim", "cutinl_io.anim",
                                                                 "cutinpty_io.anim", "cutinsgl_io.anim"};
         static const char* kHidden[cr3::EventRuntime::kCutIns] = {"_L", "", "_R", "_L", "_R"};
@@ -9951,7 +10059,8 @@ struct Viewer {
         if (ev->windowOpen(cr3::EventRuntime::Vista))
             drawWindow(vistaWindow, message && ev->messageWindow() == cr3::EventRuntime::Vista, screenW, screenH);
             if (!vistaName.fig.meshes.empty()) drawWindow(vistaName, message && ev->messageWindow() == cr3::EventRuntime::Vista, screenW, screenH);
-        drawCutIns(screenW, screenH);
+        if (cr3CutInsLoaded) drawCr3CutIns(screenW, screenH);
+        else drawCutIns(screenW, screenH);
         if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn))
             drawWindow(conversationWindow, message && ev->messageWindow() == cr3::EventRuntime::CutIn, screenW, screenH);
         if (ev->windowOpen(cr3::EventRuntime::Narration))
