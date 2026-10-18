@@ -117,10 +117,23 @@ The menus (CRXPartsBase) are laid out in a 960 x 640 space at 100 pixels a unit 
 units, the same HUD camera. A menu figure is placed at a Position figure's `call_<menu>_fitN`
 joint: N a numpad anchor (1..3 the foot, 7..9 the top, 1 4 7 left, 3 6 9 right) moved by the
 screen's room beyond 9.6 x 6.4 (16:9: +-0.88 across; 4:3: +-0.4 up and down -
-CRXPartsBase::GetFitX/YOffset). Text sizes (SearchTextPosition): `typeM` 30, `typeS` 28, else 64.
-The event windows (EvtSystem::CreateWindows, CR2's order): 1 the vista's `comMsgVMenu` (two
-centred lines) at `comMsgVPosition` - 0.03, its speaker's name in `comMsgVNameMenu`; messages
-`comMsgMenu`, narration `comMsgNMenu`, system `comMsgSMenu`. Speaker tags: 144 (CR2: 21), in
+CRXPartsBase::GetFitX/YOffset). Text sizes (SearchTextPosition): `typeM` 30, `typeS` 28, else 64 -
+but the windows' SetStringData ask their own: the vista's lines 32, its name 28; the
+conversation's lines 32, its name 30. The joint's letter after `type?_` aligns: L 0, C 1, R 2,
+else 3. Placing a line (the 64-bit ProvisionalMenuText, s its size in pixels, 200 half-pixels a
+unit): the window's Pose moves the joint (s / 2) / 200 right and down; SetTextOffsetData /
+SetPosition centre a quad W = width + s wide, the text at its left - L at the joint + (W - s) / 200
++ 3s / 1600, C on it, R at (s - W) / 200 - its middle (s - height) / 200 - 3s / 1600 off the joint;
+a bordered text (Initialize type 2: the vista's name) 0.01 back up and left. The vista's two lines
+are one block: the narrower's +0x4c8 is minus half the difference, so both start where the wider
+does. Against the playthrough (which is scaled 1% about its centre) lines and names land within
+~2 px. The event windows (EvtSystem::CreateWindows, CR2's order): 1 the vista's `comMsgVMenu` (two
+lines at `typeM_C01` / `C02`) at `comMsgVPosition` - 0.03, its speaker's name in
+`comMsgVNameMenu`; messages `comMsgMenu`, narration `comMsgNMenu`, system `comMsgSMenu`. The page
+cursor (PageSendCursorButton, the vista's): `comMsgPBtnMenu` looping `comMsgPBtnMenu_loop` (slot
+1) at `comMsgPBtnVPosition`'s `call_comMsgPBtnMenu_fit3`, reopened once the page is typed and faded
+in over 1/6 s. The conversation's button `comMsgBtn` at `comMsgPosition`'s `call_comMsgBtn_fit3`,
+rendered while the page waits for a tap (MessageWindowMenu +0x62), typing or not. Speaker tags: 144 (CR2: 21), in
 EvtWindowMessage::GetNameTagNumber's order (`tools/gen_nametags.py`). The font: `F0001.bin` (iOS,
 Android) / `font/TBGB_0KP.TTC` (Vita) - TB Gothic B, the proportional face (1) for English.
 
@@ -137,8 +150,17 @@ own animation, which for the right one turns the image joint 180 degrees about y
 faces mirrored. `SetColor(n, v)` its brightness. The conversation's box (EvtCutinWindow:
 MessageWindowMenu) is `comMsgMenu` at `comMsgPosition`'s `call_comMsgMenu_fit2`, its panel's parts
 placed by its own animation (absolute, played as it opens), the name at `typeM_L01`, three lines at
-L02..L04, drawn dark on the light panel. Open: the right portrait shows larger in the playthrough
-than this gives (the left matches), the page button `comMsgBtn`, the centre layout.
+L02..L04, drawn dark on the light panel. Both portraits fit the playthrough at the same 1.01 scale
+(the video's own) and mirrored 4 px offsets.
+
+The centre one (CutInCenterMenu, scripts' `Cutin_Start_C`: an item's picture): `comMsgCenterPosition`
+places `comMsgCenterMenu` at `call_comMsgCenterMenu_fit0` (0, 0.88); InterfaceOpenAnimeSet plays its
+`comMsgCenterMenu_in` (absolute: its user channels flash the screen-sized `flash` mesh, and hold
+`call_comMsgCenter_id00` at scale 1 - the base pose has 3); the portrait `comMsgCenter_id00` (a 2.52
+square, `mat_cutIn001_C01` the picture) sits at that joint at its scale (GetScaleSize), hidden for
+the menu animation's first 1/6 s, then faded in over the next 1/6; `comMsgeff_01`, ten times its
+size, bursts over it from 0.367 s until its animation ends. Closing takes four Poses, a quarter of
+its alpha each.
 
 ## Parameter tables (`data\*.mbe`, EXPA)
 

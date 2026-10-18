@@ -274,7 +274,10 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         static const int kEnd[6] = {0, 1, 2, -1, 3, 4}; // (EndCutInWindow: 3 every one)
         if (n < 0 || n > 5) return;
         for (int k = 0; k < kCutIns; ++k)
-            if ((n == 3 || kEnd[n] == k) && cutIns_[size_t(k)].open) cutIns_[size_t(k)].closing = true;
+            if ((n == 3 || kEnd[n] == k) && cutIns_[size_t(k)].open && !cutIns_[size_t(k)].closing) {
+                cutIns_[size_t(k)].closing = true;
+                if (k == kCentreCutIn) cutIns_[size_t(k)].time = kCentreCloseSeconds;
+            }
     };
     vm.setNative("EvtFace", "Delete", [endCutIn](NativeCall& c) { endCutIn(c.integer(0, -1)); });
     vm.setNative("EvtFace", "DispOff", [endCutIn](NativeCall&) { endCutIn(3); });
@@ -493,6 +496,7 @@ bool EventRuntime::update(ScriptVM* vm) {
         it = (it->second += kTick) > 1.0f ? closing_.erase(it) : std::next(it);
     for (Portrait& c : cutIns_) {
         if (!c.open) continue;
+        c.age += kTick;
         if (!c.closing) c.time = std::min(c.time + kTick, kCutInSeconds);
         else if ((c.time -= kTick) <= 0) c = Portrait(); // (back to its start: gone)
     }

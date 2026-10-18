@@ -159,7 +159,12 @@ public:
         float time = 0; // into the io animation
         int texture = -1;
         float bright = 1;
+        float age = 0; // (since Create, uncapped: CR3's centre one - CutInCenterMenu - fades and flashes by it)
     };
+    // CR3's centre cut-in closes in 4 updates (CutInCenterMenu::InterfaceCloseAnimeSet: 4, a quarter
+    // of its alpha off each Pose)
+    static constexpr int kCentreCutIn = 1;
+    static constexpr float kCentreCloseSeconds = 4 * (1.0f / 30.0f);
     const Portrait& cutIn(int kind) const { return cutIns_[size_t(kind)]; }
     std::string cutInImage(int id) const; // a loaded face's image ("" none)
 

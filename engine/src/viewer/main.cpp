@@ -5499,6 +5499,11 @@ struct Viewer {
         // a page's text where its colour is the default (0): CR2's windows white; CR3's message
         // box draws dark slate on its light panel (measured from a playthrough: ~(76, 83, 91))
         float lineRgb[3] = {1, 1, 1};
+        // CR3's text sizes as its window's SetStringData asks (0: CR2's placing), the name's own
+        // offset, and the vista's lines as one block (each left where the widest is)
+        int nameSize = 0, lineSize = 0;
+        float nameDx = 0, nameDy = 0;
+        bool blockLines = false;
     };
     WindowLayout vistaWindow, vistaName, narrationWindow, conversationWindow;
     // the tutorials' windows (HelpWindowMenu - SetHelpWindowParameter 0, interface 0x1a: annoWin,
@@ -5561,8 +5566,10 @@ struct Viewer {
             vistaWindow.slots = {"01", "02"};
             vistaWindow.uiUnit = vistaName.uiUnit = 10; // (its panel spans 12 units: wider than 16:9's, not stretched)
             loadPosition(vistaWindow, "commsgvposition", "call_comMsgVMenu", -0.03f);
+            vistaWindow.lineSize = 32, vistaWindow.blockLines = true; // (VistaWindowMenu::SetStringData: lines 32, the name 28)
             loadWindow(vistaName, "commsgvnamemenu");
             vistaName.slots = {"01"}, vistaName.speakerOnly = true;
+            vistaName.nameSize = vistaName.lineSize = 28, vistaName.nameDx = -0.01f, vistaName.nameDy = 0.01f; // (its border's 0.01: SetStringData's 0.07 the Pose after it drops)
             loadPosition(vistaName, "commsgvnameposition", "call_comMsgVNameMenu", -0.03f);
         } else {
             loadWindow(vistaWindow, "vstwin");
@@ -5579,6 +5586,7 @@ struct Viewer {
             conversationWindow.nameTag = true, conversationWindow.linesPerPage = 3, conversationWindow.uiUnit = 10;
             conversationWindow.slots = {"01", "02", "03", "04"};
             conversationWindow.window = cr3::EventRuntime::CutIn;
+            conversationWindow.nameSize = 30, conversationWindow.lineSize = 32; // (MessageWindowMenu::SetStringData)
             loadPosition(conversationWindow, "commsgposition", "call_comMsgMenu", 0);
             // (its own animation places the panel's parts - absolute, slot 0 -, played as it opens:
             // SetParameterDataBase(.., 0, 1/6 s, play); closing it back)
@@ -5788,10 +5796,25 @@ struct Viewer {
                 const float unitsPerPx = float(drawn) / pxUnit / float(rasterPx);
                 for (float p : pen) q.pen.push_back(p * unitsPerPx);
                 q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx;
-                // SetTextOffsetData: left - the joint less half the size; centred - on it; right -
-                // ending there; the line's middle (size - height) / 2 from the joint
-                q.x = centred ? jx - q.w / 2 : right ? jx - q.w + float(drawn) / (2 * pxUnit) : jx - float(drawn) / (2 * pxUnit);
-                q.y = jy + (float(drawn) / pxUnit - q.h) / 2;
+                if (wl.lineSize) {
+                    // CR3's (64-bit ProvisionalMenuText; s the size its window asks for, a unit 200
+                    // half-pixels): the window's Pose moves the joint (s / 2) / 200 right and down
+                    // (the vista's name its border's 0.01 - Initialize type 2 - back); SetTextOffsetData / SetPosition centre a quad W = width + s
+                    // wide, its text at its left: L at the joint + (W - s) / 200 + 3s / 1600, C on
+                    // it, R at (s - W) / 200; the middle (s - height) / 200 - 3s / 1600 off it
+                    const float s = float(whole ? wl.nameSize : wl.lineSize) / pxUnit;
+                    const int type = joint[6] == 'L' ? 0 : joint[6] == 'C' ? 1 : joint[6] == 'R' ? 2 : 3;
+                    const float px = jx + s / 4 + (whole ? wl.nameDx : 0), py = jy - s / 4 + (whole ? wl.nameDy : 0);
+                    const float W = q.w + s;
+                    const float cx = type == 1 ? px : type == 2 ? px + (s - W) / 2 : px + (W - s) / 2 + (type == 0 ? 3 * s / 16 : 0);
+                    q.x = cx - W / 2;
+                    q.y = py + (s - q.h) / 2 - 3 * s / 16;
+                } else {
+                    // SetTextOffsetData: left - the joint less half the size; centred - on it; right -
+                    // ending there; the line's middle (size - height) / 2 from the joint
+                    q.x = centred ? jx - q.w / 2 : right ? jx - q.w + float(drawn) / (2 * pxUnit) : jx - float(drawn) / (2 * pxUnit);
+                    q.y = jy + (float(drawn) / pxUnit - q.h) / 2;
+                }
                 q.joint = joint, q.dx = q.x - jx, q.dy = q.y - jy;
                 cr3::textColour(colour, q.rgb);
                 if (colour == 0 && !whole)
@@ -5812,6 +5835,13 @@ struct Viewer {
                     add(lines[i].text, (centred ? size_t(wl.linesPerPage) : 0) + i, lines[i].colour, false);
             } else {
                 for (size_t i = 0; i < lines.size(); ++i) add(lines[i].text, i, lines[i].colour, false);
+            }
+            if (wl.blockLines) { // (VistaWindowMenu::SetStringData: the narrower line's +0x4c8 half the difference back - one block)
+                float widest = 0;
+                for (const TextQuad& q : textQuads)
+                    if (q.from >= 0) widest = std::max(widest, q.w);
+                for (TextQuad& q : textQuads)
+                    if (q.from >= 0) q.x -= (widest - q.w) / 2, q.dx -= (widest - q.w) / 2;
             }
         }
         for (TextQuad& q : textQuads) {
@@ -5852,9 +5882,16 @@ struct Viewer {
     // figure slid in by its _io animator in slot 1 (relative to its base: +0xc4 = 1), the portrait
     // (comMsgCut<R|L>_id00, its material the face) at its call_ joint's fit anchor, posed by its
     // own animation (the right one's turns its image about y: the left-facing faces mirrored)
+    // The centre one (CutInCenterMenu, Create(1)): comMsgCenterPosition places comMsgCenterMenu at
+    // call_comMsgCenterMenu_fit0, its _in animation played as it opens (absolute) - a flash over
+    // the screen (its user channels) and the joint call_comMsgCenter_id00, where the portrait
+    // (comMsgCenter_id00, mat_cutIn001_C01 the face) sits at that joint's scale (GetScaleSize),
+    // hidden for its first 1/6 s, then faded in over the next; comMsgeff_01 (ten times its size)
+    // burst over it from 0.367 s until its animation ends
     struct Cr3CutIn {
         ViewFigure position, portrait;
-        std::vector<std::string> joints;
+        ViewFigure menu, effect; // (the centre one's)
+        std::vector<std::string> joints, menuJoints;
         std::string call;
         bool loaded = false;
     };
@@ -5881,8 +5918,76 @@ struct Viewer {
             c.portrait.absolute = true;  // (its own, slot 0)
             c.loaded = true;
         }
+        Cr3CutIn& c = cr3CutIns[1];
+        std::string err;
+        if (loadFigure("commsgcenterposition.geom", c.position, &err) && loadFigure("commsgcentermenu.geom", c.menu, &err) &&
+            loadFigure("commsgcenter_id00.geom", c.portrait, &err) && loadFigure("commsgeff_01.geom", c.effect, &err)) {
+            std::vector<uint8_t> d;
+            if (archive.read("commsgcenterposition.name", d)) c.joints = cr3::parseJointNames(d);
+            if (archive.read("commsgcentermenu.name", d)) c.menuJoints = cr3::parseJointNames(d);
+            c.call = "call_comMsgCenterMenu";
+            for (auto [f, anim] : {std::pair<ViewFigure*, const char*>{&c.menu, "commsgcentermenu_in.anim"}, {&c.portrait, "commsgcenter_id00.anim"},
+                                   {&c.effect, "commsgeff_01.anim"}}) {
+                const auto a = std::find(f->anims.begin(), f->anims.end(), anim);
+                if (a != f->anims.end()) loadAnim(*f, size_t(a - f->anims.begin()));
+                f->absolute = true;
+            }
+            c.loaded = true;
+        } else SDL_Log("cut-in centre: %s", err.c_str());
         time = keep;
         cr3CutInsLoaded = cr3CutIns[0].loaded || cr3CutIns[2].loaded;
+    }
+
+    void drawCr3CentreCutIn(Cr3CutIn& c, const cr3::EventRuntime::Portrait& p, cr3::EventRuntime& ev, int w, int h, const float* view) {
+        const float t = p.age + eventLead();
+        // (closing: a quarter of its alpha off each update - InterfaceCloseAnimeSet's 4)
+        const float fade = p.closing ? std::clamp((p.time - eventLead()) / cr3::EventRuntime::kCentreCloseSeconds, 0.0f, 1.0f) : 1.0f;
+        const std::vector<cr3::Mat34> pw = c.position.skeleton.world(c.position.skeleton.basePose);
+        c.menu.place = cr3::Mat34();
+        for (size_t j = 0; j < c.joints.size() && j < pw.size(); ++j)
+            if (c.joints[j].compare(0, c.call.size(), c.call) == 0) {
+                float fx, fy;
+                fitOffset(c.joints[j], w, h, 10, fx, fy);
+                c.menu.place.m[3] = pw[j].m[3] + fx, c.menu.place.m[7] = pw[j].m[7] + fy;
+            }
+        pose(c.menu, t, false);
+        cr3::SceneLighting l;
+        dev->setLighting(l);
+        if (!p.closing) drawFigure(c.menu, view);
+        // the portrait at call_comMsgCenter_id00, its scale the joint's
+        const std::vector<cr3::Mat34> mw = c.menu.skeleton.world(c.menu.posed.empty() ? c.menu.skeleton.basePose : c.menu.posed, c.menu.place);
+        c.portrait.place = cr3::Mat34();
+        for (size_t j = 0; j < c.menuJoints.size() && j < mw.size(); ++j)
+            if (c.menuJoints[j] == "call_comMsgCenter_id00") {
+                const cr3::Mat34& m = mw[j];
+                for (int r = 0; r < 3; ++r) {
+                    const float sc = std::sqrt(m.m[r] * m.m[r] + m.m[4 + r] * m.m[4 + r] + m.m[8 + r] * m.m[8 + r]); // (the column's length)
+                    c.portrait.place.m[r * 5] = sc;
+                }
+                c.portrait.place.m[3] = m.m[3], c.portrait.place.m[7] = m.m[7];
+            }
+        const float alpha = (t < 1.0f / 6 ? 0.0f : std::min((t - 1.0f / 6) * 6, 1.0f)) * fade;
+        if (alpha > 0) {
+            pose(c.portrait, 0, false);
+            cr3::Texture* face = texture(ev.cutInImage(p.texture));
+            for (ViewMesh& vm : c.portrait.meshes) {
+                vm.texture = face ? face : texture(vm.baseMaterial.diffuse());
+                std::vector<float>& dc = vm.material.params[0x33];
+                if (dc.size() < 4) dc.resize(4, 1.0f);
+                dc[0] = dc[1] = dc[2] = p.bright;
+            }
+            c.portrait.tint[3] = alpha;
+            drawFigure(c.portrait, view);
+        }
+        // the burst: from 0.367 s (its +0x48 timer) till its animation ends
+        const float et = t - 0.36666667f;
+        if (et >= 0 && c.effect.animLoaded && et <= c.effect.anim.duration() && !p.closing) {
+            c.effect.place = cr3::Mat34();
+            c.effect.place.m[0] = c.effect.place.m[5] = 10;
+            c.effect.place.m[3] = c.portrait.place.m[3], c.effect.place.m[7] = c.portrait.place.m[7];
+            pose(c.effect, et, false);
+            drawFigure(c.effect, view);
+        }
     }
 
     void drawCr3CutIns(int w, int h) {
@@ -5931,11 +6036,72 @@ struct Viewer {
             dev->setLighting(l);
             drawFigure(c.portrait, view.data());
         }
+        if (cr3CutIns[1].loaded && ev->cutIn(1).open) drawCr3CentreCutIn(cr3CutIns[1], ev->cutIn(1), *ev, w, h, view.data());
+    }
+
+    // CR3's interface parts placed by a Position figure: the part at its call_<part>_fitN joint,
+    // fitted (SearchOffsetJointPositionAnyString), posed by a looping animator over its base (slot
+    // 1: AddAnimator .., SetAnimeLoop) or its own animation (slot 0)
+    struct Cr3Part {
+        ViewFigure position, fig;
+        std::vector<std::string> positionJoints;
+        std::string call;
+        bool loaded = false;
+    };
+    // the message windows' buttons: MessageWindowMenu's comMsgBtn at comMsgPosition's
+    // call_comMsgBtn_fit3 (rendered while the page waits for a tap - +0x62 -, typing or not), and
+    // the vista's PageSendCursorButton - comMsgPBtnMenu, comMsgPBtnMenu_loop, at comMsgPBtnVPosition's
+    // call_comMsgPBtnMenu_fit3 - reopened once the page is typed, fading in over 1/6 s (Pose:
+    // alpha the time * 30 / 5)
+    Cr3Part messageButton, vistaPageCursor;
+    int vistaTypedFrame = -1; // (the event update the vista's page was typed by: the cursor's fade)
+
+    bool loadCr3Part(Cr3Part& p, const std::string& position, const std::string& figure, const std::string& call, const std::string& loop) {
+        std::string err;
+        if (!loadFigure(position + ".geom", p.position, &err) || !loadFigure(figure + ".geom", p.fig, &err)) {
+            SDL_Log("%s: %s", figure.c_str(), err.c_str());
+            return false;
+        }
+        std::vector<uint8_t> d;
+        if (archive.read(position + ".name", d)) p.positionJoints = cr3::parseJointNames(d);
+        p.call = call;
+        const float keep = time;
+        const std::string want = (loop.empty() ? figure : loop) + ".anim";
+        const auto a = std::find(p.fig.anims.begin(), p.fig.anims.end(), want);
+        if (a != p.fig.anims.end()) loadAnim(p.fig, size_t(a - p.fig.anims.begin()));
+        p.fig.absolute = loop.empty();
+        time = keep;
+        return p.loaded = true;
+    }
+
+    void drawCr3Part(Cr3Part& p, int w, int h, float t, float alpha) {
+        if (!p.loaded || alpha <= 0) return;
+        const float unit = 10;
+        const std::vector<cr3::Mat34> pw = p.position.skeleton.world(p.position.skeleton.basePose);
+        p.fig.place = cr3::Mat34();
+        for (size_t j = 0; j < p.positionJoints.size() && j < pw.size(); ++j)
+            if (p.positionJoints[j].compare(0, p.call.size(), p.call) == 0) {
+                float fx, fy;
+                fitOffset(p.positionJoints[j], w, h, unit, fx, fy);
+                p.fig.place.m[3] = pw[j].m[3] + fx, p.fig.place.m[7] = pw[j].m[7] + fy;
+                break;
+            }
+        pose(p.fig, t, true);
+        p.fig.tint[3] = std::min(alpha, 1.0f);
+        const Mat4 proj = uiProjection(w, h, unit);
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * unit;
+        const Mat4 view = cr3::mat4Multiply(proj, camera);
+        cr3::SceneLighting l;
+        dev->setLighting(l);
+        drawFigure(p.fig, view.data());
     }
 
     void loadCutIns() {
         if (archive.contains("comMsgCutRPosition.geom")) {
             loadCr3CutIns();
+            loadCr3Part(messageButton, "commsgposition", "commsgbtn", "call_comMsgBtn", "");
+            loadCr3Part(vistaPageCursor, "commsgpbtnvposition", "commsgpbtnmenu", "call_comMsgPBtnMenu", "commsgpbtnmenu_loop");
             return;
         }
         static const char* kAnim[cr3::EventRuntime::kCutIns] = {"cutinr_io.anim", "cutinlr_io.anim", "cutinl_io.anim",
@@ -10058,13 +10224,26 @@ struct Viewer {
             dev->drawQuad(white, kScreen, id.data(), rgba);
         }
         const bool message = ev->messageShown() && ev->page() < int(ev->message().pages.size());
-        if (ev->windowOpen(cr3::EventRuntime::Vista))
-            drawWindow(vistaWindow, message && ev->messageWindow() == cr3::EventRuntime::Vista, screenW, screenH);
-            if (!vistaName.fig.meshes.empty()) drawWindow(vistaName, message && ev->messageWindow() == cr3::EventRuntime::Vista, screenW, screenH);
+        const bool onVista = message && ev->messageWindow() == cr3::EventRuntime::Vista;
+        if (ev->windowOpen(cr3::EventRuntime::Vista)) {
+            drawWindow(vistaWindow, onVista, screenW, screenH);
+            // (CR3: the page cursor once the page is typed, fading in)
+            const bool typed = onVista && ev->typed() && !ev->windowClosing(cr3::EventRuntime::Vista);
+            if (!typed) vistaTypedFrame = -1;
+            else if (vistaTypedFrame < 0) vistaTypedFrame = ev->frame();
+            if (typed) {
+                const float age = float(ev->frame() - vistaTypedFrame) * cr3::EventRuntime::kTick + eventLead();
+                drawCr3Part(vistaPageCursor, screenW, screenH, age, age * 6.0f);
+            }
+        }
+        if (!vistaName.fig.meshes.empty()) drawWindow(vistaName, onVista, screenW, screenH);
         if (cr3CutInsLoaded) drawCr3CutIns(screenW, screenH);
         else drawCutIns(screenW, screenH);
-        if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn))
-            drawWindow(conversationWindow, message && ev->messageWindow() == cr3::EventRuntime::CutIn, screenW, screenH);
+        if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn)) {
+            const bool onConversation = message && ev->messageWindow() == cr3::EventRuntime::CutIn;
+            drawWindow(conversationWindow, onConversation, screenW, screenH);
+            if (onConversation && !ev->windowClosing(cr3::EventRuntime::CutIn)) drawCr3Part(messageButton, screenW, screenH, 0, 1);
+        }
         if (ev->windowOpen(cr3::EventRuntime::Narration))
             drawWindow(narrationWindow, message && ev->messageWindow() == cr3::EventRuntime::Narration, screenW, screenH);
         // the tutorials': the picture (tutorialPic, its PRG_rep the image shown), the windows over it
@@ -11005,6 +11184,8 @@ int main(int argc, char** argv) {
     v.unload(v.conversationCursor);
     for (ViewFigure& f : v.cutInFigures) v.unload(f);
     v.unload(v.pageCursor);
+    for (auto& c : v.cr3CutIns) v.unload(c.position), v.unload(c.portrait), v.unload(c.menu), v.unload(c.effect);
+    for (auto* p : {&v.messageButton, &v.vistaPageCursor}) v.unload(p->position), v.unload(p->fig);
     for (auto& q : v.textQuads) dev->destroy(q.tex);
     for (auto& q : v.nameQuads) dev->destroy(q.tex);
     for (ViewFigure& g : v.eventFigures) v.unload(g);
