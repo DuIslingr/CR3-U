@@ -28,6 +28,7 @@ target_compile_options(squirrel2 PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w -fno
 # Core library: everything that is not an app entry point, so tools can reuse it
 add_library(cr3core STATIC
     src/assets/mvgl.cpp
+    src/assets/mbe.cpp
     src/assets/image.cpp
     src/assets/geom.cpp
     src/assets/skeleton.cpp
@@ -51,6 +52,7 @@ add_library(cr3core STATIC
     src/script/gamesave.cpp
     src/battle/battledata.cpp
     src/battle/rules.cpp
+    src/battle/cr3battle.cpp
     src/battle/motion.cpp
     src/battle/camera.cpp
     src/battle/script.cpp

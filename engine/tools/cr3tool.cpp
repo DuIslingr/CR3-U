@@ -62,6 +62,7 @@
 #include "assets/mvgl.hpp"
 #include "assets/release.hpp"
 #include "battle/script.hpp"
+#include "battle/cr3battle.hpp"
 #include "field/character.hpp"
 #include "field/fieldmap.hpp"
 #include "event/runtime.hpp"
@@ -1095,6 +1096,44 @@ int pose(const char* path, const std::string& figure, const std::string& animNam
     return 0;
 }
 
+// CR3's battle (battle/cr3battle.hpp): a coupling's set-up on a battle field - its units, where
+// they stand, the cameras of the largest's size, and whether Cam_bt holds them
+int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg) {
+    cr3::MvglArchive a;
+    if (!openArchive(a, path)) return 1;
+    std::string err;
+    cr3::Cr3BattleTables t;
+    if (!t.load(a, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    std::vector<int> party;
+    for (const char* p = partyArg; p && *p;) {
+        party.push_back(std::atoi(p));
+        p = std::strchr(p, ',');
+        if (p) ++p;
+    }
+    cr3::Cr3Battle b;
+    if (!b.setup(t, coupling, fieldId, party, 1, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    std::printf("coupling %d on field %d: %s (%s)\n", coupling, fieldId, b.field.c_str(), a.contains(b.field + ".geom") ? "found" : "MISSING");
+    for (const cr3::Cr3BattleUnit& u : b.units)
+        std::printf("  %s %-5s figure %-8s%s%s variant %-2s width %.2f depth %.2f scale %.2f camera size %d  home (%.3f %.3f %.3f) yaw %.0f%s\n",
+                    u.player ? "party  " : "monster", u.name.c_str(), u.figure.c_str(), u.head.empty() ? "" : " + ", u.head.c_str(),
+                    u.variant.empty() ? "-" : u.variant.c_str(), u.width, u.depth, u.scale, u.cameraSize, u.home[0], u.home[1], u.home[2],
+                    u.yaw * 57.29578f, a.contains(u.figure + ".geom") ? "" : "  (figure MISSING)");
+    cr3::Cr3BattleCamera cam;
+    const bool camLoaded = cam.load(a, "Cam_bt");
+    std::printf("camera size %d, get-set end %.3f s; Cam_bt %s (%.2f s)\n", b.cameraSize, b.getSetEnd, camLoaded ? "loaded" : "MISSING", cam.duration());
+    for (size_t k = 0; k < b.cameras.size(); ++k) {
+        const std::string first = b.cameras[k].substr(0, b.cameras[k].find('\n'));
+        cr3::Mat34 w;
+        float fov = 0, zn = 0, zf = 0;
+        cr3::Cr3BattleCamera own;
+        const bool ok = first.find("Cam_bt") != std::string::npos ? cam.at(first, 0, w, fov, zn, zf)
+                                                                   : own.load(a, first) && own.at(first, 0, w, fov, zn, zf);
+        std::printf("  %zu %-22s %s", k, first.c_str(), ok ? "" : "not found\n");
+        if (ok) std::printf("at (%.2f %.2f %.2f) fov %.1f near %.2f far %.0f\n", w.m[3], w.m[7], w.m[11], fov, zn, zf);
+    }
+    return 0;
+}
+
 // The battles: each coupling's set-up (battle/battledata.cpp) against the archive - its map, its
 // figures and their first motions, the battledpos joints they stand on, the commands' camera
 int battles(const char* path, const char* which) {
@@ -1381,6 +1420,7 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "walk") && argc > 3) return walk(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "images")) return images(argv[2], argc > 3 ? argv[3] : nullptr, argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "battle") && argc > 3) return battles(argv[2], argv[3]);
+    if (!std::strcmp(argv[1], "cr3battle") && argc > 4) return cr3Battle(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), argc > 5 ? argv[5] : "6");
     if (!std::strcmp(argv[1], "fight") && argc > 3) {
         int party[2] = {1, 2};
         if (argc > 6) std::sscanf(argv[6], "%d,%d", &party[0], &party[1]);

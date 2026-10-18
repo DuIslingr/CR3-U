@@ -20,6 +20,11 @@ struct GameState {
     // Orlando 1, Marie 2 ...) and three pairs kept (+5..+10) - a new game's
     // (Cr3InitWorkFromBattleData): Darwin and Marie, the pairs 0 2, 1 3, 4 5
     int party[2] = {0, 2};
+    // CR3's party (utils::SetParty / GetParty: five slots of char_para ids, 0 none; the field's
+    // player Fld2CharaNameTbl[slot 0 - 1], its battle model the character's). A new game's: 6 -
+    // the prologue's hooded hero (c101 on the field, j006 in battle; the reference's), the
+    // game's own default not found yet
+    int cr3Party[5] = {6, 0, 0, 0, 0};
     // the field's leader of the two (cr3_field_data +8: FldUtilGetActiveCharacter, 0 / 1), the
     // character change allowed (+0x32: Cr3ChangeCharacter.SetEnable - its button) and the tab
     // (+0x33: Cr3TabMenu.SetEnable) - a new game's both (Cr3InitFieldData)
@@ -121,6 +126,14 @@ struct GameState {
         std::string vistaFunction, vistaMap = "null";
         int battle = -1;
         int battleParty[2] = {-1, -1};
+        // (CR3's BattleIn(coupling, field, level, music) / BattleIn2(.., the music after):
+        // FldUtilReserveBattleIN - BtlBootParam +0x14, +0x10 the battle field (battle_field.mbe),
+        // +0x18 the monsters' level, +0x1c the music; the scripts' wrappers name them cup, map,
+        // lv, bgm (passing map second))
+        int battleField = -1, battleLevel = 1, battleMusic = -1, battleMusicAfter = 32;
+        // (after it: SetBattleNext - FldUtil's DAT_0141e2e0: 1 the field, 14 the vista
+        // SetVistaFuncName2 named - its function kept without a vista reserved now, Cr3ScriptWork 0x11)
+        int battleNext = 1;
         std::string popPoint;
         bool title = false;
         int fieldMode = -1; // -1: evt000

@@ -211,8 +211,9 @@ the door itself, its function on a tap while the "!" shows: `cobj_00` is `DoorJu
 first five letters) at that joint of `<map>p`. CR3-U takes "near" as within 1.3 + the box across
 (an approximation of the ghost against the box: the walls stop the player short of it). Leaving
 for a vista (an event box's `s000_d01_00401`, ...) keeps the player's place (Fld2SaveData) for the
-return. The ship (d01): d0101 -> d0102 (`evt101_00`) -> d0103 (`evt201_00`: BattleIn 551, the
-first battle) -> d0104 (`evt102_00`, `evt202_00`: BattleIn 552) -> d0105.
+return. The ship (d01): d0101 -> d0102 (`evt101_00`) -> d0103 (`evt201_00`: BattleIn 551, two
+Heterocera) -> d0104 (`evt102_00`, `evt202_00`: BattleIn 552) -> d0105. The story's first battle is
+earlier, the vista `s000_d01_00401_evt`'s (d0102f) BattleIn2 of coupling 1 - see "Battles (CR3)".
 
 `cr3view --area <area> [--player <model>]` walks one (WASD / the stick, Shift a walk; Q / E turn
 the camera, R / V tilt it); `--walk x,y,s --run s` for captures.
@@ -268,6 +269,59 @@ the menu animation's first 1/6 s, then faded in over the next 1/6; `comMsgeff_01
 size, bursts over it from 0.367 s until its animation ends. Closing takes four Poses, a quarter of
 its alpha each.
 
+## Battles (CR3)
+
+The battle reservation: `Cr3System.BattleIn(coupling, field, level, music)` /
+`BattleIn2(.., music after)` (FldUtilReserveBattleIN; the scripts' wrappers name them `cup, lv,
+map, bgm` but pass map second) become the BtlBootParam - +0 .. +8 the party (utils::SetParty's
+slots: char_para ids), +0x10 the battle field, +0x14 the coupling, +0x18 the monsters' level, +0x1c
+the music. `SetBattleNext(14)` with `SetVistaFuncName2` / `SetVistaMapName` (the scripts'
+`SetBattleToVista`) sends the battle on to a vista; else back to the field, whose `evt100` runs
+(SetComeFromBattleToField). The ship's: `s000_d01_00401_evt` -> coupling 1 on field 44 at level 3
+-> `s000_d01_00601_evt`.
+
+BtlSystem::Init makes the units: the party (createParty: the characters' models - a party
+member's CrxModel, GameMain::BuildUnitModel), then the coupling's monsters (CreateMonster:
+`mon_cop.mbe` Coupling - id, then three (count, pointer to that many monster ids) slots, each
+filled by one of its ids at random; empty where the first id is -1). `mon_para.mbe` Monster: id,
+model, texture variation. `model.mbe` Model (64-bit layout `iippffiffii`): id, -, name, sub, width
+and depth (/ 10), camera size (MbCameraSize), scale, -, -, flags - bit 0 a parts model, drawn as
+two figures (CrxModel::Build): `<name>b<costume>` ("%sb%02d", b01 without one) and `<name>h01`,
+each with its own animations. A texture variation replaces the textures' `a` with its letter
+where that image exists (CrxModel::GetVariationTexture: `m234a00` -> `m234c00`).
+
+Placement (BtlUnitList::Align, BtlUnit::initializeHome): each side along x in the order made, side
+by side by width x scale, the side centred on 0; the party at z = Battle +0 / 10 + half its depth,
+turned 180 degrees (facing -z), the monsters at Battle +4 / 10 - half theirs, facing +z (`battle.mbe`
+Battle: 21.5, -21.5). The field: `battle_field.mbe` BattleField (id, figure, four floats) - its
+figure, its animation looped, its `DirLamp02` the shadow light (BtlField). The units stand in their
+type-0 motion, `bb01`, looped (BtlUnit::PlayStayAnimation), the monsters' started apart
+(BtlUnitList::Standby: 0 / 1 / 2 s, plus up to 0.5 at random).
+
+The cameras (BtlCameraSystem): every battle camera is a joint of one figure, `Cam_bt` (in
+CRDBcam01; 90 cameras, one 30 s animation they all run on from 0) - or a figure of its own where
+the name lacks "Cam_bt" (`Cam_human_getset`, `Cam_colosseum_getset`). BtlCameraMotion poses the
+figure at its time and takes the named joint's world position (x its scale, 1) and rotation, and
+the field of view of the camera the figure holds on that joint (GetContaindCamera); BtlCamera's
+own planes are 0.1 and 7000. BtlCameraActor puts it on an actor: position + rotation x the
+motion's position, rotation x the motion's rotation. The camera set is the largest unit's camera
+size's `model.mbe` Camera row (size, the get-set's end time, then ten names: 0 the get-set, 1 the
+command, 2 the party's attack, 3 the monsters', 4 all-attack, 5 / 6 combos, 7 all, 8 chain, 9
+up; a name list is separated by newlines).
+
+The start (BtlSysStateStart): phaseStart plays the glass break and PlayBattleIn - the get-set
+camera at the origin over the row's end time (size 4: `Cam_bt_getset_M_00`, 2 s); phaseBattleIn
+waits for the glass and that camera (or a tap), then PlayGetSet - the same camera seeked to its
+end and held - and the battle's start script. The command camera (PlayCommandSelect) is
+`Cam_bt_command_PC_00` looped over 26.67 s (one turn round the unit) on the unit's camera point -
+its figure's `DummyCP` joint (BtlUnit::VGetCameraPoint) - turned as the unit is, and the picture
+moved left by a sixth of the screen (BtlCamera::SetScreenOffsetX(-width / 3): Camera::Render
+adds offset / width to clip x).
+
+`cr3view --battle <coupling> [--battle-field <n>]` (44 unless given) shows one; `cr3tool cr3battle
+<release> <coupling> <field> [party]` prints its set-up. The turns, commands and damage are not in
+yet: in the command stage a tap ends the battle as won.
+
 ## Parameter tables (`data\*.mbe`, EXPA)
 
 `MbParameterManager::structParam`: `EXPA`, u32 table count; per table a u32 name length, the name
@@ -277,7 +331,11 @@ is pointed at them (`0xcccccccc` until then). The 64-bit builds start each table
 8-byte aligned (4 bytes skipped where not) and their pointer slots are 8 bytes; the Vita's are
 packed, 4-byte slots (`char_name.mbe`: rows 0x18 against 0xc). The columns' types are not in the
 file - the game reads each table with its own code, by its name; the CHNK entries show which slots
-are strings. 63 files, 109 tables, 27,884 rows, the same in every release (`tools/mbe.py`).
+are strings - or arrays: mon_cop's slots point at their monster ids. A table whose rows are a
+multiple of 8 long reads either way, so the layout is the release's (64-bit for iOS / Android),
+the other only if that fails. 63 files, 109 tables, 27,884 rows, the same in every release
+(`tools/mbe.py`; in the engine `assets/mbe.hpp`, rows read by a column layout - `i`, `f`, `p` a
+pointer slot, `_` the pointer alignment alone).
 
 ## Scripts (`script\*.nut`, `script64\*.nut`)
 
@@ -469,7 +527,7 @@ range (±32) where the Vita's don't (a whole number of repeats: the same samplin
 | +0x30 u32 | the meshes (0x54 bytes each) |
 | +0x34 u32 | the materials |
 | +0x38 u32 | the lights (0x34 bytes each) |
-| +0x3c u32 | the cameras (0x24 bytes each) |
+| +0x3c u32 | the cameras (0x24 bytes each; 0x30 in CR3's 64-bit geoms - the same fields, padded) |
 | +0x40 u32 | the inverse bind matrices, one per skeleton joint: 3x4 row-major (0x30 bytes) on Android / the Vita, 4x4 column-major (0x40) on the iPad |
 
 | Mesh | |

@@ -80,6 +80,7 @@
 #include "battle/script.hpp"
 #include "battle/special.hpp"
 #include "battle/glass.hpp"
+#include "battle/cr3battle.hpp"
 #include "script/gamesave.hpp"
 #include "event/runtime.hpp"
 #include "viewer/audio.hpp"
@@ -607,6 +608,7 @@ struct Viewer {
     // A tap (Return, a click): the vista's page; the field's - its event's page, else the nearest
     // balloon's function (FldMain::CheckTouchEventExec_Tap, EventExecute), the leader turned to it
     void tap() {
+        if (cr3BattleMode) return cr3BattleTap();
         if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
             if (areaEvents->running()) areaEvents->touch();
             else if (areaCheckNear >= 0) runAreaFunction(areaGimmicks[size_t(areaCheckNear)].function);
@@ -1340,6 +1342,17 @@ struct Viewer {
         f.meshes.clear();
     }
 
+    // CR3's texture variations (CrxModel::GetVariationTexture): its textures' "a" replaced by the
+    // variation's letter, where that texture exists (m234a00 -> m234c00); set while loading
+    std::string figureVariant;
+    std::string variantOf(const std::string& name) const {
+        if (figureVariant.empty() || figureVariant == "a" || name.empty()) return name;
+        std::string v = name;
+        for (size_t at = v.find('a'); at != std::string::npos; at = v.find('a', at + figureVariant.size()))
+            v.replace(at, 1, figureVariant);
+        return archive.contains("images\\" + v + ".img") ? v : name;
+    }
+
     bool loadFigure(const std::string& name, ViewFigure& f, std::string* err) {
         unload(f);
         const size_t keepAnim = f.animIndex;
@@ -1382,11 +1395,11 @@ struct Viewer {
                             m.material, gm.shaderKey[0], gm.shaderKey[1], gm.shaderKey[2], gm.shaderKey[3], st.c_str(),
                             vm.material.diffuse().c_str(), vm.material.texture(0x43).c_str(), vm.material.texture(0x48).c_str());
                 }
-                vm.texture = texture(vm.material.diffuse());
-                vm.normalMap = texture(vm.material.texture(0x35));
-                vm.extraMap = vm.material.textures.count(0x48)   ? texture(vm.material.texture(0x48), false)
-                              : vm.material.textures.count(0x44) ? texture(vm.material.texture(0x44)) // (OverlayColorSampler)
-                                                                 : texture(vm.material.texture(0x43));
+                vm.texture = texture(variantOf(vm.material.diffuse()));
+                vm.normalMap = texture(variantOf(vm.material.texture(0x35)));
+                vm.extraMap = vm.material.textures.count(0x48)   ? texture(variantOf(vm.material.texture(0x48)), false)
+                              : vm.material.textures.count(0x44) ? texture(variantOf(vm.material.texture(0x44))) // (OverlayColorSampler)
+                                                                 : texture(variantOf(vm.material.texture(0x43)));
                 // an overlay without its texture (d0252b's): the sampler never set, so unit 0's -
                 // the colour's own, laid over itself
                 if (!vm.material.textures.count(0x44) && (shaders->features(vm.material.shaderKey).shade & SHADE_OVERLAY))
@@ -1878,6 +1891,7 @@ struct Viewer {
 
     void drawScene(int w, int h) {
         if (cr3Title.stage) return drawCr3TitleScene(w, h);
+        if (cr3BattleMode) return drawCr3Battle(w, h);
         if (credits.stage || titleMenu.stage) return; // (the staff roll: its figure over black, in the interface's pass; the title)
         if (battleMode) {
             drawBattle(w, h);
@@ -2302,6 +2316,7 @@ struct Viewer {
         if (credits.stage) return updateCredits(dt);
         if (titleMenu.stage) return updateTitle(dt);
         if (cr3Title.stage) return updateCr3Title(dt);
+        if (cr3BattleMode) return updateCr3Battle(dt);
         if (areaMode && !eventMode) return updateArea(dt, sx, sy, run);
         if (playMode && (fieldMode || eventMode || battleMode) && !paused) playSeconds += dt; // (the save's play time)
         if (battleMode) {
@@ -5330,7 +5345,7 @@ struct Viewer {
     bool areaMode = false;
     cr3::Cr3Area area;
     std::vector<ViewFigure> areaFigures;
-    ViewFigure areaPlayer;
+    ViewFigure areaPlayer, areaPlayerHead; // (a parts model's head: CrxModel::Build's <name>h01)
     std::string areaPlayerName, areaPlayerArgName;
     std::unique_ptr<cr3::CharacterController> areaWalker;
     cr3::Cr3GomCamera areaCamera;
@@ -5379,11 +5394,17 @@ struct Viewer {
         initEventDrawing(); // (the area's script's windows and fades)
         // the player: Fld2TaskPlayer::CreatePlayer (Fld2CharaNameTbl's model; a hero's body b01)
         areaPlayerArgName = player;
-        areaPlayerName = player.empty() ? (name.compare(0, 1, "t") == 0 ? "j001" : "c101") : player;
+        // (Fld2TaskPlayer: Fld2CharaNameTbl[the party's first - 1], 15 its last)
+        static const char* const kCharaNames[6] = {"j001", "j002", "j003", "j004", "j005", "c101"};
+        const int lead = game.cr3Party[0] == 15 ? 6 : game.cr3Party[0];
+        areaPlayerName = player.empty() ? (lead >= 1 && lead <= 6 ? kCharaNames[lead - 1] : "c101") : player;
         if (areaPlayerName[0] == 'j' && areaPlayerName.size() == 4) areaPlayerName += "b01";
-        unload(areaPlayer);
-        areaPlayer = ViewFigure();
+        unload(areaPlayer), unload(areaPlayerHead);
+        areaPlayer = ViewFigure(), areaPlayerHead = ViewFigure();
         if (!loadFigure(areaPlayerName + ".geom", areaPlayer, &err)) SDL_Log("player %s: %s", areaPlayerName.c_str(), err.c_str());
+        if (areaPlayerName.size() == 7 && areaPlayerName.compare(4, 3, "b01") == 0 && archive.contains(areaPlayerName.substr(0, 4) + "h01.geom") &&
+            !loadFigure(areaPlayerName.substr(0, 4) + "h01.geom", areaPlayerHead, &err))
+            SDL_Log("player head: %s", err.c_str());
         areaWalker = std::make_unique<cr3::CharacterController>(area.walls);
         areaWalker->radius = 0.2f, areaWalker->stepHeight = 0.1f; // (Fld2TaskPlayer::CreateGhost: a 0.2 sphere; Setup(0.1); SetMaxSlope 45 degrees)
         areaWalker->setPosition({area.spawn[0], area.spawn[1] + 0.2f, area.spawn[2]});
@@ -5423,8 +5444,12 @@ struct Viewer {
             for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g); // (no box set off by standing in it)
         }
         savedArea.clear();
-        if (!areaEvents->start(name.substr(0, 3), "evt000")) SDL_Log("area %s: evt000 - %s", name.c_str(), areaEvents->error().c_str());
-        else SDL_Log("area %s: evt000 running, %zu gimmicks", name.c_str(), areaGimmicks.size());
+        // (FldMain::Init's mode: back from a battle evt100 - SetComeFromBattleToField -, else evt000)
+        const std::string entry = game.next.fieldMode == 1 ? "evt100" : "evt000";
+        game.next.fieldMode = -1;
+        if (!areaEvents->start(name.substr(0, 3), entry) && (entry == "evt000" || !areaEvents->start(name.substr(0, 3), "evt000")))
+            SDL_Log("area %s: %s - %s", name.c_str(), entry.c_str(), areaEvents->error().c_str());
+        else SDL_Log("area %s: %s running, %zu gimmicks", name.c_str(), entry.c_str(), areaGimmicks.size());
         SDL_Log("area %s: %zu figures, player %s at defaultPos (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
                 area.spawn[0], area.spawn[1], area.spawn[2]);
         return true;
@@ -5434,13 +5459,17 @@ struct Viewer {
     void setAreaMotion(cr3::Cr3Motion m) {
         if (areaMotionSet && m == areaMotion) return;
         const std::string want = areaPlayerName + "_" + cr3::cr3MotionName(m) + ".anim";
-        const auto it = std::find(areaPlayer.anims.begin(), areaPlayer.anims.end(), want);
-        if (it == areaPlayer.anims.end()) return;
-        ViewFigure& f = areaPlayer;
-        if (f.animLoaded) f.blendAnim = f.anim, f.blendLoaded = true, f.blendAbsolute = f.absolute, f.blendTime = areaMotionAge, f.blendLoop = true;
-        const float keep = time;
-        loadAnim(f, size_t(it - f.anims.begin()));
-        time = keep;
+        if (std::find(areaPlayer.anims.begin(), areaPlayer.anims.end(), want) == areaPlayer.anims.end()) return;
+        for (ViewFigure* fp : {&areaPlayer, &areaPlayerHead}) { // (the head: its own animator, the same motion)
+            ViewFigure& f = *fp;
+            const std::string name = f.name.substr(0, f.name.size() - 5) + "_" + cr3::cr3MotionName(m) + ".anim";
+            const auto it = std::find(f.anims.begin(), f.anims.end(), name);
+            if (it == f.anims.end()) continue;
+            if (f.animLoaded) f.blendAnim = f.anim, f.blendLoaded = true, f.blendAbsolute = f.absolute, f.blendTime = areaMotionAge, f.blendLoop = true;
+            const float keep = time;
+            loadAnim(f, size_t(it - f.anims.begin()));
+            time = keep;
+        }
         areaMotion = m, areaMotionSet = true, areaMotionAge = 0;
     }
 
@@ -5506,9 +5535,14 @@ struct Viewer {
             for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g);
             return;
         }
-        if (n.battle >= 0) {
-            SDL_Log("area %s: battle %d (not yet)", area.name.c_str(), n.battle);
-            n.battle = -1;
+        if (n.battle >= 0) { // (FldMain::BranchAfterEvent: the battle - the field kept to come back to)
+            const int id = n.battle, fieldId = n.battleField;
+            n.battle = -1, n.battleField = -1;
+            savedArea = area.name;
+            const cr3::Vec3 p = areaWalker->position();
+            savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
+            SDL_Log("area %s: battle %d on field %d", area.name.c_str(), id, fieldId);
+            if (startCr3Battle(id, fieldId)) areaMode = false;
         }
     }
 
@@ -5604,18 +5638,218 @@ struct Viewer {
             drawFigure(f, vp.data());
         }
         // the player: where it walks, facing its way
-        if (!areaPlayer.meshes.empty()) {
+        for (ViewFigure* fp : {&areaPlayer, &areaPlayerHead}) {
+            ViewFigure& f = *fp;
+            if (f.meshes.empty()) continue;
             const cr3::Vec3 p = areaWalker->position();
-            ViewFigure& f = areaPlayer;
             f.place = cr3::Mat34();
             const float c = std::cos(areaYaw), s = std::sin(areaYaw);
             f.place.m[0] = c, f.place.m[2] = s, f.place.m[8] = -s, f.place.m[10] = c;
             f.place.m[3] = p[0], f.place.m[7] = p[1] - areaWalker->radius, f.place.m[11] = p[2];
             f.tint[3] = areaCamera.playerAlpha; // (Fld2TaskPlayer::SetAlpha: the camera too near)
             f.blendWeight = f.blendLoaded ? std::min(areaMotionAge * 6.0f, 1.0f) : 1.0f; // (SetAnimationBlend 1/6 s)
-            f.blendTime += 0; // (the motion it fades from, held where it was)
             pose(f, areaMotionAge, true);
             drawFigure(f, vp.data());
+        }
+    }
+
+    // CR3's battle (--battle <coupling> [--battle-field <n>], an area's BattleIn: battle/cr3battle.hpp)
+    // - the field's figure, the units where BtlUnitList::Align puts them in their stance (bb01,
+    // looped: BtlUnit::PlayStayAnimation), the camera BtlCameraSystem plays: BtlSysStateStart's
+    // battle-in - the get-set camera of the largest unit's size, from Cam_bt (or a figure of its
+    // own) over its end time -, held at its end (PlayGetSet: SeekEnd), then the command camera on
+    // the party's first (PlayCommandSelect: Cam_bt_command_PC_00 looped over 26.67 s, riding the
+    // unit - its position, its turn - and the picture shifted a third of the screen's half width
+    // left: BtlCamera::SetScreenOffsetX(-width / 3))
+    bool cr3BattleMode = false;
+    cr3::Cr3BattleTables cr3BattleTables;
+    bool cr3BattleTablesLoaded = false;
+    cr3::Cr3Battle cr3Battle;
+    ViewFigure cr3BattleField;
+    struct Cr3BattleUnitView {
+        ViewFigure body, head;
+        float phase = 0; // (BtlUnitList::Standby: the monsters' stances started apart)
+    };
+    std::vector<Cr3BattleUnitView> cr3BattleUnits;
+    cr3::Cr3BattleCamera cr3BattleCam, cr3BattleOwnCam; // (Cam_bt; a camera figure of its own: Cam_human_getset ...)
+    enum class Cr3BattleStage { In, GetSet, Command };
+    Cr3BattleStage cr3BattleStage = Cr3BattleStage::In;
+    float cr3BattleClock = 0;
+    struct Cr3BattleCamPlay {
+        std::string name;
+        float start = 0, end = 0; // (the motion's clock: from start, its end time)
+        bool loop = false, held = false;
+        std::array<float, 3> actor{}; // (BtlCameraActor: where it rides, turned by yaw)
+        float actorYaw = 0, screenShift = 0; // (the shift in NDC: -1/3 for the command camera)
+    } cr3Cam;
+
+    // BtlCameraSystem::Load / changeMotion: a Cam_bt camera, else a figure of its own
+    void playCr3Camera(const std::string& name, float end, bool loop, const std::array<float, 3>& actor, float yaw, float shift) {
+        cr3Cam = Cr3BattleCamPlay();
+        cr3Cam.name = name.substr(0, name.find('\n')); // (a list: the first - the game picks by the attack)
+        cr3Cam.start = cr3BattleClock, cr3Cam.end = end, cr3Cam.loop = loop;
+        cr3Cam.actor = actor, cr3Cam.actorYaw = yaw, cr3Cam.screenShift = shift;
+        if (cr3Cam.name.find("Cam_bt") == std::string::npos && !cr3BattleOwnCam.load(archive, cr3Cam.name))
+            SDL_Log("battle camera %s: not found", cr3Cam.name.c_str());
+    }
+
+    bool startCr3Battle(int coupling, int fieldId) {
+        std::string err;
+        if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, &err))) {
+            SDL_Log("battle: %s", err.c_str());
+            return false;
+        }
+        const std::vector<int> party(std::begin(game.cr3Party), std::end(game.cr3Party));
+        if (!cr3Battle.setup(cr3BattleTables, coupling, fieldId, party, uint32_t(SDL_GetTicks()) | 1u, &err)) {
+            SDL_Log("battle %d: %s", coupling, err.c_str());
+            return false;
+        }
+        unload(cr3BattleField);
+        cr3BattleField = ViewFigure();
+        if (!loadFigure(cr3Battle.field + ".geom", cr3BattleField, &err)) SDL_Log("battle field %s: %s", cr3Battle.field.c_str(), err.c_str());
+        cr3BattleField.absolute = true; // (BtlField::Load: its animation looped)
+        if (loadLights(cr3Battle.field)) SDL_Log("lights: %s", cr3Battle.field.c_str());
+        for (Cr3BattleUnitView& u : cr3BattleUnits) unload(u.body), unload(u.head);
+        cr3BattleUnits.assign(cr3Battle.units.size(), Cr3BattleUnitView());
+        int monsters = 0;
+        for (size_t k = 0; k < cr3Battle.units.size(); ++k) {
+            const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
+            Cr3BattleUnitView& u = cr3BattleUnits[k];
+            figureVariant = bu.variant; // (CrxModel::ChangePartTextureVariation: the monster's)
+            for (int part = 0; part < 2; ++part) {
+                const std::string& fig = part ? bu.head : bu.figure;
+                ViewFigure& f = part ? u.head : u.body;
+                if (fig.empty()) continue;
+                if (!loadFigure(fig + ".geom", f, &err)) {
+                    SDL_Log("battle unit %s: %s", fig.c_str(), err.c_str());
+                    continue;
+                }
+                const auto it = std::find(f.anims.begin(), f.anims.end(), fig + "_bb01.anim");
+                if (it != f.anims.end()) loadAnim(f, size_t(it - f.anims.begin()));
+            }
+            figureVariant.clear();
+            if (!bu.player) u.phase = float(monsters++) + 0.25f; // (Standby: its slot's 0 / 1 / 2, + up to 0.5 at random)
+        }
+        if (!cr3BattleCam.load(archive, "Cam_bt")) SDL_Log("battle: no Cam_bt");
+        cr3BattleClock = 0, cr3BattleStage = Cr3BattleStage::In;
+        playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0); // (PlayBattleIn)
+        cr3BattleMode = true;
+        dev->resetHistory();
+        status = "battle " + std::to_string(coupling) + " on " + cr3Battle.field;
+        SDL_Log("battle %d: %s, %zu units, camera size %d (%s, %.2f s)", coupling, cr3Battle.field.c_str(), cr3Battle.units.size(),
+                cr3Battle.cameraSize, cr3Cam.name.c_str(), cr3Battle.getSetEnd);
+        return true;
+    }
+
+    void updateCr3Battle(float dt) {
+        cr3BattleClock += dt;
+        const float camT = cr3BattleClock - cr3Cam.start;
+        // BtlSysStateStart::phaseBattleIn: the battle-in camera over (or a tap) - PlayGetSet, its
+        // end held; then (the battle's start script, the announcements: not yet) the first
+        // command's camera on the party's first
+        if (cr3BattleStage == Cr3BattleStage::In && camT >= cr3Cam.end) {
+            cr3BattleStage = Cr3BattleStage::GetSet;
+            cr3Cam.held = true;
+        } else if (cr3BattleStage == Cr3BattleStage::GetSet && camT >= cr3Cam.end + 1.0f) {
+            cr3BattleStage = Cr3BattleStage::Command;
+            for (size_t k = 0; k < cr3Battle.units.size(); ++k)
+                if (cr3Battle.units[k].player) {
+                    playCr3Camera("Cam_bt_command_PC_00", 26.6667f, true, cameraPoint(k), cr3Battle.units[k].yaw, -1.0f / 3.0f);
+                    break;
+                }
+        }
+    }
+
+    // BtlUnit::VGetCameraPoint: its figure's DummyCP joint as last posed (CrxModel::GetPosition),
+    // else where it stands
+    std::array<float, 3> cameraPoint(size_t k) {
+        const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
+        ViewFigure& f = cr3BattleUnits[k].body;
+        std::vector<uint8_t> d;
+        if (f.skinned && archive.read(bu.figure + ".name", d)) {
+            const std::vector<std::string> names = cr3::parseJointNames(d);
+            const auto it = std::find(names.begin(), names.end(), "DummyCP");
+            const std::vector<cr3::JointTransform>& p = f.posed.empty() ? f.skeleton.basePose : f.posed;
+            const std::vector<cr3::Mat34> w = f.skeleton.world(p, f.place);
+            const size_t j = size_t(it - names.begin());
+            if (it != names.end() && j < w.size()) return {w[j].m[3], w[j].m[7], w[j].m[11]};
+        }
+        return bu.home;
+    }
+
+    void cr3BattleTap() {
+        if (cr3BattleStage == Cr3BattleStage::In) cr3Cam.start = cr3BattleClock - cr3Cam.end; // (phaseBattleIn: a tap ends it)
+        else if (cr3BattleStage == Cr3BattleStage::Command) endCr3Battle(); // (the turns aren't in yet: a tap takes it as won)
+    }
+
+    // the battle over (won): where SetBattleNext sent it - the vista SetVistaFuncName2 named
+    // (SetBattleToVista), else the field it came from (SetComeFromBattleToField: evt100)
+    void endCr3Battle() {
+        cr3BattleMode = false;
+        cr3::GameState::Next& n = game.next;
+        const int next = n.battleNext;
+        n.battleNext = 1;
+        SDL_Log("battle %d: taken as won (the turns not in yet)", cr3Battle.coupling);
+        if (next == 14 && !n.vistaFunction.empty()) {
+            const std::string fn = n.vistaFunction, map = n.vistaMap.empty() ? "null" : n.vistaMap;
+            n = cr3::GameState::Next();
+            SDL_Log("battle: on to %s in %s", fn.c_str(), map.c_str());
+            startVista(eventScriptOf(fn) + ":" + fn, map);
+            return;
+        }
+        n = cr3::GameState::Next();
+        if (!savedArea.empty()) {
+            n.fieldMode = 1;
+            if (!loadArea(savedArea, areaPlayerArgName)) SDL_Log("area %s: not entered", savedArea.c_str());
+        }
+    }
+
+    void drawCr3Battle(int w, int h) {
+        // the camera: the motion's joint at its time (held at its end, or looped), on its actor
+        float t = cr3BattleClock - cr3Cam.start;
+        if (cr3Cam.held || (!cr3Cam.loop && t > cr3Cam.end)) t = cr3Cam.end;
+        else if (cr3Cam.loop && cr3Cam.end > 0) t = std::fmod(t, cr3Cam.end);
+        cr3::Mat34 cw;
+        float fovDeg = 45, zn = 0.1f, zf = 7000;
+        const bool own = cr3Cam.name.find("Cam_bt") == std::string::npos;
+        if (!(own ? cr3BattleOwnCam : cr3BattleCam).at(cr3Cam.name, t, cw, fovDeg, zn, zf)) cw.m[3] = 0, cw.m[7] = 3, cw.m[11] = 8;
+        zn = 0.1f, zf = 7000; // (BtlCamera::Initialize: its own planes; the motion gives the field of view alone)
+        const float c = std::cos(cr3Cam.actorYaw), s = std::sin(cr3Cam.actorYaw);
+        cr3::Mat34 actor;
+        actor.m[0] = c, actor.m[2] = s, actor.m[8] = -s, actor.m[10] = c;
+        actor.m[3] = cr3Cam.actor[0], actor.m[7] = cr3Cam.actor[1], actor.m[11] = cr3Cam.actor[2];
+        cw = actor * cw;
+        const float fov = fovDeg * 3.14159265f / 180;
+        dev->setCamera(zn, zf, fov);
+        const Mat4 world = cr3::mat4FromMat34(cw);
+        Mat4 proj = perspective(fov, float(w) / float(std::max(h, 1)), zn, zf);
+        if (cr3Cam.screenShift != 0) { // (Camera::Render: a clip-space move by the offset / the width)
+            Mat4 shift{};
+            shift[0] = shift[5] = shift[10] = shift[15] = 1;
+            shift[12] = cr3Cam.screenShift;
+            proj = cr3::mat4Multiply(shift, proj);
+        }
+        const Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
+        cr3::SceneLighting l = lighting;
+        l.camera[0] = cw.m[3], l.camera[1] = cw.m[7], l.camera[2] = cw.m[11];
+        l.time = time;
+        dev->setLighting(l);
+        ViewFigure& f = cr3BattleField;
+        f.place = cr3::Mat34();
+        pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(cr3BattleClock, f.anim.duration()) : 0.0f, false);
+        drawFigure(f, vp.data());
+        for (size_t k = 0; k < cr3BattleUnits.size() && k < cr3Battle.units.size(); ++k) {
+            const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
+            Cr3BattleUnitView& u = cr3BattleUnits[k];
+            const float yc = std::cos(bu.yaw) * bu.scale, ys = std::sin(bu.yaw) * bu.scale;
+            for (ViewFigure* part : {&u.body, &u.head}) {
+                if (part->meshes.empty()) continue;
+                part->place = cr3::Mat34();
+                part->place.m[0] = yc, part->place.m[2] = ys, part->place.m[8] = -ys, part->place.m[10] = yc, part->place.m[5] = bu.scale;
+                part->place.m[3] = bu.home[0], part->place.m[7] = bu.home[1], part->place.m[11] = bu.home[2];
+                pose(*part, cr3BattleClock + u.phase, true);
+                drawFigure(*part, vp.data());
+            }
         }
     }
 
@@ -5662,6 +5896,15 @@ struct Viewer {
                     event->battle() >= 0 ? (": battle " + std::to_string(event->battle())).c_str() : "");
             if (playMode) {
                 branchAfterVista();
+                return;
+            }
+            // (CR3, VistaMain::BranchAfterVista: the battle it reserved - BattleIn2 -, its
+            // SetBattleToVista kept for after)
+            if (game.next.battle >= 0 && !eventScript.empty()) {
+                const int id = game.next.battle, fieldId = game.next.battleField;
+                game.next.battle = -1;
+                SDL_Log("event: battle %d on field %d", id, fieldId);
+                if (startCr3Battle(id, fieldId)) eventMode = false;
                 return;
             }
             // (--event: an event that hands over to the next vista - SetVistaEvent at its end, as the
@@ -10959,6 +11202,7 @@ int main(int argc, char** argv) {
     bool skipBattlesOpt = false;
     uint32_t fightSeed = 1;
     int battleId = 0, battleParty[2] = {1, 2}; // (--battle: Darwin and Orlando unless --party)
+    int battleFieldArg = 44; // (CR3's --battle-field: battle_field.mbe's; d1251b, the first battle's, unless given)
     float page = 3.0f;
     int width = 0, height = 0;    // the window (--size; else the resolution's, fitted to the display)
     int resW = 0, resH = 0;       // --resolution: the output frames (else the window's)
@@ -10995,6 +11239,7 @@ int main(int argc, char** argv) {
         else if (a == "--area" && next) areaName = next, ++i;
         else if (a == "--player" && next) areaPlayerArg = next, ++i;
         else if (a == "--battle" && next) battleId = std::atoi(next), ++i;
+        else if (a == "--battle-field" && next) battleFieldArg = std::atoi(next), ++i;
         else if (a == "--skip-battles") skipBattlesOpt = true;
         else if (a == "--fight" && next) fightMode = !std::strcmp(next, "pair") ? 2 : !std::strcmp(next, "manual") ? 3 : 1, ++i;
         else if (a == "--input" && next) inputArg = next, ++i;
@@ -11316,7 +11561,9 @@ int main(int argc, char** argv) {
     if (model == "c001" && leaderDefaulted) v.leaderFollows = true, v.refreshLeader();
     v.stateArg = stateArg;
     v.chargeArg = chargeArg, v.gaugeArg = gaugeArg;
-    if (battleId > 0 && !v.startBattle(battleId, battleParty)) return 1;
+    if (battleId > 0 && v.archive.contains("data\\battle_field.mbe")) { // (CR3's: battle/cr3battle.hpp)
+        if (!v.startCr3Battle(battleId, battleFieldArg)) return 1;
+    } else if (battleId > 0 && !v.startBattle(battleId, battleParty)) return 1;
     // the commands: chosen on the screen in a window (--fight manual, or --play), or given (--input)
     v.manualCommands = fightMode == 3 || !inputArg.empty() || (capture.empty() && !playFrom.empty());
     for (size_t p = 0; p < inputArg.size();) {
@@ -11426,7 +11673,7 @@ int main(int argc, char** argv) {
             v.draw(w, h);
             dev->endFrame(false);
         }
-        if (v.areaMode && tapAfter && !v.cr3Title.stage) { // (CR3's field: --tap after --run, then 4 s on)
+        if ((v.areaMode || v.cr3BattleMode) && tapAfter && !v.cr3Title.stage) { // (CR3's field or battle: --tap after --run, then 4 s on)
             v.tap();
             for (int k = 0; k < 240; ++k) v.time += 1.0f / 60.0f, v.advance(1.0f / 60.0f, 0, 0, false), v.pose();
         }

@@ -251,11 +251,12 @@ bool parseGeom(const std::vector<uint8_t>& f, Geom& out, std::string* error) {
         std::memcpy(l.v, &f[at + 8], sizeof l.v);
         out.lights.push_back(l);
     }
+    // (records 0x24 bytes; the 64-bit builds' 0x30 - the same fields, padded: cam_bt's 90)
     const unsigned cameras = u16(0x0a);
-    const size_t cameraAt = field(3);
-    if (cameras && !has(cameraAt, size_t(cameras) * 0x24)) return fail(error, "geom cameras outside the file");
+    const size_t cameraAt = field(3), cameraSize = out.version == 0x64 ? 0x30 : 0x24;
+    if (cameras && !has(cameraAt, size_t(cameras) * cameraSize)) return fail(error, "geom cameras outside the file");
     for (unsigned k = 0; k < cameras; ++k) {
-        const size_t at = cameraAt + 0x24 * size_t(k);
+        const size_t at = cameraAt + cameraSize * size_t(k);
         GeomCamera c;
         c.hash = u32(at);
         std::memcpy(&c.fovY, &f[at + 4], 4);

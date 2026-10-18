@@ -32,7 +32,22 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "GetSyncResult", [](NativeCall& c) { c.result(200); });
     vm.setNative("Cr3System", "SetVistaFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.vista = true; });
     vm.setNative("Cr3System", "SetVistaMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });
+    vm.setNative("Cr3System", "SetVistaFuncName2", [&next](NativeCall& c) { next.vistaFunction = c.string(0); }); // (Fld2SetVistaFuncName2)
+    vm.setNative("Cr3System", "SetBattleNext", [&next](NativeCall& c) { next.battleNext = c.integer(0, 1); }); // (FldUtilSetBattleNext)
     vm.setNative("Cr3System", "BattleIN", [&next](NativeCall& c) { next.battle = c.integer(0); }); // (FldUtilReserveBattleIN)
+    for (const char* name : {"BattleIn", "BattleIn2"}) // (CR3's: FldUtilReserveBattleIN / ..IN2)
+        vm.setNative("Cr3System", name, [&next](NativeCall& c) {
+            next.battle = c.integer(0), next.battleField = c.integer(1), next.battleLevel = c.integer(2, 1), next.battleMusic = c.integer(3, -1);
+            next.battleMusicAfter = c.integer(4, 32); // (BattleIn: 0x20)
+        });
+    vm.setNative("Cr3System", "SetParty", [&state](NativeCall& c) {
+        const int k = c.integer(0);
+        if (k >= 0 && k < 5) state.cr3Party[k] = c.integer(1);
+    });
+    vm.setNative("Cr3System", "GetParty", [&state](NativeCall& c) {
+        const int k = c.integer(0);
+        c.result(k >= 0 && k < 5 ? state.cr3Party[k] : 0);
+    });
     vm.setNative("Cr3System", "SetBattleParty", [&next](NativeCall& c) {
         const int k = c.integer(0);
         if (k == 0 || k == 1) next.battleParty[k] = c.integer(1, -1);

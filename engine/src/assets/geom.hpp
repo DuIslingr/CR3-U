@@ -110,7 +110,7 @@ struct GeomLight {
     const float* ground() const { return &v[6]; }
 };
 
-// A camera the figure carries (header +0x0a count, +0x3c records of 0x24 bytes;
+// A camera the figure carries (header +0x0a count, +0x3c records of 0x24 bytes - 0x30 in the 64-bit builds;
 // Figure::SetupCameras, GetContaindCamera): the maps' <map>c figures hold theirs. The joint named
 // `hash` places it, looking down its -Z axis.
 struct GeomCamera {
