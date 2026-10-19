@@ -1,7 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Chaos Rings III
-Comment=A reimplementation of the game (needs your own copy of its data)
+Name=CR3-U
+GenericName=Chaos Rings III (reimplementation)
+Comment=A reimplementation of Chaos Rings III (needs your own copy of the game)
 Exec=cr3view
 Icon=chaosrings3
 Terminal=false
