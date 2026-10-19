@@ -591,7 +591,8 @@ EnterDungeon (the server's gems), and the debug DB tools.
 MVGL "BSON" is not MongoDB's: `BSON\n` and 3 bytes, then chunks - a type byte, the size (byte 1 x
 0xffff + the u16 at 2, its 4 header bytes counted), the name at +4 (an offset into the text
 chunk), the value at +8. The first chunk is the root; type 0x20 the text (NUL-ended strings from
-+4); 3 ends a list. 1 an object, 2 an array: the count at +8, the chunks from +0xc to the list's
++4 - its size falls short of the last few, which the game reads to their NULs regardless); 3 ends
+a list. 1 an object, 2 an array: the count at +8, the chunks from +0xc to the list's
 own end (an empty one is followed directly by the next chunk); 0x10 an i32, 0x11 an f32 (both read
 as either: BsonMarshaller::GetI32 / GetF32), 0x14 a string (+8: its text offset). No other types
 occur. CrxGameTable::Load reads them by Declaration tables of (type, count, name, offset): the
@@ -613,7 +614,51 @@ open) and the sheet's newly-done flag; _PickTreasureBox draws n entries not mark
 or the sheet newly done; any at random once they run out). The scripts: Cr3GimmickData.
 OpenItemSheetRequest(sheet) (Fld2OpenItemSheetRequest: OpenItemSheet, no key, no flag),
 SetItemSheetName, GetOpenItemSheetItemNo / Type (the prize: its id, 1 a gene). `cr3tool db
-<release> [sheet]` lists the tables and plays a sheet's boxes out.
+<release> [sheet]` lists the tables and plays each rule once from a new game.
+
+The rest of DBEmu (libcrx 0x71b350 .. ; the Vita's Sync2 at 0x8107a1b0 reads cleanest), each a
+`Cr3OfflineDb` call that finishes the request with its code:
+
+- Login (Auth offline): CrxGameData::CheckDateChanged, then GetThisMonthMaster. A new day (it
+  turns at DATE_LINE_HOUR): the day's marks cleared (CrxGameData +0x2869c: bit 0 the ticket, 2 the
+  quests drawn, 3 the VS mission), a LOGIN_BONUS_COIN_MASTER_ID present, DATE_CHANGED_GP_BONUS GP,
+  DATE_CHANGED_CHEERPOINT_BONUS cheer, DATE_CHANGED_CLEAR_FLAGS cleared. GetThisMonthMaster: rows
+  whose `sdate` .. `edate` (MMDD, this year, the end day whole, never wrapping past December: a
+  0701 .. 0531 row never holds) hold today - `vipbonus` (exp / drop / gold bonus), up to five
+  `geneboxschedules`, `flags` (their flag set), the VS reward sheets.
+- Money: gold (+0x1ebc4), Oz coins and GP (+0x1e76c / +0x1e774, each with a spent count after
+  it), the gene stock's room (+0x1e768) - a new game's all 0. utils::GetGold / GetCoin add
+  (GoldGet / CoinGet), SetGold sets, Check* read.
+- Shops (`shops`: _id "T01_1" .., `goods` - _id, gold, GP, coin, up to 3 items, flag): BuyGoods
+  (coins short 0x3f2, GP 0x3f3, gold 0x3f1); SellItem pays item_para's +0x18 (column 6: a fifth of
+  the buying price); UseItem; UseContinue (CONTINUE_GEM_MASTER_ID); ExchangeGem (99 GEM_MASTER_ID
+  for a continue gem); BuyGeneStock (GENE_STOCK_PRICE coins, the room + GENE_STOCK_CAPACITY_ADD to
+  _MAX); GetDailyItem (`dailyitems`, once: its flag; 0x193 had).
+- Boxes: OpenGPBox(n, GP) - a sheet won from (+0x14a) at random, n of its entries, any;
+  OpenLuckyBox(sheet, n, coins); OpenGeneBox(box, n, coins) - `geneboxes`' baskets by `prob`, a gene
+  of the basket at random (masterId, exp, commands); OpenPrizeBox("ocean") - 16 (item, count) at
+  libcrx 0xf30fe0 by the draw's low 4 bits, flag 4026 set.
+- Genes held (CrxGeneData 0x74: masterId, exp, 16 command slots, +0x5c its id, +0x70 locked): 50
+  (GENE_CAPACITY) plus the stock's room, then the presents box. utils::GetGene(id, level) - the
+  first free of the 50 -, CheckGene (a count), CheckNewGene (never had: the gene book).
+- Presents (100, the oldest dropped): ReceivePresent(s) (a login-bonus coin is LOGIN_BONUS_COIN
+  coins; some left 0xce), Reject / DropPresent, EarnPresent(1 .. 4: genes 10, 13, 11 at 1239, 2869,
+  27674 EXP; a gold key), ClearPresents.
+- Gifts: MergeGift (`mergegifts`: its gene_id for the gifts given), ItemizeGift (`itemizegifts`:
+  the gift for its item).
+- Quests (`quests`: the Declaration's _id, `_no` - absent, read at text offset 0, which is `no` -,
+  stime, etime, flags x 6 (< 0 one clear, > 0 one set; their `expr` JavaScript is not read), lv,
+  rank, item_id, item_count): FindQuests - rank 0 all listed (20 at most); ranks 1 .. 4 shuffled
+  into ten slots, 4's up to 10 from slot 0, 3's up to 6 from 4, 2's up to 3 from 7, 1's up to 10
+  from 9 downward, the later over the earlier, once a day; then 5 / 6's up to 10. Begin / End /
+  SetQuest; EarnQuestRewards (`questprizes`: item, gold, genebox, luckybox, else a gene; taken
+  already 0x3f9). utils::SelectQuest is a menu (DBSelectQuestTask) the port has not yet: none chosen.
+- Tickets: GotTicket (today's had), ReceiveTicket (item 118, once a day; 0x3ef).
+- Sync2(event): an event's gifts - the tutorials' genes, quest56's, s100_t01_00702's two gold keys,
+  s272_t01_00401's pairs of gifts, c140's, t02_kbox_03's item 59.
+- Not yet: the gene merges (gene_para's rarity and EXP curve, a 7 x 7 kind table, `mergegene2`,
+  skill inheritance - with the port's genes), EnforceItem / EnforceGene / EnhanceGene, PickWildcard
+  and the VS tournaments.
 
 ## Scripts (`script\*.nut`, `script64\*.nut`)
 

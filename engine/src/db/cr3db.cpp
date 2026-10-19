@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "assets/mbe.hpp"
+
 #include "script/gamestate.hpp"
 
 namespace cr3 {
@@ -70,6 +72,75 @@ const char* const kTables[] = {"bingos", "checkexps", "checkgolds", "checkitems"
                                "genelevels", "loginbonus", "vip_login_bonus", "passcodeprizes", "receivetickets",
                                "invitationprizes", "questflag", "vsscore", "vsboostitems"};
 
+
+// DBEmu::OpenPrizeBox("ocean")'s prizes (libcrx 0xf30fe0: 16 of item, count; the draw's low 4 bits)
+const int kOceanPrizes[16][2] = {{18, 1}, {19, 1}, {19, 2}, {71, 1}, {72, 1}, {73, 1}, {74, 1}, {75, 1},
+                                 {76, 1}, {77, 1}, {78, 1}, {79, 1}, {80, 1}, {81, 1}, {82, 1}, {91, 1}};
+
+// DBEmu::Sync2: an event's gifts by its name - genes (> 0: a gene_para id, the bool its message)
+// and items (full ids), as the Vita's (its strcmp chain: 0x8107a1b0)
+struct Sync2Gift {
+    const char* name;
+    int gene[2];
+    bool geneMessage;
+    int item[2], count[2];
+};
+const Sync2Gift kSync2[] = {
+    {"tuto_get_gene1", {1, 0}, true, {0, 0}, {0, 0}},
+    {"tuto_get_gene2", {4, 0}, true, {0, 0}, {0, 0}},
+    {"tuto_get_gene3", {7, 0}, true, {0, 0}, {0, 0}},
+    {"tuto_merge_gene1", {4, 7}, false, {0, 0}, {0, 0}},
+    {"tuto_merge_gene2", {1, 7}, false, {0, 0}, {0, 0}},
+    {"tuto_merge_gene3", {1, 4}, false, {0, 0}, {0, 0}},
+    {"tuto_join", {70, 121}, false, {0, 0}, {0, 0}},
+    {"quest56_gift", {0, 0}, false, {600022, 0}, {1, 0}},
+    {"quest56_gene", {19, 0}, true, {0, 0}, {0, 0}},
+    {"s100_t01_00702", {0, 0}, false, {400005, 0}, {2, 0}},
+    {"s272_t01_00401_gift_32_50", {0, 0}, false, {600032, 600050}, {1, 1}},
+    {"s272_t01_00401_gift_32_57", {0, 0}, false, {600032, 600057}, {1, 1}},
+    {"s272_t01_00401_gift_32_08", {0, 0}, false, {600032, 600008}, {1, 1}},
+    {"s272_t01_00401_gift_32_23", {0, 0}, false, {600032, 600023}, {1, 1}},
+    {"s272_t01_00401_gift_50_57", {0, 0}, false, {600050, 600057}, {1, 1}},
+    {"s272_t01_00401_gift_50_08", {0, 0}, false, {600050, 600008}, {1, 1}},
+    {"s272_t01_00401_gift_50_23", {0, 0}, false, {600050, 600023}, {1, 1}},
+    {"s272_t01_00401_gift_57_08", {0, 0}, false, {600057, 600008}, {1, 1}},
+    {"s272_t01_00401_gift_57_23", {0, 0}, false, {600057, 600023}, {1, 1}},
+    {"s272_t01_00401_gift_08_23", {0, 0}, false, {600008, 600023}, {1, 1}},
+    {"c140_s222_t01_00101", {0, 0}, false, {600011, 0}, {1, 0}},
+    {"t02_kbox_03", {0, 0}, false, {59, 0}, {1, 0}},
+};
+
+std::tm localTime(std::time_t t) {
+    std::tm r{};
+#ifdef _WIN32
+    localtime_s(&r, &t);
+#else
+    localtime_r(&t, &r);
+#endif
+    return r;
+}
+
+int monthDays(int year, int month) { // (Date::max_day; month 0 .. 11, year from 1900)
+    static const int days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const int y = year + 1900;
+    const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    return month == 1 && leap ? 29 : days[std::clamp(month, 0, 11)];
+}
+
+// CheckDate(MMDD, MMDD, now): from the first day's start to the second's end, this year (each day
+// no later than its month's last; no wrap past the year's end)
+bool checkDate(int from, int to, std::time_t now) {
+    const std::tm n = localTime(now);
+    auto at = [&](int mmdd, bool after) {
+        std::tm t{};
+        t.tm_year = n.tm_year, t.tm_mon = std::clamp(mmdd / 100 - 1, 0, 11);
+        t.tm_mday = std::min(mmdd % 100, monthDays(t.tm_year, t.tm_mon)) + (after ? 1 : 0);
+        t.tm_isdst = -1;
+        return std::mktime(&t);
+    };
+    return at(from, false) <= now && now < at(to, true);
+}
+
 } // namespace
 
 const Cr3Request& cr3Request(int id) {
@@ -84,7 +155,7 @@ int cr3RequestId(const char* name) {
 }
 
 bool Cr3OfflineDb::load(const Database& release, std::string* error) {
-    tables_.clear(), sheets_.clear();
+    tables_.clear(), sheets_.clear(), quests_.clear(), prices_.clear();
     for (const char* name : kTables) {
         std::vector<uint8_t> d;
         if (!release.read(std::string("data\\") + name + ".bson", d)) continue; // (questflag, vsscore: .json too)
@@ -98,6 +169,7 @@ bool Cr3OfflineDb::load(const Database& release, std::string* error) {
     }
     if (!table("constant") || !table("bingos")) {
         if (error) *error = "the server's tables (data\\constant.bson, bingos.bson) are not in this release";
+        tables_.clear();
         return false;
     }
     // CrxGameTable::LoadItemSheetTable: each row's _id, items (category "gene" 1, else 0;
@@ -110,6 +182,26 @@ bool Cr3OfflineDb::load(const Database& release, std::string* error) {
         if (const BsonValue* r = row.get("result"); r && r->isObject()) s.result = {r->integer("item_id"), r->string("category") == "gene"};
         sheets_.push_back(std::move(s));
     }
+    // LoadQuestTable (its Declaration: _id, _no - not in the rows, so the text's first name, "no"
+    // -, stime, etime, flags x 6, lv, rank, item_id, item_count)
+    if (const BsonValue* q = table("quests"))
+        for (const BsonValue& row : q->items) {
+            Quest t;
+            t.id = row.integer("_id"), t.no = row.integer("no"), t.stime = row.integer("stime"), t.etime = row.integer("etime");
+            if (const BsonValue* f = row.get("flags"); f && f->isArray())
+                for (size_t k = 0; k < f->items.size() && k < 6; ++k) t.flags[k] = f->items[k].asInt();
+            t.level = row.integer("lv"), t.rank = row.integer("rank"), t.item = row.integer("item_id"), t.itemCount = row.integer("item_count");
+            quests_.push_back(t);
+        }
+    // GetItemPrice: item_para's tables (MbItemInfo: +4 the full id, +0x18 the price a shop pays)
+    std::vector<uint8_t> d;
+    MbeFile items;
+    if (release.read("data\\item_para.mbe", d) && items.parse(d))
+        for (const MbeFile::Table& t : items.tables())
+            for (size_t k = 0; k < t.rows.size(); ++k) {
+                MbeFile::Row r;
+                if (items.row(t, k, "iiiiiii", r) && r.i(1) > 0) prices_.emplace(r.i(1), r.i(6));
+            }
     return true;
 }
 
@@ -133,6 +225,161 @@ int Cr3OfflineDb::findItemSheet(const std::string& id) const {
         if (sheets_[k].id == id) return int(k);
     return -1;
 }
+
+int Cr3OfflineDb::itemPrice(int item) const {
+    const auto it = prices_.find(item);
+    return it != prices_.end() ? it->second : 0;
+}
+
+// --- the login and the month ---
+
+int Cr3OfflineDb::login(GameState& s, std::time_t now) {
+    dateChanged(s, now);
+    return finish(getThisMonthMaster(s, now));
+}
+
+int Cr3OfflineDb::dateChanged(GameState& s, std::time_t now) {
+    // (CrxGameData::CheckDateChanged: the day turns at DATE_LINE_HOUR)
+    const std::time_t shift = std::time_t(constant("DATE_LINE_HOUR")) * 3600;
+    const std::tm a = localTime(std::time_t(s.cr3LastLogin) - shift), b = localTime(now - shift);
+    if (s.cr3LastLogin != 0 && a.tm_year == b.tm_year && a.tm_yday == b.tm_yday) return kDbOk;
+    s.cr3Daily = 0;
+    s.cr3LastLogin = int64_t(now);
+    Cr3Present coin;
+    coin.item = constant("LOGIN_BONUS_COIN_MASTER_ID"), coin.count = 1, coin.from = constant("PRESENT_FROM_LOGINBONUS");
+    if (coin.item > 0) sendPresent(s, coin);
+    s.cr3GP += constant("DATE_CHANGED_GP_BONUS");
+    s.cr3Cheer += constant("DATE_CHANGED_CHEERPOINT_BONUS");
+    if (const BsonValue* c = constants(); c)
+        if (const BsonValue* f = c->get("DATE_CHANGED_CLEAR_FLAGS"); f && f->isArray())
+            for (const BsonValue& n : f->items) s.setFlag(n.asInt(), false);
+    return getThisMonthMaster(s, now);
+}
+
+int Cr3OfflineDb::getThisMonthMaster(GameState& s, std::time_t now) {
+    month_ = Month();
+    if (const BsonValue* t = table("vipbonus"))
+        for (const BsonValue& r : t->items)
+            if (checkDate(r.integer("sdate"), r.integer("edate"), now)) {
+                month_.expBonus = r.number("exp_bonus", 1), month_.dropBonus = r.number("drop_bonus", 1), month_.goldBonus = r.number("gold_bonus", 1);
+                break;
+            }
+    if (const BsonValue* t = table("geneboxschedules"))
+        for (const BsonValue& r : t->items) {
+            if (month_.geneBoxes.size() >= 5) break;
+            if (checkDate(r.integer("sdate"), r.integer("edate"), now)) month_.geneBoxes.push_back(r.integer("_id"));
+        }
+    if (const BsonValue* t = table("flags"))
+        for (const BsonValue& r : t->items)
+            if (checkDate(r.integer("sdate"), r.integer("edate"), now)) s.setFlag(r.integer("flag"), true);
+    for (const auto& [name, out] : {std::pair<const char*, std::string*>{"vsscorerewards", &month_.vsScoreSheet},
+                                    std::pair<const char*, std::string*>{"vsseasonscorerewards", &month_.vsSeasonSheet}})
+        if (const BsonValue* t = table(name))
+            for (const BsonValue& r : t->items)
+                if (checkDate(r.integer("sdate"), r.integer("edate"), now)) {
+                    *out = r.string("bingo");
+                    break;
+                }
+    return kDbOk;
+}
+
+// --- prizes and presents ---
+
+int Cr3OfflineDb::earnItemPrize(GameState& s, int item, int count, bool toPresents) {
+    if (item <= 0 || count <= 0) return kDbBad;
+    // (CrxGameData::AddItem: 99 of one at most - none added past that; SendPresent the lot)
+    int& held = s.cr3Items[item];
+    if (held + count <= 99) {
+        held += count;
+        return kDbOk;
+    }
+    if (!toPresents) return kDbFull;
+    Cr3Present p;
+    p.item = item, p.count = count, p.from = constant("PRESENT_FROM_SERVICE");
+    sendPresent(s, p);
+    return kDbOk;
+}
+
+int Cr3OfflineDb::earnGenePrize(GameState& s, const Cr3Gene& gene) {
+    if (gene.master <= 0) return kDbBad;
+    // (CrxGameData::AddGene: GENE_CAPACITY held, then the gene stock's room; else the presents)
+    if (int(s.cr3Genes.size()) < constant("GENE_CAPACITY", 50) + s.cr3GeneStock) {
+        s.cr3Genes.push_back(gene);
+        s.cr3Genes.back().fresh = true;
+        s.cr3GeneBook.insert(gene.master);
+        return kDbOk;
+    }
+    Cr3Present p;
+    p.gene = true, p.geneData = gene, p.from = constant("PRESENT_FROM_SERVICE");
+    sendPresent(s, p);
+    return kDbOk;
+}
+
+void Cr3OfflineDb::sendPresent(GameState& s, const Cr3Present& p) {
+    if (s.cr3Presents.size() >= 100) s.cr3Presents.erase(s.cr3Presents.begin()); // (the oldest)
+    s.cr3Presents.push_back(p);
+}
+
+bool Cr3OfflineDb::removeItem(GameState& s, int item, int n) {
+    auto it = s.cr3Items.find(item);
+    if (it == s.cr3Items.end() || it->second < n || n <= 0) return false;
+    it->second -= n;
+    return true;
+}
+
+int Cr3OfflineDb::receivePresent(GameState& s, int k) {
+    if (k < 0 || size_t(k) >= s.cr3Presents.size()) return finish(kDbBad);
+    const Cr3Present p = s.cr3Presents[size_t(k)];
+    int r;
+    if (p.gene) r = earnGenePrize(s, p.geneData);
+    else {
+        if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) s.cr3Coins += constant("LOGIN_BONUS_COIN");
+        r = earnItemPrize(s, p.item, p.count, false);
+    }
+    if (r != kDbOk) return finish(r);
+    s.cr3Presents.erase(s.cr3Presents.begin() + k);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::receivePresents(GameState& s) {
+    bool all = true;
+    for (size_t k = 0; k < s.cr3Presents.size();) {
+        const Cr3Present& p = s.cr3Presents[k];
+        bool taken = true;
+        if (p.gene) taken = earnGenePrize(s, p.geneData) == kDbOk;
+        else if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) s.cr3Coins += constant("LOGIN_BONUS_COIN");
+        else taken = earnItemPrize(s, p.item, p.count, false) == kDbOk;
+        if (taken) s.cr3Presents.erase(s.cr3Presents.begin() + long(k));
+        else all = false, ++k;
+    }
+    return finish(all ? kDbOk : kDbSomeLeft);
+}
+
+int Cr3OfflineDb::dropPresent(GameState& s, int k) {
+    if (k >= 0 && size_t(k) < s.cr3Presents.size()) s.cr3Presents.erase(s.cr3Presents.begin() + k);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::earnPresent(GameState& s, int n) {
+    Cr3Present p;
+    p.from = constant("PRESENT_FROM_SERVICE");
+    switch (n) {
+    case 1: p.gene = true, p.geneData = Cr3Gene{10, 1239}; break;
+    case 2: p.gene = true, p.geneData = Cr3Gene{13, 2869}; break;
+    case 3: p.gene = true, p.geneData = Cr3Gene{11, 27674}; break;
+    case 4: p.item = 400005, p.count = 1; break;
+    default: return finish(kDbBad);
+    }
+    sendPresent(s, p);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::clearPresents(GameState& s) {
+    s.cr3Presents.clear();
+    return finish(kDbOk);
+}
+
+// --- the item sheets ---
 
 const Cr3ItemSheet::Prize* Cr3OfflineDb::openedPrize(size_t k) const {
     const int s = findItemSheet(openedSheet_);
@@ -162,24 +409,6 @@ void Cr3OfflineDb::updateItemSheets(GameState& s) const {
         for (size_t e = 0; e < p.opened.size(); ++e) p.mark[e] = !p.mark[e] && p.opened[e] > 0;
         if (p.completed > 0 && !p.completedSeen) p.completedNew = p.completedSeen = true;
     }
-}
-
-int Cr3OfflineDb::earnItemPrize(GameState& s, int item, int count, bool toPresents) {
-    if (item <= 0 || count <= 0) return kDbBad;
-    // (CrxGameData::AddItem: 99 of one at most; the rest - SendPresent - to the presents box)
-    int& held = s.cr3Items[item];
-    const int room = std::max(99 - held, 0), added = std::min(room, count);
-    held += added;
-    if (added == count) return kDbOk;
-    if (!toPresents) return kDbFull;
-    s.cr3Presents.push_back({item, count - added, constant("PRESENT_FROM_SERVICE")});
-    return kDbOk;
-}
-
-int Cr3OfflineDb::earnGenePrize(GameState& s, int gene) {
-    if (gene <= 0) return kDbBad;
-    ++s.cr3Genes[gene]; // (dbutils::EarnGenePrize: a new gene of it - CrxGeneData at its first level)
-    return kDbOk;
 }
 
 // DBEmu::DoOpenItemSheet: the candidates - the one asked for, else (the sheet done once already,
@@ -219,42 +448,336 @@ void Cr3OfflineDb::doOpenItemSheet(GameState& s, int sheet, int entry, bool all,
 
 int Cr3OfflineDb::openItemSheet(GameState& s, const std::string& sheet, bool key, int flag) {
     const int k = findItemSheet(sheet);
-    if (k < 0) return finish(kDbBad), kDbBad;
+    if (k < 0) return finish(kDbBad);
     opened_.clear();
     markItemSheets(s);
     doOpenItemSheet(s, k, -1, false, key, flag);
     updateItemSheets(s);
-    return finish(kDbOk), kDbOk;
+    return finish(kDbOk);
 }
 
 int Cr3OfflineDb::openTreasureBox(GameState& s, const std::string& sheet, int entry, bool key, int flag) {
     const int k = findItemSheet(sheet);
-    if (k < 0 || entry < 0 || size_t(entry) >= sheets_[size_t(k)].entries.size()) return finish(kDbBad), kDbBad;
+    if (k < 0 || entry < 0 || size_t(entry) >= sheets_[size_t(k)].entries.size()) return finish(kDbBad);
     opened_.clear();
     markItemSheets(s);
     doOpenItemSheet(s, k, entry, false, key, flag);
     updateItemSheets(s);
-    return finish(kDbOk), kDbOk;
+    return finish(kDbOk);
 }
 
 // _PickTreasureBox: the entries not marked (any, with all or the sheet newly done) shuffled, n
 // of them taken from the end - once those run out, any entry at random
 int Cr3OfflineDb::pickTreasureBox(GameState& s, const std::string& sheet, int n, bool all) {
     const int k = findItemSheet(sheet);
-    if (k < 0) return finish(kDbNone), kDbNone;
+    if (k < 0) return finish(kDbNone);
     const Cr3ItemSheet& t = sheets_[size_t(k)];
     Cr3SheetProgress& p = progress(s, k);
     openedSheet_ = t.id, opened_.clear();
     std::vector<int> pool;
     for (size_t e = 0; e < t.entries.size(); ++e)
         if (p.completedNew || all || !p.mark[e]) pool.push_back(int(e));
-    if (pool.empty()) return finish(kDbNone), kDbNone;
+    if (pool.empty()) return finish(kDbNone);
     std::shuffle(pool.begin(), pool.end(), rng_);
     for (int i = 0; i < n; ++i) {
-        if (pool.empty()) opened_.push_back(int(rng_() % uint32_t(std::max<size_t>(t.entries.size(), 1))));
+        if (pool.empty()) opened_.push_back(int(random() % uint32_t(std::max<size_t>(t.entries.size(), 1))));
         else opened_.push_back(pool.back()), pool.pop_back();
     }
-    return finish(kDbOk), kDbOk;
+    return finish(kDbOk);
+}
+
+// --- the boxes ---
+
+int Cr3OfflineDb::openGPBox(GameState& s, int n, int gp) {
+    if (s.cr3GP < gp) return finish(kDbNoGP);
+    std::vector<int> pool; // (the sheets won from: +0x14a)
+    for (size_t k = 0; k < sheets_.size(); ++k)
+        if (progress(s, int(k)).changed) pool.push_back(int(k));
+    if (pool.empty()) return finish(kDbBad);
+    opened_.clear();
+    markItemSheets(s);
+    std::shuffle(pool.begin(), pool.end(), rng_);
+    for (int i = 0; i < n; ++i) doOpenItemSheet(s, pool.front(), -1, true, false, 0);
+    updateItemSheets(s);
+    s.cr3GP -= gp, s.cr3GPSpent += gp;
+    openedSheet_ = sheets_[size_t(pool.front())].id;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::openLuckyBox(GameState& s, const std::string& sheet, int n, int coins) {
+    if (s.cr3Coins < coins) return finish(kDbNoCoins);
+    opened_.clear();
+    markItemSheets(s);
+    if (const int k = findItemSheet(sheet); k >= 0)
+        for (int i = 0; i < n; ++i) doOpenItemSheet(s, k, -1, false, false, 0);
+    updateItemSheets(s);
+    s.cr3Coins -= coins, s.cr3CoinsSpent += coins;
+    openedSheet_ = sheet;
+    return finish(kDbOk);
+}
+
+// DBEmu::OpenGeneBox(box, gene): a basket by its prob (out of their sum), then one of its genes
+// at random - its masterId, exp and commands
+int Cr3OfflineDb::openGeneBox(GameState& s, int box, int n, int coins) {
+    if (s.cr3Coins < coins) return finish(kDbNoCoins);
+    const BsonValue* t = table("geneboxes");
+    const BsonValue* row = nullptr;
+    if (t)
+        for (const BsonValue& r : t->items)
+            if (r.integer("_id") == box) row = &r;
+    const BsonValue* baskets = row ? row->get("baskets") : nullptr;
+    if (!baskets || !baskets->isArray()) return finish(kDbBad);
+    lastGenes_.clear();
+    int total = 0;
+    for (const BsonValue& b : baskets->items) total += b.integer("prob");
+    for (int i = 0; i < n && total > 0; ++i) {
+        const int roll = int(random() % uint32_t(total));
+        int sum = 0;
+        for (const BsonValue& b : baskets->items) {
+            sum += b.integer("prob");
+            if (roll >= sum) continue;
+            const BsonValue* items = b.get("items");
+            if (items && items->isArray() && !items->items.empty()) {
+                const BsonValue& g = items->items[random() % items->items.size()];
+                Cr3Gene gene{g.integer("masterId"), g.integer("exp")};
+                if (const BsonValue* c = g.get("commands"); c && c->isArray())
+                    for (const BsonValue& v : c->items) gene.commands.push_back(v.asInt());
+                earnGenePrize(s, gene);
+                lastGenes_.push_back(gene);
+            }
+            break;
+        }
+    }
+    s.cr3Coins -= coins, s.cr3CoinsSpent += coins;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::openPrizeBox(GameState& s, const std::string& name) {
+    if (name != "ocean") return finish(kDbBad);
+    const int* p = kOceanPrizes[random() & 0xf];
+    const size_t before = s.cr3Presents.size();
+    const int r = earnItemPrize(s, p[0], p[1]);
+    prizeBox_ = {1, p[0], p[1], s.cr3Presents.size() > before};
+    if (r == kDbOk) s.setFlag(0xfba, true); // (SM_OpenPrizeBox: the box opened)
+    return finish(r);
+}
+
+// --- the shops and items ---
+
+int Cr3OfflineDb::findShop(const std::string& id) const {
+    if (const BsonValue* t = table("shops"))
+        for (size_t k = 0; k < t->items.size(); ++k)
+            if (t->items[k].string("_id") == id) return int(k);
+    return -1;
+}
+
+int Cr3OfflineDb::buyGoods(GameState& s, int shop, int goods, int n) {
+    const BsonValue* t = table("shops");
+    if (!t || shop < 0 || size_t(shop) >= t->items.size()) return finish(kDbBad);
+    const BsonValue* list = t->items[size_t(shop)].get("goods");
+    if (!list || !list->isArray()) return finish(kDbBad);
+    for (const BsonValue& g : list->items) {
+        if (g.integer("_id") != goods) continue;
+        const int coins = g.integer("coin") * n, gp = g.integer("GP") * n, gold = g.integer("gold") * n;
+        if (s.cr3Coins < coins) return finish(kDbNoCoins);
+        if (s.cr3GP < gp) return finish(kDbNoGP);
+        if (s.cr3Money < gold) return finish(kDbNoGold);
+        if (const BsonValue* items = g.get("items"); items && items->isArray())
+            for (size_t k = 0; k < items->items.size() && k < 3; ++k) {
+                const int id = items->items[k].integer("item_id"), count = items->items[k].integer("count") * n;
+                for (int c = 0; id > 0 && c < count; ++c) earnItemPrize(s, id, 1);
+            }
+        s.cr3Coins -= coins, s.cr3CoinsSpent += coins;
+        s.cr3GP -= gp, s.cr3GPSpent += gp;
+        s.cr3Money -= gold;
+        return finish(kDbOk);
+    }
+    return finish(kDbBad);
+}
+
+int Cr3OfflineDb::sellItem(GameState& s, int item, int n) {
+    const int price = itemPrice(item);
+    if (!removeItem(s, item, n)) return finish(kDbBad);
+    s.cr3Money += price * n;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::useItem(GameState& s, int item, int n) { return finish(removeItem(s, item, n) ? kDbOk : kDbBad); }
+
+int Cr3OfflineDb::useContinue(GameState& s) {
+    return finish(removeItem(s, constant("CONTINUE_GEM_MASTER_ID"), 1) ? kDbOk : kDbBad);
+}
+
+int Cr3OfflineDb::exchangeGem(GameState& s) {
+    const int gem = constant("GEM_MASTER_ID");
+    const auto it = s.cr3Items.find(gem);
+    if (it == s.cr3Items.end() || it->second <= 0) return finish(kDbNone);
+    if (it->second < 99) return finish(kDbBad);
+    it->second = 0;
+    earnItemPrize(s, constant("CONTINUE_GEM_MASTER_ID"), 1);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::buyGeneStock(GameState& s) {
+    const int most = constant("GENE_STOCK_CAPACITY_MAX"), price = constant("GENE_STOCK_PRICE");
+    if (s.cr3GeneStock >= most) return finish(kDbFull);
+    if (s.cr3Coins < price) return finish(kDbNoCoins);
+    s.cr3GeneStock = std::min(s.cr3GeneStock + constant("GENE_STOCK_CAPACITY_ADD"), most);
+    s.cr3Coins -= price, s.cr3CoinsSpent += price;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::getDailyItem(GameState& s, int id) {
+    if (const BsonValue* t = table("dailyitems"))
+        for (const BsonValue& r : t->items) {
+            if (r.integer("_id") != id) continue;
+            const int flag = r.integer("flag");
+            if (s.flag(flag)) return finish(kDbDone);
+            const int res = earnItemPrize(s, r.integer("masterId"), r.integer("count"), false);
+            s.setFlag(flag, true);
+            return finish(res);
+        }
+    return finish(kDbBad);
+}
+
+// --- gifts ---
+
+int Cr3OfflineDb::mergeGift(GameState& s, int id, const std::vector<int>& gifts) {
+    if (const BsonValue* t = table("mergegifts"))
+        for (const BsonValue& r : t->items) {
+            if (r.integer("_id") != id) continue;
+            earnGenePrize(s, r.integer("gene_id"));
+            for (const int g : gifts) removeItem(s, g, 1);
+            return finish(kDbOk);
+        }
+    return finish(kDbBad);
+}
+
+int Cr3OfflineDb::itemizeGift(GameState& s, int gift) {
+    const auto held = s.cr3Items.find(gift);
+    if (held == s.cr3Items.end() || held->second <= 0) return finish(kDbBad);
+    if (const BsonValue* t = table("itemizegifts"))
+        for (const BsonValue& r : t->items) {
+            if (r.integer("_id") != gift) continue;
+            removeItem(s, gift, 1);
+            earnItemPrize(s, r.integer("item_id"), r.integer("count"));
+            return finish(kDbOk);
+        }
+    return finish(kDbBad);
+}
+
+// --- quests ---
+
+int Cr3OfflineDb::findQuests(GameState& s, std::time_t now) {
+    auto holds = [&](const Quest& q) { // (dbutils::CheckQuest)
+        if ((q.stime != 0 && now < q.stime) || (q.etime != 0 && q.etime < now)) return false;
+        for (const int f : q.flags)
+            if ((f < 0 && s.flag(-f)) || (f > 0 && !s.flag(f))) return false;
+        return true;
+    };
+    standingQuests_.clear(), foundQuests_.clear();
+    std::vector<int> pool[6]; // (ranks 1 .. 4, then 5 and 6 together)
+    for (size_t k = 0; k < quests_.size(); ++k) {
+        const Quest& q = quests_[k];
+        if (!holds(q)) continue;
+        if (q.rank == 0) {
+            if (standingQuests_.size() < 20) standingQuests_.push_back(int(k));
+        } else if (q.rank >= 1 && q.rank <= 4) pool[q.rank].push_back(int(k));
+        else if (q.rank == 5 || q.rank == 6) pool[5].push_back(int(k));
+    }
+    for (std::vector<int>& p : pool) std::shuffle(p.begin(), p.end(), rng_);
+    if (!(s.cr3Daily & 4)) {
+        int slot[20] = {};
+        for (size_t k = 0; k < std::min<size_t>(pool[4].size(), 10); ++k) slot[k] = pool[4][k];
+        for (size_t k = 0; k < std::min<size_t>(pool[3].size(), 6); ++k) slot[4 + k] = pool[3][k];
+        for (size_t k = 0; k < std::min<size_t>(pool[2].size(), 3); ++k) slot[7 + k] = pool[2][k];
+        for (size_t k = 0; k < std::min<size_t>(pool[1].size(), 10); ++k) slot[9 - k] = pool[1][k];
+        s.cr3Quests.offered.clear();
+        for (const int v : slot)
+            if (v > 0) s.cr3Quests.offered.push_back(v); // (index 0 never: its > 0 test)
+        s.cr3Daily |= 4;
+    }
+    for (const int v : s.cr3Quests.offered)
+        if (v > 0) foundQuests_.push_back(v);
+    for (size_t k = 0; k < std::min<size_t>(pool[5].size(), 10); ++k) foundQuests_.push_back(pool[5][k]);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::beginQuest(GameState& s, int id) {
+    if (id < 0 || id > 999) return finish(kDbBad);
+    s.cr3Quests.state = 0;
+    s.cr3Quests.begun.insert(id);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::endQuest(GameState& s, int id) {
+    if (id < 0 || id >= 1000) return finish(kDbBad);
+    s.cr3Quests.state = 3;
+    s.cr3Quests.ended.insert(id);
+    ++s.cr3Quests.endedCount;
+    auto& o = s.cr3Quests.offered;
+    for (auto it = o.begin(); it != o.end(); ++it)
+        if (*it >= 0 && size_t(*it) < quests_.size() && quests_[size_t(*it)].id == id) {
+            o.erase(it); // (its slot emptied, the rest moved up)
+            break;
+        }
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::setQuest(GameState& s, int id) {
+    s.cr3Quests.offered.clear();
+    s.cr3Quests.begun.erase(id), s.cr3Quests.ended.erase(id);
+    for (size_t k = 0; k < quests_.size(); ++k)
+        if (quests_[k].id == id) s.cr3Quests.offered = {int(k)};
+    return finish(kDbOk);
+}
+
+// dbutils::EarnQuestPrize: by its category - item, gold, genebox, luckybox, else a gene
+int Cr3OfflineDb::earnQuestPrize(GameState& s, const BsonValue& p) {
+    const std::string c = p.string("category");
+    if (c == "item") return earnItemPrize(s, p.integer("item_id"), p.integer("count"));
+    if (c == "gold") return s.cr3Money += p.integer("count"), kDbOk;
+    if (c == "genebox") return openGeneBox(s, p.integer("item_id"), 1, 0);
+    if (c == "luckybox") return openLuckyBox(s, p.string("item_id"), 1, 0);
+    return earnGenePrize(s, p.integer("item_id"));
+}
+
+int Cr3OfflineDb::earnQuestRewards(GameState& s, int id) {
+    if (s.cr3Quests.state > 0) return finish(kDbQuestBusy);
+    if (const BsonValue* t = table("questprizes"))
+        for (const BsonValue& r : t->items)
+            if (r.integer("_id") == id)
+                if (const BsonValue* items = r.get("items"); items && items->isArray())
+                    for (const BsonValue& p : items->items) earnQuestPrize(s, p);
+    s.cr3Quests.state = 1;
+    return finish(kDbOk);
+}
+
+// --- tickets and events ---
+
+int Cr3OfflineDb::gotTicket(GameState& s) {
+    ticket_ = (s.cr3Daily & 1) != 0;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::receiveTicket(GameState& s) {
+    if (s.cr3Daily & 1) return finish(kDbTicketHad);
+    earnItemPrize(s, 118, 1);
+    ticket_ = true;
+    s.cr3Daily |= 1;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::sync2(GameState& s, const std::string& name) {
+    for (const Sync2Gift& g : kSync2) {
+        if (name != g.name) continue;
+        for (const int gene : g.gene)
+            if (gene > 0) earnGenePrize(s, gene);
+        for (int k = 0; k < 2; ++k)
+            if (g.item[k] > 0) earnItemPrize(s, g.item[k], g.count[k]);
+        return finish(kDbOk);
+    }
+    return finish(kDbBad);
 }
 
 } // namespace cr3

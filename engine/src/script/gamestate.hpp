@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -35,15 +36,22 @@ struct GameState {
     std::map<int, int> cr3Armour;
     // the offline game database (db/cr3db.hpp: the server's tables and rules, as the Vita plays
     // them - the release's, set by whoever opened it; null: none) and what it keeps in the save:
-    // the item sheets' progress by sheet, the genes won (a count by id), the presents box
+    // the item sheets' progress by sheet, the genes held, the presents box, the quests
     Cr3OfflineDb* cr3Db = nullptr;
     std::map<std::string, Cr3SheetProgress> cr3Sheets;
-    std::map<int, int> cr3Genes;
-    struct Present {
-        int item = 0, count = 0, from = 0; // (from: PRESENT_FROM_*)
-    };
-    std::vector<Present> cr3Presents;
-    int cr3Money = 0; // (Cr3System.GoldSet / GoldGet; battles' winnings)
+    std::vector<Cr3Gene> cr3Genes;
+    std::set<int> cr3GeneBook; // (the genes ever had: utils::CheckNewGene - CrxGameData +0x28198's bits)
+    std::vector<Cr3Present> cr3Presents;
+    Cr3Quests cr3Quests;
+    int cr3Money = 0; // (Cr3System.GoldSet / GoldGet; battles' winnings - CrxGameData +0x1ebc4)
+    // the Oz coins and GP, each with what has been spent of it (CrxGameData +0x1e76c / +0x1e770,
+    // +0x1e774 / +0x1e778), the gene stock's room (+0x1e768) - a new game's all 0
+    int cr3Coins = 0, cr3CoinsSpent = 0, cr3GP = 0, cr3GPSpent = 0, cr3GeneStock = 0;
+    // the day's marks (DAT_014d094c: bit 0 the day's ticket received, 2 the day's quests drawn,
+    // 3 the VS daily mission - cleared when the date changes)
+    int cr3Daily = 0;
+    int64_t cr3LastLogin = 0; // (CrxGameData +0x28698: the last day's login, epoch seconds; 0 none yet)
+    int cr3Cheer = 0;         // (the cheer points: DATE_CHANGED_CHEERPOINT_BONUS a day, CHEER_POINT_MAX)
     // the field's leader of the two (cr3_field_data +8: FldUtilGetActiveCharacter, 0 / 1), the
     // character change allowed (+0x32: Cr3ChangeCharacter.SetEnable - its button) and the tab
     // (+0x33: Cr3TabMenu.SetEnable) - a new game's both (Cr3InitFieldData)

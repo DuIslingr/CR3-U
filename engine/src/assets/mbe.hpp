@@ -25,6 +25,7 @@ public:
         std::vector<size_t> rows; // (their file offsets)
     };
     const Table* table(const std::string& name) const;
+    const std::vector<Table>& tables() const { return tables_; }
 
     // a row's columns, by the layout
     struct Row {

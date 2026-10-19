@@ -87,7 +87,9 @@ bool parseBson(const std::vector<uint8_t>& d, BsonValue& out, std::string* error
     // BsonMarshaller::Load: the text chunk - the chunks after the header, up to an end (3)
     for (size_t o = 8; o + 4 <= d.size() && d[o] != 3 && r.size(o) > 0; o += r.size(o))
         if (d[o] == 0x20) {
-            r.text = o + 4, r.textSize = std::min(r.size(o) - 4, d.size() - (o + 4));
+            // (its size falls short of its strings - the game reads them to their NULs, strcmp:
+            // the file's end bounds them)
+            r.text = o + 4, r.textSize = d.size() - (o + 4);
             break;
         }
     if (!r.value(8, out, 0)) {

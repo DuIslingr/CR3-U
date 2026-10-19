@@ -533,9 +533,10 @@ struct Viewer {
     // the game's database, offline as the Vita plays it (db/cr3db.hpp: the release's server
     // tables and DBEmu's rules) - every release's, never a server
     cr3::Cr3OfflineDb offlineDb;
-    void resetGame() { // (Cr3UtilResetWork: a new game's state, the database kept)
+    void resetGame() { // (Cr3UtilResetWork: a new game's state, the database kept - logged in, as Auth offline)
         game = cr3::GameState();
         game.cr3Db = offlineDb.loaded() ? &offlineDb : nullptr;
+        if (game.cr3Db) offlineDb.login(game, std::time(nullptr));
     }
     std::unique_ptr<cr3::FieldScript> script;   // the dungeon's script
     float player[3] = {0, 0, 0}, heading = 0;

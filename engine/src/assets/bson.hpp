@@ -3,7 +3,8 @@
 // Load, BsonMarshaller): not MongoDB's. "BSON\n" and 3 bytes, then chunks - a type byte, the size
 // (byte 1 x 0xffff + the u16 at 2, the header's 4 bytes counted), the name (+4: an offset into
 // the text chunk), the value (+8). The first chunk is the root; type 0x20 is the text chunk (its
-// strings from +4, NUL-ended, the names' and the strings'); 3 ends a list. 1 an object and 2 an
+// strings from +4, NUL-ended, the names' and the strings' - its size short of the last few, read
+// to their NULs regardless); 3 ends a list. 1 an object and 2 an
 // array: their count at +8, their chunks from +0xc to their own end; 0x10 an i32, 0x11 an f32,
 // 0x14 a string (+8: its offset into the text).
 

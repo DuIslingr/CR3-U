@@ -248,8 +248,9 @@ int events(const char* path, const char* only, int seconds) {
 }
 
 // The offline database (db/cr3db.hpp): the server's tables the release holds, the requests the
-// Vita plays offline, and an item sheet played out - every box opened until its whole prize
-// (what each gives: ids, never names)
+// Vita plays offline, then each DBEmu rule played once from a new game (ids and counts, never
+// names): an item sheet's boxes to its whole prize, the shop, the boxes, the presents, gifts,
+// quests, tickets and an event's gifts
 int db(const char* path, const char* sheet) {
     cr3::Database a;
     if (!openArchive(a, path)) return 1;
@@ -261,33 +262,108 @@ int db(const char* path, const char* sheet) {
     }
     int offline = 0;
     for (int k = 0; k < cr3::kCr3RequestCount; ++k) offline += cr3::cr3Request(k).offline;
-    std::printf("%zu server tables, %zu item sheets; %d requests, %d played offline\n", d.tables().size(), d.itemSheets().size(),
-                cr3::kCr3RequestCount, offline);
+    std::printf("%zu server tables, %zu item sheets, %zu quests; %d requests, %d played offline\n", d.tables().size(),
+                d.itemSheets().size(), d.quests().size(), cr3::kCr3RequestCount, offline);
     for (const auto& [name, t] : d.tables()) std::printf("  %-22s %zu rows\n", name.c_str(), t.size());
-    std::printf("constants: GOLDKEY_MASTER_ID %d, GOLD_MAX %d, GEM_COUNT_IN_DUNGEON %d\n", d.constant("GOLDKEY_MASTER_ID"),
-                d.constant("GOLD_MAX"), d.constant("GEM_COUNT_IN_DUNGEON"));
-    if (!sheet) return 0;
-    const int k = d.findItemSheet(sheet);
-    if (k < 0) {
-        std::fprintf(stderr, "no item sheet %s\n", sheet);
-        return 1;
-    }
+    std::printf("constants: GOLDKEY_MASTER_ID %d, GOLD_MAX %d, GENE_CAPACITY %d; item 101 sells for %d\n", d.constant("GOLDKEY_MASTER_ID"),
+                d.constant("GOLD_MAX"), d.constant("GENE_CAPACITY"), d.itemPrice(101));
     cr3::GameState s;
     s.cr3Db = &d;
-    const cr3::Cr3ItemSheet& t = d.itemSheets()[size_t(k)];
-    std::printf("sheet %s: %zu entries, its whole prize %s %d\n", t.id.c_str(), t.entries.size(), t.result.gene ? "gene" : "item", t.result.item);
-    for (size_t n = 1; n <= t.entries.size() + 2; ++n) {
-        const int r = d.openItemSheet(s, sheet, false, -1);
-        const cr3::Cr3ItemSheet::Prize* p = d.openedPrize();
-        const cr3::Cr3SheetProgress& g = s.cr3Sheets[t.id];
-        std::printf("  box %2zu: %d -> entry %2d, %s %d; sheet done %d\n", n, r, d.opened().empty() ? -1 : d.opened()[0],
-                    p && p->gene ? "gene" : "item", p ? p->item : 0, g.completed);
-    }
-    int items = 0, genes = 0;
-    for (const auto& [id, n] : s.cr3Items) items += n;
-    for (const auto& [id, n] : s.cr3Genes) genes += n;
-    std::printf("won: %d items (%zu kinds), %d genes (%zu kinds), %zu presents\n", items, s.cr3Items.size(), genes, s.cr3Genes.size(),
+    d.seed(1);
+    auto items = [&] {
+        int n = 0;
+        for (const auto& [id, c] : s.cr3Items) n += c;
+        return n;
+    };
+    // a login on 2026-10-19 12:00 (GetThisMonthMaster's dated rows), then the next day (each
+    // call made before its numbers are printed)
+    std::tm day{};
+    day.tm_year = 126, day.tm_mon = 9, day.tm_mday = 19, day.tm_hour = 12, day.tm_isdst = -1;
+    const std::time_t now = std::mktime(&day);
+    int r = d.login(s, now);
+    std::printf("login: %d; VIP x%.1f exp, gene boxes on offer", r, d.month().expBonus);
+    for (const int b : d.month().geneBoxes) std::printf(" %d", b);
+    std::printf("; VS sheets %s / %s; GP %d, presents %zu\n", d.month().vsScoreSheet.c_str(), d.month().vsSeasonSheet.c_str(), s.cr3GP,
                 s.cr3Presents.size());
+    d.dateChanged(s, now + 60);
+    std::printf("same day again: GP %d; ", s.cr3GP);
+    d.dateChanged(s, now + 86400);
+    std::printf("next day: GP %d, presents %zu; ", s.cr3GP, s.cr3Presents.size());
+    r = d.receivePresents(s);
+    std::printf("presents taken: %d - Oz coins %d, items %d\n", r, s.cr3Coins, items());
+    // an item sheet
+    const std::string sh = sheet ? sheet : "d02";
+    const int k = d.findItemSheet(sh);
+    if (k >= 0) {
+        const cr3::Cr3ItemSheet& t = d.itemSheets()[size_t(k)];
+        std::printf("sheet %s: %zu entries, its whole prize %s %d\n", t.id.c_str(), t.entries.size(), t.result.gene ? "gene" : "item", t.result.item);
+        for (size_t n = 1; n <= t.entries.size() + 2; ++n) {
+            r = d.openItemSheet(s, sh, false, -1);
+            const cr3::Cr3ItemSheet::Prize* p = d.openedPrize();
+            std::printf("  box %2zu: %d -> entry %2d, %s %d; sheet done %d\n", n, r, d.opened().empty() ? -1 : d.opened()[0],
+                        p && p->gene ? "gene" : "item", p ? p->item : 0, s.cr3Sheets[t.id].completed);
+        }
+    }
+    // the shop: T01_1's goods 1 (item 101 for 60 gold) x 3, one sold, then 99 more - too dear
+    s.cr3Money = 1000;
+    const int shop = d.findShop("T01_1");
+    const int had101 = s.cr3Items[101];
+    r = d.buyGoods(s, shop, 1, 3);
+    std::printf("shop T01_1 (%d): buy 3 of goods 1 %d, gold %d, item 101 +%d; ", shop, r, s.cr3Money, s.cr3Items[101] - had101);
+    r = d.sellItem(s, 101, 1);
+    std::printf("sell 1 %d, gold %d; ", r, s.cr3Money);
+    r = d.buyGoods(s, shop, 1, 99);
+    std::printf("99 more %d\n", r);
+    r = d.getDailyItem(s, 0);
+    const int again = d.getDailyItem(s, 0);
+    s.cr3Coins += 10, s.cr3GP += 300;
+    const int stock = d.buyGeneStock(s);
+    std::printf("daily item 0: %d, again %d; gene stock: %d (room %d)\n", r, again, stock, s.cr3GeneStock);
+    // the boxes
+    r = d.openGPBox(s, 1, 200);
+    std::printf("GP box (200 GP) %d: sheet %s, %zu won; ", r, d.openedSheet().c_str(), d.opened().size());
+    r = d.openLuckyBox(s, "d03", 1, 1);
+    std::printf("lucky box d03 (1 coin) %d: %zu won; ", r, d.opened().size());
+    const size_t g0 = s.cr3Genes.size();
+    r = d.openGeneBox(s, 1, 3, 2);
+    std::printf("gene box 1 x 3 (2 coins) %d: %zu genes (", r, s.cr3Genes.size() - g0);
+    for (const cr3::Cr3Gene& g : d.lastGenes()) std::printf(" %d/%d", g.master, g.exp);
+    r = d.openPrizeBox(s, "ocean");
+    std::printf(" ); ocean %d: item %d x%d, flag 4026 %d\n", r, d.prizeBox().item, d.prizeBox().count, s.flag(0xfba));
+    // presents, gifts, tickets, an event's gifts
+    size_t genes = s.cr3Genes.size();
+    r = d.earnPresent(s, 1);
+    const int taken = d.receivePresent(s, int(s.cr3Presents.size()) - 1);
+    std::printf("present 1 earned %d, taken %d - genes +%zu; ", r, taken, s.cr3Genes.size() - genes);
+    s.cr3Items[600001] = 1;
+    r = d.itemizeGift(s, 600001);
+    std::printf("itemize gift 600001 %d (item 131 x%d, the gift x%d); ", r, s.cr3Items[131], s.cr3Items[600001]);
+    genes = s.cr3Genes.size();
+    r = d.mergeGift(s, 1, {});
+    std::printf("merge gift 1 %d (genes +%zu)\n", r, s.cr3Genes.size() - genes);
+    d.gotTicket(s);
+    const bool had = d.ticketReceived();
+    r = d.receiveTicket(s);
+    const int twice = d.receiveTicket(s);
+    std::printf("ticket: had %d, receive %d, again %d (item 118 x%d); ", had, r, twice, s.cr3Items[118]);
+    r = d.sync2(s, "s272_t01_00401_gift_32_50");
+    std::printf("Sync2 s272_t01_00401_gift_32_50 %d (600032 x%d, 600050 x%d), ", r, s.cr3Items[600032], s.cr3Items[600050]);
+    r = d.sync2(s, "nothing");
+    std::printf("unknown %d\n", r);
+    // quests: flag 2095 set (the first quests' condition), which hold; then one begun, its prize,
+    // ended
+    s.setFlag(2095, true);
+    r = d.findQuests(s, now);
+    std::printf("quests found %d: %zu standing, %zu offered", r, d.standingQuests().size(), d.foundQuests().size());
+    if (!d.foundQuests().empty() || !d.standingQuests().empty()) {
+        const int q = d.quests()[size_t(d.foundQuests().empty() ? d.standingQuests()[0] : d.foundQuests()[0])].id;
+        const int gold = s.cr3Money;
+        const int begun = d.beginQuest(s, q), prize = d.earnQuestRewards(s, q);
+        const int gained = s.cr3Money - gold, again2 = d.earnQuestRewards(s, q), ended = d.endQuest(s, q);
+        std::printf("; quest %d begun %d, prize %d (gold +%d), again %d, ended %d", q, begun, prize, gained, again2, ended);
+    }
+    std::printf("\nfinally: %d items (%zu kinds), %zu genes, %zu presents, gold %d, coins %d (spent %d), GP %d (spent %d)\n", items(),
+                s.cr3Items.size(), s.cr3Genes.size(), s.cr3Presents.size(), s.cr3Money, s.cr3Coins, s.cr3CoinsSpent, s.cr3GP, s.cr3GPSpent);
     return 0;
 }
 

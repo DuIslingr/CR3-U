@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <ctime>
 #include <sstream>
 
 #include "script/vm.hpp"
@@ -53,6 +54,90 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3GimmickData", "OpenItemSheet", [](NativeCall&) {});
     vm.setNative("Cr3GimmickData", "CheckOpenItemSheet", [](NativeCall& c) { c.result(true); });
+    // the rest of Cr3System's database calls (libcrx's Sqrat bindings: utils::*), offline
+    Cr3OfflineDb* const& db = state.cr3Db;
+    // utils::OpenGBox(sheet, entry, key) / OpenGBoxAndSetFlag(.., flag): DBSystem::
+    // OpenTreasureBox - that entry won; GetItemSheetNo: the sheet's index (-1 none)
+    vm.setNative("Cr3System", "OpenGBox", [&state, &db](NativeCall& c) {
+        if (db && !c.string(0).empty()) db->openTreasureBox(state, c.string(0), c.integer(1), c.boolean(2), -1);
+    });
+    vm.setNative("Cr3System", "OpenGBoxAndSetFlag", [&state, &db](NativeCall& c) {
+        if (db && !c.string(0).empty()) db->openTreasureBox(state, c.string(0), c.integer(1), c.boolean(2), c.integer(3, -1));
+    });
+    vm.setNative("Cr3System", "GetItemSheetNo", [&db](NativeCall& c) { c.result(db ? db->findItemSheet(c.string(0)) : -1); });
+    // utils::OpenPrizeBox(name) ("ocean"), GetPrizeBoxItemType / Id / Count, CheckPrizeBoxPresent
+    // (it went to the presents box)
+    vm.setNative("Cr3System", "OpenPrizeBox", [&state, &db](NativeCall& c) {
+        if (db) db->openPrizeBox(state, c.string(0));
+    });
+    vm.setNative("Cr3System", "GetPrizeBoxItemType", [&db](NativeCall& c) { c.result(db ? db->prizeBox().type : 0); });
+    vm.setNative("Cr3System", "GetPrizeBoxItemId", [&db](NativeCall& c) { c.result(db ? db->prizeBox().item : 0); });
+    vm.setNative("Cr3System", "GetPrizeBoxItemCount", [&db](NativeCall& c) { c.result(db ? db->prizeBox().count : 0); });
+    vm.setNative("Cr3System", "CheckPrizeBoxPresent", [&db](NativeCall& c) { c.result(db && db->prizeBox().toPresents); });
+    // utils::EarnPresent(n), Sync2(event): the presents, an event's gifts; utils::Sync: SyncWait,
+    // nothing to wait for
+    vm.setNative("Cr3System", "EarnPresent", [&state, &db](NativeCall& c) {
+        if (db) db->earnPresent(state, c.integer(0));
+    });
+    vm.setNative("Cr3System", "Sync2", [&state, &db](NativeCall& c) {
+        if (db) db->sync2(state, c.string(0));
+    });
+    vm.setNative("Cr3System", "Sync", [&db](NativeCall&) {
+        if (db) db->finish(kDbOk);
+    });
+    // the day's ticket: utils::CheckTicketReceived (GotTicket) - its Result -, ReceiveTicket
+    vm.setNative("Cr3System", "CheckTicketReceived", [&state, &db](NativeCall&) {
+        if (db) db->gotTicket(state);
+    });
+    vm.setNative("Cr3System", "CheckTicketReceivedResult", [&db](NativeCall& c) { c.result(db && db->ticketReceived()); });
+    vm.setNative("Cr3System", "ReceiveTicket", [&state, &db](NativeCall&) {
+        if (db) db->receiveTicket(state);
+    });
+    // quests: utils::SelectQuest(n) - DBSelectQuestTask(n): FindQuests, then the quest board's
+    // choice (no board yet: none chosen, -100) -, GetSelectedQuest, StartQuest (CrxGameActivities'
+    // record: begun), CompleteQuest (ended - one more done), GetQuestState
+    vm.setNative("Cr3System", "SelectQuest", [&state, &db](NativeCall&) {
+        if (db) db->findQuests(state, std::time(nullptr));
+        state.cr3Quests.selected = -100;
+    });
+    vm.setNative("Cr3System", "GetSelectedQuest", [&state](NativeCall& c) { c.result(state.cr3Quests.selected); });
+    vm.setNative("Cr3System", "StartQuest", [&state](NativeCall& c) { state.cr3Quests.begun.insert(c.integer(0)); });
+    vm.setNative("Cr3System", "CompleteQuest", [&state](NativeCall& c) {
+        state.cr3Quests.ended.insert(c.integer(0));
+        ++state.cr3Quests.endedCount;
+    });
+    vm.setNative("Cr3System", "GetQuestState", [&state](NativeCall& c) { c.result(state.cr3Quests.state); });
+    // money: utils::SetGold (GoldSet) / GetGold (GoldGet: n more) / CheckGold (GoldCheck); the
+    // Oz coins likewise (CoinGet / CoinCheck)
+    vm.setNative("Cr3System", "GoldSet", [&state](NativeCall& c) { state.cr3Money = c.integer(0); });
+    vm.setNative("Cr3System", "GoldGet", [&state](NativeCall& c) { state.cr3Money += c.integer(0); });
+    vm.setNative("Cr3System", "GoldCheck", [&state](NativeCall& c) { c.result(state.cr3Money); });
+    vm.setNative("Cr3System", "CoinGet", [&state](NativeCall& c) { state.cr3Coins += c.integer(0); });
+    vm.setNative("Cr3System", "CoinCheck", [&state](NativeCall& c) { c.result(state.cr3Coins); });
+    // utils::GetItemWithCategory(category, id, count): 0 an item, 1 .. 6 x 100000 + id, 10 gold
+    vm.setNative("Cr3System", "GetItemWithCategory", [&state, &db](NativeCall& c) {
+        const int cat = c.integer(0), id = c.integer(1), n = c.integer(2, 1);
+        if (cat == 10) state.cr3Money += id;
+        else if (cat >= 0 && cat <= 6 && db) db->earnItemPrize(state, cat * 100000 + id, n);
+    });
+    // genes: utils::GetGene(id, level) - a gene in the first of the 50 places free (its index; -1
+    // none) -, CheckGene (how many held, the stock's too), CheckNewGene (never had), CheckGeneFull
+    vm.setNative("Cr3System", "GeneGet", [&state, &db](NativeCall& c) {
+        if (int(state.cr3Genes.size()) >= (db ? db->constant("GENE_CAPACITY", 50) : 50)) return c.result(-1);
+        Cr3Gene g{c.integer(0)};
+        g.level = c.integer(1);
+        state.cr3Genes.push_back(g);
+        state.cr3GeneBook.insert(g.master);
+        c.result(int(state.cr3Genes.size()) - 1);
+    });
+    vm.setNative("Cr3System", "GeneCheck", [&state](NativeCall& c) {
+        const int id = c.integer(0);
+        c.result(int(std::count_if(state.cr3Genes.begin(), state.cr3Genes.end(), [id](const Cr3Gene& g) { return g.master == id; })));
+    });
+    vm.setNative("Cr3System", "CheckNewGene", [&state](NativeCall& c) { c.result(state.cr3GeneBook.count(c.integer(0)) == 0); });
+    vm.setNative("Cr3System", "CheckGeneFull", [&state, &db](NativeCall& c) {
+        c.result(int(state.cr3Genes.size()) >= (db ? db->constant("GENE_CAPACITY", 50) : 50) + state.cr3GeneStock);
+    });
     vm.setNative("Cr3System", "SetVistaFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.vista = true; });
     vm.setNative("Cr3System", "SetVistaMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });
     vm.setNative("Cr3System", "SetVistaFuncName2", [&next](NativeCall& c) { next.vistaFunction = c.string(0); }); // (Fld2SetVistaFuncName2)
