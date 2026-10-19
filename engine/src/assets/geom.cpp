@@ -40,6 +40,14 @@ void GeomMesh::resolveJoints(float scale) {
     if (!joints.empty()) {
         if (scale != 1.0f)
             for (uint8_t& j : joints) j = uint8_t(std::clamp(long(std::lround(j * scale)), 0L, 255L));
+        // the weights to a sum of 1: stored as bytes they come to 254 / 255 (two 127s) - a vertex
+        // short of its joints by 0.4%, pulled that far towards the world's origin, which far off it
+        // (an event's hero 37 units out) shows: j001's hair drawn out behind him
+        for (size_t v = 0; v + 4 <= weights.size(); v += 4) {
+            const float sum = weights[v] + weights[v + 1] + weights[v + 2] + weights[v + 3];
+            if (sum > 0.5f && sum < 1.5f)
+                for (int k = 0; k < 4; ++k) weights[v + size_t(k)] /= sum;
+        }
         return;
     }
     if (positionW.empty()) return;

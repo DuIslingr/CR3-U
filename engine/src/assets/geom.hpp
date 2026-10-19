@@ -33,7 +33,7 @@ struct GeomMesh {
     // the vertex shader's (ShaderLibrary::jointScale): the iPad's slots (Indices * 3.0,
     // Position.w * 3.0), Android's and the Vita's already rows (1)
     void resolveJoints(float scale);
-    std::vector<float> weights;  // blend weights, 4 a vertex, used as stored (no remainder implied)
+    std::vector<float> weights;  // blend weights, 4 a vertex (after resolveJoints: summing to 1)
     std::vector<uint16_t> strip; // the indices as stored (a triangle strip, or a list: `list`)
     bool list = false;           // CR3: triangles three indices each (GL 4; the Vita's primitive 1)
     // the strip as a triangle list, degenerate triangles dropped, every other one turned so all

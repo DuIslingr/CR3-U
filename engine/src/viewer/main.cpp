@@ -1358,6 +1358,11 @@ struct Viewer {
         return archive.contains("images\\" + v + ".img") ? v : name;
     }
 
+    // the name a figure's motions go by: a hero's costume body's the b01 body's (j001b02 -> j001b01)
+    static std::string motionBase(const std::string& base) {
+        return base.size() == 7 && base[0] == 'j' && base[4] == 'b' ? base.substr(0, 4) + "b01" : base;
+    }
+
     bool loadFigure(const std::string& name, ViewFigure& f, std::string* err) {
         unload(f);
         const size_t keepAnim = f.animIndex;
@@ -1419,6 +1424,9 @@ struct Viewer {
                     ps += " ";
                 }
                 for (const auto& [k, v] : vm.material.states) st += std::to_string(k) + "=" + std::to_string(v[0]) + "/" + std::to_string(v[1]) + " ";
+                int top = 0;
+                for (uint8_t j : vm.source.joints) top = std::max(top, int(j));
+                SDL_Log("%s mesh %zu: joints up to %d for a palette of %zu", name.c_str(), f.meshes.size(), top, vm.source.palette.size());
                 SDL_Log("%s mesh %zu: key %08x_%08x_%08x_%08x textures [%s] params {%s} states {%s} lit %d", name.c_str(), f.meshes.size(),
                         vm.material.shaderKey[0], vm.material.shaderKey[1], vm.material.shaderKey[2], vm.material.shaderKey[3], tx.c_str(),
                         ps.c_str(), st.c_str(), int(vm.lit));
@@ -1439,9 +1447,13 @@ struct Viewer {
         f.skinned = archive.read(base + ".skel", data) && cr3::parseSkeleton(data, f.skeleton) &&
                     g.inverseBind.size() == f.skeleton.basePose.size();
         f.inverseBind = g.inverseBind;
+        // (a hero's costume - j001b02 - moves by the b01 body's motions: the same skeleton, only
+        // j001b01_* animations in the archives)
+        const std::string shared = motionBase(base);
         if (f.skinned)
             for (const auto& e : archive.entries())
-                if (e.name.size() > 5 && e.name.compare(0, base.size(), base) == 0 && e.name.compare(e.name.size() - 5, 5, ".anim") == 0)
+                if (e.name.size() > 5 && e.name.compare(e.name.size() - 5, 5, ".anim") == 0 &&
+                    (e.name.compare(0, base.size(), base) == 0 || (shared != base && e.name.compare(0, shared.size() + 1, shared + "_") == 0)))
                     f.anims.push_back(e.name);
         std::sort(f.anims.begin(), f.anims.end());
         if (!f.anims.empty()) loadAnim(f, std::min(f.animIndex, f.anims.size() - 1));
@@ -1471,8 +1483,13 @@ struct Viewer {
         f.animIndex = index;
         std::vector<uint8_t> data;
         std::string err;
+        // (a costume body - j001b02, the b01 skeleton and a DirLamp01 after it - takes the b01
+        // motions over its first joints)
+        const std::string base = f.name.size() > 5 ? f.name.substr(0, f.name.size() - 5) : f.name;
+        const bool costume = motionBase(base) != base;
         f.animLoaded = archive.read(f.anims[index], data, &err) && f.anim.parse(data, &err) &&
-                       f.anim.joints() == int(f.skeleton.basePose.size());
+                       (f.anim.joints() == int(f.skeleton.basePose.size()) ||
+                        (costume && f.anim.joints() > 0 && f.anim.joints() < int(f.skeleton.basePose.size())));
         if (!f.animLoaded) SDL_Log("%s: %s", f.anims[index].c_str(), err.empty() ? "not this skeleton's" : err.c_str());
         time = 0;
     }
@@ -5420,11 +5437,11 @@ struct Viewer {
         static const char* const kCharaNames[6] = {"j001", "j002", "j003", "j004", "j005", "c101"};
         const int lead = game.cr3Party[0] == 15 ? 6 : game.cr3Party[0];
         areaPlayerName = player.empty() ? (lead >= 1 && lead <= 6 ? kCharaNames[lead - 1] : "c101") : player;
-        if (areaPlayerName[0] == 'j' && areaPlayerName.size() == 4) areaPlayerName += "b01";
+        if (areaPlayerName[0] == 'j' && areaPlayerName.size() == 4) areaPlayerName = cr3PartsBody(areaPlayerName);
         unload(areaPlayer), unload(areaPlayerHead);
         areaPlayer = ViewFigure(), areaPlayerHead = ViewFigure();
         if (!loadFigure(areaPlayerName + ".geom", areaPlayer, &err)) SDL_Log("player %s: %s", areaPlayerName.c_str(), err.c_str());
-        if (areaPlayerName.size() == 7 && areaPlayerName.compare(4, 3, "b01") == 0 && archive.contains(areaPlayerName.substr(0, 4) + "h01.geom") &&
+        if (areaPlayerName.size() == 7 && areaPlayerName[4] == 'b' && archive.contains(areaPlayerName.substr(0, 4) + "h01.geom") &&
             !loadFigure(areaPlayerName.substr(0, 4) + "h01.geom", areaPlayerHead, &err))
             SDL_Log("player head: %s", err.c_str());
         areaWalker = std::make_unique<cr3::CharacterController>(area.walls);
@@ -5485,11 +5502,11 @@ struct Viewer {
     // Fld2TaskPlayer::SetMotion: the motion, blended in over 1/6 s
     void setAreaMotion(cr3::Cr3Motion m) {
         if (areaMotionSet && m == areaMotion) return;
-        const std::string want = areaPlayerName + "_" + cr3::cr3MotionName(m) + ".anim";
+        const std::string want = motionBase(areaPlayerName) + "_" + cr3::cr3MotionName(m) + ".anim";
         if (std::find(areaPlayer.anims.begin(), areaPlayer.anims.end(), want) == areaPlayer.anims.end()) return;
         for (ViewFigure* fp : {&areaPlayer, &areaPlayerHead}) { // (the head: its own animator, the same motion)
             ViewFigure& f = *fp;
-            const std::string name = f.name.substr(0, f.name.size() - 5) + "_" + cr3::cr3MotionName(m) + ".anim";
+            const std::string name = motionBase(f.name.substr(0, f.name.size() - 5)) + "_" + cr3::cr3MotionName(m) + ".anim";
             const auto it = std::find(f.anims.begin(), f.anims.end(), name);
             if (it == f.anims.end()) continue;
             if (f.animLoaded) f.blendAnim = f.anim, f.blendLoaded = true, f.blendAbsolute = f.absolute, f.blendTime = areaMotionAge, f.blendLoop = true;
@@ -5702,6 +5719,18 @@ struct Viewer {
     bool cr3BattleMode = false;
     cr3::Cr3BattleTables cr3BattleTables;
     bool cr3BattleTablesLoaded = false;
+    bool cr3TablesReady() {
+        std::string err;
+        if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, &err))) SDL_Log("tables: %s", err.c_str());
+        return cr3BattleTablesLoaded;
+    }
+    // a hero's parts model's body (j001 -> j001b02): its armour's (CrxModel::GetBodyModelNo)
+    std::string cr3PartsBody(const std::string& model) {
+        const int ch = model.size() == 4 && model[0] == 'j' ? std::atoi(model.c_str() + 1) : 0;
+        if (ch <= 0 || !cr3TablesReady()) return model + "b01";
+        const auto it = game.cr3Armour.find(ch);
+        return cr3BattleTables.body(model, it != game.cr3Armour.end() ? it->second : cr3BattleTables.defaultArmour(ch));
+    }
     cr3::Cr3Battle cr3Battle;
     ViewFigure cr3BattleField;
     struct Cr3BattleUnitView {
@@ -5872,7 +5901,7 @@ struct Viewer {
             return false;
         }
         const std::vector<int> party(std::begin(game.cr3Party), std::end(game.cr3Party));
-        if (!cr3Battle.setup(cr3BattleTables, coupling, fieldId, party, uint32_t(SDL_GetTicks()) | 1u, &err)) {
+        if (!cr3Battle.setup(cr3BattleTables, coupling, fieldId, party, uint32_t(SDL_GetTicks()) | 1u, &err, &game.cr3Armour)) {
             SDL_Log("battle %d: %s", coupling, err.c_str());
             return false;
         }
@@ -6641,7 +6670,8 @@ struct Viewer {
                 std::string err;
                 // (CrxModel::Build: a parts model - the heroes' j00N - is <name>b01 and <name>h01)
                 const bool parts = !archive.contains(n + ".geom") && archive.contains(n + "b01.geom");
-                const std::string body = parts ? n + "b01" : n;
+                std::string body = parts ? cr3PartsBody(n) : n;
+                if (parts && !archive.contains(body + ".geom")) body = n + "b01";
                 if (!archive.contains(body + ".geom") || !loadFigure(body + ".geom", f, &err))
                     SDL_Log("event model %s: %s", n.c_str(), err.empty() ? "no figure" : err.c_str());
                 if (parts && archive.contains(n + "h01.geom") && !loadFigure(n + "h01.geom", head, &err))
@@ -6691,13 +6721,13 @@ struct Viewer {
     // j001h01_... for the model's j001_...)
     void poseEventFigure(cr3::EventRuntime& ev, const cr3::EventModel& m, ViewFigure& f) {
         if (f.meshes.empty()) return;
-        const std::string own = f.name.size() > 5 ? f.name.substr(0, f.name.size() - 5) : m.figure; // (its .geom's name)
+        const std::string own = f.name.size() > 5 ? motionBase(f.name.substr(0, f.name.size() - 5)) : m.figure; // (its .geom's name - a costume's motions the b01 body's)
         auto mine = [&](const std::string& a) { // (the model's name for an animation, as this figure's)
             return own != m.figure && a.compare(0, m.figure.size(), m.figure) == 0 ? own + a.substr(m.figure.size()) : a;
         };
         // its motion (ChangeAnimator: relative to the base pose), else its own animation alone
         // in slot 0 (absolute: an effect's)
-        const std::string want = (m.animation.empty() ? own : mine(m.animation)) + ".anim";
+        const std::string want = (m.animation.empty() ? (f.name.size() > 5 ? f.name.substr(0, f.name.size() - 5) : own) : mine(m.animation)) + ".anim";
         const auto it = std::find(f.anims.begin(), f.anims.end(), want);
         if (SDL_getenv("CR3_EVTANIM") && (!f.animLoaded || f.anims[f.animIndex] != want)) // (debugging)
             SDL_Log("event figure %s: %s %s", own.c_str(), want.c_str(), it == f.anims.end() ? "MISSING" : "ok");
@@ -6714,7 +6744,7 @@ struct Viewer {
             if (from != f.blendName) {
                 std::vector<uint8_t> d;
                 f.blendName = from;
-                f.blendLoaded = archive.read(from, d) && f.blendAnim.parse(d) && f.blendAnim.joints() == int(f.skeleton.basePose.size());
+                f.blendLoaded = archive.read(from, d) && f.blendAnim.parse(d) && f.blendAnim.joints() > 0 && f.blendAnim.joints() <= int(f.skeleton.basePose.size());
             }
             f.blendAbsolute = m.blendFrom == m.figure;
             f.blendTime = m.blendFromTime + m.animTime + eventLead();

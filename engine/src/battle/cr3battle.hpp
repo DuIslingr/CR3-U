@@ -9,6 +9,7 @@
 // (BtlField::Load).
 
 #include <array>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,12 @@ namespace cr3 {
 struct Cr3BattleTables {
     MbeFile model, monster, coupling, field, battle, character, command, direction, gene, item, skill;
     bool load(const MvglArchive& archive, std::string* error = nullptr);
+    // a character's armour (CrxCharacter: a guest's its char_para row's +0x14; anyone else's the
+    // save's - none kept: the new game's, j001's armour 83 - its starting clothes, body model 2, as
+    // the reference shows them - else the row's), and the body it dresses a parts model in
+    // (CrxModel::GetBodyModelNo: the armour's +0x30 - "%sb%02d", b01 without one)
+    int defaultArmour(int character) const;
+    std::string body(const std::string& model, int armour) const;
 };
 
 struct Cr3BattleUnit {
@@ -50,9 +57,10 @@ struct Cr3Battle {
     int cameraSize = -1;               // the largest unit's (BtlCameraSystem::ChangeLargerCameraSize)
     std::array<std::string, 10> cameras; // model.mbe Camera's names for that size: 0 the get-set, 1 command, ...
     float getSetEnd = 4.16667f;        // (its +0x04: PlayBattleIn's end time)
-    // party: the characters in the party's slots (Cr3System.SetParty: char_para ids, 0 none)
+    // party: the characters in the party's slots (Cr3System.SetParty: char_para ids, 0 none);
+    // armours: theirs where the game has set one (else Cr3BattleTables::defaultArmour)
     bool setup(const Cr3BattleTables& t, int coupling, int fieldId, const std::vector<int>& party, uint32_t seed,
-               std::string* error = nullptr);
+               std::string* error = nullptr, const std::map<int, int>* armours = nullptr);
 };
 
 // BtlCameraMotion: a camera figure (Cam_bt: every battle camera a joint of it, all animated by

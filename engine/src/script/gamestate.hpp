@@ -28,6 +28,7 @@ struct GameState {
     // CR3's items (Cr3System.ItemGet / ItemSet / ItemCheck): a count by the full id - category x
     // 100000 + the table's id (1: item_para Item, 2 Weapon, 3 Armor, ...)
     std::map<int, int> cr3Items;
+    std::map<int, int> cr3Armour; // (a character's armour where the game set one; else the new game's - Cr3BattleTables::defaultArmour)
     int cr3Money = 0; // (Cr3System.GoldSet / GoldGet; battles' winnings)
     // the field's leader of the two (cr3_field_data +8: FldUtilGetActiveCharacter, 0 / 1), the
     // character change allowed (+0x32: Cr3ChangeCharacter.SetEnable - its button) and the tab

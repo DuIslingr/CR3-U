@@ -38,7 +38,24 @@ bool Cr3BattleTables::load(const MvglArchive& a, std::string* error) {
            readTable(a, "skill_para.mbe", skill, error);
 }
 
-bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, const std::vector<int>& party, uint32_t seed, std::string* error) {
+int Cr3BattleTables::defaultArmour(int ch) const {
+    MbeFile::Row r;
+    if (!character.find("Char", ch, "iiiiii", r)) return 0;
+    if (!(r.i(3) & 1) && ch == 1) return 83; // (the new game's: j001's clothes)
+    return r.i(5);
+}
+
+std::string Cr3BattleTables::body(const std::string& model, int armour) const {
+    MbeFile::Row r;
+    int number = 1;
+    if (armour > 0 && item.find("Armor", armour, "iiiiiiiiiiiii", r) && r.i(12) > 0) number = r.i(12);
+    char name[40];
+    std::snprintf(name, sizeof name, "%sb%02d", model.c_str(), number);
+    return name;
+}
+
+bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, const std::vector<int>& party, uint32_t seed, std::string* error,
+                      const std::map<int, int>* armours) {
     *this = Cr3Battle();
     coupling = couplingId, fieldId = fieldNo;
     MbeFile::Row r;
@@ -48,6 +65,7 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
     }
     float partyLine = 2, monsterLine = -2; // (MbBattleInfo +0, +4: 20, -20)
     if (t.battle.table("Battle") && t.battle.row(*t.battle.table("Battle"), 0, kBattle, r)) partyLine = r.f(0) * 0.1f, monsterLine = r.f(1) * 0.1f;
+    int armour = 0; // (the party member being added's)
     auto addUnit = [&](int modelId, bool player) -> Cr3BattleUnit* {
         MbeFile::Row m;
         if (!t.model.find("Model", modelId, kModel, m)) return nullptr;
@@ -56,7 +74,7 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
         u.width = m.f(4) * 0.1f, u.depth = m.f(5) * 0.1f, u.cameraSize = m.i(6), u.scale = m.f(7);
         // CrxModel::Build: a parts model is two figures, <name>b<costume> (FUN_009467ac's "%sb%02d";
         // b01 without a costume) and <name>h01
-        if (m.i(10) & 1) u.figure = u.name + "b01", u.head = u.name + "h01";
+        if (m.i(10) & 1) u.figure = t.body(u.name, armour), u.head = u.name + "h01";
         else u.figure = u.name;
         units.push_back(u);
         return &units.back();
@@ -66,7 +84,10 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
         if (party[k] <= 0) continue;
         MbeFile::Row c;
         if (!t.character.find("Char", party[k], kChar, c)) continue;
+        const auto set = armours ? armours->find(party[k]) : std::map<int, int>::const_iterator();
+        armour = armours && set != armours->end() ? set->second : t.defaultArmour(party[k]);
         if (Cr3BattleUnit* u = addUnit(c.i(1), true)) u->character = party[k];
+        armour = 0;
     }
     // CreateMonster: each slot with an id (MbCouplingInfo::GetMonsterId: one of its list at random)
     MbeFile::Row cp;

@@ -159,8 +159,12 @@ HP / MP one (100). d0103's `evt201_00` (2012) is the Heterocera battle (551); d0
 sets 2003 and plays `00701_evt` - the spider, battle 2 -; entering d0105 then (`00901_set`: 2003 on,
 2004 off, area 4) plays `00901_evt`, clears 5051 and goes on through `s000_t01_01001_evt` (e0019f),
 `01101_evt` (e0009f) and `s001_t02_00101_evt` (t0201f) to the town's field, t0201. An event's model
-that is a parts model (the heroes' j00N: no `j001.geom`) is its body `j001b01` and head `j001h01`,
-each posed by its own animation of the event's suffix (`j001b01_s001_t02_00101_03`).
+that is a parts model (the heroes' j00N: no `j001.geom`) is its body and head `j001h01`, each
+posed by its own animation of the event's suffix (`j001b01_s001_t02_00101_03`). The body is the
+character's armour's (CrxModel::GetBodyModelNo: Armor +0x30, `%sb%02d`; b01 without one): the new
+game's j001 wears armour 83 - body 2, the white vest the reference shows (its save comes from the
+game's server, not in the app: the armour is inferred) -; a costume body (j001b02: b01's 31 joints
+and a DirLamp01) moves by the b01 body's animations over its first joints.
 `cr3view --input box:<event box>` puts the player in an area's box (tests); `--walk x,y,s` in a
 CR3 area walks for those seconds only.
 
@@ -766,7 +770,10 @@ range (±32) where the Vita's don't (a whole number of repeats: the same samplin
 Semantics (the shaders' attributes): 1 Position (3 floats), 2 Normal, 3 Tangent, 4 Binormal (3
 normalised shorts each), 5 / 6 Texcoord0 / 1 (2 shorts, divided by 1024 in the vertex shader),
 9 Color (4 normalised bytes), 10 / 11 blend indices / weights (bytes). Skinning: a palette of 56
-joints (`MatrixPalette[56*3]`). The releases store a vertex's joint differently, and the vertex
+joints (`MatrixPalette[56*3]`). The weights, normalised bytes, fall short of 1 (two 127s: 254 /
+255), and a vertex short of its joints is pulled towards the world's origin by that much: unseen
+near it, plain far off (an event's j001 37 units out: his hair drawn out behind him, his collar and
+eyes askew) - CR3-U makes each vertex's sum 1 (GeomMesh::resolveJoints). The releases store a vertex's joint differently, and the vertex
 shader says how it reads it:
 
 - Android: blend indices as MatrixPalette's rows (slot x 3; `idx = Indices`), on every skinned mesh.
