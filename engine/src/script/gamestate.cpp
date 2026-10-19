@@ -99,9 +99,17 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         if (id >= 100000) state.cr3Items[id] = std::clamp(state.cr3Items[id] + c.integer(1, 1), 0, 99); // (CR3's)
         if (id > 0 && id < 300) state.itemCount[id] = static_cast<short>(std::clamp(state.itemCount[id] + c.integer(1, 1), 0, 99));
     });
+    // utils::SetItem(item, character): the character wears it, its slot by the id (1xxxxx weapon,
+    // 2xxxxx armour, 3xxxxx accessory: test_equip.i's SetEquip - PartyEquip, a character's
+    // starting kit); utils::GetAndSetItem: one more of it, then the same
     vm.setNative("Cr3System", "ItemSet", [&state](NativeCall& c) {
-        const int id = c.integer(0);
-        if (id >= 100000) state.cr3Items[id] = std::clamp(c.integer(1, 0), 0, 99);
+        const int id = c.integer(0), ch = c.integer(1);
+        if (id >= 200000 && id < 300000 && ch > 0) state.cr3Armour[ch] = id - 200000;
+    });
+    vm.setNative("Cr3System", "ItemGetAndSet", [&state](NativeCall& c) {
+        const int id = c.integer(0), ch = c.integer(1);
+        if (id >= 100000) state.cr3Items[id] = std::min(state.cr3Items[id] + 1, 99);
+        if (id >= 200000 && id < 300000 && ch > 0) state.cr3Armour[ch] = id - 200000;
     });
     vm.setNative("Cr3System", "ItemCheck", [&state](NativeCall& c) {
         const int id = c.integer(0);

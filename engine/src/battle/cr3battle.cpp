@@ -41,7 +41,7 @@ bool Cr3BattleTables::load(const MvglArchive& a, std::string* error) {
 int Cr3BattleTables::defaultArmour(int ch) const {
     MbeFile::Row r;
     if (!character.find("Char", ch, "iiiiii", r)) return 0;
-    if (!(r.i(3) & 1) && ch == 1) return 83; // (the new game's: j001's clothes)
+    if (!(r.i(3) & 1) && ch == 1) return 83; // (PartyEquip(1): j001's - the row's armour 1, b01, is the Black Jacket)
     return r.i(5);
 }
 

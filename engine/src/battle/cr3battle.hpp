@@ -25,9 +25,10 @@ struct Cr3BattleTables {
     MbeFile model, monster, coupling, field, battle, character, command, direction, gene, item, skill;
     bool load(const MvglArchive& archive, std::string* error = nullptr);
     // a character's armour (CrxCharacter: a guest's its char_para row's +0x14; anyone else's the
-    // save's - none kept: the new game's, j001's armour 83 - its starting clothes, body model 2, as
-    // the reference shows them - else the row's), and the body it dresses a parts model in
-    // (CrxModel::GetBodyModelNo: the armour's +0x30 - "%sb%02d", b01 without one)
+    // save's - where no script has put one on yet, the starting kit's: test_equip.i's PartyEquip,
+    // which the row's are but for j001's armour 83 - body model 2, as the reference shows it -),
+    // and the body it dresses a parts model in (CrxModel::GetBodyModelNo: the armour's +0x30 -
+    // "%sb%02d", b01 without one)
     int defaultArmour(int character) const;
     std::string body(const std::string& model, int armour) const;
 };

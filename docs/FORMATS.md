@@ -161,10 +161,19 @@ sets 2003 and plays `00701_evt` - the spider, battle 2 -; entering d0105 then (`
 `01101_evt` (e0009f) and `s001_t02_00101_evt` (t0201f) to the town's field, t0201. An event's model
 that is a parts model (the heroes' j00N: no `j001.geom`) is its body and head `j001h01`, each
 posed by its own animation of the event's suffix (`j001b01_s001_t02_00101_03`). The body is the
-character's armour's (CrxModel::GetBodyModelNo: Armor +0x30, `%sb%02d`; b01 without one): the new
-game's j001 wears armour 83 - body 2, the white vest the reference shows (its save comes from the
-game's server, not in the app: the armour is inferred) -; a costume body (j001b02: b01's 31 joints
-and a DirLamp01) moves by the b01 body's animations over its first joints.
+character's armour's (CrxModel::GetBodyModelNo: Armor +0x30, `%sb%02d`; b01 without one). The
+starting kits are the scripts': test_equip.i's `PartyEquip(chr)` (once each, flags 1021 - 1025)
+gives and puts on (Cr3System.ItemSet = utils::SetItem(item, character): 1xxxxx the weapon slot,
+2xxxxx armour, 3xxxxx accessory; ItemGetAndSet the item given first) a gene, weapon, armour and
+accessory - char_para's +0x10 / +0x14 / +0x18 for all but j001, whose armour is 83, not the row's
+1 (the Black Jacket, b01): 83 is body 2, the white vest the reference shows, its numbers the
+jacket's. `s001_t02_00101_evt` runs `PartyEquip(1)` first thing; the prologue before it (the battles
+are the hooded guest's, char 6) shows j001 in his new save's - an iPhone's from the server
+(resetPlayer / loadPlayer), the Vita's built on the device (DBEmu stands in for the server;
+CrxGameData::Init leaves every slot empty) -, so the port gives him 83 from the start, as the
+reference. DBSystem::SM_SkipVSTuto (the VS tutorial skipped) sets the same kits for 1 - 3. A
+costume body (j001b02: b01's 31 joints and a DirLamp01) moves by the b01 body's animations over its
+first joints.
 `cr3view --input box:<event box>` puts the player in an area's box (tests); `--walk x,y,s` in a
 CR3 area walks for those seconds only.
 
