@@ -45,6 +45,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <regex>
 #include <set>
 #include <string>
@@ -64,6 +65,7 @@
 #include "battle/script.hpp"
 #include "battle/cr3battle.hpp"
 #include "battle/cr3rules.hpp"
+#include "db/cr3db.hpp"
 #include "field/character.hpp"
 #include "field/fieldmap.hpp"
 #include "event/runtime.hpp"
@@ -245,6 +247,50 @@ int events(const char* path, const char* only, int seconds) {
     return 0;
 }
 
+// The offline database (db/cr3db.hpp): the server's tables the release holds, the requests the
+// Vita plays offline, and an item sheet played out - every box opened until its whole prize
+// (what each gives: ids, never names)
+int db(const char* path, const char* sheet) {
+    cr3::Database a;
+    if (!openArchive(a, path)) return 1;
+    cr3::Cr3OfflineDb d;
+    std::string err;
+    if (!d.load(a, &err)) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+        return 1;
+    }
+    int offline = 0;
+    for (int k = 0; k < cr3::kCr3RequestCount; ++k) offline += cr3::cr3Request(k).offline;
+    std::printf("%zu server tables, %zu item sheets; %d requests, %d played offline\n", d.tables().size(), d.itemSheets().size(),
+                cr3::kCr3RequestCount, offline);
+    for (const auto& [name, t] : d.tables()) std::printf("  %-22s %zu rows\n", name.c_str(), t.size());
+    std::printf("constants: GOLDKEY_MASTER_ID %d, GOLD_MAX %d, GEM_COUNT_IN_DUNGEON %d\n", d.constant("GOLDKEY_MASTER_ID"),
+                d.constant("GOLD_MAX"), d.constant("GEM_COUNT_IN_DUNGEON"));
+    if (!sheet) return 0;
+    const int k = d.findItemSheet(sheet);
+    if (k < 0) {
+        std::fprintf(stderr, "no item sheet %s\n", sheet);
+        return 1;
+    }
+    cr3::GameState s;
+    s.cr3Db = &d;
+    const cr3::Cr3ItemSheet& t = d.itemSheets()[size_t(k)];
+    std::printf("sheet %s: %zu entries, its whole prize %s %d\n", t.id.c_str(), t.entries.size(), t.result.gene ? "gene" : "item", t.result.item);
+    for (size_t n = 1; n <= t.entries.size() + 2; ++n) {
+        const int r = d.openItemSheet(s, sheet, false, -1);
+        const cr3::Cr3ItemSheet::Prize* p = d.openedPrize();
+        const cr3::Cr3SheetProgress& g = s.cr3Sheets[t.id];
+        std::printf("  box %2zu: %d -> entry %2d, %s %d; sheet done %d\n", n, r, d.opened().empty() ? -1 : d.opened()[0],
+                    p && p->gene ? "gene" : "item", p ? p->item : 0, g.completed);
+    }
+    int items = 0, genes = 0;
+    for (const auto& [id, n] : s.cr3Items) items += n;
+    for (const auto& [id, n] : s.cr3Genes) genes += n;
+    std::printf("won: %d items (%zu kinds), %d genes (%zu kinds), %zu presents\n", items, s.cr3Items.size(), genes, s.cr3Genes.size(),
+                s.cr3Presents.size());
+    return 0;
+}
+
 int usage() {
     std::fprintf(stderr,
                  "cr3tool [--patch <fan translation>] <command> ...\n"
@@ -269,7 +315,8 @@ int usage() {
                  "cr3tool sound <release> [--full]\n"
                  "cr3tool glass <seeds>\n"
                  "cr3tool save-import <game.dat | cont.dat> [system.dat]  (a CR3-U save on stdout)\n"
-                 "cr3tool save-export <archive> <CR3-U save> <game.dat>\n");
+                 "cr3tool save-export <archive> <CR3-U save> <game.dat>\n"
+                 "cr3tool db <release> [item sheet]  (the offline database: tables, requests, a sheet's boxes)\n");
     return 2;
 }
 
@@ -469,11 +516,24 @@ int traceEvent(const char* path, const char* script, const char* function, int m
     return ok ? 0 : 1;
 }
 
+// the release's offline database (db/cr3db.hpp), loaded once; null where it has none
+cr3::Cr3OfflineDb* offlineDb(const cr3::MvglArchive& a) {
+    static std::map<const cr3::MvglArchive*, std::unique_ptr<cr3::Cr3OfflineDb>> dbs;
+    auto& db = dbs[&a];
+    if (!db) {
+        db = std::make_unique<cr3::Cr3OfflineDb>();
+        std::string err;
+        if (!db->load(a, &err)) std::fprintf(stderr, "database: %s\n", err.c_str());
+    }
+    return db->loaded() ? db.get() : nullptr;
+}
+
 // An event to its end through the runtime: what it shows, per change (a message's number and
 // pages, never its text); `quiet` only the outcome. 0: it ended
 int playEvent(const cr3::MvglArchive& a, const std::string& event, bool quiet, std::string* outcome = nullptr,
               std::map<std::string, int>* stubsOut = nullptr) {
     cr3::GameState state;
+    state.cr3Db = offlineDb(a);
     cr3::EventRuntime rt(a, state);
     rt.autoPage = 1.0f;
     rt.askYesNo = true; // (questions, choices and text entry answered as a player confirming would)
@@ -756,6 +816,7 @@ int fieldScripts(const char* path, const char* binary, const char* only) {
         if (!f.load(a, info)) continue;
         ++maps;
         cr3::GameState state; // (a new game's: every flag clear)
+        state.cr3Db = offlineDb(a);
         cr3::FieldScript script(a, state);
         // (to its end: an area's set-up may play an event, its pages turning by themselves)
         bool ok = script.enter(info.name, f.gimmicks());
@@ -1477,6 +1538,7 @@ int main(int argc, char** argv) {
     if (argc > 2 && !std::strcmp(argv[1], "--patch")) gPatch = argv[2], argc -= 2, argv += 2;
     if (argc < 3) return usage();
     if (!std::strcmp(argv[1], "release")) return release(argv[2]);
+    if (!std::strcmp(argv[1], "db")) return db(argv[2], argc > 3 ? argv[3] : nullptr);
     if (!std::strcmp(argv[1], "texts")) return texts(argv[2]);
     if (!std::strcmp(argv[1], "events")) return events(argv[2], argc > 3 && std::strcmp(argv[3], "all") ? argv[3] : nullptr, argc > 4 ? std::atoi(argv[4]) : 300);
     if (!std::strcmp(argv[1], "check")) return check(argv[2]);

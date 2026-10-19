@@ -528,6 +528,13 @@ struct Viewer {
     ViewFigure mapFigure; // <map>f
     std::vector<ViewFigure> gimmicks; // the figures <map>p's NPCs, objects, boxes and effects show
     cr3::GameState game;                        // the story's flags and work values (a new game's)
+    // the game's database, offline as the Vita plays it (db/cr3db.hpp: the release's server
+    // tables and DBEmu's rules) - every release's, never a server
+    cr3::Cr3OfflineDb offlineDb;
+    void resetGame() { // (Cr3UtilResetWork: a new game's state, the database kept)
+        game = cr3::GameState();
+        game.cr3Db = offlineDb.loaded() ? &offlineDb : nullptr;
+    }
     std::unique_ptr<cr3::FieldScript> script;   // the dungeon's script
     float player[3] = {0, 0, 0}, heading = 0;
     std::unique_ptr<cr3::CharacterController> controller; // (on the map's walls and floors)
@@ -6195,11 +6202,11 @@ struct Viewer {
             }
         } else {
             for (const auto& [id, n] : game.cr3Items) {
-                if (id <= 100000 || id >= 200000 || n <= 0) continue;
+                if (id <= 0 || id >= 100000 || n <= 0) continue; // (an Item's full id its own)
                 cr3::MbeFile::Row r;
-                if (!cr3BattleTables.item.find("Item", id - 100000, "iiiiiiiiiiiii", r)) continue;
+                if (!cr3BattleTables.item.find("Item", id, "iiiiiiiiiiiii", r)) continue;
                 Cr3ListRow row;
-                row.item = id, row.command = r.i(3), row.count = n, row.name = cr3NameOf("item_name.mbe", "ItemName", id - 100000);
+                row.item = id, row.command = r.i(3), row.count = n, row.name = cr3NameOf("item_name.mbe", "ItemName", id);
                 cr3::Cr3Command c;
                 row.usable = cr3Rules.command(row.command, c) && c.usable();
                 cr3List.push_back(row);
@@ -7529,7 +7536,7 @@ struct Viewer {
             t.stage = 0;
             for (ViewFigure& f : t.maps) unload(f);
             unload(t.logo.position), unload(t.logo.fig);
-            game = cr3::GameState();
+            resetGame();
             SDL_Log("title: a new game");
             startEvent("t01:s000_t01_00101_evt", "null", pageSeconds);
         }
@@ -12039,7 +12046,7 @@ struct Viewer {
                         UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view);
                         float tx, ty;
                         const Cr3ListRow& row = cr3List[size_t(cr3Focus)];
-                        const std::string text = row.item ? cr3NameOf("item_help.mbe", "ItemHelp", row.item - 100000)
+                        const std::string text = row.item ? cr3NameOf("item_help.mbe", "ItemHelp", row.item)
                                                           : cr3NameOf("command_help.mbe", "CommandHelp", row.command);
                         if (!text.empty() && cr3UiCall(help, "typeM_L01", tx, ty)) {
                             dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
@@ -12501,6 +12508,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!patch.empty() && !v.archive.addOverlay(patch, &err)) SDL_Log("fan translation: %s", err.c_str());
+    if (v.offlineDb.load(v.archive, &err))
+        SDL_Log("database: offline, %zu server tables, %zu item sheets", v.offlineDb.tables().size(), v.offlineDb.itemSheets().size());
+    else if (v.archive.kind() != cr3::Database::Kind::None)
+        SDL_Log("database: %s", err.c_str());
+    v.resetGame();
     {
         // the language: --language, else English where the release has one (the iPhone's, Android's,
         // the fan translation's), else Japanese
@@ -12721,7 +12733,7 @@ int main(int argc, char** argv) {
         if (v.titleMenu.stage != 0 || !v.titleMenu.action) return true;
         const int act = v.titleMenu.action;
         v.titleMenu.action = 0;
-        v.game = cr3::GameState(); // (Cr3UtilResetWork)
+        v.resetGame();
         v.playSeconds = 0;
         v.newGame();
         if (act == 4) v.carryOver();

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "db/cr3db.hpp"
 #include "field/treasure.hpp"
 
 namespace cr3 {
@@ -25,12 +26,23 @@ struct GameState {
     // the prologue's hooded hero (c101 on the field, j006 in battle; the reference's), the
     // game's own default not found yet
     int cr3Party[5] = {6, 0, 0, 0, 0};
-    // CR3's items (Cr3System.ItemGet / ItemCheck): a count by the full id - category x 100000 +
-    // the table's id (1 item_para Weapon, 2 Armor, 3 Accessory; an Item its own id)
+    // CR3's items (Cr3System.ItemGet / ItemCheck): a count by the full id (CrxGameData::AddItem_Sub)
+    // - an Item its own id, else category x 100000 + the table's id (1 Weapon, 2 Armor, 3
+    // Accessory; 4, 5 others, 6 a gift)
     std::map<int, int> cr3Items;
     // a character's armour where a script put one on (Cr3System.ItemSet / ItemGetAndSet); else
     // the new game's (Cr3BattleTables::defaultArmour)
     std::map<int, int> cr3Armour;
+    // the offline game database (db/cr3db.hpp: the server's tables and rules, as the Vita plays
+    // them - the release's, set by whoever opened it; null: none) and what it keeps in the save:
+    // the item sheets' progress by sheet, the genes won (a count by id), the presents box
+    Cr3OfflineDb* cr3Db = nullptr;
+    std::map<std::string, Cr3SheetProgress> cr3Sheets;
+    std::map<int, int> cr3Genes;
+    struct Present {
+        int item = 0, count = 0, from = 0; // (from: PRESENT_FROM_*)
+    };
+    std::vector<Present> cr3Presents;
     int cr3Money = 0; // (Cr3System.GoldSet / GoldGet; battles' winnings)
     // the field's leader of the two (cr3_field_data +8: FldUtilGetActiveCharacter, 0 / 1), the
     // character change allowed (+0x32: Cr3ChangeCharacter.SetEnable - its button) and the tab

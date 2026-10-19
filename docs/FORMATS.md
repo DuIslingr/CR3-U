@@ -568,6 +568,53 @@ the other only if that fails. 63 files, 109 tables, 27,884 rows, the same in eve
 (`tools/mbe.py`; in the engine `assets/mbe.hpp`, rows read by a column layout - `i`, `f`, `p` a
 pointer slot, `_` the pointer alignment alone).
 
+## The game database, offline (`data\*.bson`; db/cr3db)
+
+CR3 was an online game: DBSystem::Request(id) queues a request, its SM_<name> sends JSON to the
+game server and reads the answer into CrxGameData. Every release also carries the server's rules
+(DBEmu) and its tables (48 `data\*.bson`; the iPhone's and Android's byte-identical, the Vita's a
+little different). The Vita turns emulation on (GameSystem +0x1af; Android's +0x1b3 is a debug
+menu switch, "Emulation"): DBSystem::AddRequest queues only the requests CheckEmulation lists, and
+each handler calls its DBEmu function and finishes with the code it returns (FinishRequest, +0x1bc
+= utils::GetSyncResult: 200 done, 0x192 full, 500 none such, 1000 an error); the rest are dropped
+unqueued. The port plays every release that way and never contacts a server.
+
+The requests: ids 0 .. 0xa3, named by the Vita eboot's table after the handlers (0x815e8a80: 5
+state-machine entries, then a handler per id; the names 165 x 8 + 19 x 4 on). 77 are played
+offline (`cr3Request(id).offline`): Auth, Save / LoadPlayer, AddItem, the genes (Add, Remove, Move,
+Enforce, Enhance, Merge, Sell), the boxes (PickTreasureBox, OpenTreasureBox, OpenGBox,
+OpenItemSheet, OpenPrizeBox, the GP / lucky / gene boxes), the presents, quests, tickets, gifts,
+BuyGoods / SellItem / UseItem, the VS tournaments, missions and battles, VIP, Sync / Sync2. The
+dropped: friends, visits, messages, the bazaar, colosseum matching, research, rankings, payments,
+EnterDungeon (the server's gems), and the debug DB tools.
+
+MVGL "BSON" is not MongoDB's: `BSON\n` and 3 bytes, then chunks - a type byte, the size (byte 1 x
+0xffff + the u16 at 2, its 4 header bytes counted), the name at +4 (an offset into the text
+chunk), the value at +8. The first chunk is the root; type 0x20 the text (NUL-ended strings from
++4); 3 ends a list. 1 an object, 2 an array: the count at +8, the chunks from +0xc to the list's
+own end (an empty one is followed directly by the next chunk); 0x10 an i32, 0x11 an f32 (both read
+as either: BsonMarshaller::GetI32 / GetF32), 0x14 a string (+8: its text offset). No other types
+occur. CrxGameTable::Load reads them by Declaration tables of (type, count, name, offset): the
+constants (`constant`'s one row, 162 fields - GOLDKEY_MASTER_ID 400005, GOLD_MAX, the seeds'
+monthly ids ...) from libcrx's 0x011aa158.
+
+Full item ids (CrxGameData::AddItem_Sub): an Item its own id (item_para Item 1 .. ); 1xxxxx a
+weapon, 2xxxxx armour, 3xxxxx an accessory (100000 x the category + the table's id); 4xxxxx,
+5xxxxx other goods (tickets, the gold key 400005, gems 500001), 6xxxxx a gift. 99 of one at most:
+dbutils::EarnItemPrize sends the rest to the presents box (SendPresent, from PRESENT_FROM_SERVICE).
+
+Item sheets (`bingos`, CrxItemSheetTable 0x150 bytes): a dungeon's treasure prizes - `_id` (d02
+..), up to 17 `items` (category "gene" a gene, else an item by its full id; item_id) and the
+`result` for winning them all. DBEmu::DoOpenItemSheet draws from the entries not won yet (all of
+them once the sheet is done, or with `all`), shuffled, the first won; with a key one gold key is
+spent, with a flag that flag set; the first time every entry has been won the sheet's result is
+given too. MarkItemSheet / UpdateItemSheet keep each entry's "new" mark (won since the last
+open) and the sheet's newly-done flag; _PickTreasureBox draws n entries not marked (any, with all
+or the sheet newly done; any at random once they run out). The scripts: Cr3GimmickData.
+OpenItemSheetRequest(sheet) (Fld2OpenItemSheetRequest: OpenItemSheet, no key, no flag),
+SetItemSheetName, GetOpenItemSheetItemNo / Type (the prize: its id, 1 a gene). `cr3tool db
+<release> [sheet]` lists the tables and plays a sheet's boxes out.
+
 ## Scripts (`script\*.nut`, `script64\*.nut`)
 
 Compiled Squirrel 2.2.4, as CR2's. Every release has the 32-bit `script\` set (194 files); iOS and

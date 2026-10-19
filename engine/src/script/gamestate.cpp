@@ -24,12 +24,35 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     GameState::Next& next = state.next;
     // FldUtilSetVistaFuncName: the event, and that a vista is to come; its map ("null": none)
-    // CR3's utils::WaitSync: DBSystem::IsIdle - its save / online sync not busy; the port has none
+    // CR3's utils::WaitSync: DBSystem::IsIdle - no request queued. The port's database is the
+    // Vita's, offline (db/cr3db.hpp): a request is done when it is made
     vm.setNative("Cr3System", "WaitSync", [](NativeCall& c) { c.result(true); });
     // utils::GetSyncResult: DBSystem's last request's result (+0x1bc) - an HTTP-like code the
-    // scripts compare: 200 done, 1006 a ticket quest's error, ... The port answers its requests
-    // itself: done
-    vm.setNative("Cr3System", "GetSyncResult", [](NativeCall& c) { c.result(200); });
+    // scripts compare: 200 done, 1006 a ticket quest's error, ...
+    vm.setNative("Cr3System", "GetSyncResult", [&state](NativeCall& c) { c.result(state.cr3Db ? state.cr3Db->lastResult() : int(kDbOk)); });
+    // utils::EnterDungeon: DBSystem::Request(EnterDungeon) - the server's dungeon entry (its gems,
+    // GEM_COUNT_IN_DUNGEON), not one the Vita plays offline: dropped
+    vm.setNative("Cr3System", "EnterDungeon", [](NativeCall&) {});
+    // the item sheets (a dungeon's treasure prizes: Fld2OpenItemSheetRequest - DBSystem::
+    // OpenItemSheet(sheet, no key, no flag) -, Fld2SetItemSheetName, Fld2GetOpenItemSheetItemNo /
+    // Type - the prize last won: its id, 1 a gene -, Fld2CheckOpenItemSheet / OpenItemSheet - the
+    // field's sheet screen, Fld2Main step 0xc: none yet, done at once)
+    vm.setNative("Cr3GimmickData", "OpenItemSheetRequest", [&state](NativeCall& c) {
+        if (state.cr3Db) state.cr3Db->openItemSheet(state, c.string(0), false, -1);
+    });
+    vm.setNative("Cr3GimmickData", "SetItemSheetName", [&state](NativeCall& c) {
+        if (state.cr3Db) state.cr3Db->setOpenedSheet(c.string(0));
+    });
+    vm.setNative("Cr3GimmickData", "GetOpenItemSheetItemNo", [&state](NativeCall& c) {
+        const Cr3ItemSheet::Prize* p = state.cr3Db ? state.cr3Db->openedPrize() : nullptr;
+        c.result(p ? p->item : 0);
+    });
+    vm.setNative("Cr3GimmickData", "GetOpenItemSheetItemType", [&state](NativeCall& c) {
+        const Cr3ItemSheet::Prize* p = state.cr3Db ? state.cr3Db->openedPrize() : nullptr;
+        c.result(p && p->gene ? 1 : 0);
+    });
+    vm.setNative("Cr3GimmickData", "OpenItemSheet", [](NativeCall&) {});
+    vm.setNative("Cr3GimmickData", "CheckOpenItemSheet", [](NativeCall& c) { c.result(true); });
     vm.setNative("Cr3System", "SetVistaFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.vista = true; });
     vm.setNative("Cr3System", "SetVistaMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });
     vm.setNative("Cr3System", "SetVistaFuncName2", [&next](NativeCall& c) { next.vistaFunction = c.string(0); }); // (Fld2SetVistaFuncName2)
@@ -96,7 +119,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     // Cr3UtilGetItem(item, n): its count n more, 0..99; Cr3UtilCheckItem: its count
     vm.setNative("Cr3System", "ItemGet", [&state](NativeCall& c) {
         const int id = c.integer(0);
-        if (id >= 100000) state.cr3Items[id] = std::clamp(state.cr3Items[id] + c.integer(1, 1), 0, 99); // (CR3's)
+        if (id > 0) state.cr3Items[id] = std::clamp(state.cr3Items[id] + c.integer(1, 1), 0, 99); // (CR3's, by its full id)
         if (id > 0 && id < 300) state.itemCount[id] = static_cast<short>(std::clamp(state.itemCount[id] + c.integer(1, 1), 0, 99));
     });
     // utils::SetItem(item, character): the character wears it, its slot by the id (1xxxxx weapon,
@@ -113,8 +136,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3System", "ItemCheck", [&state](NativeCall& c) {
         const int id = c.integer(0);
-        if (id >= 100000) return c.result(state.cr3Items.count(id) ? state.cr3Items.at(id) : 0);
-        c.result(id > 0 && id < 300 ? int(state.itemCount[id]) : 0);
+        c.result(id > 0 && state.cr3Items.count(id) ? state.cr3Items.at(id) : 0);
     });
     vm.setNative("Cr3System", "MPFullRecovery", [&state](NativeCall&) {
         for (int& m : state.mp) m = -1;

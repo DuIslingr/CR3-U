@@ -29,6 +29,8 @@ target_compile_options(squirrel2 PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w -fno
 add_library(cr3core STATIC
     src/assets/mvgl.cpp
     src/assets/mbe.cpp
+    src/assets/bson.cpp
+    src/db/cr3db.cpp
     src/assets/image.cpp
     src/assets/geom.cpp
     src/assets/skeleton.cpp
