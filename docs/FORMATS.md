@@ -399,21 +399,50 @@ GetGuardMultipliers); physical / magic damage the attacker's kinds 54 / 55. A he
 calculateHpHeal): clamp(defence / attack, 0.5, 2) x power x (gene level / 20 + 1) x (1 + the
 skills' heal correction).
 
+Criticals and downs: calculateCriticalHit (only where the command's +0xbc bit 4 allows, always
+with bit 5): a random byte under the attacker's luck / the target's mapped 8 / 13 / 18 / 24 / 29 /
+34 / 39 at 0.5 / 0.7 / 0.9 / 1.1 / 1.3 / 1.5 (+ skills, status effects, the target's bonus); a
+critical adds 0.5 to "Status". calculateDown: a hit downs its target where the element's rate is
+above 1, on a critical, where the command says (bit 6) or where the target is already down (its
+combo chance - BtlBasicStatus +0x6d, set by TakeDamage from a downing hit); a down adds 0.1 to
+"Status" and counts the target's combo (+1: the magic chain bonus, x (1 + combo x 0.001)). The
+downs last while one side acts (BtlCommandManager::resetChance: the other side acting clears all -
+ResetAllChance; the same side's next keeps them unless the last action began with one and did not
+carry it on); every hit of an action plays, past the target's death.
+
+The break gauge (BtlBreakGaugeUI, a BtlBreakPoint at -1000 .. 1000: above 0 the party's advantage
+- "Player" -, below the monsters' - "Enemy" -, 0 "Even"; HaveAdvantage gives "Status" x 1.5 and
+the bigger break bonus): each hit adds its points after its action is calculated
+(BtlDamageChunk::AddBreakPointToCalculation, a damage record's +0x50). A hit's points
+(calculateBreakPoint, BtlDamageTarget::SetBreakPoint): the command's +0x22 (s16; below 0 none) -
+with +0xbc bit 1, the unit's weapon break constant instead (Weapon +0x40: 501's 100; a monster's
+its attack command's +0x22) and +0x22 into the bonus -, plus a share of the action's bonus
+(battle.mbe Battle +0x50 / +0x60 without / with the advantage: 0 / 100, +0x54 / +0x64 a critical:
+25 / 50, +0x58 / +0x68 a down: 25 / 50; status effects' bonus), split over its targets, then each
+target's hits; a monster's negative. BtlBreakPoint::Add: the battle's first nonzero points jump to
++-500 whatever they are; from above 0 to 0 or below another -500 first (a break), likewise from
+below; held within +-1000. Even() resets it only after a Continue. The side with the advantage acts
+first. The HUD (btBrkGauge posed at ((v + 1000) / 20) / 30 s; btBrkName_fr00 0 Player, 1 Enemy, 2
+Even, 3 at +-1000) follows the hits as they land.
+
 CR3-U has the base, element, resistances (skills without conditions, equipment), level, command
-multiplier, spread and heals; not yet status effects (battle_0001's Battle_Boot gives the hero
-40, 65, 66, 67, battle_0551's 40, 145, 66, 67 - kinds 53, 47, 65, 66, 140, none a damage one),
-conditional skills, the chain / combo bonus, criticals, misses or the gauge (Even throughout).
-Against the reference: the hero's first hit 352 (CR3-U: 400 / 170 x 90 x 0.5 x 3.5 = 371, spread
-352 - 389), a later one 576 with the gauge's advantage (x 1.5: 528 - 584), Gunner's four 34 and
-Axer's 40 (CR3-U 32 - 36 and 38 - 42: the armour's 20%); Augmented Electra on a Heterocera 1049
-for four (CR3-U ~250 each with the advantage, ~5% short - the combo bonus, likely).
+multiplier, spread, criticals, downs and combos, the break gauge and heals; not yet status effects
+(battle_0001's Battle_Boot gives the hero 40, 65, 66, 67, battle_0551's 40, 145, 66, 67 - kinds
+53, 47, 65, 66, 140, none a damage one), conditional skills, misses, a down's delayed command
+(delayCommandByDown) or the physical chain bonus. Against the reference (part 1): the hero's
+first hit 352 at Even (CR3-U: 400 / 170 x 90 x 0.5 x 3.5 = 371, spread 352 - 389), a later one
+576 at Player (x 1.5: 528 - 584); Gunner's four 34 and Axer's 40 (32 - 36 and 38 - 42: the
+armour's 20%); against a Heterocera (436 - 450 s) Rakshasa Lotus 758 for two - one a critical, 284
++ 474 (CR3-U 282 - 311 and 450 - 498) - then 331 on the downed target (x 1.1: 310 - 342), and at
+Player Augmented Electra (multiplier 0.95) 265 / 256 / .. / 265, 1049 for four (CR3-U 251 - 277
+each); Heterocera's command 242, 12 - 13 a hit (CR3-U 12 - 14).
 
 A turn (BtlSysStateSelect): the get-set menu (EntryGetSet: Battle, Escape - not where the
 coupling's +0x44 bit 1 forbids it -, Options; SE bt_001 the first time; the get-set camera held),
 then each party member's command (6 Attack - its target -, 7 Gene - the gene's commands, a list -,
 8 Item - the items, a list -, 9 Guard - command 51 on itself), then the party's actions and the
-monsters' (each side's list in order: BtlCommandManager - the side ahead on the gauge first; the
-party here). Escaping (BtlSystem::Escape): sure with the gauge's advantage, else a random byte
+monsters' (each side's list in order: BtlCommandManager - the side ahead on the gauge first, the
+party at even). Escaping (BtlSystem::Escape): sure with the gauge's advantage, else a random byte
 under 240 (the party's level below the monsters'), 244, or 252 (twenty levels above). The win
 (BtlSysStateAction::phaseVictory): the result music, the victory, a half-second fade, then the
 result - unless story flag 5051 (byte 0x14cfb67 bit 3 of Cr3FlagWork at 0x14cf8f0) is on:

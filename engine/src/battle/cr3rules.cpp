@@ -18,7 +18,7 @@ constexpr const char* kAccessory = "iiiiiiiiiiiiiiiiii";         // 12 HP (+0x30
 constexpr const char* kGene = "iiiiiiiiiiiiiiiiiiiiiii";         // 13 HP (+0x34), 14 MP, 15 atk | def, 16 spd | luck, 17 .. 20 their growth
 constexpr const char* kGuestGene = "iiiiiiiiiiiiiiiiiii";        // id, gene, level, then (type, id) x 8
 constexpr const char* kSkill = "iiiiiiiiiiiiiiiiiiiii";          // 8 its condition (+0x20), 12 / 13 and 14 / 15 its effects (kind, constant)
-constexpr const char* kCommand = "iiiiiiffiii_ip_ip_ip_ip_ip_ip_ipiiiiiiiiiiiiiii_pi"; // 5 power, 6 multiplier, 8 packed (target, hits, ..), 27 spread (+0xa8), 33 formula (+0xc0)
+constexpr const char* kCommand = "iiiiiiffiii_ip_ip_ip_ip_ip_ip_ipiiiiiiiiiiiiiii_pi"; // 5 power, 6 multiplier, 8 packed (attacks, hits, break), 27 spread (+0xa8), 32 flags, 33 formula (+0xc0)
 constexpr const char* kFormula = "iiii";  // id, action, damage, chain
 constexpr const char* kDirection = "iii"; // command, kind, motion
 
@@ -37,6 +37,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     tables_ = &t;
     rng_ = seed ? seed : 1;
     fighters.clear();
+    gauge = 0, gaugeStarted = false; // (BtlBreakGaugeUI: even)
     for (size_t k = 0; k < b.units.size(); ++k) {
         const Cr3BattleUnit& u = b.units[k];
         Cr3Fighter f;
@@ -54,7 +55,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
             // else's the save's, not kept yet: the row's too)
             MbeFile::Row e;
             if (r.i(4) > 0 && t.item.find("Weapon", r.i(4), kWeapon, e)) {
-                f.weaponConstant = e.i(14), f.weaponHits = e.i(15), f.consumption = float(e.i(17)) * 0.01f;
+                f.weaponConstant = e.i(14), f.weaponHits = e.i(15), f.weaponBreak = e.i(16), f.consumption = float(e.i(17)) * 0.01f;
                 f.lowerPhysical = e.i(18), f.lowerMagic = e.i(19);
                 for (size_t k = 0; k < 7; ++k) f.lowerElement[k] = e.i(20 + k);
             }
@@ -126,6 +127,8 @@ bool Cr3BattleRules::command(int id, Cr3Command& c) const {
     c.hits = hits > 0 ? hits : 1;
     c.hitsOwn = hits < 0;
     c.repeat = std::max(int(int8_t(uint32_t(r.i(8)) & 0xff)), 1); // (+0x20: its attacks - Rakshasa Lotus's 3; the magic number)
+    c.breakPoint = int16_t(uint32_t(r.i(8)) >> 16);                 // (+0x22)
+    c.flags = uint32_t(r.i(32));                                      // (+0xbc)
     c.spread = r.i(27);
     c.type = r.i(1);
     c.target = r.i(4);
@@ -166,7 +169,42 @@ int Cr3BattleRules::mpCost(const Cr3Fighter& f, const Cr3Command& c) const {
     }
 }
 
-int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c) {
+void Cr3BattleRules::addBreak(int points) {
+    // (BtlBreakPoint::Add: the battle's first points +-500 whatever they are; from above 0 to 0 or
+    // below another -500 first - a break -, from below to 0 or above +500; held within +-1000)
+    if (points == 0) return;
+    if (!gaugeStarted) points = points > 0 ? 500 : -500;
+    gaugeStarted = true;
+    if (gauge > 0 && gauge + points < 1) gauge = std::clamp(gauge - 500, -1000, 1000);
+    else if (gauge < 0 && gauge + points >= 0) gauge = std::clamp(gauge + 500, -1000, 1000);
+    gauge = std::clamp(gauge + points, -1000, 1000);
+}
+
+int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool* critOut, bool* downOut) {
+    const bool adv = advantage(s.player);
+    // (calculateCriticalHit: +0xbc bit 4 lets it, bit 5 always; else a random byte under the
+    // attacker's luck / the target's - below 0.5 8, 0.7 13, 0.9 18, 1.1 24, 1.3 29, 1.5 34, else 39)
+    bool crit = false;
+    if (c.flags & 0x10) {
+        if (c.flags & 0x20) crit = true;
+        else {
+            const float luck = float(s.luck) / float(std::max(t.luck, 1));
+            const int chance = luck < 0.5f ? 8 : luck < 0.7f ? 13 : luck < 0.9f ? 18 : luck < 1.1f ? 24 : luck < 1.3f ? 29 : luck < 1.5f ? 34 : 39;
+            crit = int(random() * 256.0f) < chance;
+        }
+    }
+    const int e = std::clamp(c.element, 0, 6);
+    float rate = 1;
+    if (tables_) {
+        MbeFile::Row er;
+        if (tables_->battle.find("Element", e, "ifffffff", er) && t.element >= 0 && t.element < 7) rate = er.f(size_t(1 + t.element));
+    }
+    // (calculateDown: the target downs where the element's rate is above 1, on a critical, where the
+    // command always downs - bit 6 - or where it is already down)
+    const bool down = crit || t.comboChance || rate > 1.0f || (c.flags & 0x40);
+    if (critOut) *critOut = crit;
+    if (downOut) *downOut = down;
+
     float ratio = float(s.attack) / float(std::max(t.defence, 1));
     ratio = std::clamp(ratio, 0.2f, 5.0f);
     // (below 0: the unit's own - VGetWeaponConstant: a character's weapon's, a monster's attack
@@ -178,13 +216,10 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
                          : (s.attackCommand != c.id && command(s.attackCommand, own) && own.power >= 0 ? own.power : 0);
     }
     float d = ratio * float(power) * 0.5f;
-    // ("Status": x 1.5 with the gauge's advantage - CR3-U's stays even)
+    // ("Status": x 1.5 with the gauge's advantage, + 0.1 a down, + 0.5 a critical)
+    d *= (adv ? 1.5f : 1.0f) + (down ? 0.1f : 0.0f) + (crit ? 0.5f : 0.0f);
     // ("Element": the attack element's row of battle.mbe Element, the target's element's column)
-    const int e = std::clamp(c.element, 0, 6);
-    if (tables_) {
-        MbeFile::Row er;
-        if (tables_->battle.find("Element", e, "ifffffff", er) && t.element >= 0 && t.element < 7) d *= er.f(size_t(1 + t.element));
-    }
+    d *= rate;
     // ("Resistance": the attacker's lowered element resistance - (the target's physical or magic
     // resistance + its element resistance) + the attacker's lowered physical or magic one; the
     // element's skill kinds BtlElement's: 3 + 4e a resistance, 4 + 4e a lowered one)
@@ -201,6 +236,8 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
     if (t.guarding) d *= 0.5f; // (Guard: an approximation - its status effect's multiplier not read yet)
     int out = int(d);
     if (c.spread > 0) out = int(((random() - 0.5f) * float(c.spread) * 2 + 100.0f) / 100.0f * float(out));
+    // (calculateMagicChainBonus: x (1 + the target's combo count x 0.001))
+    if (magic) out = int((float(t.combo) * 0.001f + 1.0f) * float(out));
     return std::max(out, 1);
 }
 
@@ -225,8 +262,9 @@ int Cr3BattleRules::livingTarget(bool player, int preferred) {
 std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>>& choices) {
     std::vector<Cr3Action> out;
     for (Cr3Fighter& f : fighters) f.guarding = false;
-    // the party's (their choices), then the monsters' (by their commands' ratios)
-    std::vector<std::array<int, 3>> order;
+    // the party's (their choices) and the monsters' (by their commands' ratios): the side with the
+    // gauge's advantage first, the party at even
+    std::vector<std::array<int, 3>> order, monsters;
     for (const auto& c : choices)
         if (c[0] >= 0 && size_t(c[0]) < fighters.size() && fighters[size_t(c[0])].player) order.push_back(c);
     for (size_t k = 0; k < fighters.size(); ++k) {
@@ -243,11 +281,26 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     break;
                 }
         }
-        order.push_back({int(k), cmd, -1});
+        monsters.push_back({int(k), cmd, -1});
     }
+    order.insert(advantage(false) ? order.begin() : order.end(), monsters.begin(), monsters.end());
+    int lastSide = -1; // (BtlCommandManager::Clear: none yet this turn)
+    bool lastHadChance = false, lastContinued = false;
+    std::vector<int> lastTargets;
     for (const auto& [src, cmd, tgt] : order) {
         Cr3Fighter& s = fighters[size_t(src)];
         if (s.dead()) continue;
+        // (BtlCommandManager::resetChance: the other side acting clears every down - ResetAllChance;
+        // the same side's next keeps them - the combo - unless the last action began with one and
+        // did not carry it on: its targets' then go - BtlDamageChunk::ResetCombo)
+        if (lastSide >= 0 && lastSide != int(s.player))
+            for (Cr3Fighter& f : fighters) f.comboChance = false, f.combo = 0;
+        else if (lastSide >= 0 && lastHadChance && !lastContinued)
+            for (int ti : lastTargets) fighters[size_t(ti)].comboChance = false, fighters[size_t(ti)].combo = 0;
+        lastSide = int(s.player);
+        lastHadChance = std::any_of(fighters.begin(), fighters.end(), [](const Cr3Fighter& f) { return f.comboChance; });
+        lastContinued = false;
+        lastTargets.clear();
         Cr3Action a;
         a.source = src, a.command = cmd;
         if (cmd < 0) { // (Guard)
@@ -263,6 +316,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         a.mpCost = std::min(mpCost(s, c), s.mp);
         s.mp -= a.mpCost, s.hp = std::max(s.hp - c.hpCost, 1);
         const bool ally = c.ally();
+        bool anyCrit = false, anyDown = false;
         std::vector<int> targets;
         // (the target kind's side: 2 / 11 all allies, 4 all enemies, 5 everyone, 9 either - a heal its own)
         const bool ownSide = c.target == 2 || c.target == 11 || (c.target == 9 && ally);
@@ -283,15 +337,59 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                 hit.hits.push_back(-h);
                 t.hp = std::min(t.hp + h, t.maxHp);
             } else {
-                for (int h = 0; h < c.hits && !t.dead(); ++h) {
-                    const int d = damage(s, t, c);
+                // (every hit plays, past the target's death - the reference's 1089 on a 400 HP
+                // Heterocera; the gauge's state is the action's own: its points land after it)
+                lastTargets.push_back(ti);
+                for (int h = 0; h < c.hits; ++h) {
+                    bool crit = false, down = false;
+                    lastContinued |= t.comboChance;
+                    const int d = damage(s, t, c, &crit, &down);
                     hit.hits.push_back(d);
+                    hit.flags.push_back(uint8_t((crit ? 1 : 0) | (down ? 2 : 0)));
                     t.hp = std::max(t.hp - d, 0);
+                    if (down) t.comboChance = true, ++t.combo; // (BtlBasicStatus::TakeDamage, addComboNum)
+                    anyCrit |= crit, anyDown |= down;
                 }
             }
             hit.hpAfter = t.hp, hit.killed = t.dead();
             a.targets.push_back(hit);
         }
+        // its break points (calculateBreakPoint, BtlDamageTarget::SetBreakPoint): each hit its base
+        // - the command's +0x22, or with flag bit 1 the unit's weapon's break constant - and a share
+        // of the action's bonus (bit 1: +0x22; + battle.mbe Battle +0x50 / +0x60 without / with the
+        // advantage, +0x54 / +0x64 a critical, +0x58 / +0x68 a down); a monster's negative; added
+        // hit by hit (AddBreakPointToCalculation)
+        if (!ally && c.breakPoint >= 0) {
+            int base = c.breakPoint, bonus = 0;
+            if (c.flags & 2) {
+                Cr3Command own;
+                base = s.player ? s.weaponBreak : command(s.attackCommand, own) ? std::max(own.breakPoint, 0) : 0;
+                bonus = c.breakPoint;
+            }
+            const bool adv = advantage(s.player);
+            bonus += adv ? 100 : 0;
+            if (anyCrit) bonus += adv ? 50 : 25;
+            if (anyDown) bonus += adv ? 50 : 25;
+            size_t records = 0;
+            for (const Cr3Hit& th : a.targets) records += th.hits.size();
+            // (split over the targets, then each target's over its hits)
+            int left = bonus, targetsLeft = int(a.targets.size());
+            for (Cr3Hit& th : a.targets) {
+                int share = targetsLeft > 0 ? left / targetsLeft : 0;
+                left -= share, --targetsLeft;
+                int hitsLeft = int(th.hits.size());
+                for (size_t h = 0; h < th.hits.size(); ++h) {
+                    const int part = hitsLeft > 0 ? share / hitsLeft : 0;
+                    share -= part, --hitsLeft;
+                    addBreak((base + part) * (s.player ? 1 : -1));
+                    th.gauge.push_back(gauge);
+                }
+            }
+            (void)records;
+        }
+        for (Cr3Hit& th : a.targets)
+            while (th.gauge.size() < th.hits.size()) th.gauge.push_back(gauge);
+        a.gaugeAfter = gauge;
         a.target = a.targets[0].target, a.hits = a.targets[0].hits, a.hpAfter = a.targets[0].hpAfter, a.killed = a.targets[0].killed;
         out.push_back(a);
         if (outcome() != 0) break;

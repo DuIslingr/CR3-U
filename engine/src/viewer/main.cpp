@@ -5826,6 +5826,7 @@ struct Viewer {
         if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, uint32_t(SDL_GetTicks()) | 1u, &err)) SDL_Log("battle rules: %s", err.c_str());
         cr3HpShown.clear();
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp);
+        cr3GaugeShown = 0;
         cr3AnimCommon.clear();
         if (const cr3::MbeFile::Table* t = cr3BattleTables.model.table("AnimCommon"))
             for (size_t r = 0; r < t->rows.size(); ++r) {
@@ -5931,6 +5932,7 @@ struct Viewer {
     // ---- the turn (BtlSysStateSelect / BtlSysStateAction, battle/cr3rules.hpp) ----
     cr3::Cr3BattleRules cr3Rules;
     std::vector<int> cr3HpShown;            // (each fighter's HP as shown: the hits land one by one)
+    int cr3GaugeShown = 0;                  // (the break gauge as shown - BtlBreakGaugeUI's direction point: hit by hit)
     std::vector<std::string> cr3AnimCommon; // (model.mbe AnimCommon: a motion type's suffix)
     std::vector<std::array<int, 3>> cr3Choices;
     std::vector<cr3::Cr3Action> cr3Actions;
@@ -6212,6 +6214,7 @@ struct Viewer {
             for (const cr3::Cr3Hit& th : a.targets) { // (each target the hit lands on at once)
                 if (h >= th.hits.size()) continue;
                 const int d = th.hits[h];
+                if (h < th.gauge.size()) cr3GaugeShown = th.gauge[h];
                 const size_t tu = size_t(cr3Rules.fighters[size_t(th.target)].unit);
                 int& shown = cr3HpShown[size_t(th.target)];
                 shown = std::clamp(shown - d, 0, cr3Rules.fighters[size_t(th.target)].maxHp);
@@ -6225,6 +6228,7 @@ struct Viewer {
         }
         if (t >= cr3ActionPlay.end) {
             for (const cr3::Cr3Hit& th : a.targets) cr3HpShown[size_t(th.target)] = th.hpAfter;
+            cr3GaugeShown = a.gaugeAfter;
             ++cr3ActionAt;
             startCr3Action();
         }
@@ -11740,7 +11744,8 @@ struct Viewer {
                 }
             }
             // the break gauge (btBrkMenu: btBrkWinPanel looping, btBrkGauge at ((v + 1000) / 20) / 30 s -
-            // even 1.6333 -, btBrkName_fr00's frame: 0 Player, 1 Enemy, 2 Even, 3 a full break)
+            // even 1.6333 -, btBrkName_fr00's frame: 0 Player, 1 Enemy, 2 Even, 3 a full break; the rules'
+            // gauge, battle/cr3rules.hpp, as each hit lands)
             UiFig& bpos = cr3UiPut("btbrkposition", "", 0, 0, 0, view);
             if (cr3UiCall(bpos, "call_btBrkMenu", x, y, w, h)) {
                 UiFig& menu = cr3UiPut("btbrkmenu", "", 0, x, y, view);
@@ -11750,14 +11755,17 @@ struct Viewer {
                     const float len = win.fig.animLoaded ? std::max(win.fig.anim.duration(), 0.01f) : 1.0f;
                     UiFig& wp = cr3UiPut("btbrkwinpanel", "", std::fmod(cr3BattleClock, len), cx, cy, view);
                     float gx, gy;
-                    if (cr3UiCall(wp, "call_btBrkGauge", gx, gy)) cr3UiPut("btbrkgauge", "", 1.6333333f, gx, gy, view);
+                    if (cr3UiCall(wp, "call_btBrkGauge", gx, gy))
+                        cr3UiPut("btbrkgauge", "", float((std::clamp(cr3GaugeShown, -1000, 1000) + 1000) / 20) / 30.0f, gx, gy, view);
                 }
                 if (cr3UiCall(menu, "call_btBrkNamePanel", cx, cy)) {
                     UiFig& np = cr3UiPut("btbrknamepanel", "btbrknamepanel_io", std::min(cr3BattleClock - cr3StageStart, 1.0f), cx, cy, view);
                     float nx, ny;
                     if (cr3UiCall(np, "call_btBrkName_fr00", nx, ny)) {
                         dev->clearDepth(); // (over the ring: its display priority's)
-                        cr3UiPut("btbrkname_fr00", "", 2.0f / 30.0f, nx, ny, view);
+                        const int g = cr3GaugeShown;
+                        const int frame = std::abs(g) >= 1000 ? 3 : g > 0 ? 0 : g < 0 ? 1 : 2;
+                        cr3UiPut("btbrkname_fr00", "", float(frame) / 30.0f, nx, ny, view);
                     }
                 }
             }

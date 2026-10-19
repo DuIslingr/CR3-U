@@ -1122,7 +1122,7 @@ int pose(const char* path, const std::string& figure, const std::string& animNam
 
 // CR3's battle (battle/cr3battle.hpp): a coupling's set-up on a battle field - its units, where
 // they stand, the cameras of the largest's size, and whether Cam_bt holds them
-int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg) {
+int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg, uint32_t seed = 1, const char* commandsArg = nullptr) {
     cr3::MvglArchive a;
     if (!openArchive(a, path)) return 1;
     std::string err;
@@ -1143,7 +1143,13 @@ int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg)
                     u.variant.empty() ? "-" : u.variant.c_str(), u.width, u.depth, u.scale, u.cameraSize, u.home[0], u.home[1], u.home[2],
                     u.yaw * 57.29578f, a.contains(u.figure + ".geom") ? "" : "  (figure MISSING)");
     cr3::Cr3BattleRules rules;
-    if (rules.setup(t, b, 3, 1, &err)) {
+    std::vector<int> commands; // (the party's first member's command each turn; its attack after)
+    for (const char* p = commandsArg; p && *p;) {
+        commands.push_back(std::atoi(p));
+        p = std::strchr(p, ',');
+        if (p) ++p;
+    }
+    if (rules.setup(t, b, 3, seed, &err)) {
         for (const cr3::Cr3Fighter& f : rules.fighters) {
             cr3::Cr3Command c;
             rules.command(f.attackCommand, c);
@@ -1166,11 +1172,20 @@ int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg)
         for (int turn = 1; turn <= 8 && rules.outcome() == 0; ++turn) {
             std::vector<std::array<int, 3>> choices;
             for (size_t k = 0; k < rules.fighters.size(); ++k)
-                if (rules.fighters[k].player && !rules.fighters[k].dead()) choices.push_back({int(k), rules.fighters[k].attackCommand, -1});
+                if (rules.fighters[k].player && !rules.fighters[k].dead())
+                    choices.push_back({int(k), k == 0 && size_t(turn - 1) < commands.size() ? commands[size_t(turn - 1)] : rules.fighters[k].attackCommand, -1});
             for (const cr3::Cr3Action& x : rules.turn(choices)) {
                 int sum = 0;
-                for (int h : x.hits) sum += h;
-                std::printf("    turn %d: %d -> %d command %d: %zu hits, %d (HP %d%s)\n", turn, x.source, x.target, x.command, x.hits.size(), sum, x.hpAfter, x.killed ? ", down" : "");
+                std::string each;
+                if (!x.targets.empty())
+                    for (size_t h = 0; h < x.targets[0].hits.size(); ++h) {
+                        const int v = x.targets[0].hits[h];
+                        sum += v;
+                        const uint8_t fl = h < x.targets[0].flags.size() ? x.targets[0].flags[h] : 0;
+                        each += " " + std::to_string(v) + ((fl & 1) ? "!" : "") + ((fl & 2) ? "v" : "");
+                    }
+                std::printf("    turn %d: %d -> %d command %d: %zu hits, %d (HP %d%s) [%s ] gauge %d\n", turn, x.source, x.target, x.command,
+                            x.hits.size(), sum, x.hpAfter, x.killed ? ", dead" : "", each.c_str(), x.gaugeAfter);
             }
         }
         std::printf("  outcome %d\n", rules.outcome());
@@ -1478,7 +1493,8 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "walk") && argc > 3) return walk(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "images")) return images(argv[2], argc > 3 ? argv[3] : nullptr, argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "battle") && argc > 3) return battles(argv[2], argv[3]);
-    if (!std::strcmp(argv[1], "cr3battle") && argc > 4) return cr3Battle(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), argc > 5 ? argv[5] : "6");
+    if (!std::strcmp(argv[1], "cr3battle") && argc > 4) return cr3Battle(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), argc > 5 ? argv[5] : "6",
+                                                                       argc > 6 ? uint32_t(std::strtoul(argv[6], nullptr, 10)) : 1u, argc > 7 ? argv[7] : nullptr);
     if (!std::strcmp(argv[1], "fight") && argc > 3) {
         int party[2] = {1, 2};
         if (argc > 6) std::sscanf(argv[6], "%d,%d", &party[0], &party[1]);

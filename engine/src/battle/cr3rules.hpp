@@ -29,13 +29,13 @@
 // one, at least -100 - each its skills' (kinds 1 / 4 resistance, 2 / 5 lowered, 3 + 4e / 4 + 4e an
 // element's) and its equipment's), x (gene level / 20 + 1) ("Level": a character's gene's, a
 // monster's own), x the command's multiplier, then (int) and the spread
-// (calculateHpFluctuation: x ((random - 0.5) x spread x 2 + 100) / 100); at least 1. The
-// reference's hits fit: the hero's first 352 (400 / 170 x 90 x 0.5 x 3.5 = 371, the spread's low
-// end), a later one 576 (x 1.5: the gauge), Gunner's four 34, Axer's 40 (20% physical
-// resistance). Not in yet: status effects (battle_0001's Battle_Boot gives the hero four, of kinds
-// 47 / 53 / 65 / 66 - none a damage one), skills' conditional effects and the multipliers (Damage
-// Multi, Team Play, Target Skill, critical), critical hits, misses, the break gauge (Even
-// throughout).
+// (calculateHpFluctuation: x ((random - 0.5) x spread x 2 + 100) / 100); at least 1. "Status" is
+// 1.5 with the gauge's advantage, + 0.5 a critical (calculateCriticalHit: luck against luck), + 0.1
+// a down (calculateDown: a critical, an element rate above 1, or a target already down - its combo
+// chance, kept while one side acts). The break gauge: docs/FORMATS.md "Battles (CR3)". Not in yet:
+// status effects (battle_0001's Battle_Boot gives the hero four, of kinds 47 / 53 / 65 / 66 - none
+// a damage one), skills' conditional effects and the rarer multipliers (Damage Multi, Team Play,
+// Target Skill), misses, a down's delayed command.
 //
 // A turn (BtlCommandManager::Calculate: a command list per side, in order): the party's chosen
 // commands, then each living monster's; a dead target's attack goes to another living one.
@@ -54,6 +54,8 @@ struct Cr3Command {
     int power = 0, hits = 1, formula = 1, spread = 0;
     bool hitsOwn = false; // (+0x21 below 0: the unit's own)
     int repeat = 1;       // (+0x20: its attacks, each of its hits - Rakshasa Lotus 3 x the weapon's 1)
+    int breakPoint = -1;  // (+0x22, s16: its break points a hit - below 0 none; with flag bit 1 the unit's weapon's instead)
+    uint32_t flags = 0;   // (+0xbc: bit 1 the weapon's break, 4 can be critical, 5 always critical, 6 always downs)
     int type = 0;         // (+0x04: 0 an attack, 1 a physical skill, 2 magic, 3 support, 4 special, 7 a guard)
     int damage = -1;      // (its CommandFomula row's damage: 1 physical, 2 magic, 5 an HP heal, ...)
     int target = 3;       // (+0x10: BtlStatusList's target kind - 0 itself, 1 an ally, 2 all allies, 3 an enemy,
@@ -79,7 +81,7 @@ struct Cr3Fighter {
     int element = 0;   // (a monster's +0x18: BtlStatus::initializeElement)
     // equipment (a character's; 0 none): the weapon's constant, hits, MP consumption factor and
     // lowered resistances; the armour's resistances (index 0 .. 6 an element's)
-    int weaponConstant = 0, weaponHits = 0;
+    int weaponConstant = 0, weaponHits = 0, weaponBreak = 0; // (Weapon +0x40 the break constant; a monster's: its attack command's +0x22)
     float consumption = 1;
     int lowerPhysical = 0, lowerMagic = 0, physical = 0, magic = 0;
     std::array<int, 7> lowerElement{}, elementResist{};
@@ -89,12 +91,16 @@ struct Cr3Fighter {
     int geneLevel = 0;                          // (VGetGeneLevel: the "Level" step's - a character's gene's, a monster's level)
     std::vector<std::pair<int, int>> commands; // (a monster's: command, ratio)
     bool guarding = false;
+    bool comboChance = false; // (BtlBasicStatus +0x6d: downed - every later hit on it downs too, until the acting side changes)
+    int combo = 0;            // (its combo count: +1 a downing hit; the magic chain bonus's)
     bool dead() const { return hp <= 0; }
 };
 
 struct Cr3Hit {
     int target = -1;
     std::vector<int> hits; // each hit's damage (a heal's: below 0)
+    std::vector<uint8_t> flags; // each hit's: bit 0 critical, bit 1 down
+    std::vector<int> gauge; // the break gauge after each hit
     int hpAfter = 0;
     bool killed = false;
 };
@@ -105,6 +111,7 @@ struct Cr3Action {
     bool killed = false;
     std::vector<Cr3Hit> targets;                // every target's (one but for an all)
     int mpCost = 0;
+    int gaugeAfter = 0;                         // the break gauge after it
 };
 
 class Cr3BattleRules {
@@ -114,7 +121,15 @@ public:
     // a turn: the party's choices (a fighter's index -> command (-1 a guard), target), then the
     // monsters' own; returns the actions in order, applied
     std::vector<Cr3Action> turn(const std::vector<std::array<int, 3>>& choices);
-    int damage(const Cr3Fighter& source, const Cr3Fighter& target, const Cr3Command& c);
+    // a hit's damage; crit / down: whether it was a critical hit, whether it downed the target
+    int damage(const Cr3Fighter& source, const Cr3Fighter& target, const Cr3Command& c, bool* crit = nullptr, bool* down = nullptr);
+    // the break gauge (BtlBreakGaugeUI: -1000 .. 1000, above 0 the party's advantage, below the
+    // monsters'; BtlBreakPoint::Add - the battle's first points jump to +-500, crossing 0 adds
+    // another -+500, a break)
+    int gauge = 0;
+    bool gaugeStarted = false;
+    bool advantage(bool player) const { return player ? gauge > 0 : gauge < 0; }
+    void addBreak(int points);
     int heal(const Cr3Fighter& source, const Cr3Command& c); // (calculateHpHeal)
     int mpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetMpCost)
     // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the skills
