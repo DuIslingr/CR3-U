@@ -6073,8 +6073,8 @@ struct Viewer {
                 cr3::Cr3Command c;
                 if (!cr3Rules.command(id, c) || c.type < 1 || c.type > 4) continue;
                 Cr3ListRow row;
-                row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = c.mpCost;
-                row.usable = c.usable() && c.mpCost <= f.mp;
+                row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = cr3Rules.mpCost(f, c);
+                row.usable = c.usable() && row.cost <= f.mp;
                 cr3List.push_back(row);
             }
         } else {

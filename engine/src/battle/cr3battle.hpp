@@ -21,7 +21,7 @@ namespace cr3 {
 
 // the battle's tables (data\*.mbe), read once
 struct Cr3BattleTables {
-    MbeFile model, monster, coupling, field, battle, character, command, direction, gene, item;
+    MbeFile model, monster, coupling, field, battle, character, command, direction, gene, item, skill;
     bool load(const MvglArchive& archive, std::string* error = nullptr);
 };
 

@@ -338,44 +338,75 @@ game's call fails the same way). 470 of the 471 boot / start / victory calls end
 
 The rules (battle/cr3rules.hpp): a character's numbers from char_para (+0x48 HP, +0x4c MP, +0x50
 attack | defence, +0x54 speed | luck as s16 pairs, +0x58.. their growth: base + (level - 1) x
-growth / 100; +0x1c its guest gene - GuestGene's row, 0 none -, +0x20 its attack command:
-BtlCharacterStatus::VGetAttackCommandId; +0x10 is another), a monster's from mon_para (+0x14 its
-level where set - Gunner's and Axer's 50, the target list's "50" -, else the reservation's; +0x18
-its element; +0x1c HP .. +0x28 speed | luck, +0x2c.. growth; +0x3c / +0x40 EXP and money, +0x44 /
-+0x46 their growth). The character's real attack, defence etc. add its gene's and accessory's
-(CrxCharacter::GetAttack); the guest hero's gene 453 adds nothing.
+growth / 100; +0x0c bit 0 a guest; +0x10 / +0x14 / +0x18 its weapon, armour and accessory, +0x1c
+its gene - a guest's GuestGene row -, +0x20 its attack command: BtlCharacterStatus::
+VGetAttackCommandId), a monster's from mon_para (+0x14 its level where set - Gunner's and Axer's
+50, the target list's "50" -, else the reservation's; +0x18 its element; +0x1c HP .. +0x28 speed |
+luck, +0x2c.. growth; +0x3c / +0x40 EXP and money, +0x44 / +0x46 their growth).
+
+Equipment (CrxCharacter::initialize): a guest's is its char_para row's; anyone else's the save's
+(CR3-U, keeping no equipment yet, gives them the row's too). item_para Weapon: +0x38 the constant
+(VGetWeaponConstant), +0x3c the hits (VGetWeaponHitNum), +0x44 the MP consumption %, +0x48 / +0x4c
+lowered physical / magic resistance, +0x50 + 4e an element's. Armor (64-bit layout 13 ints, `_p`,
+11 ints, `_p`): +0x44 physical, +0x48 magic, +0x4c + 4e an element's resistance. Accessory: +0x30
+HP, +0x34 MP, +0x38 attack, +0x3c defence, +0x40 speed, +0x44 luck, added. A guest's gene
+(CrxGene(int)): GuestGene +4 the gene, +8 its level, then eight (type, id) pairs from +0x0c - 0 a
+command, 1 a skill; gene_para Gene adds +0x34 HP, +0x38 MP, +0x3c.. s16 attack, defence, speed,
+luck at the gene's level (+0x44.. their growth). The prologue hero: weapon 501 (constant 90, 1 hit,
+200%), armour 202 (20% physical), accessory 100 (+1 defence), GuestGene 1 - gene 453 (nothing
+added) at level 50; attack 400, defence 291.
 
 A command (command_para Command, 64-bit layout `iiiiiiffiii` + `_ip` x 7 + 15 ints + `_pi`): +0x04
 its type (0 an attack, 1 a physical skill, 2 magic, 3 support, 4 special, 7 a guard), +0x10 its
 target kind (BtlStatusList's collectCommandTarget table: 0 self, 1 an ally, 2 all allies, 3 an
 enemy, 4 all enemies, 5 everyone, 6 a random enemy, ...), +0x14 power (below 0: the unit's weapon
-constant - VGetWeaponConstant; a monster's its attack command's), +0x18 multiplier, +0x21 hits
-(below 0: the weapon's - VGetWeaponHitNum), +0x24 its attack element, +0xa8 spread (a percentage
-either way), +0xac / +0xb0 HP cost, +0xb4 / +0xb8 MP cost (kind 0 the value, 3 x the weapon's
-consumption factor - Weapon +0x44 / 100), +0xc0 its formula row (CommandFomula: action, damage,
-chain - BtlCalculator's table: 1 physical, 2 magic, 3 / 4 their chain bonuses, 5 an HP heal, ...);
-its direction (direction.mbe CommandDirection: +4 the kind, +8 the motion - an AnimCommon type: 10
-bi01, 15 bs01). Weapons (item_para Weapon): +0x38 the constant, +0x3c the hits, +0x44 the
-consumption. Gene commands: a guest's GuestGene row (+0x10, +0x18 .. +0x48; the prologue hero's row
-1 - Rakshasa Lotus, Augmented Electra, Augmented Aquinas, Augmented Healing (All), costs 20 / 18 /
-36 / 24 as the reference's list). A monster picks among its mode-0 MonsterCommand row's eight
-(command, ratio, count) by ratio; its skills are the row's eight ids at +0x80 (Gunner's and Axer's
-304).
+constant - VGetWeaponConstant; a monster's its attack command's), +0x18 multiplier, +0x20 its
+attacks (the "magic number": Rakshasa Lotus 3), +0x21 each one's hits (below 0: the weapon's -
+VGetWeaponHitNum), +0x24 its attack element, +0xa8 spread (a percentage either way), +0xac / +0xb0
+HP cost, +0xb4 / +0xb8 MP cost (MbCommandInfo::GetMpCost - kind 0 the value, 1 / 2 a percentage
+of the max MP, 3 x the weapon's consumption factor, Weapon +0x44 / 100, at least 1: Rakshasa
+Lotus's 20 is 40 with weapon 501, as the reference's MP shows at 505 - 509 s), +0xc0 its formula
+row (CommandFomula: action, damage, chain - BtlCalculator's table: 1 physical, 2 magic, 3 / 4 their
+chain bonuses, 5 an HP heal, ...); its direction (direction.mbe CommandDirection: +4 the kind, +8
+the motion - an AnimCommon type: 10 bi01, 15 bs01). The prologue hero's gene commands: Rakshasa
+Lotus, Augmented Electra, Augmented Aquinas, Augmented Healing (All) - 40 / 18 / 36 / 24. A
+monster picks among its mode-0 MonsterCommand row's eight (command, ratio, count) by ratio; its
+skills are the row's eight ids at +0x80 (Gunner's, Axer's and Heterocera's 304: element 4
+resistance -50).
 
-Damage (calculateBasicDamage), a hit's: clamp(attack / defence, 0.2, 5) x (power + 0) x 0.5, then
-"Status" (x 1.5 with the gauge's advantage), "Element" (battle.mbe Element: the attack element's
-row, the target element's column; + two corrections), "Resistance" ((r + 100) / 100: the
-attacker's lower-resistance bonus less the target's physical / magic and element resistances -
-skill kinds 1 and 4, armour), "Level" (the attacker's gene level / 20 + 1 - VGetGeneLevel: a
-monster's its level, a character's its gene's), "Command" (+0x18), "Status Effect" (kind 34
-effects), then the spread; at least 1. Attack and defence themselves carry status-effect
-multipliers (kinds 36 / 37, 38 / 39: GetAttackMultipliers, GetGuardMultipliers). A heal (formula
-5, calculateHpHeal): clamp(defence / attack, 0.5, 2) x power x (gene level / 20 + 1) x (1 + the
-skills' heal correction). CR3-U has the base, element, level, command multiplier, spread and the
-heal; not yet skills, status effects, equipment (a weapon for the guest hero - none found in the
-data: CR3-U uses its attack as the power), criticals, misses, chain bonuses or the gauge. Against
-the reference: the hero's first hit gives 483 (reference 352: a weapon constant x level of ~300
-would match exactly), the monsters' 44 and 48 (reference 34 and 40).
+Skills (skill_para Skill): +0x20 the condition (0 none), +0x2c the chance, then two (kind,
+constant) effects at +0x30 - at +0x40 / +0x44 with the gauge's advantage (MbSkillInfo). Kinds: 1
+physical resistance, 2 lowered physical, 4 magic, 5 lowered magic, 3 + 4e / 4 + 4e an element's
+resistance / lowered one (BtlElement's table: element 4's 19 and 20), 0x23 percent damage
+resistance, 0x24 attack multiplier, ... (BtlSkillUtility).
+
+Damage (calculateBasicDamage, after BtlBasicDamageParam's bonus, status multiplier, the target's
+resistance and the attacker's lowered one - calculatePhysicalDamage / calculateMagicDamage), a
+hit's: clamp(attack / defence, 0.2, 5) x (power + bonus) x 0.5, then "Status" (x 1.5 with the
+gauge's advantage), "Element" (battle.mbe Element: the attack element's row, the target element's
+column; + the same-element and status-effect corrections), "Resistance" ((r + 100) / 100, r = the
+attacker's lowered element resistance - (the target's physical or magic resistance + its element
+resistance) + the attacker's lowered physical or magic one, at least -100: each its skills' and
+its equipment's), "Level" (the attacker's gene level / 20 + 1 - VGetGeneLevel: a monster's its
+level, a character's its gene's), "Command" (+0x18), "Status Effect" (the target's kind 34),
+Team Play (MbBattleInfo's cooperation scales 0 / 1 / 3 / 5 by how many act together), "Damage
+Multi", "Target Skill", the potions' buffs, "Critical Damage Percent"; (int), x 10 where the
+coupling's +0x44 bit 3 says; then the spread (calculateHpFluctuation: x ((random - 0.5) x spread
+x 2 + 100) / 100 - the low end exactly for an automatic command) and the chain bonus (magic: x (1
++ the target's combo value x 0.001); physical: also x the attacker's +0x78 virtual). Attack and
+defence carry status-effect multipliers (kinds 36 / 38: GetAttackMultipliers,
+GetGuardMultipliers); physical / magic damage the attacker's kinds 54 / 55. A heal (formula 5,
+calculateHpHeal): clamp(defence / attack, 0.5, 2) x power x (gene level / 20 + 1) x (1 + the
+skills' heal correction).
+
+CR3-U has the base, element, resistances (skills without conditions, equipment), level, command
+multiplier, spread and heals; not yet status effects (battle_0001's Battle_Boot gives the hero
+40, 65, 66, 67, battle_0551's 40, 145, 66, 67 - kinds 53, 47, 65, 66, 140, none a damage one),
+conditional skills, the chain / combo bonus, criticals, misses or the gauge (Even throughout).
+Against the reference: the hero's first hit 352 (CR3-U: 400 / 170 x 90 x 0.5 x 3.5 = 371, spread
+352 - 389), a later one 576 with the gauge's advantage (x 1.5: 528 - 584), Gunner's four 34 and
+Axer's 40 (CR3-U 32 - 36 and 38 - 42: the armour's 20%); Augmented Electra on a Heterocera 1049
+for four (CR3-U ~250 each with the advantage, ~5% short - the combo bonus, likely).
 
 A turn (BtlSysStateSelect): the get-set menu (EntryGetSet: Battle, Escape - not where the
 coupling's +0x44 bit 1 forbids it -, Options; SE bt_001 the first time; the get-set camera held),
