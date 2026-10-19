@@ -32,10 +32,12 @@
 // (calculateHpFluctuation: x ((random - 0.5) x spread x 2 + 100) / 100); at least 1. "Status" is
 // 1.5 with the gauge's advantage, + 0.5 a critical (calculateCriticalHit: luck against luck), + 0.1
 // a down (calculateDown: a critical, an element rate above 1, or a target already down - its combo
-// chance, kept while one side acts). The break gauge: docs/FORMATS.md "Battles (CR3)". Not in yet:
-// status effects (battle_0001's Battle_Boot gives the hero four, of kinds 47 / 53 / 65 / 66 - none
-// a damage one), skills' conditional effects and the rarer multipliers (Damage Multi, Team Play,
-// Target Skill), misses, a down's delayed command.
+// chance, kept while one side acts). A hit may miss (calculateHit: speed against speed); status
+// effects (skill_para StatusEffect) scale the stats and the damage, stop a unit acting, forbid
+// commands and change HP each turn; a downed unit's command waits. The break gauge, the status
+// effects' kinds and the misses: docs/FORMATS.md "Battles (CR3)". Not in yet: skills' conditional
+// effects and the rarer multipliers (Damage Multi, Team Play, Target Skill), evasion, the status
+// effects' triggers, end timings and stacks.
 //
 // A turn (BtlCommandManager::Calculate: a command list per side, in order): the party's chosen
 // commands, then each living monster's; a dead target's attack goes to another living one.
@@ -55,7 +57,9 @@ struct Cr3Command {
     bool hitsOwn = false; // (+0x21 below 0: the unit's own)
     int repeat = 1;       // (+0x20: its attacks, each of its hits - Rakshasa Lotus 3 x the weapon's 1)
     int breakPoint = -1;  // (+0x22, s16: its break points a hit - below 0 none; with flag bit 1 the unit's weapon's instead)
-    uint32_t flags = 0;   // (+0xbc: bit 1 the weapon's break, 4 can be critical, 5 always critical, 6 always downs)
+    uint32_t flags = 0;   // (+0xbc: bit 1 the weapon's break, 2 always hits, 3 its status effects always land, 4 can be critical, 5 always critical, 6 always downs)
+    float hitRate = 1;    // (+0x1c: x the hit chance)
+    std::vector<int> effects; // (+0x40 / +0x48: the status effects it gives - Guard's 2)
     int type = 0;         // (+0x04: 0 an attack, 1 a physical skill, 2 magic, 3 support, 4 special, 7 a guard)
     int damage = -1;      // (its CommandFomula row's damage: 1 physical, 2 magic, 5 an HP heal, ...)
     int target = 3;       // (+0x10: BtlStatusList's target kind - 0 itself, 1 an ally, 2 all allies, 3 an enemy,
@@ -90,7 +94,10 @@ struct Cr3Fighter {
     std::vector<int> geneCommands;              // (a character's gene's: a guest's GuestGene row)
     int geneLevel = 0;                          // (VGetGeneLevel: the "Level" step's - a character's gene's, a monster's level)
     std::vector<std::pair<int, int>> commands; // (a monster's: command, ratio)
-    bool guarding = false;
+    // its status effects (BtlStatusEffectList: skill_para StatusEffect ids, the turns left - -1
+    // until removed)
+    std::vector<std::pair<int, int>> effects;
+    std::array<int, 6> effectResist{}; // (a monster's resistances to battle.mbe's listed effects)
     bool comboChance = false; // (BtlBasicStatus +0x6d: downed - every later hit on it downs too, until the acting side changes)
     int combo = 0;            // (its combo count: +1 a downing hit; the magic chain bonus's)
     bool dead() const { return hp <= 0; }
@@ -99,13 +106,13 @@ struct Cr3Fighter {
 struct Cr3Hit {
     int target = -1;
     std::vector<int> hits; // each hit's damage (a heal's: below 0)
-    std::vector<uint8_t> flags; // each hit's: bit 0 critical, bit 1 down
+    std::vector<uint8_t> flags; // each hit's: bit 0 critical, bit 1 down, bit 2 a miss
     std::vector<int> gauge; // the break gauge after each hit
     int hpAfter = 0;
     bool killed = false;
 };
 struct Cr3Action {
-    int source = -1, target = -1, command = -1; // (fighters' indices - the first target; command -1: a guard)
+    int source = -1, target = -1, command = -1; // (fighters' indices - the first target; command -1: a guard, -2: unable to act)
     std::vector<int> hits;                      // (the first target's, as Cr3Hit's)
     int hpAfter = 0;
     bool killed = false;
@@ -136,12 +143,33 @@ public:
     // without a condition, their effects without the gauge's advantage)
     int skillConstant(const Cr3Fighter& f, int kind) const;
     int outcome() const; // 0 going on, 1 won, 2 lost
+    // status effects (BtlStatusEffectList): given (a script's, or a command's that landed), removed;
+    // whether one of a kind is on; a kind's multiplier (the effects' constants / 100, multiplied)
+    // and sum; the stats as they stand (CrxCharacter's x kinds 36 / 38 / 40 / 42)
+    void giveEffect(int fighter, int id);
+    void removeEffect(int fighter, int id);
+    bool hasEffect(int fighter, int id) const;
+    bool hasKind(const Cr3Fighter& f, int kind) const;
+    float effectMultiplier(const Cr3Fighter& f, int kind) const;
+    int effectSum(const Cr3Fighter& f, int kind) const;
+    int attackOf(const Cr3Fighter& f) const, defenceOf(const Cr3Fighter& f) const, speedOf(const Cr3Fighter& f) const,
+        luckOf(const Cr3Fighter& f) const;
+    // the command menu's buttons (BtlStatus::OpenMenuInterface: kinds 140 no Attack, 47 no Gene,
+    // 66 no Item, 65 no Guard): 0 Attack, 1 Gene, 2 Item, 3 Guard
+    bool menuEnabled(int fighter, int button) const;
+    // a hit landing (calculateHit)
+    bool hits(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c);
+    // the turn's end: the effects' HP (kinds 45 / 46, a percentage of the max HP) and their turns
+    std::vector<std::pair<int, int>> endTurn(); // (fighter, HP change)
     std::vector<Cr3Fighter> fighters;
 
 private:
     const Cr3BattleTables* tables_ = nullptr;
     uint32_t rng_ = 1;
     float random(); // [0, 1)
+    bool effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, int id);
+    std::array<int, 4> breakWith_{0, 25, 25, 50}, breakWithout_{100, 50, 50, 100}; // (battle.mbe Battle +0x50 / +0x60: base, critical, down, kill)
+    std::vector<int> resistIds_;
     int livingTarget(bool player, int preferred);
 };
 

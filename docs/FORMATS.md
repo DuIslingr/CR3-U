@@ -417,19 +417,47 @@ the bigger break bonus): each hit adds its points after its action is calculated
 (calculateBreakPoint, BtlDamageTarget::SetBreakPoint): the command's +0x22 (s16; below 0 none) -
 with +0xbc bit 1, the unit's weapon break constant instead (Weapon +0x40: 501's 100; a monster's
 its attack command's +0x22) and +0x22 into the bonus -, plus a share of the action's bonus
-(battle.mbe Battle +0x50 / +0x60 without / with the advantage: 0 / 100, +0x54 / +0x64 a critical:
-25 / 50, +0x58 / +0x68 a down: 25 / 50; status effects' bonus), split over its targets, then each
-target's hits; a monster's negative. BtlBreakPoint::Add: the battle's first nonzero points jump to
+(battle.mbe Battle +0x60 without the advantage: 100, a critical 50, a down 50; +0x50 with it: 0,
+25, 25; status effects' bonus), split over its targets, then each target's landed hits; a kill
+adds +0x6c / +0x5c (100 / 50: BtlDamageChunk::addKillBreakPointBonus) to its target's last; a
+monster's negative. BtlBreakPoint::Add: the battle's first nonzero points jump to
 +-500 whatever they are; from above 0 to 0 or below another -500 first (a break), likewise from
 below; held within +-1000. Even() resets it only after a Continue. The side with the advantage acts
 first. The HUD (btBrkGauge posed at ((v + 1000) / 20) / 30 s; btBrkName_fr00 0 Player, 1 Enemy, 2
 Even, 3 at +-1000) follows the hits as they land.
 
+Misses (calculateHit): a target with a kind 123 effect always evades; +0xbc bit 2 always hits;
+else a random byte under +0x1c x the speed ratio's 192 / 213 / 233 / 251 / 269 / 290 (at 0.5 /
+0.9 / 1.1 / 1.3 / 1.5; + the target's taken bonus) x the attacker's kind 48 multipliers, less
+evasion. A miss does no damage, no points, no down; its popup is MISSED!.
+
+Status effects (skill_para StatusEffect: +0x14 / +0x18 its turns - one between, -1 until removed -,
++0x1c its stack, +0x30 / +0x34 its chance - with the advantage -, four (kind, constant) from +0x38;
+BtlStatusEffectList, the visitors multiplying constant / 100 or summing): given by a script
+(BattleStatus.GiveStatusEffect - battle_0001's Battle_Boot gives the hero 40, 65, 66, 67) or by a
+landed command (its +0x40 / +0x48 list: Guard's 51 gives 2 - kind 34 at 50, damage taken x 0.5
+for the turn) where a random byte is under its chance + the luck ratio's -52 / -26 / -13 / 0 / 13
+/ 26 / 52 - the target's resistance (a monster's s16 at mon_para +0x48 + 2i, i its index in
+battle.mbe Battle +0x70 / +0x78's list: 13, 14, 15, 16, 1; Gunner's 999) - always with +0xbc bit 3.
+Kinds: 31 no action, 34 damage taken, 36 / 38 / 40 / 42 attack / defence / speed / luck, 45 / 46
+HP healed / lost a turn (a percentage of the max HP: calculateStatusEffectHpChange), 48 hit chance,
+54 / 55 physical / magic damage dealt, 123 always evades; the menu's (BtlStatus::OpenMenuInterface:
+140 no Attack, 47 no Gene, 66 no Item, 65 no Guard - the first battle's tutorial leaves Attack
+alone, battle_0551's Gene; a button forbidden is drawn with diffuse (0.549, 0.549, 0.655) -
+comBtn::SelectableSet). At the turn's end each loses a turn (BtlStatusEffect::Update).
+
+A downed unit's command still to come waits (BtlCommandManager::delayCommandByDown: to the back).
+The popups (BtlDamageUI::Draw, DamageInfoMes: btBonusMenu with its in, btBonus_fr00 at
+call_btBonus_fr on frame kind - 1, btBonusBg_fr00 at call_btBonusBg_fr - frame 1 for kinds 4 / 5;
+kinds 1, 3, 6 raised 1.2): 1 MISSED! (the damage's +0x6b), 3 blocked (+0x6e, SE bt_093), 4 (+0x6d),
+5 CRITICAL! (+0x6c), after its number.
+
 CR3-U has the base, element, resistances (skills without conditions, equipment), level, command
-multiplier, spread, criticals, downs and combos, the break gauge and heals; not yet status effects
-(battle_0001's Battle_Boot gives the hero 40, 65, 66, 67, battle_0551's 40, 145, 66, 67 - kinds
-53, 47, 65, 66, 140, none a damage one), conditional skills, misses, a down's delayed command
-(delayCommandByDown) or the physical chain bonus. Against the reference (part 1): the hero's
+multiplier, spread, criticals, downs and combos, misses, status effects (their numbers, turns,
+menu, no action, HP a turn), the delay of the downed, the break gauge and heals; not yet the
+status effects' triggers and end timings (+0x20 / +0x24: those of a moment, counters), their
+stacks and icons, conditional skills, evasion, items' effects, Team Play.
+Against the reference (part 1): the hero's
 first hit 352 at Even (CR3-U: 400 / 170 x 90 x 0.5 x 3.5 = 371, spread 352 - 389), a later one
 576 at Player (x 1.5: 528 - 584); Gunner's four 34 and Axer's 40 (32 - 36 and 38 - 42: the
 armour's 20%); against a Heterocera (436 - 450 s) Rakshasa Lotus 758 for two - one a critical, 284

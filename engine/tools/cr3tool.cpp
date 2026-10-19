@@ -1182,11 +1182,12 @@ int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg,
                         const int v = x.targets[0].hits[h];
                         sum += v;
                         const uint8_t fl = h < x.targets[0].flags.size() ? x.targets[0].flags[h] : 0;
-                        each += " " + std::to_string(v) + ((fl & 1) ? "!" : "") + ((fl & 2) ? "v" : "");
+                        each += " " + ((fl & 4) ? std::string("miss") : std::to_string(v) + ((fl & 1) ? "!" : "") + ((fl & 2) ? "v" : ""));
                     }
                 std::printf("    turn %d: %d -> %d command %d: %zu hits, %d (HP %d%s) [%s ] gauge %d\n", turn, x.source, x.target, x.command,
                             x.hits.size(), sum, x.hpAfter, x.killed ? ", dead" : "", each.c_str(), x.gaugeAfter);
             }
+            for (const auto& [fi, change] : rules.endTurn()) std::printf("    turn %d end: %d HP %+d\n", turn, fi, change);
         }
         std::printf("  outcome %d\n", rules.outcome());
     }

@@ -491,6 +491,7 @@ bool EventRuntime::start(const std::string& name, const std::string& function) {
     vm_ = std::make_unique<ScriptVM>();
     bindGameState(*vm_, state_);
     bindNatives(*vm_);
+    if (extraNatives) extraNatives(*vm_);
     std::vector<uint8_t> bytecode;
     const std::string script = "script\\" + lower(name) + ".nut";
     if (!archive_.read(script, bytecode, &error_) || !vm_->load(bytecode, script) || !vm_->runMain()) {

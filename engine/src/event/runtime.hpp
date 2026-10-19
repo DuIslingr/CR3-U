@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -61,6 +62,8 @@ public:
     // fades too), and one update for it - the scene, its wait counted down (and it resumed), the
     // windows, the fade. reset(): every state back to none (a new scene).
     void bindNatives(ScriptVM& vm);
+    // more natives for its scripts (a battle's: BattleStatus), bound after the rest at start
+    std::function<void(ScriptVM&)> extraNatives;
     bool update(ScriptVM* vm);
     void reset();
     int frame() const { return frame_; }

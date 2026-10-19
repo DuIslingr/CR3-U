@@ -5691,6 +5691,44 @@ struct Viewer {
     bool runCr3BattleScript(const char* fn) {
         cr3BattleEvents = std::make_unique<cr3::EventRuntime>(archive, game);
         cr3BattleEvents->language = optionLanguage, cr3BattleEvents->autoPage = pageSeconds, cr3BattleEvents->askYesNo = true;
+        // (BattleStatus: the battle's units by an id - CR3-U's the fighter's index -; their status
+        // effects, HP, level)
+        cr3BattleEvents->extraNatives = [this](cr3::ScriptVM& vm) {
+            auto nth = [this](bool player, int n) {
+                for (size_t k = 0; k < cr3Rules.fighters.size(); ++k)
+                    if (cr3Rules.fighters[k].player == player && n-- == 0) return int(k);
+                return -1;
+            };
+            auto fighter = [this](int id) -> const cr3::Cr3Fighter* {
+                return id >= 0 && size_t(id) < cr3Rules.fighters.size() ? &cr3Rules.fighters[size_t(id)] : nullptr;
+            };
+            vm.setNative("BattleStatus", "GetIdByPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(true, c.integer(0))); });
+            vm.setNative("BattleStatus", "GetIdByNonPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(false, c.integer(0))); });
+            vm.setNative("BattleStatus", "GetIdByCharId", [this](cr3::NativeCall& c) {
+                int id = -1;
+                for (size_t k = 0; k < cr3Rules.fighters.size(); ++k)
+                    if (cr3Rules.fighters[k].player && cr3Rules.fighters[k].id == c.integer(0)) id = int(k);
+                c.result(id);
+            });
+            vm.setNative("BattleStatus", "GiveStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.giveEffect(c.integer(0, -1), c.integer(1)); });
+            vm.setNative("BattleStatus", "RemovesStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.removeEffect(c.integer(0, -1), c.integer(1)); });
+            vm.setNative("BattleStatus", "HaveStatusEffect", [this](cr3::NativeCall& c) { c.result(cr3Rules.hasEffect(c.integer(0, -1), c.integer(1))); });
+            vm.setNative("BattleStatus", "GetStatusEffectTurn", [this](cr3::NativeCall& c) {
+                int turns = 0;
+                if (c.integer(0, -1) >= 0 && size_t(c.integer(0, -1)) < cr3Rules.fighters.size())
+                    for (const auto& [e, t] : cr3Rules.fighters[size_t(c.integer(0))].effects)
+                        if (e == c.integer(1)) turns = t;
+                c.result(turns);
+            });
+            vm.setNative("BattleStatus", "GetHp", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->hp : 0); });
+            vm.setNative("BattleStatus", "GetLevel", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->level : 0); });
+            vm.setNative("BattleStatus", "GetMonsterId", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f && !f->player ? f->id : -1); });
+            vm.setNative("BattleStatus", "GetElement", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->element : 0); });
+            vm.setNative("BattleStatus", "LowHp", [fighter](cr3::NativeCall& c) { // (BtlStatus::IsLowHp: under its share)
+                const auto* f = fighter(c.integer(0, -1));
+                c.result(f && f->maxHp > 0 && float(f->hp) / float(f->maxHp) < (c.count() > 1 ? float(c.integer(1)) / 100.0f : 0.2f));
+            });
+        };
         cr3BattleEventClock = 0;
         if (!cr3BattleEvents->start(cr3Battle.script(), fn)) {
             SDL_Log("battle script %s: %s", fn, cr3BattleEvents->error().c_str());
@@ -5823,7 +5861,10 @@ struct Viewer {
         }
         if (!cr3BattleCam.load(archive, "Cam_bt")) SDL_Log("battle: no Cam_bt");
         cr3BattleClock = 0, cr3BattleStage = Cr3BattleStage::In, cr3BattleStarted = false;
-        if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, uint32_t(SDL_GetTicks()) | 1u, &err)) SDL_Log("battle rules: %s", err.c_str());
+        // (the rules' random numbers: the clock's, or CR3_BATTLE_SEED's for a battle to replay)
+        const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
+        const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) : uint32_t(SDL_GetTicks()) | 1u;
+        if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
         cr3HpShown.clear();
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp);
         cr3GaugeShown = 0;
@@ -5945,9 +5986,10 @@ struct Viewer {
     } cr3ActionPlay;
     // the damage shown (DamageInfo: btNumMenu over the target, btNumMenu_in)
     struct Cr3Popup {
-        int value = 0;
+        int value = 0; // (below 0: none - a word alone)
         std::array<float, 3> at{};
         float start = 0;
+        int bonus = 0; // (DamageInfoMes's kind - btBonus_fr00's frame + 1: 1 MISS, 3 blocked, 5 CRITICAL; 0 none)
     };
     std::vector<Cr3Popup> cr3Popups;
     struct Cr3Tap {
@@ -6125,7 +6167,7 @@ struct Viewer {
         startCr3Action();
     }
     void chooseCr3Command(int button) {
-        if (cr3Chooser < 0) return;
+        if (cr3Chooser < 0 || !cr3Rules.menuEnabled(cr3Chooser, button)) return;
         audio.playSe(0x153, false);
         if (button == 3) { // (Guard)
             cr3Choices.push_back({cr3Chooser, -1, -1});
@@ -6171,9 +6213,9 @@ struct Viewer {
         const cr3::Cr3Fighter& s = cr3Rules.fighters[size_t(a.source)];
         const size_t su = size_t(s.unit);
         const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
-        if (a.command < 0) { // (Guard: bg01)
-            setCr3Motion(su, "bg01", false);
-            cr3ActionPlay.end = 1.0f;
+        if (a.command < 0) { // (Guard: bg01; -2 unable to act - a kind 31 effect -: a moment)
+            if (a.command == -1) setCr3Motion(su, "bg01", false);
+            cr3ActionPlay.end = a.command == -1 ? 1.0f : 0.5f;
             return;
         }
         cr3::Cr3Command c;
@@ -6214,11 +6256,21 @@ struct Viewer {
             for (const cr3::Cr3Hit& th : a.targets) { // (each target the hit lands on at once)
                 if (h >= th.hits.size()) continue;
                 const int d = th.hits[h];
+                const uint8_t flags = h < th.flags.size() ? th.flags[h] : 0;
                 if (h < th.gauge.size()) cr3GaugeShown = th.gauge[h];
                 const size_t tu = size_t(cr3Rules.fighters[size_t(th.target)].unit);
                 int& shown = cr3HpShown[size_t(th.target)];
                 shown = std::clamp(shown - d, 0, cr3Rules.fighters[size_t(th.target)].maxHp);
+                // (BtlDamageUI::Draw: a miss its word alone - kind 1 -, a critical its number and
+                // kind 5)
+                if (flags & 3) SDL_Log("battle %.2f s: %s%s", cr3BattleClock, (flags & 1) ? "critical " : "", (flags & 2) ? "down" : "");
+                if (flags & 4) {
+                    SDL_Log("battle %.2f s: miss", cr3BattleClock);
+                    cr3Popups.push_back({-1, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock, 1});
+                    continue;
+                }
                 cr3Popups.push_back({std::abs(d), unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock});
+                if (flags & 1) cr3Popups.push_back({-1, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock, 5});
                 if (d < 0) continue; // (a heal: no flinch)
                 const bool last = h + 1 == th.hits.size();
                 if (last && th.killed) setCr3Motion(tu, "bd03", false, true);
@@ -6248,6 +6300,13 @@ struct Viewer {
             cr3BattleStage = Cr3BattleStage::Lost, cr3StageStart = cr3BattleClock;
             SDL_Log("battle %d: lost (no game over yet: on as if won)", cr3Battle.coupling);
         } else {
+            // (the turn's end: the status effects' HP changes - poison, regeneration - and their
+            // turns)
+            for (const auto& [fi, change] : cr3Rules.endTurn()) {
+                const size_t tu = size_t(cr3Rules.fighters[size_t(fi)].unit);
+                cr3HpShown[size_t(fi)] = cr3Rules.fighters[size_t(fi)].hp;
+                cr3Popups.push_back({std::abs(change), unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock});
+            }
             beginCr3Turn();
         }
     }
@@ -11788,16 +11847,21 @@ struct Viewer {
                 for (int b = 0; b < count; ++b) {
                     float px, py;
                     if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(first + b), px, py)) continue;
-                    UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
                     const int id = getSet ? kGetSet[b] : kCr3Buttons[b];
+                    // (Escape where forbidden; Options: not in yet; a command its status effects
+                    // forbid - BtlStatus::OpenMenuInterface: comBtn::SelectableSet(false), its parts'
+                    // diffuse (0.549, 0.549, 0.655))
+                    const bool off = getSet ? (b == 1 && !cr3EscapeAllowed()) || b == 2 : !cr3Rules.menuEnabled(cr3Chooser, b);
+                    for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
+                        UiFig& u = uiFig(part);
+                        u.fig.tint[0] = u.fig.tint[1] = off ? 0.549f : 1.0f, u.fig.tint[2] = off ? 0.655f : 1.0f;
+                    }
+                    UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
                     float cx, cy;
                     if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
                     if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
-                    const bool off = getSet ? (b == 1 && !cr3EscapeAllowed()) || b == 2 // (Escape where forbidden; Options: not in yet)
-                                            : false;
-                    const float textAlpha = off ? 0.4f : 1.0f;
                     if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy))
-                        cr3UiPut(b == cr3Focus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view, textAlpha);
+                        cr3UiPut(b == cr3Focus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
                     if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
                     float ax, ay, bx, by;
                     if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, b});
@@ -11917,6 +11981,21 @@ struct Viewer {
                 const float sy = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / cw * float(screenH) * 0.5f / k;
                 const int n = int(std::to_string(std::max(it->value, 0)).size());
                 const float alpha = age > 1.0f ? 1.0f - (age - 1.0f) / 0.3f : 1.0f;
+                if (it->bonus > 0) {
+                    // (DamageInfoMes: btBonusMenu, btBonusMenu_in; btBonus_fr00 at call_btBonus_fr,
+                    // frame kind - 1 - kinds 1, 3, 6 raised 1.2 -, btBonusBg_fr00 at
+                    // call_btBonusBg_fr, frame 1 for kinds 4 / 5)
+                    UiFig& bm = cr3UiPut("btbonusmenu", "btbonusmenu_in", std::min(age, 1.0f), sx, sy, view, alpha);
+                    float bx, by;
+                    if (cr3UiCall(bm, "call_btBonusBg_fr", bx, by))
+                        cr3UiPut("btbonusbg_fr00", "", (it->bonus | 1) == 5 ? 1.0f / 30.0f : 0.0f, bx, by, view, alpha);
+                    if (cr3UiCall(bm, "call_btBonus_fr", bx, by)) {
+                        const bool raised = it->bonus == 1 || it->bonus == 3 || it->bonus == 6;
+                        cr3UiPut("btbonus_fr00", "", float(it->bonus - 1) / 30.0f, bx, by + (raised ? 1.2f : 0.0f), view, alpha);
+                    }
+                    ++it;
+                    continue;
+                }
                 UiFig& menu = cr3UiPut("btnummenu", "btnummenu_in", std::min(age, 0.5333f), sx, sy, view, alpha);
                 float lx, ly;
                 if (cr3UiCall(menu, "call_btNum_num", lx, ly)) {

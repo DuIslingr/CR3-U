@@ -10,13 +10,15 @@ namespace {
 
 // the rows' layouts (assets/mbe.hpp)
 constexpr const char* kCharStats = "iiiiiiiii_ip_ipiiiiiiii"; // 7 the guest gene, 8 the attack command; 13 HP, 14 MP, 15 atk | def, 16 spd | luck, 17 .. 20 their growth
-constexpr const char* kMonsterStats = "iipiiiiiiiiiiii";          // 4 level (+0x14), 5 element, 6 HP, 7 MP, 8 atk | def, 9 spd | luck, 10 .. 13 their growth
+constexpr const char* kMonsterStats = "iipiiiiiiiiiiiiiiiiiii";          // 4 level (+0x14), 5 element, 6 HP, 7 MP, 8 atk | def, 9 spd | luck, 10 .. 13 their growth
 constexpr const char* kMonsterCommand = "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"; // id, mode, -, -, -, the attack command, -, -, then (command, ratio, count) x 8, skills x 8 (+0x80)
 constexpr const char* kWeapon = "iiiiiiiiiiiiiiiiiiiiiiiiiii";   // 14 the constant (+0x38), 15 hits, 17 consumption %, 18 / 19 lowered physical / magic, 20.. lowered element 0 ..
 constexpr const char* kArmor = "iiiiiiiiiiiii_piiiiiiiiiii_p";  // 15 physical (+0x44), 16 magic, 17 .. 23 element 0 .. 6
 constexpr const char* kAccessory = "iiiiiiiiiiiiiiiiii";         // 12 HP (+0x30), 13 MP, 14 attack, 15 defence, 16 speed, 17 luck
 constexpr const char* kGene = "iiiiiiiiiiiiiiiiiiiiiii";         // 13 HP (+0x34), 14 MP, 15 atk | def, 16 spd | luck, 17 .. 20 their growth
 constexpr const char* kGuestGene = "iiiiiiiiiiiiiiiiiii";        // id, gene, level, then (type, id) x 8
+constexpr const char* kStatusEffect = "iiiiiiiiiiiiiiiiiiiiii"; // id, .., 5 / 6 turns (+0x14 / +0x18), 12 / 13 chance (+0x30 / +0x34; with the advantage), 14 .. 21 four (kind, constant)
+constexpr const char* kBattleBreak = "ffii_ip_ip_ip_ipiiiiiiii_ip";  // 12 .. 19 the break bonuses (+0x50: with the advantage base, critical, down, kill; +0x60 without), 20 / 21 the status effects monsters resist (+0x70 / +0x78)
 constexpr const char* kSkill = "iiiiiiiiiiiiiiiiiiiii";          // 8 its condition (+0x20), 12 / 13 and 14 / 15 its effects (kind, constant)
 constexpr const char* kCommand = "iiiiiiffiii_ip_ip_ip_ip_ip_ip_ipiiiiiiiiiiiiiii_pi"; // 5 power, 6 multiplier, 8 packed (attacks, hits, break), 27 spread (+0xa8), 32 flags, 33 formula (+0xc0)
 constexpr const char* kFormula = "iiii";  // id, action, damage, chain
@@ -38,6 +40,12 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     rng_ = seed ? seed : 1;
     fighters.clear();
     gauge = 0, gaugeStarted = false; // (BtlBreakGaugeUI: even)
+    MbeFile::Row bt;
+    resistIds_.clear();
+    if (const MbeFile::Table* tb = t.battle.table("Battle"); tb && t.battle.row(*tb, 0, kBattleBreak, bt)) {
+        for (size_t k = 0; k < 4; ++k) breakWith_[k] = bt.i(12 + k), breakWithout_[k] = bt.i(16 + k);
+        for (int k = 0; k < bt.i(20) && k < 6; ++k) resistIds_.push_back(bt.element(21, size_t(k)));
+    }
     for (size_t k = 0; k < b.units.size(); ++k) {
         const Cr3BattleUnit& u = b.units[k];
         Cr3Fighter f;
@@ -90,6 +98,10 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
             // Axer's 50, the target list's - else the reservation's)
             f.id = u.monster, f.level = r.i(4) > 0 ? r.i(4) : std::max(monsterLevel, 1), f.element = r.i(5);
             f.geneLevel = f.level; // (BtlMonsterStatus::VGetGeneLevel: its level)
+            // (MbMonsterInfo::GetStatusEffectResistance: an s16 each at +0x48, in battle.mbe's
+            // list's order - 13, 14, 15, 16, 1)
+            for (size_t k = 0; k < 6; ++k)
+                f.effectResist[k] = (k & 1) ? high16(r.i(17 + k / 2)) : low16(r.i(17 + k / 2));
             f.maxHp = grown(r.i(6), r.i(10), f.level), f.maxMp = std::max(grown(r.i(7), r.i(11), f.level), 0);
             f.attack = grown(low16(r.i(8)), low16(r.i(12)), f.level), f.defence = grown(high16(r.i(8)), high16(r.i(12)), f.level);
             f.speed = grown(low16(r.i(9)), low16(r.i(13)), f.level), f.luck = grown(high16(r.i(9)), high16(r.i(13)), f.level);
@@ -129,6 +141,9 @@ bool Cr3BattleRules::command(int id, Cr3Command& c) const {
     c.repeat = std::max(int(int8_t(uint32_t(r.i(8)) & 0xff)), 1); // (+0x20: its attacks - Rakshasa Lotus's 3; the magic number)
     c.breakPoint = int16_t(uint32_t(r.i(8)) >> 16);                 // (+0x22)
     c.flags = uint32_t(r.i(32));                                      // (+0xbc)
+    c.hitRate = r.f(7);                                               // (+0x1c)
+    for (int k = 0; k < r.i(13) && k < 8; ++k)
+        if (r.element(14, size_t(k)) > 0) c.effects.push_back(r.element(14, size_t(k))); // (+0x40 / +0x48)
     c.spread = r.i(27);
     c.type = r.i(1);
     c.target = r.i(4);
@@ -169,6 +184,108 @@ int Cr3BattleRules::mpCost(const Cr3Fighter& f, const Cr3Command& c) const {
     }
 }
 
+bool Cr3BattleRules::hasEffect(int fi, int id) const {
+    if (fi < 0 || size_t(fi) >= fighters.size()) return false;
+    for (const auto& [e, turns] : fighters[size_t(fi)].effects)
+        if (e == id) return true;
+    return false;
+}
+
+void Cr3BattleRules::giveEffect(int fi, int id) {
+    // (BtlStatusEffectList::Add: its turns from its range - StatusEffect +0x14 .. +0x18, -1 until
+    // removed; one already on is renewed)
+    if (!tables_ || fi < 0 || size_t(fi) >= fighters.size()) return;
+    MbeFile::Row r;
+    if (!tables_->skill.find("StatusEffect", id, kStatusEffect, r)) return;
+    int turns = r.i(5);
+    if (turns >= 0 && r.i(6) > turns) turns += int(random() * float(r.i(6) - turns + 1));
+    Cr3Fighter& f = fighters[size_t(fi)];
+    for (auto& [e, t] : f.effects)
+        if (e == id) {
+            t = turns;
+            return;
+        }
+    f.effects.emplace_back(id, turns);
+}
+
+void Cr3BattleRules::removeEffect(int fi, int id) {
+    if (fi < 0 || size_t(fi) >= fighters.size()) return;
+    auto& v = fighters[size_t(fi)].effects;
+    v.erase(std::remove_if(v.begin(), v.end(), [id](const std::pair<int, int>& e) { return e.first == id; }), v.end());
+}
+
+// (BtlStatusEffectVisitor: each effect on - its four (kind, constant) - of the kind)
+template <typename F> static void eachEffectKind(const MbeFile& table, const Cr3Fighter& f, int kind, F&& fn) {
+    MbeFile::Row r;
+    for (const auto& [id, turns] : f.effects)
+        if (table.find("StatusEffect", id, kStatusEffect, r))
+            for (size_t k = 0; k < 4; ++k)
+                if (r.i(14 + k * 2) == kind) fn(r.i(15 + k * 2));
+}
+
+bool Cr3BattleRules::hasKind(const Cr3Fighter& f, int kind) const {
+    bool on = false;
+    if (tables_) eachEffectKind(tables_->skill, f, kind, [&](int) { on = true; });
+    return on;
+}
+
+float Cr3BattleRules::effectMultiplier(const Cr3Fighter& f, int kind) const {
+    float m = 1;
+    if (tables_) eachEffectKind(tables_->skill, f, kind, [&](int c) { m *= float(c) / 100.0f; });
+    return m;
+}
+
+int Cr3BattleRules::effectSum(const Cr3Fighter& f, int kind) const {
+    int sum = 0;
+    if (tables_) eachEffectKind(tables_->skill, f, kind, [&](int c) { sum += c; });
+    return sum;
+}
+
+// (BtlStatus::GetAttack etc.: the unit's x its status effects' multipliers - kinds 36 attack, 38
+// defence (GetGuardMultipliers), 40 speed, 42 luck)
+int Cr3BattleRules::attackOf(const Cr3Fighter& f) const { return std::max(int(float(f.attack) * effectMultiplier(f, 36)), 1); }
+int Cr3BattleRules::defenceOf(const Cr3Fighter& f) const { return std::max(int(float(f.defence) * effectMultiplier(f, 38)), 1); }
+int Cr3BattleRules::speedOf(const Cr3Fighter& f) const { return std::max(int(float(f.speed) * effectMultiplier(f, 40)), 1); }
+int Cr3BattleRules::luckOf(const Cr3Fighter& f) const { return std::max(int(float(f.luck) * effectMultiplier(f, 42)), 1); }
+
+bool Cr3BattleRules::menuEnabled(int fi, int button) const {
+    if (fi < 0 || size_t(fi) >= fighters.size()) return true;
+    static const int kinds[4] = {140, 47, 66, 65};
+    return button < 0 || button > 3 || !hasKind(fighters[size_t(fi)], kinds[button]);
+}
+
+bool Cr3BattleRules::hits(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c) {
+    // (calculateHit: a target with kind 123 always evades; +0xbc bit 2 always hits; else a random
+    // byte under +0x1c x (the speed ratio's 192 / 213 / 233 / 251 / 269 / 290 at 0.5 / 0.9 / 1.1 /
+    // 1.3 / 1.5) x the attacker's kind 48 multipliers, less evasion - none read yet)
+    if (hasKind(t, 123)) return false;
+    if (c.flags & 4) return true;
+    const float ratio = float(speedOf(s)) / float(speedOf(t));
+    const int table = ratio < 0.5f ? 192 : ratio < 0.9f ? 213 : ratio < 1.1f ? 233 : ratio < 1.3f ? 251 : ratio < 1.5f ? 269 : 290;
+    const int chance = int(effectMultiplier(s, 48) * float(int(c.hitRate * float(table))));
+    return int(random() * 256.0f) < chance;
+}
+
+std::vector<std::pair<int, int>> Cr3BattleRules::endTurn() {
+    std::vector<std::pair<int, int>> out;
+    for (size_t k = 0; k < fighters.size(); ++k) {
+        Cr3Fighter& f = fighters[k];
+        if (f.dead()) continue;
+        // (calculateStatusEffectHpChange: (kind 45 heal rate - kind 46 damage rate) x the max HP)
+        const int change = int(float(effectSum(f, 45) - effectSum(f, 46)) / 100.0f * float(f.maxHp));
+        if (change != 0) {
+            f.hp = std::clamp(f.hp + change, change < 0 ? 1 : 0, f.maxHp);
+            out.emplace_back(int(k), change);
+        }
+        // (BtlStatusEffect::Update: a turn off each, gone at 0; -1 stays)
+        for (auto& [id, turns] : f.effects)
+            if (turns > 0) --turns;
+        f.effects.erase(std::remove_if(f.effects.begin(), f.effects.end(), [](const std::pair<int, int>& e) { return e.second == 0; }),
+                        f.effects.end());
+    }
+    return out;
+}
+
 void Cr3BattleRules::addBreak(int points) {
     // (BtlBreakPoint::Add: the battle's first points +-500 whatever they are; from above 0 to 0 or
     // below another -500 first - a break -, from below to 0 or above +500; held within +-1000)
@@ -188,7 +305,7 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
     if (c.flags & 0x10) {
         if (c.flags & 0x20) crit = true;
         else {
-            const float luck = float(s.luck) / float(std::max(t.luck, 1));
+            const float luck = float(luckOf(s)) / float(luckOf(t));
             const int chance = luck < 0.5f ? 8 : luck < 0.7f ? 13 : luck < 0.9f ? 18 : luck < 1.1f ? 24 : luck < 1.3f ? 29 : luck < 1.5f ? 34 : 39;
             crit = int(random() * 256.0f) < chance;
         }
@@ -205,7 +322,7 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
     if (critOut) *critOut = crit;
     if (downOut) *downOut = down;
 
-    float ratio = float(s.attack) / float(std::max(t.defence, 1));
+    float ratio = float(attackOf(s)) / float(defenceOf(t));
     ratio = std::clamp(ratio, 0.2f, 5.0f);
     // (below 0: the unit's own - VGetWeaponConstant: a character's weapon's, a monster's attack
     // command's power)
@@ -233,8 +350,10 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
     d *= float(r + 100) / 100.0f;
     d *= float(s.geneLevel) / 20.0f + 1.0f; // ("Level": VGetGeneLevel)
     d *= c.multiplier > 0 ? c.multiplier : 1.0f;
-    if (t.guarding) d *= 0.5f; // (Guard: an approximation - its status effect's multiplier not read yet)
+    d *= effectMultiplier(t, 34); // ("Status Effect": the target's kind 34 - Guard's status effect 2, x 0.5)
     int out = int(d);
+    // (calculatePhysicalDamage / calculateMagicDamage: x the attacker's kind 54 / 55 multipliers)
+    out = int(float(out) * effectMultiplier(s, magic ? 55 : 54));
     if (c.spread > 0) out = int(((random() - 0.5f) * float(c.spread) * 2 + 100.0f) / 100.0f * float(out));
     // (calculateMagicChainBonus: x (1 + the target's combo count x 0.001))
     if (magic) out = int((float(t.combo) * 0.001f + 1.0f) * float(out));
@@ -244,7 +363,7 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
 int Cr3BattleRules::heal(const Cr3Fighter& s, const Cr3Command& c) {
     // (calculateHpHeal: clamp(defence / attack, 0.5, 2) x power x (gene level / 20 + 1) x (1 + the
     // skills' heal correction - none yet))
-    float ratio = std::clamp(float(s.defence) / float(std::max(s.attack, 1)), 0.5f, 2.0f);
+    float ratio = std::clamp(float(defenceOf(s)) / float(attackOf(s)), 0.5f, 2.0f);
     return std::max(int(ratio * float(c.power) * (float(s.geneLevel) / 20.0f + 1.0f)), 1);
 }
 
@@ -259,9 +378,25 @@ int Cr3BattleRules::livingTarget(bool player, int preferred) {
     return alive[size_t(random() * float(alive.size())) % alive.size()];
 }
 
+bool Cr3BattleRules::effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, int id) {
+    // (BtlCalculator::IsStatusEffectHit: +0xbc bit 3 always; else a random byte under its chance
+    // - StatusEffect +0x30, +0x34 with the advantage - + the luck ratio's -52 / -26 / -13 / 0 / 13
+    // / 26 / 52 at 0.5 / 0.7 / 0.9 / 1.1 / 1.3 / 1.5, less the target's resistance - a monster's,
+    // to battle.mbe's listed effects)
+    if (c.flags & 8) return true;
+    MbeFile::Row r;
+    if (!tables_ || !tables_->skill.find("StatusEffect", id, kStatusEffect, r)) return false;
+    const float luck = float(luckOf(s)) / float(luckOf(t));
+    const int bonus = luck < 0.5f ? -52 : luck < 0.7f ? -26 : luck < 0.9f ? -13 : luck < 1.1f ? 0 : luck < 1.3f ? 13 : luck < 1.5f ? 26 : 52;
+    int resist = 0;
+    for (size_t k = 0; k < resistIds_.size() && k < t.effectResist.size(); ++k)
+        if (resistIds_[k] == id) resist = t.effectResist[k];
+    const int chance = (advantage(s.player) ? r.i(13) : r.i(12)) + bonus - resist;
+    return int(random() * 256.0f) < std::max(chance, 0);
+}
+
 std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>>& choices) {
     std::vector<Cr3Action> out;
-    for (Cr3Fighter& f : fighters) f.guarding = false;
     // the party's (their choices) and the monsters' (by their commands' ratios): the side with the
     // gauge's advantage first, the party at even
     std::vector<std::array<int, 3>> order, monsters;
@@ -287,9 +422,18 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     int lastSide = -1; // (BtlCommandManager::Clear: none yet this turn)
     bool lastHadChance = false, lastContinued = false;
     std::vector<int> lastTargets;
-    for (const auto& [src, cmd, tgt] : order) {
+    for (size_t at = 0; at < order.size(); ++at) {
+        const auto [src, cmd, tgt] = order[at];
         Cr3Fighter& s = fighters[size_t(src)];
         if (s.dead()) continue;
+        Cr3Action a;
+        a.source = src, a.command = cmd;
+        // (MbStatusEffectInfo::IsNoAction: a kind 31 effect - stunned, asleep - and it does nothing)
+        if (hasKind(s, 31)) {
+            a.command = -2, a.gaugeAfter = gauge;
+            out.push_back(a);
+            continue;
+        }
         // (BtlCommandManager::resetChance: the other side acting clears every down - ResetAllChance;
         // the same side's next keeps them - the combo - unless the last action began with one and
         // did not carry it on: its targets' then go - BtlDamageChunk::ResetCombo)
@@ -301,10 +445,11 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         lastHadChance = std::any_of(fighters.begin(), fighters.end(), [](const Cr3Fighter& f) { return f.comboChance; });
         lastContinued = false;
         lastTargets.clear();
-        Cr3Action a;
-        a.source = src, a.command = cmd;
-        if (cmd < 0) { // (Guard)
-            s.guarding = true;
+        if (cmd < 0) { // (Guard: command 51 - its status effect 2, damage taken x 0.5 till the turn's end)
+            Cr3Command g;
+            if (command(51, g))
+                for (int e : g.effects) giveEffect(src, e);
+            a.gaugeAfter = gauge;
             out.push_back(a);
             continue;
         }
@@ -328,19 +473,27 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         else if (ally) targets.push_back(tgt >= 0 && fighters[size_t(tgt)].player == s.player && !fighters[size_t(tgt)].dead() ? tgt : src);
         else if (int t = livingTarget(!s.player, tgt); t >= 0) targets.push_back(t);
         if (targets.empty()) break; // (no one left on the other side)
+        std::vector<int> downed; // (its targets downed: their commands wait - delayCommandByDown)
         for (int ti : targets) {
             Cr3Fighter& t = fighters[size_t(ti)];
             Cr3Hit hit;
             hit.target = ti;
+            bool landed = false;
             if (ally) {
                 const int h = heal(s, c);
-                hit.hits.push_back(-h);
+                hit.hits.push_back(-h), hit.flags.push_back(0);
                 t.hp = std::min(t.hp + h, t.maxHp);
+                landed = true;
             } else {
                 // (every hit plays, past the target's death - the reference's 1089 on a 400 HP
                 // Heterocera; the gauge's state is the action's own: its points land after it)
                 lastTargets.push_back(ti);
                 for (int h = 0; h < c.hits; ++h) {
+                    if (!hits(s, t, c)) { // (a miss: no damage, no points)
+                        hit.hits.push_back(0), hit.flags.push_back(4);
+                        continue;
+                    }
+                    landed = true;
                     bool crit = false, down = false;
                     lastContinued |= t.comboChance;
                     const int d = damage(s, t, c, &crit, &down);
@@ -349,43 +502,52 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     t.hp = std::max(t.hp - d, 0);
                     if (down) t.comboChance = true, ++t.combo; // (BtlBasicStatus::TakeDamage, addComboNum)
                     anyCrit |= crit, anyDown |= down;
+                    if (down && std::find(downed.begin(), downed.end(), ti) == downed.end()) downed.push_back(ti);
                 }
             }
+            // its status effects, where it landed and the target lives (IsStatusEffectHit)
+            if (landed && !t.dead())
+                for (int e : c.effects)
+                    if (effectLands(s, t, c, e)) giveEffect(ti, e);
             hit.hpAfter = t.hp, hit.killed = t.dead();
             a.targets.push_back(hit);
         }
-        // its break points (calculateBreakPoint, BtlDamageTarget::SetBreakPoint): each hit its base
-        // - the command's +0x22, or with flag bit 1 the unit's weapon's break constant - and a share
-        // of the action's bonus (bit 1: +0x22; + battle.mbe Battle +0x50 / +0x60 without / with the
-        // advantage, +0x54 / +0x64 a critical, +0x58 / +0x68 a down); a monster's negative; added
-        // hit by hit (AddBreakPointToCalculation)
+        // its break points (calculateBreakPoint, BtlDamageTarget::SetBreakPoint): each landed hit its
+        // base - the command's +0x22, or with flag bit 1 the unit's weapon's break constant - and a
+        // share of the action's bonus (bit 1: +0x22; + battle.mbe Battle +0x60 without the advantage
+        // - 100, a critical 50, a down 50 - or +0x50 with it - 0, 25, 25 -); a kill adds +0x6c / +0x5c
+        // (100 / 50: addKillBreakPointBonus) to its target's last; a monster's negative; added hit by
+        // hit (AddBreakPointToCalculation)
         if (!ally && c.breakPoint >= 0) {
             int base = c.breakPoint, bonus = 0;
             if (c.flags & 2) {
-                Cr3Command own;
                 base = s.player ? s.weaponBreak : command(s.attackCommand, own) ? std::max(own.breakPoint, 0) : 0;
                 bonus = c.breakPoint;
             }
-            const bool adv = advantage(s.player);
-            bonus += adv ? 100 : 0;
-            if (anyCrit) bonus += adv ? 50 : 25;
-            if (anyDown) bonus += adv ? 50 : 25;
-            size_t records = 0;
-            for (const Cr3Hit& th : a.targets) records += th.hits.size();
-            // (split over the targets, then each target's over its hits)
+            const std::array<int, 4>& table = advantage(s.player) ? breakWith_ : breakWithout_;
+            bonus += table[0];
+            if (anyCrit) bonus += table[1];
+            if (anyDown) bonus += table[2];
             int left = bonus, targetsLeft = int(a.targets.size());
             for (Cr3Hit& th : a.targets) {
                 int share = targetsLeft > 0 ? left / targetsLeft : 0;
                 left -= share, --targetsLeft;
-                int hitsLeft = int(th.hits.size());
+                int landedHits = 0;
+                for (uint8_t fl : th.flags) landedHits += (fl & 4) ? 0 : 1;
+                int hitsLeft = landedHits, lastLanded = -1;
+                for (size_t h = 0; h < th.flags.size(); ++h)
+                    if (!(th.flags[h] & 4)) lastLanded = int(h);
                 for (size_t h = 0; h < th.hits.size(); ++h) {
-                    const int part = hitsLeft > 0 ? share / hitsLeft : 0;
-                    share -= part, --hitsLeft;
-                    addBreak((base + part) * (s.player ? 1 : -1));
+                    if (!(th.flags[h] & 4)) {
+                        const int part = hitsLeft > 0 ? share / hitsLeft : 0;
+                        share -= part, --hitsLeft;
+                        int points = base + part;
+                        if (th.killed && int(h) == lastLanded) points += table[3];
+                        addBreak(points * (s.player ? 1 : -1));
+                    }
                     th.gauge.push_back(gauge);
                 }
             }
-            (void)records;
         }
         for (Cr3Hit& th : a.targets)
             while (th.gauge.size() < th.hits.size()) th.gauge.push_back(gauge);
@@ -393,6 +555,15 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         a.target = a.targets[0].target, a.hits = a.targets[0].hits, a.hpAfter = a.targets[0].hpAfter, a.killed = a.targets[0].killed;
         out.push_back(a);
         if (outcome() != 0) break;
+        // (delayCommandByDown: a downed unit's command still to come goes to the back)
+        for (int d : downed)
+            for (size_t k = at + 1; k < order.size(); ++k)
+                if (order[k][0] == d) {
+                    const auto moved = order[k];
+                    order.erase(order.begin() + long(k));
+                    order.push_back(moved);
+                    break;
+                }
     }
     return out;
 }
