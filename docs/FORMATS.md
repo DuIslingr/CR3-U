@@ -149,6 +149,21 @@ vista is `s000_t01_00101_evt`. From there the events hand over (SetVistaEvent - 
 part its script: `s000_d01_00301_evt` is d01's) through `00103`, `00201` (the opening) and the ship
 (`s000_d01_00301_evt`), whose SetVistaToField returns to the field of its map: `d0101`.
 
+The prologue's story on (part 1 of the reference, 354 - 712 s): d0102's event box `evt101_00`
+(flag 2001 on, 2002 off: sets 2002) plays `s000_d01_00401_evt` - the first battle, then
+`00601_evt`; SetVistaToField (Cr3System.SetComeFromVistaToField: Cr3FieldData +0x10 = 2) puts the
+player back where it stepped in (Fld2Main::ChangeArea: come-from 1, 2 or -2 - the position and
+rotation Fld2SaveData kept, Cr3FieldData +0x20 / +0x30), and d01's `evt000` shows the area's
+name (flag 1007), the controls and mini-map tutorials once (flags 71, 106) and, with 2002 on, the
+HP / MP one (100). d0103's `evt201_00` (2012) is the Heterocera battle (551); d0104's `evt102_00`
+sets 2003 and plays `00701_evt` - the spider, battle 2 -; entering d0105 then (`00901_set`: 2003 on,
+2004 off, area 4) plays `00901_evt`, clears 5051 and goes on through `s000_t01_01001_evt` (e0019f),
+`01101_evt` (e0009f) and `s001_t02_00101_evt` (t0201f) to the town's field, t0201. An event's model
+that is a parts model (the heroes' j00N: no `j001.geom`) is its body `j001b01` and head `j001h01`,
+each posed by its own animation of the event's suffix (`j001b01_s001_t02_00101_03`).
+`cr3view --input box:<event box>` puts the player in an area's box (tests); `--walk x,y,s` in a
+CR3 area walks for those seconds only.
+
 English textures: GameSystem::InitLang adds the texture folder `images_eng` for any language but
 Japanese, looked in before `images` - 314 of the interface's, the title's "Tap to play" among them.
 
@@ -464,6 +479,17 @@ armour's 20%); against a Heterocera (436 - 450 s) Rakshasa Lotus 758 for two - o
 + 474 (CR3-U 282 - 311 and 450 - 498) - then 331 on the downed target (x 1.1: 310 - 342), and at
 Player Augmented Electra (multiplier 0.95) 265 / 256 / .. / 265, 1049 for four (CR3-U 251 - 277
 each); Heterocera's command 242, 12 - 13 a hit (CR3-U 12 - 14).
+
+Scripted battles: the battle's script (battle_NNNN) runs Battle_Direction_End_Base after each
+action's direction and Battle_Turn_End_Base at a turn's end; BattleStatus.GetHp reads the HP as
+shown (the direction status, BtlStatus +0x88 - the turn's sums are ahead of it). The spider
+(battle_0002): Battle_Boot gives both sides status effect 40 (kind 53, 1: an endure - TakeDamage
+never below the least HP, BtlStatusEffectUtility::GetLeastHp: kind 53 a number, kind 121 a
+percentage) and the hero AddExtraSkill 430 (condition 28 - every foe's HP at or under 1 -, effect
+kind 100: add command 126, all foes, power 80, 3 hits, sure); Battle_Direction_End plays
+s000_d01_00801's cut-in once the spider's HP shows 1, then the hero's added command finishes it
+(CR3-U lets a skill's added command past the endure - the reference's 1276 kills it; how the game
+does is not found).
 
 A turn (BtlSysStateSelect): the get-set menu (EntryGetSet: Battle, Escape - not where the
 coupling's +0x44 bit 1 forbids it -, Options; SE bt_001 the first time; the get-set camera held),
@@ -789,9 +815,11 @@ characters' carries other data).
 
 ### Lights
 
-A figure can carry lights (`Figure::SetupLights`, `RenderContaindLights`): +0 u32 the joint
-whose name hash it is (that joint places it), +4 u16 type (0 point, 2 ambient, 3 directional, 4
-fog), +6 u16 which of its kind (DirLamp01..03, PointLamp01..07), then floats from +8:
+A figure can carry lights (`Figure::SetupLights`, `RenderContaindLights`), records of 0x34 bytes
+(0x40 in the 64-bit builds: the same fields, padded - read at 0x34, a figure's later lights, the
+maps' and events' fog, come out as garbage): +0 u32 the joint whose name hash it is (that joint
+places it), +4 u16 type (0 point, 2 ambient, 3 directional, 4 fog), +6 u16 which of its kind
+(DirLamp01..03, PointLamp01..07), then floats from +8:
 
 | Type | +0x08 | +0x0c | +0x10.. | +0x1c | +0x20.. |
 |---|---|---|---|---|---|
@@ -806,7 +834,9 @@ SkyDir = the joint's position, normalised ((0, 1, 0) at the origin); FogParams =
 near), -1 / (far - near), alpha), FogColor. Without a light figure, RenderContext's defaults: the
 light (0.531, -0.758, 0.379) at 0.5 grey, ambient 0.5, ground 0.3, sky (0, -1, 0), fog (1.5,
 -0.005, 1) white. The maps' lights are figures of their own: `<map>c` lights the characters (118
-with ambient + directional + fog, ...), `<map>b` battles, `*_evt_light` events.
+with ambient + directional + fog, ...), `<map>b` battles, `*_evt_light` events; a vista its map
+figure's own (VistaMain::LoadMapData builds `<map>` and `<map>s`: e0009f's dark navy fog, far
+2500).
 
 ### Cameras
 

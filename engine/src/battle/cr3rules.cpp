@@ -40,6 +40,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     rng_ = seed ? seed : 1;
     fighters.clear();
     gauge = 0, gaugeStarted = false; // (BtlBreakGaugeUI: even)
+    usedSkills_.clear();
     MbeFile::Row bt;
     resistIds_.clear();
     if (const MbeFile::Table* tb = t.battle.table("Battle"); tb && t.battle.row(*tb, 0, kBattleBreak, bt)) {
@@ -235,6 +236,12 @@ float Cr3BattleRules::effectMultiplier(const Cr3Fighter& f, int kind) const {
     return m;
 }
 
+int Cr3BattleRules::effectMax(const Cr3Fighter& f, int kind) const {
+    int most = 0;
+    if (tables_) eachEffectKind(tables_->skill, f, kind, [&](int c) { most = std::max(most, c); });
+    return most;
+}
+
 int Cr3BattleRules::effectSum(const Cr3Fighter& f, int kind) const {
     int sum = 0;
     if (tables_) eachEffectKind(tables_->skill, f, kind, [&](int c) { sum += c; });
@@ -399,9 +406,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     std::vector<Cr3Action> out;
     // the party's (their choices) and the monsters' (by their commands' ratios): the side with the
     // gauge's advantage first, the party at even
-    std::vector<std::array<int, 3>> order, monsters;
+    std::vector<std::array<int, 4>> order, monsters; // (fighter, command, target, 1: a skill's added command)
     for (const auto& c : choices)
-        if (c[0] >= 0 && size_t(c[0]) < fighters.size() && fighters[size_t(c[0])].player) order.push_back(c);
+        if (c[0] >= 0 && size_t(c[0]) < fighters.size() && fighters[size_t(c[0])].player) order.push_back({c[0], c[1], c[2], 0});
     for (size_t k = 0; k < fighters.size(); ++k) {
         const Cr3Fighter& f = fighters[k];
         if (f.player || f.dead()) continue;
@@ -416,14 +423,14 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     break;
                 }
         }
-        monsters.push_back({int(k), cmd, -1});
+        monsters.push_back({int(k), cmd, -1, 0});
     }
     order.insert(advantage(false) ? order.begin() : order.end(), monsters.begin(), monsters.end());
     int lastSide = -1; // (BtlCommandManager::Clear: none yet this turn)
     bool lastHadChance = false, lastContinued = false;
     std::vector<int> lastTargets;
     for (size_t at = 0; at < order.size(); ++at) {
-        const auto [src, cmd, tgt] = order[at];
+        const auto [src, cmd, tgt, fromSkill] = order[at];
         Cr3Fighter& s = fighters[size_t(src)];
         if (s.dead()) continue;
         Cr3Action a;
@@ -499,7 +506,11 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     const int d = damage(s, t, c, &crit, &down);
                     hit.hits.push_back(d);
                     hit.flags.push_back(uint8_t((crit ? 1 : 0) | (down ? 2 : 0)));
-                    t.hp = std::max(t.hp - d, 0);
+                    // (BtlBasicStatus::TakeDamage: no lower than the least HP its effects allow -
+                    // kind 53 a number, 121 a percentage of the max: an endure; a skill's added
+                    // command past it - the spider's finisher)
+                    const int least = fromSkill ? 0 : std::max(effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)));
+                    t.hp = std::max(t.hp - d, t.hp > 0 ? std::min(least, t.hp) : 0);
                     if (down) t.comboChance = true, ++t.combo; // (BtlBasicStatus::TakeDamage, addComboNum)
                     anyCrit |= crit, anyDown |= down;
                     if (down && std::find(downed.begin(), downed.end(), ti) == downed.end()) downed.push_back(ti);
@@ -555,6 +566,26 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         a.target = a.targets[0].target, a.hits = a.targets[0].hits, a.hpAfter = a.targets[0].hpAfter, a.killed = a.targets[0].killed;
         out.push_back(a);
         if (outcome() != 0) break;
+        // (BtlSkill::Trigger: a skill adding a command - kind 100 - whose condition now holds, once;
+        // condition 28: every foe's HP at or under its constant - the guest hero's 430, command 126
+        // once the spider endures at 1)
+        if (tables_)
+            for (size_t k = 0; k < fighters.size(); ++k) {
+                const Cr3Fighter& f = fighters[k];
+                if (f.dead()) continue;
+                for (int id : f.skills) {
+                    MbeFile::Row r;
+                    if (!tables_->skill.find("Skill", id, kSkill, r) || usedSkills_.count({int(k), id})) continue;
+                    const int added = r.i(12) == 100 ? r.i(13) : r.i(14) == 100 ? r.i(15) : -1;
+                    if (added < 0 || r.i(8) != 28) continue;
+                    int most = 0;
+                    for (const Cr3Fighter& o : fighters)
+                        if (o.player != f.player) most = std::max(most, o.hp);
+                    if (most > r.i(9)) continue;
+                    usedSkills_.insert({int(k), id});
+                    order.insert(order.begin() + long(at) + 1, {int(k), added, -1, 1});
+                }
+            }
         // (delayCommandByDown: a downed unit's command still to come goes to the back)
         for (int d : downed)
             for (size_t k = at + 1; k < order.size(); ++k)

@@ -1333,6 +1333,10 @@ struct Viewer {
             !cr3::parseSkeleton(data, sk))
             return false;
         cr3::SceneLighting l;
+        if (SDL_getenv("CR3_MATERIALS"))
+            for (const cr3::GeomLight& gl : g.lights)
+                SDL_Log("%s light: type %d index %d v %.3f %.3f %.3f %.3f %.3f %.3f", figure.c_str(), gl.type, gl.index, gl.v[0], gl.v[1], gl.v[2], gl.v[3],
+                        gl.v[4], gl.v[5]);
         if (!cr3::lightsFromFigure(g, sk, l)) return false;
         lighting = l;
         return true;
@@ -1405,6 +1409,19 @@ struct Viewer {
                 // the colour's own, laid over itself
                 if (!vm.material.textures.count(0x44) && (shaders->features(vm.material.shaderKey).shade & SHADE_OVERLAY))
                     vm.extraMap = vm.texture;
+            }
+            if (SDL_getenv("CR3_MATERIALS")) { // (debugging: each mesh's material as it loads)
+                std::string tx, ps, st;
+                for (const auto& [k, v] : vm.material.textures) tx += std::to_string(k) + ":" + v + " ";
+                for (const auto& [k, v] : vm.material.params) {
+                    ps += std::to_string(k) + "=";
+                    for (float x : v) ps += std::to_string(x).substr(0, 6) + ",";
+                    ps += " ";
+                }
+                for (const auto& [k, v] : vm.material.states) st += std::to_string(k) + "=" + std::to_string(v[0]) + "/" + std::to_string(v[1]) + " ";
+                SDL_Log("%s mesh %zu: key %08x_%08x_%08x_%08x textures [%s] params {%s} states {%s} lit %d", name.c_str(), f.meshes.size(),
+                        vm.material.shaderKey[0], vm.material.shaderKey[1], vm.material.shaderKey[2], vm.material.shaderKey[3], tx.c_str(),
+                        ps.c_str(), st.c_str(), int(vm.lit));
             }
             f.meshes.push_back(std::move(vm));
             f.vertices += m.vertexCount;
@@ -1950,6 +1967,7 @@ struct Viewer {
                     if (models[i].visible) {
                         if (models[i].hasShadow() && models[i].shadow) drawShadow(eventFigures[i].place, fr.scene.data());
                         drawFigure(eventFigures[i], fr.scene.data());
+                        if (i < eventHeads.size() && !eventHeads[i].meshes.empty()) drawFigure(eventHeads[i], fr.scene.data());
                     }
             }
             if (!script || script->playerVisible()) drawShadow(fig.place, fr.scene.data()), drawFigure(fig, fr.scene.data());
@@ -5300,6 +5318,7 @@ struct Viewer {
     std::string secondMapName;
     float vistaMapTime = 0; // (its own animation's time: held while SetMapAnimPause says)
     std::vector<ViewFigure> eventFigures;
+    std::vector<ViewFigure> eventHeads; // (a parts model's head - CrxModel::Build's <name>h01 - by its body's index; empty: none)
     std::vector<std::string> eventFigureNames; // (what eventFigures were made for)
     float eventClock = 0;
     float fadeColours[4][3] = {{0, 0, 0}, {1, 1, 1}, {1, 1, 1}, {0, 0, 0}};
@@ -5376,7 +5395,7 @@ struct Viewer {
     std::array<float, 3> savedPos{};
     float savedYaw = 0;
 
-    bool loadArea(const std::string& name, const std::string& player) {
+    bool loadArea(const std::string name, const std::string& player) { // (a copy: callers pass members it resets)
         std::string err;
         if (!area.load(archive, name, &err)) {
             SDL_Log("area %s: %s", name.c_str(), err.c_str());
@@ -5436,10 +5455,14 @@ struct Viewer {
                 for (size_t j = 0; j < names.size() && j < w.size(); ++j)
                     if (names[j].compare(0, 11, "ragdoll_evt") == 0 || names[j].compare(0, 12, "ragdoll_cobj") == 0)
                         areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false});
+                for (const AreaGimmick& g : areaGimmicks) // (where: for --walk tests)
+                    SDL_Log("area %s: %s %s at (%.2f %.2f %.2f)", name.c_str(), g.eventBox ? "event box" : "check object", g.function.c_str(),
+                            g.world.m[3], g.world.m[7], g.world.m[11]);
             }
         }
         // (standing where it was left for a vista, coming back to it)
-        if (savedArea == name) {
+        const bool restored = savedArea == name;
+        if (restored) {
             areaWalker->setPosition({savedPos[0], savedPos[1], savedPos[2]});
             areaYaw = savedYaw;
             const cr3::Vec3 q = areaWalker->position();
@@ -5453,8 +5476,9 @@ struct Viewer {
         if (!areaEvents->start(name.substr(0, 3), entry) && (entry == "evt000" || !areaEvents->start(name.substr(0, 3), "evt000")))
             SDL_Log("area %s: %s - %s", name.c_str(), entry.c_str(), areaEvents->error().c_str());
         else SDL_Log("area %s: %s running, %zu gimmicks", name.c_str(), entry.c_str(), areaGimmicks.size());
-        SDL_Log("area %s: %zu figures, player %s at defaultPos (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
-                area.spawn[0], area.spawn[1], area.spawn[2]);
+        const cr3::Vec3 at = areaWalker->position();
+        SDL_Log("area %s: %zu figures, player %s at %s (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
+                restored ? "where it left" : "defaultPos", at[0], at[1], at[2]);
         return true;
     }
 
@@ -5569,6 +5593,17 @@ struct Viewer {
         }
         const bool scripted = areaEvents && areaEvents->running();
         if (scripted) sx = sy = 0; // (PauseMove: the player held while the area's script runs)
+        // (--input box:<event box>: tests - the player put in that box, set off as if walked in)
+        if (!scripted && !inputScript.empty() && inputScript.front().compare(0, 4, "box:") == 0) {
+            const std::string want = inputScript.front().substr(4);
+            inputScript.pop_front();
+            for (const AreaGimmick& g : areaGimmicks)
+                if (g.function == want) {
+                    areaWalker->setPosition({g.world.m[3], g.world.m[7] - 1.0f, g.world.m[11]});
+                    for (int k = 0; k < 30; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
+                    SDL_Log("area %s: put in %s", area.name.c_str(), want.c_str());
+                }
+        }
         const bool* keys = SDL_GetKeyboardState(nullptr);
         if (keys) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
         const float fx = areaCamera.at[0] - areaCamera.eye[0], fz = areaCamera.at[2] - areaCamera.eye[2];
@@ -5710,6 +5745,10 @@ struct Viewer {
                     if (cr3Rules.fighters[k].player && cr3Rules.fighters[k].id == c.integer(0)) id = int(k);
                 c.result(id);
             });
+            vm.setNative("BattleStatus", "AddExtraSkill", [this](cr3::NativeCall& c) { // (a skill for the battle: the guest hero's 430)
+                if (c.integer(0, -1) >= 0 && size_t(c.integer(0, -1)) < cr3Rules.fighters.size())
+                    cr3Rules.fighters[size_t(c.integer(0))].skills.push_back(c.integer(1));
+            });
             vm.setNative("BattleStatus", "GiveStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.giveEffect(c.integer(0, -1), c.integer(1)); });
             vm.setNative("BattleStatus", "RemovesStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.removeEffect(c.integer(0, -1), c.integer(1)); });
             vm.setNative("BattleStatus", "HaveStatusEffect", [this](cr3::NativeCall& c) { c.result(cr3Rules.hasEffect(c.integer(0, -1), c.integer(1))); });
@@ -5720,7 +5759,11 @@ struct Viewer {
                         if (e == c.integer(1)) turns = t;
                 c.result(turns);
             });
-            vm.setNative("BattleStatus", "GetHp", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->hp : 0); });
+            // (GetHp: the HP as shown - the direction's, BtlStatus +0x88: the turn's sums are ahead of it)
+            vm.setNative("BattleStatus", "GetHp", [this](cr3::NativeCall& c) {
+                const int id = c.integer(0, -1);
+                c.result(id >= 0 && size_t(id) < cr3HpShown.size() ? cr3HpShown[size_t(id)] : 0);
+            });
             vm.setNative("BattleStatus", "GetLevel", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->level : 0); });
             vm.setNative("BattleStatus", "GetMonsterId", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f && !f->player ? f->id : -1); });
             vm.setNative("BattleStatus", "GetElement", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->element : 0); });
@@ -5943,7 +5986,7 @@ struct Viewer {
                 }
             }
         } else if (cr3BattleStage == Cr3BattleStage::Action) {
-            stepCr3Action();
+            if (!scripted) stepCr3Action(); // (a battle script's direction - Battle_Direction_End's cut-in - first)
         } else if (cr3BattleStage == Cr3BattleStage::Won) {
             // (BtlSysStateAction::phaseVictory: then a half-second fade - and the result unless
             // story flag 5051 - DAT_014cfb67 bit 3 - is on, as for the ship's battles)
@@ -6244,7 +6287,12 @@ struct Viewer {
         cr3Cam.lookAt = unitPoint(size_t(cr3Rules.fighters[size_t(std::max(a.target, 0))].unit), "DummyCP", 1.2f);
         cr3Cam.lookWeight = s.player ? 0.2f : 0.4f;
     }
+    bool cr3PendingStart = false; // (an action to start once the battle's script is over)
     void stepCr3Action() {
+        if (cr3PendingStart) {
+            cr3PendingStart = false;
+            return startCr3Action();
+        }
         if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
         const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
         const float t = cr3BattleClock - cr3ActionStart;
@@ -6282,6 +6330,13 @@ struct Viewer {
             for (const cr3::Cr3Hit& th : a.targets) cr3HpShown[size_t(th.target)] = th.hpAfter;
             cr3GaugeShown = a.gaugeAfter;
             ++cr3ActionAt;
+            // (BtlSysStateAction: the battle's script after each direction - battle_0002's cut-in
+            // once the spider endures at 1 HP - and the next action after it)
+            if (runCr3BattleScript("Battle_Direction_End_Base") && cr3BattleEvents && cr3BattleEvents->running()) {
+                cr3ActionStart = cr3BattleClock, cr3ActionPlay = Cr3ActionPlay(), cr3ActionPlay.end = 0, cr3ActionPlay.hitsShown = 1 << 20;
+                cr3PendingStart = true;
+                return;
+            }
             startCr3Action();
         }
     }
@@ -6302,6 +6357,7 @@ struct Viewer {
         } else {
             // (the turn's end: the status effects' HP changes - poison, regeneration - and their
             // turns)
+            runCr3BattleScript("Battle_Turn_End_Base"); // (its turn's end: battle scripts')
             for (const auto& [fi, change] : cr3Rules.endTurn()) {
                 const size_t tu = size_t(cr3Rules.fighters[size_t(fi)].unit);
                 cr3HpShown[size_t(fi)] = cr3Rules.fighters[size_t(fi)].hp;
@@ -6414,7 +6470,8 @@ struct Viewer {
         n = cr3::GameState::Next();
         if (!savedArea.empty()) {
             n.fieldMode = 1;
-            if (!loadArea(savedArea, areaPlayerArgName)) SDL_Log("area %s: not entered", savedArea.c_str());
+            const std::string back = savedArea; // (a copy: loadArea clears savedArea as it restores the place)
+            if (!loadArea(back, areaPlayerArgName)) SDL_Log("area %s: not entered", back.c_str());
         }
     }
 
@@ -6492,10 +6549,14 @@ struct Viewer {
         unload(vistaMap);
         vistaMap = ViewFigure();
         for (ViewFigure& f : eventFigures) unload(f);
-        eventFigures.clear(), eventFigureNames.clear();
+        for (ViewFigure& f : eventHeads) unload(f);
+        eventFigures.clear(), eventHeads.clear(), eventFigureNames.clear();
         eventEnded = false, eventClock = 0, messageLogged = false;
         vistaMapName = map;
         if (map != "null" && !loadFigure(map + ".geom", vistaMap, &err)) SDL_Log("vista %s: %s", map.c_str(), err.c_str());
+        // (VistaMain::LoadMapData: CrxSimpleModel::Build - the map figure's own lights, where it has
+        // any: e0009f's dark space, not the field's left on)
+        if (map != "null" && loadLights(map)) SDL_Log("lights: %s", map.c_str());
         vistaMap.absolute = true; // (VistaMain::LoadMapData: slot 0)
         vistaMapTime = 0;
         event = std::make_unique<cr3::EventRuntime>(archive, game);
@@ -6573,12 +6634,20 @@ struct Viewer {
         for (const cr3::EventModel& m : ev.scene().models()) names.push_back(m.figure);
         if (names != eventFigureNames) {
             for (ViewFigure& f : eventFigures) unload(f);
-            eventFigures.clear();
+            for (ViewFigure& f : eventHeads) unload(f);
+            eventFigures.clear(), eventHeads.clear();
             for (const std::string& n : names) {
-                ViewFigure f;
+                ViewFigure f, head;
                 std::string err;
-                if (!archive.contains(n + ".geom") || !loadFigure(n + ".geom", f, &err)) SDL_Log("event model %s: %s", n.c_str(), err.empty() ? "no figure" : err.c_str());
+                // (CrxModel::Build: a parts model - the heroes' j00N - is <name>b01 and <name>h01)
+                const bool parts = !archive.contains(n + ".geom") && archive.contains(n + "b01.geom");
+                const std::string body = parts ? n + "b01" : n;
+                if (!archive.contains(body + ".geom") || !loadFigure(body + ".geom", f, &err))
+                    SDL_Log("event model %s: %s", n.c_str(), err.empty() ? "no figure" : err.c_str());
+                if (parts && archive.contains(n + "h01.geom") && !loadFigure(n + "h01.geom", head, &err))
+                    SDL_Log("event model %s head: %s", n.c_str(), err.c_str());
                 eventFigures.push_back(std::move(f));
+                eventHeads.push_back(std::move(head));
             }
             eventFigureNames = names;
         }
@@ -6612,49 +6681,61 @@ struct Viewer {
     void poseEventModels(cr3::EventRuntime& ev) {
         std::vector<cr3::EventModel>& models = ev.scene().models();
         for (size_t i = 0; i < models.size() && i < eventFigures.size(); ++i) {
-            ViewFigure& f = eventFigures[i];
             const cr3::EventModel& m = models[i];
-            if (!m.visible || f.meshes.empty()) continue;
-            // its motion (ChangeAnimator: relative to the base pose), else its own animation alone
-            // in slot 0 (absolute: an effect's)
-            const std::string want = (m.animation.empty() ? m.figure : m.animation) + ".anim";
-            const auto it = std::find(f.anims.begin(), f.anims.end(), want);
-            if (it != f.anims.end() && (!f.animLoaded || f.anims[f.animIndex] != want)) {
-                const float keep = time;
-                loadAnim(f, size_t(it - f.anims.begin()));
-                time = keep;
-            }
-            f.absolute = m.animation.empty();
-            // a ChangeAnimatorBlend's fade from the motion before
-            f.blendWeight = 1;
-            if (m.blendSeconds > 0 && m.animTime + eventLead() < m.blendSeconds && !m.blendFrom.empty()) {
-                const std::string from = m.blendFrom + ".anim";
-                if (from != f.blendName) {
-                    std::vector<uint8_t> d;
-                    f.blendName = from;
-                    f.blendLoaded = archive.read(from, d) && f.blendAnim.parse(d) && f.blendAnim.joints() == int(f.skeleton.basePose.size());
-                }
-                f.blendAbsolute = m.blendFrom == m.figure;
-                f.blendTime = m.blendFromTime + m.animTime + eventLead();
-                f.blendWeight = (m.animTime + eventLead()) / m.blendSeconds;
-            }
-            // EvtModel::ChangeTexture_Face: the j<NNN>face material's colour texture
-            const auto face = ev.faces().find(m.face);
-            const uint32_t faceMaterial = cr3::nameHash(("j" + m.figure.substr(1, 3) + "face").c_str());
-            // ChangeModelColor: its variant's textures on every material (EvtModel::ChangeTexture_Color)
-            const std::string colour = m.color < 0 || m.figure.size() < 4 ? std::string() : "m" + m.figure.substr(1, 3) + "abcd"[m.color] + "01";
-            cr3::Texture* ct = colour.empty() ? nullptr : texture(colour);
-            cr3::Texture* cn = colour.empty() ? nullptr : texture(colour + "n");
-            for (ViewMesh& vm : f.meshes) {
-                vm.texture = face != ev.faces().end() && vm.baseMaterial.hash == faceMaterial ? texture(face->second)
-                             : ct                                                              ? ct
-                                                                                               : texture(vm.baseMaterial.diffuse());
-                vm.normalMap = cn ? cn : texture(vm.baseMaterial.texture(0x35)); // (else its own)
-            }
-            f.place = ev.scene().placeAt(m, eventLead());
-            f.tint[3] = m.alpha(eventLead()); // (ChangeAlpha)
-            pose(f, m.animTime + eventLead(), m.loop);
+            if (!m.visible) continue;
+            poseEventFigure(ev, m, eventFigures[i]);
+            if (i < eventHeads.size() && !eventHeads[i].meshes.empty()) poseEventFigure(ev, m, eventHeads[i]);
         }
+    }
+    // one of a model's figures: its motion by the figure's own name (a parts model's j001b01_...,
+    // j001h01_... for the model's j001_...)
+    void poseEventFigure(cr3::EventRuntime& ev, const cr3::EventModel& m, ViewFigure& f) {
+        if (f.meshes.empty()) return;
+        const std::string own = f.name.size() > 5 ? f.name.substr(0, f.name.size() - 5) : m.figure; // (its .geom's name)
+        auto mine = [&](const std::string& a) { // (the model's name for an animation, as this figure's)
+            return own != m.figure && a.compare(0, m.figure.size(), m.figure) == 0 ? own + a.substr(m.figure.size()) : a;
+        };
+        // its motion (ChangeAnimator: relative to the base pose), else its own animation alone
+        // in slot 0 (absolute: an effect's)
+        const std::string want = (m.animation.empty() ? own : mine(m.animation)) + ".anim";
+        const auto it = std::find(f.anims.begin(), f.anims.end(), want);
+        if (SDL_getenv("CR3_EVTANIM") && (!f.animLoaded || f.anims[f.animIndex] != want)) // (debugging)
+            SDL_Log("event figure %s: %s %s", own.c_str(), want.c_str(), it == f.anims.end() ? "MISSING" : "ok");
+        if (it != f.anims.end() && (!f.animLoaded || f.anims[f.animIndex] != want)) {
+            const float keep = time;
+            loadAnim(f, size_t(it - f.anims.begin()));
+            time = keep;
+        }
+        f.absolute = m.animation.empty();
+        // a ChangeAnimatorBlend's fade from the motion before
+        f.blendWeight = 1;
+        if (m.blendSeconds > 0 && m.animTime + eventLead() < m.blendSeconds && !m.blendFrom.empty()) {
+            const std::string from = mine(m.blendFrom) + ".anim";
+            if (from != f.blendName) {
+                std::vector<uint8_t> d;
+                f.blendName = from;
+                f.blendLoaded = archive.read(from, d) && f.blendAnim.parse(d) && f.blendAnim.joints() == int(f.skeleton.basePose.size());
+            }
+            f.blendAbsolute = m.blendFrom == m.figure;
+            f.blendTime = m.blendFromTime + m.animTime + eventLead();
+            f.blendWeight = (m.animTime + eventLead()) / m.blendSeconds;
+        }
+        // EvtModel::ChangeTexture_Face: the j<NNN>face material's colour texture
+        const auto face = ev.faces().find(m.face);
+        const uint32_t faceMaterial = cr3::nameHash(("j" + m.figure.substr(1, 3) + "face").c_str());
+        // ChangeModelColor: its variant's textures on every material (EvtModel::ChangeTexture_Color)
+        const std::string colour = m.color < 0 || m.figure.size() < 4 ? std::string() : "m" + m.figure.substr(1, 3) + "abcd"[m.color] + "01";
+        cr3::Texture* ct = colour.empty() ? nullptr : texture(colour);
+        cr3::Texture* cn = colour.empty() ? nullptr : texture(colour + "n");
+        for (ViewMesh& vm : f.meshes) {
+            vm.texture = face != ev.faces().end() && vm.baseMaterial.hash == faceMaterial ? texture(face->second)
+                         : ct                                                              ? ct
+                                                                                           : texture(vm.baseMaterial.diffuse());
+            vm.normalMap = cn ? cn : texture(vm.baseMaterial.texture(0x35)); // (else its own)
+        }
+        f.place = ev.scene().placeAt(m, eventLead());
+        f.tint[3] = m.alpha(eventLead()); // (ChangeAlpha)
+        pose(f, m.animTime + eventLead(), m.loop);
     }
 
     void drawEvent(int w, int h) {
@@ -6690,6 +6771,7 @@ struct Viewer {
                     if (models[i].visible && models[i].layer == layer) {
                         if (models[i].hasShadow() && models[i].shadow) drawShadow(eventFigures[i].place, vp.data());
                         drawFigure(eventFigures[i], vp.data());
+                        if (i < eventHeads.size() && !eventHeads[i].meshes.empty()) drawFigure(eventHeads[i], vp.data());
                     }
                 for (const cr3::EventSprite& sp : sprites)
                     if (sp.layer == layer && white.id) {
@@ -12687,7 +12769,9 @@ int main(int argc, char** argv) {
         }
         for (int k = 0; k < int(runSeconds * 60.0f + 0.5f); ++k) {
             v.time += 1.0f / 60.0f;
-            v.advance(1.0f / 60.0f, walkX, walkY, true); // (the field on in --walk's direction)
+            // (the field on in --walk's direction; a CR3 area's only for --walk's seconds)
+            const bool walking = areaName.empty() || k < int(walkSeconds * 60.0f);
+            v.advance(1.0f / 60.0f, walking ? walkX : 0.0f, walking ? walkY : 0.0f, true);
             v.pose();
             v.draw(w, h);
             dev->endFrame(false);

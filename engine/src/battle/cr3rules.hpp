@@ -44,6 +44,7 @@
 
 #include <array>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -152,6 +153,7 @@ public:
     bool hasKind(const Cr3Fighter& f, int kind) const;
     float effectMultiplier(const Cr3Fighter& f, int kind) const;
     int effectSum(const Cr3Fighter& f, int kind) const;
+    int effectMax(const Cr3Fighter& f, int kind) const;
     int attackOf(const Cr3Fighter& f) const, defenceOf(const Cr3Fighter& f) const, speedOf(const Cr3Fighter& f) const,
         luckOf(const Cr3Fighter& f) const;
     // the command menu's buttons (BtlStatus::OpenMenuInterface: kinds 140 no Attack, 47 no Gene,
@@ -170,6 +172,7 @@ private:
     bool effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, int id);
     std::array<int, 4> breakWith_{0, 25, 25, 50}, breakWithout_{100, 50, 50, 100}; // (battle.mbe Battle +0x50 / +0x60: base, critical, down, kill)
     std::vector<int> resistIds_;
+    std::set<std::pair<int, int>> usedSkills_; // (fighter, skill: the added commands fired)
     int livingTarget(bool player, int preferred);
 };
 

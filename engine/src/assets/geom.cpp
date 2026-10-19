@@ -239,11 +239,14 @@ bool parseGeom(const std::vector<uint8_t>& f, Geom& out, std::string* error) {
         out.materials.push_back(std::move(mat));
         p += 0x18 + entrySize * size_t(n);
     }
+    // (records 0x34 bytes; the 64-bit builds' 0x40 - the same fields, padded: read at 0x34, a
+    // figure's second light - the maps' and events' fog - came out as garbage and the white default
+    // fog stood in)
     const unsigned lights = u16(8);
-    const size_t lightAt = field(2);
-    if (lights && !has(lightAt, size_t(lights) * 0x34)) return fail(error, "geom lights outside the file");
+    const size_t lightAt = field(2), lightSize = out.version == 0x64 ? 0x40 : 0x34;
+    if (lights && !has(lightAt, size_t(lights) * lightSize)) return fail(error, "geom lights outside the file");
     for (unsigned k = 0; k < lights; ++k) {
-        const size_t at = lightAt + 0x34 * size_t(k);
+        const size_t at = lightAt + lightSize * size_t(k);
         GeomLight l;
         l.hash = u32(at);
         l.type = u16(at + 4);
