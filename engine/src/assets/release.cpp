@@ -65,10 +65,18 @@ std::string resolveArchive(const std::string& path) { return path; } // (Databas
 std::string defaultArchive(const std::vector<std::string>& places) {
     std::error_code ec;
     if (const char* env = std::getenv("CR3_DATA"); env && *env) return env;
+    // vita/, then android/, then ios/ in each game folder (Database::open finds the release under
+    // it, however deep), then the older places
+    for (const char* kind : {"vita", "android", "ios"})
+        for (std::string base : places) {
+            if (base.empty()) continue;
+            if (base.back() != '/' && base.back() != '\\') base += '/';
+            if (fs::is_directory(base + kind, ec)) return base + kind;
+        }
     for (std::string base : places) {
         if (base.empty()) continue;
         if (base.back() != '/' && base.back() != '\\') base += '/';
-        for (const char* sub : {"vita", "android", "ios", "ipad", "PCSG00500", "PCSG00457", "ChaosRings3_FINAL_ENG.app", "Payload", "data"}) {
+        for (const char* sub : {"ipad", "PCSG00500", "PCSG00457", "ChaosRings3_FINAL_ENG.app", "Payload", "data"}) {
             const std::string a = base + sub;
             if (fs::exists(a, ec)) return a;
         }

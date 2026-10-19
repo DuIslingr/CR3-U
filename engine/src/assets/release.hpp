@@ -18,10 +18,12 @@ namespace cr3 {
 // its CR3 folder), an unpacked .ipa (Payload/ChaosRings3_FINAL_ENG.app/CRDB.ios.mvgl)
 std::string resolveArchive(const std::string& path);
 
-// With no --data: CR3_DATA, else the first copy found in one of `places` (each a folder: beside
-// the executable, the working directory, ...) - its vita/, android/ or ipad/, a release's own
-// folder there (PCSG00498, CR3, ChaosRings3_FINAL_ENG.app, Payload, data), else the place itself (each
-// as resolveArchive takes a folder). Empty: none found
+// With no --data: CR3_DATA, else the first copy found in one of `places` (the game folders: beside
+// the executable, the .app or the AppImage, the working directory) - its vita/, then android/, then
+// ios/ (Database::open finds the release however deep in it: vita/PCSG00500,
+// ios/Payload/ChaosRings3_FINAL_ENG.app); then the older places: ipad/, a release's own folder
+// there (PCSG00500, PCSG00457, ChaosRings3_FINAL_ENG.app, Payload, data). Empty: none found. The
+// layout is the same in all four ports (CR1:U's platform/paths.hpp)
 std::string defaultArchive(const std::vector<std::string>& places);
 std::string defaultArchive(const std::string& baseDir);
 

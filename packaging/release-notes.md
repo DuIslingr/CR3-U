@@ -10,17 +10,18 @@ for Windows, macOS, Linux and Android. Opened with no arguments it starts at the
 | `CR3-U-x86_64.AppImage`, `CR3-U-linux-x86_64.tar.gz` | Linux x86-64 (Vulkan or OpenGL; FSR 3.1) |
 | `CR3-U-android.apk` | Android 7+, arm64 / x86-64 (OpenGL ES 3.0) |
 
-**The game's data** - any one of, in a folder named `vita`, `android` or `ipad` beside the program
-(beside the `.app` on macOS, beside the AppImage on Linux; on Android in
-`Android/data/local.preservation.chaosrings3/files/`), or given with `--data <folder>`: the Vita's
-`PCSG00498` folder, the Android 2.1.2 release's `main.212.com.square_enix.chaosrings3gp.obb` with its
-APK, or the iPad 2.1.0's `ChaosRings3_FINAL_ENG.app` (or the unpacked `.ipa`). If none is found it says
-where it looked.
+**The game's data** - nothing to set: put your copy in the folder holding the program (the folder
+holding the `.app` on macOS, the AppImage's on Linux; on Android
+`Android/data/local.preservation.chaosrings3/files/` on the shared storage), in a folder named after its release:
+`ios/` - the 1.2.2 `ChaosRings3_FINAL_ENG.app` (or the unpacked `.ipa`); `android/` - the 1.1.3 `.apks` (or its base.apk with the asset packs); `vita/` - the installed `PCSG00500` folder (or the Prequel Trilogy's `PCSG00457`). Any one is enough, and each
+may hold it as it was unpacked or installed (one or two folders down). With several, the first of `vita/`, `android/`, `ios/` is played; the fan translation's `rePatch` in a `translation` folder there is laid over an unpatched Vita copy. If none is found it
+says where it looked; the README's "Your copy" has the details.
 
 **In this release:** the game from its title screen; the Options window's new **Graphics** button
 (or G / Tab) with display, resolution, VSync, frame rate, renderer, upscaler (FSR 3.1 / DLSS /
 MetalFX), MSAA, anisotropic filtering, texture filtering and HD textures, kept in `settings.ini`;
-HD textures you make yourself (`cr3view --export-textures`, then `tools/hd_textures.py`).
+HD textures you make yourself (`cr3view --export-textures` into `textures/export/`, then
+`tools/hd_textures.py <the game folder>` into `textures/hd/`, read by itself: the README's "HD textures").
 
 **Not included:** any of the game. You need your own copy; the port reads it at run time. DLSS is
 not in these builds either (NVIDIA's NGX library is proprietary and the port is GPL): build it

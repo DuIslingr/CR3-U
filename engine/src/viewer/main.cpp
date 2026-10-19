@@ -244,7 +244,8 @@ struct Viewer {
     ViewFigure fig;                  // the model (fields: the character)
     std::map<std::string, cr3::Texture> textures; // by name
     // HD textures (tools/hd_textures.py's): replacements found by the original's pixels' hash in
-    // hdDir - CR3_HD_TEXTURES, else hd-textures/ beside the executable, else the profile folder's
+    // hdDir - CR3_HD_TEXTURES, else textures/hd/ in the game folder (the older hd-textures/ beside
+    // the executable or in the profile folder while there is none)
     bool hdTextures = false;
     std::string hdDir;
     int hdLoaded = 0, hdMissing = 0;
@@ -266,6 +267,7 @@ struct Viewer {
         int anisotropy = 16;      // samples (1: off)
         bool sharpTextures = false;
         bool hdTextures = false;
+        bool hdSet = false;       // (settings.ini says which: else on when there are HD textures)
         bool padSwap = false;     // a controller's: × (south) confirms, ○ (east) goes back - else as the Vita
     } settings;
     bool settingsPersist = false;
@@ -296,7 +298,7 @@ struct Viewer {
             else if (k == "msaa") s.msaa = v >= 8 ? 8 : v >= 4 ? 4 : v >= 2 ? 2 : 1;
             else if (k == "anisotropy") s.anisotropy = v >= 16 ? 16 : v >= 8 ? 8 : v >= 4 ? 4 : v >= 2 ? 2 : 1;
             else if (k == "sharp_textures") s.sharpTextures = v != 0;
-            else if (k == "hd_textures") s.hdTextures = v != 0;
+            else if (k == "hd_textures") s.hdTextures = v != 0, s.hdSet = true;
             else if (k == "pad_swap") s.padSwap = v != 0;
         }
         std::fclose(f);
@@ -460,7 +462,7 @@ struct Viewer {
             const bool have = !hdDir.empty() && SDL_GetPathInfo(hdDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
             rows.push_back({"HD Textures", onOff(s.hdTextures),
                             have ? "Upscaled textures (waifu2x / Real-ESRGAN: tools/hd_textures.py) from " + hdDir
-                                 : "None made yet: cr3view --export-textures, then tools/hd_textures.py into " + hdDir,
+                                 : "None in " + hdDir + " yet: cr3view --export-textures, then tools/hd_textures.py",
                             true, [&s](int) { s.hdTextures = !s.hdTextures; }});
         }
         rows.push_back({"Swap \u25cb and \u00d7", onOff(s.padSwap),
@@ -12321,7 +12323,8 @@ int main(int argc, char** argv) {
     float walkX = 0, walkY = 0, walkSeconds = 0; // --walk: the field's character runs first (captures)
     bool tapAfter = false, mute = false, forceAudio = false;
     int hdArg = -1;        // --hd-textures / --no-hd-textures (-1: the settings')
-    std::string exportDir; // --export-textures <dir>: every image as <hash>.crraw, for tools/hd_textures.py
+    std::string exportDir; // --export-textures [dir]: every image as <hash>.crraw, for tools/hd_textures.py (textures/export/ in the game folder without one)
+    bool exportTextures = false;
     std::string eventName, vista = "null", fontPath, playFrom, callEntry = "evt000";
     std::string areaName, areaPlayerArg; // --area <area> [--player <model>]: CR3's field
     int creditsArg = -1;
@@ -12417,7 +12420,10 @@ int main(int argc, char** argv) {
         else if (a == "--mute") mute = true;
         else if (a == "--hd-textures") hdArg = 1;
         else if (a == "--no-hd-textures") hdArg = 0;
-        else if (a == "--export-textures" && next) exportDir = next, ++i;
+        else if (a == "--export-textures") {
+            exportTextures = true;
+            if (next && next[0] != '-') exportDir = next, ++i;
+        }
         else if (a == "--audio") forceAudio = true; // (the device even under --capture: tests, SDL_AUDIO_DRIVER=dummy)
         else if (a == "--call" && next) callEntry = argv[++i]; // (--play: the map's event function, not its evt000)
         else if (a == "--credits" && next) creditsArg = std::atoi(argv[++i]); // (the staff roll n at once: --play's, for tests)
@@ -12448,18 +12454,23 @@ int main(int argc, char** argv) {
         upscale.ratio = q->ratio;
     }
     std::vector<std::string> searched; // (where a copy was looked for: the message if none)
-    if (data.empty()) { // (CR3_DATA, else a copy in one of the platform's places: vita/, android/, ipad/ ...)
+    if (data.empty()) { // (CR3_DATA, else a copy in a game folder: vita/, android/, ios/ ...)
         searched = dataPlaces();
         data = cr3::defaultArchive(searched);
     }
     data = cr3::resolveArchive(data); // (a folder: the OBB or the CRDB.*.mvgl in it, a Vita copy's PCSG00498 ...)
     if (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
-        std::string msg = "Could not find the game's data.\n\nPut one of these in a folder named vita, android or ipad here:\n";
+#ifdef SDL_PLATFORM_ANDROID
+        if (!searched.empty()) // (the folders made, to be seen over USB)
+            for (const char* f : {"ios", "android", "vita"}) SDL_CreateDirectory((searched.front() + f).c_str());
+#endif
+        std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the folder here:\n";
         msg += searched.empty() ? std::string("(no folder)") : searched.front();
-        msg += "\n\n - the Vita's PCSG00498 folder\n - the Android release's main.212.com.square_enix.chaosrings3gp.obb and its APK"
-               "\n - the iPad's ChaosRings3_FINAL_ENG.app (or the unpacked .ipa)\n\nAlso looked in:";
+        msg += "\n\n  ios/      the iOS ChaosRings3_FINAL_ENG.app (or the unpacked .ipa)"
+               "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
+               "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457)\n\nAlso looked in:";
         for (size_t k = 1; k < searched.size(); ++k) msg += "\n" + searched[k];
-        msg += "\n\nOr run with --data <that folder>, or set CR3_DATA.";
+        msg += "\n\nThe README's \"Your copy\" has the details.";
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", msg.c_str(), nullptr);
         return 2;
     }
@@ -12471,6 +12482,29 @@ int main(int argc, char** argv) {
                              "[--renderer vulkan|opengl] [--capture out.bmp]\n");
         return 2;
     }
+    // the game folder (textures/, translation/ go there) and its HD textures: textures/hd/ - on, unless
+    // settings.ini says otherwise, when it is there (CR3_HD_TEXTURES elsewhere; the older hd-textures/
+    // beside the executable or in the profile folder while there is no textures/hd/)
+    const std::string gameFolder = searched.empty() ? dataPlaces().front() : searched.front();
+    std::string hdFolder;
+    bool hdBundled = true, patchFound = false;
+    {
+        auto isDir = [](const std::string& p) {
+            SDL_PathInfo info;
+            return !p.empty() && SDL_GetPathInfo(p.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
+        };
+        const char* env = SDL_getenv("CR3_HD_TEXTURES");
+        const char* base = SDL_GetBasePath();
+        const std::string hd = gameFolder + "textures/hd/", beside = base ? std::string(base) + "hd-textures" : std::string();
+        if (env && *env) hdFolder = env, hdBundled = false;
+        else if (isDir(hd)) hdFolder = hd;
+        else if (isDir(beside)) hdFolder = beside;
+        else if (isDir(Viewer::savePath("hd-textures"))) hdFolder = Viewer::savePath("hd-textures"), hdBundled = false;
+        else hdFolder = hd, hdBundled = false;
+        if (!hdFolder.empty() && hdFolder.back() != '/' && hdFolder.back() != '\\') hdFolder += '/';
+        // the fan translation (--patch, else translation/ in the game folder: its rePatch/ or PCSG00500/ - for the Vita release)
+        if (patch.empty() && isDir(gameFolder + "translation")) patch = gameFolder + "translation", patchFound = true;
+    }
     Viewer v;
     { // CR3-U's settings (settings.ini; not for captures and exports), the command line's flags over them
         auto given = [&](const char* flag) {
@@ -12479,7 +12513,7 @@ int main(int argc, char** argv) {
             return false;
         };
         Viewer::Settings& s = v.settings;
-        if (capture.empty() && exportDir.empty()) {
+        if (capture.empty() && !exportTextures) {
             v.settingsPersist = true;
             v.loadSettings();
             if (!given("--renderer")) renderer = s.renderer ? "opengl" : "vulkan";
@@ -12488,7 +12522,7 @@ int main(int argc, char** argv) {
             if (!given("--upscaler")) upscale.mode = cr3::Upscaler(s.upscaler);
             if (!given("--quality")) upscale.ratio = kQualities[s.quality].ratio;
             if (!given("--sharpness")) upscale.sharpness = float(s.sharpness) / 100.0f;
-            if (hdArg < 0) hdArg = s.hdTextures ? 1 : 0;
+            if (hdArg < 0) hdArg = s.hdSet ? (s.hdTextures ? 1 : 0) : hdBundled ? 1 : 0;
         }
         // (what runs, as the list shows it)
         s.renderer = renderer == "opengl" ? 1 : 0;
@@ -12507,7 +12541,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "%s\n", err.c_str());
         return 1;
     }
-    if (!patch.empty() && !v.archive.addOverlay(patch, &err)) SDL_Log("fan translation: %s", err.c_str());
+    SDL_Log("data: %s", data.c_str());
+    if (patchFound && v.archive.kind() != cr3::MvglArchive::Kind::Vita) patch.clear(); // (the others are in English already)
+    if (!patch.empty() && !v.archive.addOverlay(patch, &err) && !patchFound) SDL_Log("fan translation: %s", err.c_str());
     if (v.offlineDb.load(v.archive, &err))
         SDL_Log("database: offline, %zu server tables, %zu item sheets", v.offlineDb.tables().size(), v.offlineDb.itemSheets().size());
     else if (v.archive.kind() != cr3::Database::Kind::None)
@@ -12524,20 +12560,13 @@ int main(int argc, char** argv) {
         SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
                 l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
     }
-    {
-        const char* env = SDL_getenv("CR3_HD_TEXTURES");
-        const char* base = SDL_GetBasePath();
-        const std::string beside = base ? std::string(base) + "hd-textures" : std::string();
-        SDL_PathInfo info;
-        v.hdDir = env && *env ? env
-                  : !beside.empty() && SDL_GetPathInfo(beside.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY ? beside
-                                                                                                                 : Viewer::savePath("hd-textures");
-        if (!v.hdDir.empty() && v.hdDir.back() != '/' && v.hdDir.back() != '\\') v.hdDir += '/';
-        if (hdArg >= 0) v.hdTextures = hdArg == 1;
-    }
-    if (!exportDir.empty()) { // (the archive's every image, once each by its pixels: tools/hd_textures.py's input)
+    v.hdDir = hdFolder;
+    if (hdArg >= 0) v.hdTextures = hdArg == 1;
+    if (exportTextures) { // (the archive's every image, once each by its pixels: tools/hd_textures.py's input)
+        if (exportDir.empty()) exportDir = gameFolder + "textures/export/"; // (else the profile folder's, if that can't be written)
         if (exportDir.back() != '/' && exportDir.back() != '\\') exportDir += '/';
-        SDL_CreateDirectory(exportDir.c_str());
+        if (!SDL_CreateDirectory(exportDir.c_str())) exportDir = Viewer::savePath("textures/export/"), SDL_CreateDirectory(exportDir.c_str());
+        std::printf("exporting to %s\n", exportDir.c_str());
         std::set<uint64_t> seen;
         int written = 0, failed = 0, dupes = 0, kinds[4] = {0, 0, 0, 0};
         for (const auto& e : v.archive.entries()) {
@@ -12827,6 +12856,7 @@ int main(int argc, char** argv) {
         std::vector<uint8_t> px;
         const bool ok = dev->readPixels(px, w, h) && saveBmp(capture.c_str(), px, w, h);
         SDL_Log("capture %s: %s", capture.c_str(), ok ? "written" : SDL_GetError());
+        if (v.hdTextures) SDL_Log("hd textures: %d replaced, %d without one (%s)", v.hdLoaded, v.hdMissing, v.hdDir.c_str());
         code = ok ? 0 : 1;
     } else {
         bool running = true, dragging = false;
