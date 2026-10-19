@@ -5682,7 +5682,7 @@ struct Viewer {
     cr3::Cr3BattleCamera cr3BattleCam, cr3BattleOwnCam; // (Cam_bt; a camera figure of its own: Cam_human_getset ...)
     // BtlSysStateStart's battle-in and get-set; BtlSysStateSelect's command and target selection;
     // BtlSysStateAction's actions; the end (won: Battle_Victory_Base, then on; lost)
-    enum class Cr3BattleStage { In, GetSet, Command, Target, Action, Won, Lost };
+    enum class Cr3BattleStage { In, GetSet, Menu, Command, List, Target, Action, Won, Result, Lost };
     // its script (BtlScriptSystem: battle_NNNN run through the event system - Battle_Boot_Base as
     // it boots, Battle_Start_Base once the get-set camera holds: the tutorials)
     std::unique_ptr<cr3::EventRuntime> cr3BattleEvents;
@@ -5872,13 +5872,29 @@ struct Viewer {
             runCr3BattleScript("Battle_Start_Base");
         } else if (cr3BattleStage == Cr3BattleStage::GetSet && !scripted && camT >= cr3Cam.end + 0.5f) {
             beginCr3Turn();
-        } else if (cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target) {
+        } else if (cr3BattleStage == Cr3BattleStage::Menu || cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target ||
+                   cr3BattleStage == Cr3BattleStage::List) {
             // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive)
             if (!inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
                 const std::string tok = inputScript.front();
                 if (cr3BattleStage == Cr3BattleStage::Command && (tok == "attack" || tok == "guard")) {
                     inputScript.pop_front();
                     chooseCr3Command(tok == "attack" ? 0 : 3);
+                } else if (cr3BattleStage == Cr3BattleStage::Menu && (tok == "battle" || tok == "escape")) {
+                    inputScript.pop_front();
+                    chooseCr3GetSet(tok == "battle" ? 0 : 1);
+                } else if (cr3BattleStage == Cr3BattleStage::Command && tok.compare(0, 4, "gene") == 0) {
+                    chooseCr3Command(1);
+                } else if (cr3BattleStage == Cr3BattleStage::Command && tok.compare(0, 4, "item") == 0) {
+                    chooseCr3Command(2);
+                } else if (cr3BattleStage == Cr3BattleStage::List && (tok == "gene" || tok == "item")) {
+                    inputScript.pop_front(); // (the list opened alone: it waits)
+                } else if (cr3BattleStage == Cr3BattleStage::List && (tok.compare(0, 4, "gene") == 0 || tok.compare(0, 4, "item") == 0)) {
+                    inputScript.pop_front();
+                    chooseCr3ListRow(std::atoi(tok.c_str() + 4));
+                    if (cr3BattleStage == Cr3BattleStage::List) cr3BattleStage = Cr3BattleStage::Command; // (not usable: back)
+                } else if (cr3BattleStage == Cr3BattleStage::Menu && (tok == "attack" || tok == "guard" || tok.compare(0, 4, "gene") == 0 || tok.compare(0, 4, "item") == 0)) {
+                    chooseCr3GetSet(0); // (the get-set's Battle implied)
                 } else if (cr3BattleStage == Cr3BattleStage::Target && tok.size() > 1 && tok[0] == 't') {
                     inputScript.pop_front();
                     chooseCr3Target(std::atoi(tok.c_str() + 1));
@@ -5887,7 +5903,20 @@ struct Viewer {
         } else if (cr3BattleStage == Cr3BattleStage::Action) {
             stepCr3Action();
         } else if (cr3BattleStage == Cr3BattleStage::Won) {
-            if (!scripted && cr3BattleClock - cr3StageStart > 2.5f) endCr3Battle();
+            // (BtlSysStateAction::phaseVictory: then a half-second fade - and the result unless
+            // story flag 5051 - DAT_014cfb67 bit 3 - is on, as for the ship's battles)
+            if (!scripted && cr3BattleClock - cr3StageStart > 2.5f) {
+                if (game.flag(5051)) endCr3Battle();
+                else enterCr3Result();
+            }
+        } else if (cr3BattleStage == Cr3BattleStage::Result) {
+            // (a battle's leftover choices - won before they were used - are dropped up to "result")
+            while (!inputScript.empty() && inputScript.front() != "result" &&
+                   (inputScript.front() == "battle" || inputScript.front() == "escape" || inputScript.front() == "attack" ||
+                    inputScript.front() == "guard" || inputScript.front().compare(0, 4, "gene") == 0 ||
+                    inputScript.front().compare(0, 4, "item") == 0 || (inputScript.front().size() > 1 && inputScript.front()[0] == 't')))
+                inputScript.pop_front();
+            if (!inputScript.empty() && inputScript.front() == "result" && cr3BattleClock - cr3StageStart > 1.5f) inputScript.pop_front(), endCr3Battle();
         } else if (cr3BattleStage == Cr3BattleStage::Lost) {
             if (cr3BattleClock - cr3StageStart > 2.5f) endCr3Battle();
         }
@@ -5971,10 +6000,111 @@ struct Viewer {
     }
 
     // a turn begins: the party's first able member chooses (PlayCommandSelect on it)
+    // (BtlSysStateSelect::phaseGetSetStart: the get-set camera at its end, then EntryGetSet -
+    // Battle, Escape - not where the coupling's +0x44 bit 1 forbids it -, Options; SE bt_001 the
+    // first time)
+    bool cr3GetSetSeen = false;
     void beginCr3Turn() {
         cr3Choices.clear();
         cr3Chooser = -1;
-        nextCr3Chooser();
+        cr3BattleStage = Cr3BattleStage::Menu, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+        playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0);
+        cr3Cam.held = true;
+        if (!cr3GetSetSeen) audio.playSe("bt_001", false), cr3GetSetSeen = true;
+    }
+    bool cr3EscapeAllowed() const { return (cr3Battle.couplingFlags & 2) == 0; }
+    // the get-set menu's choice: 0 Battle, 1 Escape, 2 Options
+    void chooseCr3GetSet(int b) {
+        if (b == 0) {
+            audio.playSe(0x153, false);
+            nextCr3Chooser();
+        } else if (b == 1 && cr3EscapeAllowed()) {
+            // (BtlSystem::Escape: sure with the gauge's advantage, else a random byte under 240 -
+            // the party's level below the monsters' -, 244, or 252 twenty levels above; failed,
+            // the monsters act - phaseEscapeFailure)
+            audio.playSe(0x153, false);
+            int partyLevel = 1, monsterLevel = 1;
+            for (const cr3::Cr3Fighter& f : cr3Rules.fighters) (f.player ? partyLevel : monsterLevel) = std::max(f.player ? partyLevel : monsterLevel, f.level);
+            const int diff = partyLevel - monsterLevel;
+            const int threshold = diff < 0 ? 0xf0 : diff >= 20 ? 0xfc : 0xf4;
+            if (int(SDL_rand(256)) < threshold) {
+                SDL_Log("battle %d: escaped", cr3Battle.coupling);
+                cr3Escaped = true;
+                endCr3Battle();
+            } else {
+                SDL_Log("battle %d: the escape failed", cr3Battle.coupling);
+                cr3Choices.clear();
+                cr3Actions = cr3Rules.turn(cr3Choices);
+                cr3ActionAt = 0;
+                cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
+                startCr3Action();
+            }
+        }
+    }
+    bool cr3Escaped = false;
+    // the list (Gene: BtlStatusList::OpenCommandList - the gene's commands; Item: BtlItemListUI -
+    // the items held, each its Item row's command): a row each, its cost, usable or not
+    struct Cr3ListRow {
+        int command = -1, item = 0; // (item: its full id, 0 for a gene command)
+        std::string name;
+        int cost = 0, count = 0;
+        bool usable = true;
+    };
+    std::vector<Cr3ListRow> cr3List;
+    bool cr3ListItems = false;
+    int cr3ChosenCommand = -1, cr3ChosenItem = 0;
+    std::string cr3NameOf(const char* file, const char* table, int id) {
+        static std::map<std::string, cr3::MbeFile> files;
+        cr3::MbeFile& f = files[file];
+        if (!f.table(table)) {
+            std::vector<uint8_t> d;
+            if (archive.read(std::string("data\\") + file, d)) f.parse(d);
+        }
+        cr3::MbeFile::Row r;
+        if (!f.find(table, id, "ipp", r)) return {};
+        return optionLanguage == 0 || r.s(2).empty() ? r.s(1) : r.s(2);
+    }
+    void openCr3List(bool items) {
+        cr3List.clear();
+        cr3ListItems = items;
+        const cr3::Cr3Fighter& f = cr3Rules.fighters[size_t(cr3Chooser)];
+        if (!items) {
+            for (int id : f.geneCommands) {
+                cr3::Cr3Command c;
+                if (!cr3Rules.command(id, c) || c.type < 1 || c.type > 4) continue;
+                Cr3ListRow row;
+                row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = c.mpCost;
+                row.usable = c.usable() && c.mpCost <= f.mp;
+                cr3List.push_back(row);
+            }
+        } else {
+            for (const auto& [id, n] : game.cr3Items) {
+                if (id <= 100000 || id >= 200000 || n <= 0) continue;
+                cr3::MbeFile::Row r;
+                if (!cr3BattleTables.item.find("Item", id - 100000, "iiiiiiiiiiiii", r)) continue;
+                Cr3ListRow row;
+                row.item = id, row.command = r.i(3), row.count = n, row.name = cr3NameOf("item_name.mbe", "ItemName", id - 100000);
+                cr3::Cr3Command c;
+                row.usable = cr3Rules.command(row.command, c) && c.usable();
+                cr3List.push_back(row);
+            }
+        }
+        cr3BattleStage = Cr3BattleStage::List, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+    }
+    void chooseCr3ListRow(int k) {
+        if (k < 0 || size_t(k) >= cr3List.size() || !cr3List[size_t(k)].usable) return;
+        const Cr3ListRow& row = cr3List[size_t(k)];
+        audio.playSe(0x153, false);
+        cr3ChosenCommand = row.command, cr3ChosenItem = row.item;
+        cr3::Cr3Command c;
+        cr3Rules.command(row.command, c);
+        if (c.all || c.ally()) { // (no target to choose: all of them, or the user - its own side's first)
+            if (row.item) game.cr3Items[row.item] = std::max(game.cr3Items[row.item] - 1, 0);
+            cr3Choices.push_back({cr3Chooser, row.command, c.ally() ? cr3Chooser : -1});
+            nextCr3Chooser();
+        } else {
+            cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+        }
     }
     void nextCr3Chooser() {
         for (size_t f = size_t(cr3Chooser + 1); f < cr3Rules.fighters.size(); ++f)
@@ -5999,7 +6129,10 @@ struct Viewer {
             cr3Choices.push_back({cr3Chooser, -1, -1});
             nextCr3Chooser();
         } else if (button == 0) { // (Attack: its target next)
+            cr3ChosenCommand = cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, cr3ChosenItem = 0;
             cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+        } else if (button == 1 || button == 2) { // (Gene: its commands; Item)
+            openCr3List(button == 2);
         }
     }
     std::vector<int> cr3LivingMonsters() const {
@@ -6013,7 +6146,8 @@ struct Viewer {
         if (alive.empty() || cr3Chooser < 0) return;
         audio.playSe(0x153, false);
         const int target = alive[size_t(std::clamp(n, 0, int(alive.size()) - 1))];
-        cr3Choices.push_back({cr3Chooser, cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, target});
+        if (cr3ChosenItem) game.cr3Items[cr3ChosenItem] = std::max(game.cr3Items[cr3ChosenItem] - 1, 0);
+        cr3Choices.push_back({cr3Chooser, cr3ChosenCommand >= 0 ? cr3ChosenCommand : cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, target});
         nextCr3Chooser();
     }
 
@@ -6070,20 +6204,27 @@ struct Viewer {
         if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
         const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
         const float t = cr3BattleClock - cr3ActionStart;
-        while (a.target >= 0 && cr3ActionPlay.hitsShown < int(a.hits.size()) &&
+        size_t mostHits = 0;
+        for (const cr3::Cr3Hit& th : a.targets) mostHits = std::max(mostHits, th.hits.size());
+        while (a.target >= 0 && cr3ActionPlay.hitsShown < int(mostHits) &&
                t >= cr3ActionPlay.hitAt + cr3ActionPlay.hitGap * float(cr3ActionPlay.hitsShown)) {
-            const int d = a.hits[size_t(cr3ActionPlay.hitsShown++)];
-            const size_t tu = size_t(cr3Rules.fighters[size_t(a.target)].unit);
-            int& shown = cr3HpShown[size_t(a.target)];
-            shown = std::max(shown - d, 0);
-            cr3Popups.push_back({d, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock});
-            const bool last = cr3ActionPlay.hitsShown == int(a.hits.size());
-            if (last && a.killed) setCr3Motion(tu, "bd03", false, true);
-            else setCr3Motion(tu, "bd01", false);
+            const size_t h = size_t(cr3ActionPlay.hitsShown++);
+            for (const cr3::Cr3Hit& th : a.targets) { // (each target the hit lands on at once)
+                if (h >= th.hits.size()) continue;
+                const int d = th.hits[h];
+                const size_t tu = size_t(cr3Rules.fighters[size_t(th.target)].unit);
+                int& shown = cr3HpShown[size_t(th.target)];
+                shown = std::clamp(shown - d, 0, cr3Rules.fighters[size_t(th.target)].maxHp);
+                cr3Popups.push_back({std::abs(d), unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock});
+                if (d < 0) continue; // (a heal: no flinch)
+                const bool last = h + 1 == th.hits.size();
+                if (last && th.killed) setCr3Motion(tu, "bd03", false, true);
+                else setCr3Motion(tu, "bd01", false);
+            }
             audio.playSe(0x164, false);
         }
         if (t >= cr3ActionPlay.end) {
-            if (a.target >= 0) cr3HpShown[size_t(a.target)] = a.hpAfter;
+            for (const cr3::Cr3Hit& th : a.targets) cr3HpShown[size_t(th.target)] = th.hpAfter;
             ++cr3ActionAt;
             startCr3Action();
         }
@@ -6107,30 +6248,57 @@ struct Viewer {
         }
     }
 
+    // the result (BattleResultV2Menu: the EXP and money - the monsters' MbMonsterInfo::GetExp /
+    // GetMoney at their levels: +0x3c / +0x40 + (level - 1) x the s16 at +0x44 / +0x46)
+    int cr3ResultExp = 0, cr3ResultMoney = 0;
+    void enterCr3Result() {
+        cr3ResultExp = cr3ResultMoney = 0;
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
+            if (f.player) continue;
+            cr3::MbeFile::Row r;
+            if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiii", r)) continue;
+            cr3ResultExp += r.i(14) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) & 0xffff));
+            cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16));
+        }
+        game.cr3Money += cr3ResultMoney;
+        cr3BattleStage = Cr3BattleStage::Result, cr3StageStart = cr3BattleClock;
+        SDL_Log("battle %d: result - %d EXP, %d money", cr3Battle.coupling, cr3ResultExp, cr3ResultMoney);
+    }
+
     // the keys: up / down the focus, Return chooses, Backspace back from the targets
     bool cr3BattleKey(SDL_Keycode k) {
         if (cr3BattleEvents && cr3BattleEvents->running()) return false;
-        const int n = cr3BattleStage == Cr3BattleStage::Command ? 4 : cr3BattleStage == Cr3BattleStage::Target ? int(cr3LivingMonsters().size()) : 0;
+        const int n = cr3BattleStage == Cr3BattleStage::Menu ? 3 : cr3BattleStage == Cr3BattleStage::Command ? 4
+                    : cr3BattleStage == Cr3BattleStage::List ? std::max(int(cr3List.size()), 1)
+                    : cr3BattleStage == Cr3BattleStage::Target ? int(cr3LivingMonsters().size()) : 0;
         if (n == 0) return false;
         if (k == SDLK_UP) cr3Focus = (cr3Focus + n - 1) % n;
         else if (k == SDLK_DOWN) cr3Focus = (cr3Focus + 1) % n;
         else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
-            if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
+            if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(cr3Focus);
+            else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(cr3Focus);
+            else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
             else chooseCr3Target(cr3Focus);
-        } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Target) {
+        } else if (k == SDLK_BACKSPACE && (cr3BattleStage == Cr3BattleStage::Target || cr3BattleStage == Cr3BattleStage::List)) {
             cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+        } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Command && cr3Choices.empty()) {
+            beginCr3Turn(); // (back to the get-set)
         } else return false;
         return true;
     }
     // a click (fx, fy: the screen's fractions) on a button
     bool cr3BattleClick(float fx, float fy) {
-        if (cr3BattleStage != Cr3BattleStage::Command && cr3BattleStage != Cr3BattleStage::Target) return false;
+        if (cr3BattleStage != Cr3BattleStage::Menu && cr3BattleStage != Cr3BattleStage::Command && cr3BattleStage != Cr3BattleStage::Target &&
+            cr3BattleStage != Cr3BattleStage::List)
+            return false;
         if (cr3BattleEvents && cr3BattleEvents->running()) return false;
         const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
         const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
         for (const Cr3Tap& t : cr3Taps)
             if (ux >= std::min(t.x0, t.x1) && ux <= std::max(t.x0, t.x1) && uy >= std::min(t.y0, t.y1) && uy <= std::max(t.y0, t.y1)) {
-                if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(t.id);
+                if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(t.id);
+                else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(t.id);
+                else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(t.id);
                 else chooseCr3Target(t.id);
                 return true;
             }
@@ -6156,7 +6324,10 @@ struct Viewer {
 
     void cr3BattleTap() {
         if (cr3BattleEvents && cr3BattleEvents->running()) return cr3BattleEvents->touch(); // (its window's page)
+        if (cr3BattleStage == Cr3BattleStage::Result && cr3BattleClock - cr3StageStart > 1.0f) return endCr3Battle();
         if (cr3BattleStage == Cr3BattleStage::In) cr3Cam.start = cr3BattleClock - cr3Cam.end; // (phaseBattleIn: a tap ends it)
+        else if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(cr3Focus);
+        else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(cr3Focus);
         else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
         else if (cr3BattleStage == Cr3BattleStage::Target) chooseCr3Target(cr3Focus);
     }
@@ -6176,6 +6347,7 @@ struct Viewer {
             startVista(eventScriptOf(fn) + ":" + fn, map);
             return;
         }
+        SDL_Log("battle: over (next %d)", next);
         n = cr3::GameState::Next();
         if (!savedArea.empty()) {
             n.fieldMode = 1;
@@ -11461,9 +11633,73 @@ struct Viewer {
         return optionLanguage == 0 || en.empty() ? jp : en; // (the text slot: 0 Japanese)
     }
 
+    void drawCr3Result(int w, int h) {
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        const float t = cr3BattleClock - cr3StageStart;
+        UiFig& pos = cr3UiPut("btrsltposition", "btrsltposition_in", t, 0, 0, view);
+        float x, y;
+        if (cr3UiCall(pos, "call_btRsltBgMenu", x, y, w, h)) cr3UiPut("btrsltbgmenu", "", 0, x, y, view);
+        // (the background - the position's own meshes too - stands at z 0.03 .. 0.05, in front of the
+        // menus' 0 .. 0.02: the parts are drawn in order, over it)
+        dev->clearDepth();
+        if (cr3UiCall(pos, "call_btRsltTitleTMenu", x, y, w, h)) cr3UiPut("btrslttitletmenu", "btrslttitletmenu_in", t, x, y, view);
+        if (cr3UiCall(pos, "call_btRsltTitleBMenu", x, y, w, h)) cr3UiPut("btrslttitlebmenu", "btrslttitlebmenu_in", t, x, y, view);
+        if (cr3UiCall(pos, "call_btRsltInfoMenu", x, y, w, h)) cr3UiPut("btrsltinfomenu", "btrsltinfomenu_in", t, x, y, view);
+        if (cr3UiCall(pos, "call_btRsltPointMenu", x, y, w, h)) {
+            // (two btRsltPointPanel_numNN - N its digits - the EXP's and the money's, a
+            // btRsltPointNum_fr00 frame a digit)
+            UiFig& pm = cr3UiPut("btrsltpointmenu", "btrsltpointmenu_in", t, x, y, view);
+            for (int k = 0; k < 2; ++k) {
+                float px, py;
+                if (!cr3UiCall(pm, "call_btRsltPointPanel_num00_00" + std::to_string(k + 1), px, py)) continue;
+                const std::string digits = std::to_string(std::max(k ? cr3ResultMoney : cr3ResultExp, 0));
+                const int n = std::min(int(digits.size()), 5);
+                char lay[32];
+                std::snprintf(lay, sizeof lay, "btrsltpointpanel_num%02d", n);
+                UiFig& panel = cr3UiPut(lay, "", 0, px, py, view);
+                for (int d = 0; d < n; ++d) {
+                    float dx, dy;
+                    const std::string joint = n == 1 ? std::string("call_btRsltPointNum_fr00") : "call_btRsltPointNum_fr00_00" + std::to_string(d + 1);
+                    if (cr3UiCall(panel, joint, dx, dy)) cr3UiPut("btrsltpointnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
+                }
+            }
+        }
+        if (cr3UiCall(pos, "call_btRsltCharaMenu", x, y, w, h)) {
+            UiFig& cm = cr3UiPut("btrsltcharamenu", "btrsltcharamenu_in", t, x, y, view);
+            int slot = 0;
+            for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
+                float px, py;
+                if (!f.player || !cr3UiCall(cm, "call_btRsltCharaPanel_00" + std::to_string(++slot), px, py)) continue;
+                UiFig& card = cr3UiPut("btrsltcharapanel", "btrsltcharapanel_in", t, px, py, view);
+                float cx, cy;
+                dev->clearDepth(); // (over the card's shadow)
+                if (cr3UiCall(card, "call_btRsltCharaIcon_fr00", cx, cy)) cr3UiPut("btrsltcharaicon_fr00", "", 0, cx, cy, view);
+                // (the level's progress - its bar posed at its percent / 30 s, as the status's -: CR3-U
+                // keeps no EXP yet, so none)
+                if (cr3UiCall(card, "call_btRsltLv_per", cx, cy)) cr3UiPut("btrsltlv_per", "", 0, cx, cy, view);
+                // the level: btRsltLvPanel_num00's three places, btRsltLvNum_fr00 frame a digit
+                // (leading places blank)
+                if (cr3UiCall(card, "call_btRsltLvPanel_num00", cx, cy)) {
+                    UiFig& lv = cr3UiPut("btrsltlvpanel_num00", "", 0, cx, cy, view);
+                    const std::string digits = std::to_string(std::clamp(f.level, 0, 999));
+                    for (size_t d = 0; d < digits.size(); ++d) {
+                        float dx, dy;
+                        if (cr3UiCall(lv, "call_btRsltLvNum_fr00_00" + std::to_string(3 - digits.size() + d + 1), dx, dy))
+                            cr3UiPut("btrsltlvnum_fr00", "", float(digits[d] - '0') / 30, dx, dy, view);
+                    }
+                }
+            }
+        }
+    }
+
     void drawCr3BattleHud(int w, int h) {
         if (!cr3BattleMode) return;
-        const bool hud = cr3BattleStage >= Cr3BattleStage::Command && cr3BattleStage <= Cr3BattleStage::Action;
+        const bool hud = cr3BattleStage >= Cr3BattleStage::Menu && cr3BattleStage <= Cr3BattleStage::Action;
+        if (cr3BattleStage == Cr3BattleStage::Result) return drawCr3Result(w, h);
         if (!hud && cr3Popups.empty()) return;
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
@@ -11528,7 +11764,7 @@ struct Viewer {
         }
         cr3Taps.clear();
         const bool waiting = !(cr3BattleEvents && cr3BattleEvents->running());
-        if (cr3BattleStage == Cr3BattleStage::Command && waiting) {
+        if ((cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Menu) && waiting) {
             // the command buttons (comBtnMenu, its io animator as it opens; four at panels 004..007 -
             // comBtnMenu::SetParamNumber 5 - each comBtnPanel with comBtnBg_fr00 (its slot's frame),
             // comBtnIcon_fr00 and comBtnText_fr00 (the button's), comBtnR; the focused one's text
@@ -11536,15 +11772,22 @@ struct Viewer {
             UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
             if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
                 UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", cr3BattleClock - cr3MenuStart, x, y, view);
-                for (int b = 0; b < 4; ++b) {
+                // (the get-set's three on panels 005..007: 0 Battle, 2 Escape, 3 Options;
+                // the commands' four on 004..007)
+                const bool getSet = cr3BattleStage == Cr3BattleStage::Menu;
+                const int count = getSet ? 3 : 4, first = getSet ? 5 : 4;
+                static constexpr int kGetSet[3] = {0, 2, 3};
+                for (int b = 0; b < count; ++b) {
                     float px, py;
-                    if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(4 + b), px, py)) continue;
+                    if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(first + b), px, py)) continue;
                     UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
-                    const int id = kCr3Buttons[b];
+                    const int id = getSet ? kGetSet[b] : kCr3Buttons[b];
                     float cx, cy;
                     if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
                     if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
-                    const float textAlpha = (b == 1 || b == 2) ? 0.4f : 1.0f; // (Gene, Item: not in yet)
+                    const bool off = getSet ? (b == 1 && !cr3EscapeAllowed()) || b == 2 // (Escape where forbidden; Options: not in yet)
+                                            : false;
+                    const float textAlpha = off ? 0.4f : 1.0f;
                     if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy))
                         cr3UiPut(b == cr3Focus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view, textAlpha);
                     if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
@@ -11582,6 +11825,71 @@ struct Viewer {
                     float ax, ay, bx, by;
                     if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(i)});
                 }
+            }
+        }
+        if (cr3BattleStage == Cr3BattleStage::List && waiting) {
+            // the list (comListMenu, interface 0x2d: comListPosition and its io animator, rows of
+            // comListPanel 0.76 apart from call_comListPanel - the name at typeM_L01, the cost in
+            // comListNumM_num00's digits, the count in comListNumI; the cursor comListCursor on
+            // the focused; what can't be used dimmed)
+            UiFig& pos = cr3UiPut("comlistposition", "comlistposition_io", cr3BattleClock - cr3MenuStart, 0, 0, view);
+            if (cr3UiCall(pos, "call_comListMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+                float lx, ly;
+                // (its category: comListCategoryPanel - comListCBg / CIcon / Ctext at the list's frame:
+                // 0 Genes, 1 Items)
+                if (cr3UiCall(menu, "call_comListCategoryPanel", lx, ly)) {
+                    UiFig& cat = cr3UiPut("comlistcategorypanel", "", 0, lx, ly, view);
+                    const float frame = (cr3ListItems ? 1.0f : 0.0f) / 30;
+                    float cx, cy;
+                    if (cr3UiCall(cat, "call_comListCBg_fr00", cx, cy)) cr3UiPut("comlistcbg_fr00", "", frame, cx, cy, view);
+                    if (cr3UiCall(cat, "call_comListCIcon_fr00", cx, cy)) cr3UiPut("comlistcicon_fr00", "", frame, cx, cy, view);
+                    if (cr3UiCall(cat, "call_comListCtext_fr00", cx, cy)) cr3UiPut("comlistctext_fr00", "", frame, cx, cy, view);
+                }
+                // (the focused one's help across the top: btHelpMenu at btHelpPosition's fit8, its
+                // line at typeM_L01 - command_help.mbe's)
+                if (cr3Focus >= 0 && size_t(cr3Focus) < cr3List.size()) {
+                    UiFig& hp = cr3UiPut("bthelpposition", "", 0, 0, 0, view);
+                    float hx, hy;
+                    if (cr3UiCall(hp, "call_btHelpMenu", hx, hy, w, h)) {
+                        UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view);
+                        float tx, ty;
+                        const Cr3ListRow& row = cr3List[size_t(cr3Focus)];
+                        const std::string text = row.item ? cr3NameOf("item_help.mbe", "ItemHelp", row.item - 100000)
+                                                          : cr3NameOf("command_help.mbe", "CommandHelp", row.command);
+                        if (!text.empty() && cr3UiCall(help, "typeM_L01", tx, ty)) {
+                            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                            drawUiText(text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+                        }
+                    }
+                }
+                if (cr3UiCall(menu, "call_comListPanel", lx, ly))
+                    for (size_t k = 0; k < cr3List.size() && k < 6; ++k) {
+                        const Cr3ListRow& row = cr3List[k];
+                        const float ry = ly - 0.76f * float(k), alpha = row.usable ? 1.0f : 0.5f;
+                        UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ry, view, alpha);
+                        float cx, cy;
+                        if (int(k) == cr3Focus && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                        const int number = row.item ? row.count : row.cost;
+                        if (cr3UiCall(panel, row.item ? "call_comListNumI_num00" : "call_comListNumM_num00", cx, cy)) {
+                            UiFig& num = cr3UiPut(row.item ? "comlistnumi_num00" : "comlistnumm_num00", "", 0, cx, cy, view, alpha);
+                            const std::string digits = std::to_string(std::max(number, 0));
+                            int slots = 0;
+                            for (const std::string& j : num.joints) slots += j.rfind("call_comListNum_fr00_", 0) == 0;
+                            for (int d = 0; d < int(digits.size()) && d < slots; ++d) {
+                                float dx, dy; // (right-aligned in its slots)
+                                if (cr3UiCall(num, "call_comListNum_fr00_00" + std::to_string(slots - int(digits.size()) + d + 1), dx, dy))
+                                    cr3UiPut("comlistnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view, alpha);
+                            }
+                        }
+                        if (cr3UiCall(panel, "typeM_L01", cx, cy)) {
+                            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                            // (ProvisionalMenuText: the line's box hangs from the joint - its middle ~0.17 below)
+                            drawUiText(row.name, 26, (cx + 0.075f) / 10, (cy - 0.15f) / 10, w, h, true, row.usable ? 0.3f : 0.6f); // (dark on the light row)
+                        }
+                        float ax, ay, bx, by;
+                        if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(k)});
+                    }
             }
         }
         // the damage (DamageInfo: btNumMenu - btNumMenu_in over its first 0.53 s - the digits'

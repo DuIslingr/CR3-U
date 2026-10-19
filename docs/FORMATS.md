@@ -338,21 +338,55 @@ game's call fails the same way). 470 of the 471 boot / start / victory calls end
 
 The rules (battle/cr3rules.hpp): a character's numbers from char_para (+0x48 HP, +0x4c MP, +0x50
 attack | defence, +0x54 speed | luck as s16 pairs, +0x58.. their growth: base + (level - 1) x
-growth / 100), a monster's from mon_para (+0x1c HP .. +0x28 speed | luck, +0x2c.. growth) at the
-reservation's level. A command (command_para Command, 64-bit layout `iiiiiiffiii` + `_ip` x 7 +
-15 ints + `_pi`): +0x14 power, +0x18 multiplier, +0x21 hits (below 0 the unit's own), +0xa8 spread
-(a percentage either way), +0xc0 its formula row (CommandFomula: action, damage, chain - BtlCalculator's
-table: 1 physical, 2 magic, 3 / 4 their chain bonuses, ...); its direction (direction.mbe
-CommandDirection: +4 the kind, +8 the motion - an AnimCommon type: 10 bi01, 15 bs01). The hero's
-attack is 501 (power 360, magic), Gunner's 1102 (power 10, 4 hits), Axer's 1010 / 1615. A monster
-picks among its mode-0 MonsterCommand row's eight (command, ratio, count) by ratio. Damage
-(calculateBasicDamage), a hit's: clamp(attack / defence, 0.2, 5) x power x 0.5, then "Status" (x
-1.5 with the gauge's advantage), "Element" (rate + corrections), "Resistance" ((r + 100) / 100),
-"Level" (gene level / 20 + 1: a monster's its level), "Command" (+0x18), "Status Effect", then the
-spread. CR3-U has the base, the level, the command multiplier and the spread; not yet skills,
-status effects, elements, equipment, criticals, misses or the gauge - its first hit is 423 where
-the reference's is 352. A turn: the party's choices, then the monsters' (each side's list in
-order - BtlCommandManager - the side ahead on the gauge first; the party here).
+growth / 100; +0x1c its guest gene - GuestGene's row, 0 none -, +0x20 its attack command:
+BtlCharacterStatus::VGetAttackCommandId; +0x10 is another), a monster's from mon_para (+0x14 its
+level where set - Gunner's and Axer's 50, the target list's "50" -, else the reservation's; +0x18
+its element; +0x1c HP .. +0x28 speed | luck, +0x2c.. growth; +0x3c / +0x40 EXP and money, +0x44 /
++0x46 their growth). The character's real attack, defence etc. add its gene's and accessory's
+(CrxCharacter::GetAttack); the guest hero's gene 453 adds nothing.
+
+A command (command_para Command, 64-bit layout `iiiiiiffiii` + `_ip` x 7 + 15 ints + `_pi`): +0x04
+its type (0 an attack, 1 a physical skill, 2 magic, 3 support, 4 special, 7 a guard), +0x10 its
+target kind (BtlStatusList's collectCommandTarget table: 0 self, 1 an ally, 2 all allies, 3 an
+enemy, 4 all enemies, 5 everyone, 6 a random enemy, ...), +0x14 power (below 0: the unit's weapon
+constant - VGetWeaponConstant; a monster's its attack command's), +0x18 multiplier, +0x21 hits
+(below 0: the weapon's - VGetWeaponHitNum), +0x24 its attack element, +0xa8 spread (a percentage
+either way), +0xac / +0xb0 HP cost, +0xb4 / +0xb8 MP cost (kind 0 the value, 3 x the weapon's
+consumption factor - Weapon +0x44 / 100), +0xc0 its formula row (CommandFomula: action, damage,
+chain - BtlCalculator's table: 1 physical, 2 magic, 3 / 4 their chain bonuses, 5 an HP heal, ...);
+its direction (direction.mbe CommandDirection: +4 the kind, +8 the motion - an AnimCommon type: 10
+bi01, 15 bs01). Weapons (item_para Weapon): +0x38 the constant, +0x3c the hits, +0x44 the
+consumption. Gene commands: a guest's GuestGene row (+0x10, +0x18 .. +0x48; the prologue hero's row
+1 - Rakshasa Lotus, Augmented Electra, Augmented Aquinas, Augmented Healing (All), costs 20 / 18 /
+36 / 24 as the reference's list). A monster picks among its mode-0 MonsterCommand row's eight
+(command, ratio, count) by ratio; its skills are the row's eight ids at +0x80 (Gunner's and Axer's
+304).
+
+Damage (calculateBasicDamage), a hit's: clamp(attack / defence, 0.2, 5) x (power + 0) x 0.5, then
+"Status" (x 1.5 with the gauge's advantage), "Element" (battle.mbe Element: the attack element's
+row, the target element's column; + two corrections), "Resistance" ((r + 100) / 100: the
+attacker's lower-resistance bonus less the target's physical / magic and element resistances -
+skill kinds 1 and 4, armour), "Level" (the attacker's gene level / 20 + 1 - VGetGeneLevel: a
+monster's its level, a character's its gene's), "Command" (+0x18), "Status Effect" (kind 34
+effects), then the spread; at least 1. Attack and defence themselves carry status-effect
+multipliers (kinds 36 / 37, 38 / 39: GetAttackMultipliers, GetGuardMultipliers). A heal (formula
+5, calculateHpHeal): clamp(defence / attack, 0.5, 2) x power x (gene level / 20 + 1) x (1 + the
+skills' heal correction). CR3-U has the base, element, level, command multiplier, spread and the
+heal; not yet skills, status effects, equipment (a weapon for the guest hero - none found in the
+data: CR3-U uses its attack as the power), criticals, misses, chain bonuses or the gauge. Against
+the reference: the hero's first hit gives 483 (reference 352: a weapon constant x level of ~300
+would match exactly), the monsters' 44 and 48 (reference 34 and 40).
+
+A turn (BtlSysStateSelect): the get-set menu (EntryGetSet: Battle, Escape - not where the
+coupling's +0x44 bit 1 forbids it -, Options; SE bt_001 the first time; the get-set camera held),
+then each party member's command (6 Attack - its target -, 7 Gene - the gene's commands, a list -,
+8 Item - the items, a list -, 9 Guard - command 51 on itself), then the party's actions and the
+monsters' (each side's list in order: BtlCommandManager - the side ahead on the gauge first; the
+party here). Escaping (BtlSystem::Escape): sure with the gauge's advantage, else a random byte
+under 240 (the party's level below the monsters'), 244, or 252 (twenty levels above). The win
+(BtlSysStateAction::phaseVictory): the result music, the victory, a half-second fade, then the
+result - unless story flag 5051 (byte 0x14cfb67 bit 3 of Cr3FlagWork at 0x14cf8f0) is on:
+s000_d01_00301_evt sets it, so the ship's battles go straight on.
 
 The interface (BtlInterfaceSystem, CRXParts at 100 pixels a unit): the party's status (btStMenu at
 btStPosition's call_btStMenu_fit1: a btStPanel each - the portrait btStChara_id00 with
@@ -367,7 +401,18 @@ comBtnIcon_fr00 / comBtnText_fr00 at the button's frame - the labels images, ima
 English); the targets (btTgtMenu, btTgtMenu_in, a btTgtPanel each: the name at typeM_C01, the bar
 btTgtBar_per, the icon bt_targIcon_<model><variant> masked by bt_targIcon_<model>_a); the damage
 (DamageInfo: btNumMenu with btNumMenu_in over 0.53 s, the layout btNum_num0N for N digits, a
-btNum_fr00 frame each - digit + 10 x the set).
+btNum_fr00 frame each - digit + 10 x the set); the lists (comListMenu, interface 0x2d:
+comListPosition with its io, comListCategoryPanel - comListCBg / CIcon / Ctext at frame 0 Genes,
+1 Items -, rows of comListPanel 0.76 apart from call_comListPanel - the name at typeM_L01, the cost
+in comListNumM_num00 - and comListCursor on the focused; the focused one's help across the top in
+btHelpMenu at btHelpPosition's fit8, command_help.mbe's); the result (BattleResultV2Menu:
+btRsltPosition with its in, btRsltBgMenu, the titles, btRsltPointMenu - two btRsltPointPanel_numNN,
+the EXP's and the money's, btRsltPointNum_fr00 digits -, btRsltInfoMenu, btRsltCharaMenu's
+btRsltCharaPanel a member - its shadow, call_GeneCard, btRsltCharaIcon_fr00, btRsltLv_per and
+btRsltLvPanel_num00's three btRsltLvNum_fr00 places. The background and the position's own meshes
+stand at z 0.03 .. 0.05, in front of the menus' 0 .. 0.02, so the parts are drawn in order over it
+- with depth tested they vanish. CR3-U draws all but the gene card and the level bar's progress;
+no reference shows a result screen yet).
 
 The cameras of an action (BtlCameraSystem::PlayPlayerMelee: the target's size's attack_PC riding
 (target x, 0, 0) unturned, turned 0.2 of the way toward its actor target; PlayEnemyMelee: the
@@ -376,9 +421,10 @@ attacker's size's attack_<size> at the target's front (x, 0, Battle +0 / 10), 0.
 `cr3view --battle <coupling> [--battle-field <n>]` (44 unless given) plays one: Up / Down, Return
 (or a click on a button), Backspace back from the targets; `--input attack,t0,guard,...` chooses
 for captures. `cr3tool cr3battle <release> <coupling> <field> [party]` prints its set-up and
-simulates it. Not in yet: Gene and Item (greyed), the get-set menu, the gauge's play, escape, the
-result screen (EXP, drops), a lost battle's game over, the approach / return of melee attacks,
-effects (eff### figures), voices.
+simulates it; `--input battle,escape,attack,gene<n>,item<n>,t<n>,guard,result` chooses for
+captures. Not in yet: Options (CR3's options screen), Emperor Mode and other specials, the gauge's
+play, the result screen's gene card and EXP, drops, a lost battle's game over, the approach /
+return of melee attacks, effects (eff### figures), voices, the list's icons and scrolling.
 
 ## Parameter tables (`data\*.mbe`, EXPA)
 

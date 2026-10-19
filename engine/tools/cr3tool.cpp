@@ -1150,6 +1150,14 @@ int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg)
             std::printf("  fighter %d: HP %d MP %d atk %d def %d spd %d luck %d level %d; attack %d (power %d x%d, formula %d, spread %d, motion %d, direction %d)\n",
                         f.id, f.maxHp, f.maxMp, f.attack, f.defence, f.speed, f.luck, f.level, f.attackCommand, c.power, c.hits, c.formula, c.spread,
                         c.motion, c.direction);
+            std::vector<int> listed = f.geneCommands;
+            for (const auto& [mc, ratio] : f.commands) listed.push_back(mc);
+            for (int g : listed) {
+                cr3::Cr3Command gc;
+                rules.command(g, gc);
+                std::printf("    %s command %d: type %d, damage %d, target kind %d, power %d x%d%s, MP %d, element %d\n", f.player ? "gene" : "monster", g,
+                            gc.type, gc.damage, gc.target, gc.power, gc.hits, gc.all ? " (all)" : "", gc.mpCost, gc.element);
+            }
         }
         for (int turn = 1; turn <= 8 && rules.outcome() == 0; ++turn) {
             std::vector<std::array<int, 3>> choices;

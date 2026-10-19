@@ -33,7 +33,8 @@ bool Cr3BattleTables::load(const MvglArchive& a, std::string* error) {
     return readTable(a, "model.mbe", model, error) && readTable(a, "mon_para.mbe", monster, error) &&
            readTable(a, "mon_cop.mbe", coupling, error) && readTable(a, "battle_field.mbe", field, error) &&
            readTable(a, "battle.mbe", battle, error) && readTable(a, "char_para.mbe", character, error) &&
-           readTable(a, "command_para.mbe", command, error) && readTable(a, "direction.mbe", direction, error);
+           readTable(a, "command_para.mbe", command, error) && readTable(a, "direction.mbe", direction, error) &&
+           readTable(a, "gene_para.mbe", gene, error) && readTable(a, "item_para.mbe", item, error);
 }
 
 bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, const std::vector<int>& party, uint32_t seed, std::string* error) {

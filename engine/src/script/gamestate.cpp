@@ -96,10 +96,16 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     // Cr3UtilGetItem(item, n): its count n more, 0..99; Cr3UtilCheckItem: its count
     vm.setNative("Cr3System", "ItemGet", [&state](NativeCall& c) {
         const int id = c.integer(0);
+        if (id >= 100000) state.cr3Items[id] = std::clamp(state.cr3Items[id] + c.integer(1, 1), 0, 99); // (CR3's)
         if (id > 0 && id < 300) state.itemCount[id] = static_cast<short>(std::clamp(state.itemCount[id] + c.integer(1, 1), 0, 99));
+    });
+    vm.setNative("Cr3System", "ItemSet", [&state](NativeCall& c) {
+        const int id = c.integer(0);
+        if (id >= 100000) state.cr3Items[id] = std::clamp(c.integer(1, 0), 0, 99);
     });
     vm.setNative("Cr3System", "ItemCheck", [&state](NativeCall& c) {
         const int id = c.integer(0);
+        if (id >= 100000) return c.result(state.cr3Items.count(id) ? state.cr3Items.at(id) : 0);
         c.result(id > 0 && id < 300 ? int(state.itemCount[id]) : 0);
     });
     vm.setNative("Cr3System", "MPFullRecovery", [&state](NativeCall&) {

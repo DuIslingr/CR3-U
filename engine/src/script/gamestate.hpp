@@ -25,6 +25,10 @@ struct GameState {
     // the prologue's hooded hero (c101 on the field, j006 in battle; the reference's), the
     // game's own default not found yet
     int cr3Party[5] = {6, 0, 0, 0, 0};
+    // CR3's items (Cr3System.ItemGet / ItemSet / ItemCheck): a count by the full id - category x
+    // 100000 + the table's id (1: item_para Item, 2 Weapon, 3 Armor, ...)
+    std::map<int, int> cr3Items;
+    int cr3Money = 0; // (Cr3System.GoldSet / GoldGet; battles' winnings)
     // the field's leader of the two (cr3_field_data +8: FldUtilGetActiveCharacter, 0 / 1), the
     // character change allowed (+0x32: Cr3ChangeCharacter.SetEnable - its button) and the tab
     // (+0x33: Cr3TabMenu.SetEnable) - a new game's both (Cr3InitFieldData)
