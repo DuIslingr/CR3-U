@@ -366,8 +366,14 @@ footer, and:
   system window (`comMsgSMenu` at `comMsgSPosition`'s fit2, lines at `typeM_L05` .. `L07`:
   AnnounceMenuName 0x175) and YNChoiceButton (interface 0xf: `comBtnMenu`'s buttons from its joint
   10 on - slots 005 / 006 - OK, icon and text 10, and Cancel, 11). OK merges (DBEmu MergeGene: 100
-  gold a level of the two) - the header away, GeneSynthesizeEffect (`ue002jene01`; CR3-U a white
-  flash for now), then the new gene.
+  gold a level of the two) - the header away, GeneSynthesizeEffect, then the new gene.
+- GeneSynthesizeEffect (0xb2; the field hidden, SE `com_031`): the scene through `Cam_ue002jene01`'s
+  camera `EV1000` (8.33 s; a tap ends it) - `c115_ue002jene01` (the clerk on her bed) and
+  `ue002jene01` (the stage: `g_1` .. `g_20`, `g_d`, `g_result`), each on its own animation;
+  `ue002jene02`, a gene's light, at stage joints with their whole transform - a merge's two at `g_4`
+  / `g_5` (SetParamNumber 5), an enhance's fed genes from `g_1` and the base at `g_d` (6, 7); the new
+  card at `g_result` (its scale and turn; SetCardModel's move offset (-0.087, 0, 0) - the strings and
+  the offset are in the executable, lost in the decompile) from the clerk's animation's end - 2.4 s.
 
 Combine and Sell want more than five genes held (CheckSynthesisGeneCount(0); else AlertwindowMenu -
 `comMsgSMenu` with `comMsgBtn`, gone by itself - says AnnounceMenuName 0x31e), and each gene picked

@@ -5632,7 +5632,7 @@ struct Viewer {
             geneMenu.since += dt;
             geneMenu.alertSince += dt;
             if (!geneMenu.alert.empty() && geneMenu.alertSince > 2.0f) geneMenu.alert.clear(); // (SetAutoEndAlertWindowMenu)
-            if (geneMenu.screen == 5 && geneMenu.since >= 1.5f) geneMenu.screen = 6, geneMenu.since = 0.75f; // (the flash over: its card)
+            if (geneMenu.screen == 5 && geneMenu.since >= geneMenu.effectEnd) geneMenu.screen = 6, geneMenu.since = 0; // (the effect over: its card)
             if (!inputScript.empty() && inputScript.front().compare(0, 4, "lab:") == 0 && geneLabClock > 1.0f && geneMenu.since > 0.5f &&
                 uiClock >= inputNext && !areaEvents->geneLab().talking) {
                 static const std::map<std::string, int> kLab = {{"talk", 17},  {"combine", 28},  {"sell", 21},    {"repository", 29}, {"back", -1},
@@ -11899,6 +11899,8 @@ struct Viewer {
         int row = 0;             // (3: the row in focus)
         bool result = false;     // (3: the mix button's - the result's card over the two)
         int made = -1;           // (6: the new gene - its cr3Genes index)
+        int lights = 2;          // (5: GeneSynthesizeEffect's gene lights - a merge's two, an enhance's fed + its own)
+        float effectEnd = 0;     // (5: the camera's animation's length - the effect over)
         std::string message;     // (an alert's, over it)
     } geneMenu;
     void geneMenuScreen(int screen) { geneMenu.screen = screen, geneMenu.since = 0, geneLabFocus = 0; }
@@ -12697,19 +12699,102 @@ struct Viewer {
             if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, b == 0 ? kTapYes : kTapNo});
         }
     }
-    // the merge (GeneSynthesizeEffect: a white flash here - the ue002jene01 scene to come) and the
-    // new gene's card, 9 x, its name under it; a tap back to the lab's buttons
+    // the merge (GeneSynthesizeEffect 0xb2, the field hidden): the scene through Cam_ue002jene01's
+    // camera EV1000 - c115_ue002jene01 (the clerk) and ue002jene01 (the lights' stage) each on its
+    // own animation; ue002jene02, a gene's light, at the stage's g_1 .. g_N joints (a merge's two at
+    // g_4 and g_5 - SetParamNumber 5; an enhance's fed genes from g_1 and its own at g_d - 6, 7), each
+    // with the joint's whole transform; the new card at g_result (and its move offset, -0.087 across)
+    // from the clerk's animation's end - 2.4 s; over at the camera's end or a tap. Then the new gene's card, 9 x, its name under it; a
+    // tap back to the lab's buttons
+    cr3::Cr3BattleCamera geneEffectCam;
+    bool geneEffectCamLoaded = false;
+    // a posed figure's joint's whole transform (its place in the world)
+    bool cr3JointMatrix(const UiFig& u, const std::string& joint, cr3::Mat34& out) {
+        const auto it = std::find(u.joints.begin(), u.joints.end(), joint);
+        if (it == u.joints.end()) return false;
+        std::vector<cr3::JointTransform> p = u.fig.skeleton.basePose;
+        if (!u.fig.posed.empty()) p = u.fig.posed;
+        const std::vector<cr3::Mat34> w = u.fig.skeleton.world(p, u.fig.place);
+        const size_t j = size_t(it - u.joints.begin());
+        if (j >= w.size()) return false;
+        out = w[j];
+        return true;
+    }
+    float geneEffectLength() {
+        if (!geneEffectCamLoaded) geneEffectCamLoaded = geneEffectCam.load(archive, "Cam_ue002jene01");
+        return geneEffectCamLoaded && geneEffectCam.duration() > 0 ? geneEffectCam.duration() : 4.0f;
+    }
+    void drawGeneEffect(int w, int h, const cr3::Cr3Gene& made) {
+        const float t = geneMenu.since;
+        static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+        const Mat4 id = cr3::mat4Identity();
+        const float black[4] = {0, 0, 0, 1};
+        if (white.id) dev->drawQuad(white, kScreen, id.data(), black); // (Fld2SetVisible(false))
+        dev->clearDepth();
+        geneEffectLength();
+        cr3::Mat34 cw;
+        float fovDeg = 45, zn = 0.1f, zf = 1000;
+        if (!geneEffectCamLoaded || !geneEffectCam.at("EV1000", std::min(t, geneMenu.effectEnd), cw, fovDeg, zn, zf)) cw.m[11] = 10;
+        const float fov = fovDeg * 3.14159265f / 180;
+        dev->setCamera(std::max(zn, 0.01f), zf, fov);
+        const Mat4 vp = cr3::mat4Multiply(perspective(fov, float(w) / float(std::max(h, 1)), std::max(zn, 0.01f), zf), cr3::mat4RigidInverse(cr3::mat4FromMat34(cw)));
+        cr3::SceneLighting l = lighting;
+        l.camera[0] = cw.m[3], l.camera[1] = cw.m[7], l.camera[2] = cw.m[11];
+        l.time = time;
+        dev->setLighting(l);
+        UiFig& stage = uiFig("ue002jene01");
+        stage.fig.place = cr3::Mat34();
+        poseUi(stage, "ue002jene01", t);
+        drawFigure(stage.fig, vp.data());
+        UiFig& clerk = uiFig("c115_ue002jene01");
+        clerk.fig.place = cr3::Mat34();
+        poseUi(clerk, "c115_ue002jene01", t);
+        const float clerkEnd = clerk.fig.animLoaded ? clerk.fig.anim.duration() : 0.0f;
+        drawFigure(clerk.fig, vp.data());
+        // (the lights: their own animation each, at their joints)
+        std::vector<std::string> at;
+        if (geneMenu.mode == 1) {
+            for (int k = 1; k <= std::min(geneMenu.lights, 20); ++k) at.push_back("g_" + std::to_string(k));
+            at.push_back("g_d");
+        } else
+            at = {"g_4", "g_5"};
+        for (const std::string& j : at) {
+            cr3::Mat34 m;
+            if (!cr3JointMatrix(stage, j, m)) continue;
+            UiFig& light = uiFig("ue002jene02");
+            light.fig.place = m;
+            poseUi(light, "ue002jene02", t);
+            drawFigure(light.fig, vp.data());
+        }
+        // (the card: from the clerk's end - 2.4 s, at g_result)
+        cr3::Mat34 m;
+        const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(made.master) : nullptr;
+        if (gi && t >= clerkEnd - 2.4f && cr3JointMatrix(stage, "g_result", m)) {
+            UiFig& u = uiFig("card_default");
+            u.fig.place = m;
+            u.fig.place.m[3] -= 0.087f; // (SetCardModel: its move offset, (-0.087, 0, 0))
+            poseUi(u, "card_default", 0);
+            char name[32];
+            std::snprintf(name, sizeof name, "card_%03d", gi->series);
+            cr3UiMaterial(u, "picture", name);
+            std::snprintf(name, sizeof name, "card_rar_%02d", gi->grade);
+            cr3UiMaterial(u, "rarity", name);
+            std::snprintf(name, sizeof name, "card_att_%02d", gi->kind);
+            cr3UiMaterial(u, "attribute", name);
+            u.fig.tint[3] = 1;
+            drawFigure(u.fig, vp.data());
+        }
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+    }
     void drawGeneMerge(int w, int h, const Mat4& view) {
         const float t = geneMenu.since;
         if (geneMenu.made < 0 || size_t(geneMenu.made) >= game.cr3Genes.size()) return;
         const cr3::Cr3Gene& g = game.cr3Genes[size_t(geneMenu.made)];
         if (geneMenu.screen == 5) {
-            const float a = t < 0.75f ? t / 0.75f : std::max(1.0f - (t - 0.75f) / 0.75f, 0.0f);
-            static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
-            const Mat4 id = cr3::mat4Identity();
-            const float rgba[4] = {1, 1, 1, a};
-            if (white.id) dev->drawQuad(white, kScreen, id.data(), rgba);
-            if (t < 0.75f) return;
+            drawGeneEffect(w, h, g);
+            geneLabTaps.push_back({-6, -4, 6, 4, kTapAlert}); // (a tap ends it)
+            return;
         }
         dev->clearDepth();
         drawCr3Card(g.master, 0, 0.3f, 1.0f, 9.0f, view, std::min(t / 0.3f, 1.0f));
@@ -12746,6 +12831,10 @@ struct Viewer {
     }
     void chooseGeneLab(cr3::EventRuntime& ev, int id) {
         const int screen = geneMenu.screen;
+        if (screen == 5) { // (a tap ends the effect - TouchGestureTap)
+            if (id == kTapAlert) geneMenu.screen = 6, geneMenu.since = 0;
+            return;
+        }
         if (!geneMenu.alert.empty()) { // (an alert takes the tap)
             if (id == kTapAlert || id == -1) geneMenu.alert.clear();
             return;
@@ -12938,9 +13027,11 @@ struct Viewer {
                     return;
                 }
                 geneMenu.made = base - int(std::count_if(geneMenu.picked.begin(), geneMenu.picked.end(), [base](int g) { return g < base; }));
+                geneMenu.lights = int(geneMenu.picked.size());
                 geneMenu.picked.clear();
-                audio.playSe("com_024", false);
+                audio.playSe("com_031", false);
                 geneMenuScreen(5);
+                geneMenu.effectEnd = geneEffectLength();
                 return;
             }
             const int preview = geneMenu.rows[size_t(geneMenu.row)];
@@ -12951,15 +13042,17 @@ struct Viewer {
                 return;
             }
             geneMenu.made = int(game.cr3Genes.size()) - 1;
-            audio.playSe("com_024", false);
+            geneMenu.lights = 2;
+            audio.playSe("com_031", false); // (the effect's: SoundPlaySE com_031, stopped at its end)
             geneMenuScreen(5);
+            geneMenu.effectEnd = geneEffectLength();
+            SDL_Log("gene lab: the effect, %.2f s (the clerk's %.2f)", geneMenu.effectEnd, titleAnimLength("c115_ue002jene01", "c115_ue002jene01"));
             SDL_Log("gene lab: made gene %d", game.cr3Genes.back().master);
         }
     }
     bool geneLabClick(float fx, float fy) {
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !ev->geneLab().open || ev->geneLab().talking) return false;
-        if (geneMenu.screen == 5) return true;
         const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
         const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
         // (the last drawn on top first: the cards in focus, the question)
