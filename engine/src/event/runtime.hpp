@@ -217,6 +217,9 @@ public:
     const GeneLab& geneLab() const { return geneLab_; }
     void geneLabTalk() { if (geneLab_.open && !geneLab_.talking) geneLab_.talk = true; }
     void geneLabEnd();
+    // the clerk's cut-in away while a menu holds the screen (GeneSynthesisMain 9: EndCutInMenu(2))
+    // and back after it (CreateGeneSynthesisClerk)
+    void geneLabClerk(bool shown);
     std::string cutInImage(int id) const; // a loaded face's image ("" none)
 
     // The tutorials' pictures (Cr3FieldTutorial in the field and the battles; InterfaceWindow's

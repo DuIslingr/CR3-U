@@ -204,10 +204,15 @@ bool Cr3OfflineDb::load(const Database& release, std::string* error) {
             if (const MbeFile::Table* t = gp.table("Gene"))
                 for (size_t k = 0; k < t->rows.size(); ++k) {
                     MbeFile::Row r;
-                    if (!gp.row(*t, k, "iiiiiiiiiiiii", r)) continue;
+                    if (!gp.row(*t, k, "iiiiiiiiiiiiiiiiiiiiiii", r)) continue;
                     GeneInfo i;
                     i.id = r.i(0), i.series = r.i(1), i.grade = r.i(2), i.maxLevel = r.i(3), i.curve = r.i(4), i.rank = r.i(5);
                     i.type = r.i(6), i.worth = r.i(8), i.worthPerLevel = r.i(9), i.price = r.i(10), i.pricePerLevel = r.i(11), i.kind = r.i(12);
+                    i.stars = r.i(22);
+                    auto s16 = [](int v, int half) { return int(int16_t(uint32_t(v) >> (half * 16) & 0xffff)); };
+                    i.base[0] = r.i(13), i.base[1] = r.i(14), i.growth[0] = r.i(17), i.growth[1] = r.i(18);
+                    for (int h = 0; h < 2; ++h)
+                        i.base[2 + h] = s16(r.i(15), h), i.base[4 + h] = s16(r.i(16), h), i.growth[2 + h] = s16(r.i(19), h), i.growth[4 + h] = s16(r.i(20), h);
                     genes_[i.id] = i;
                 }
             if (const MbeFile::Table* t = gp.table("ExpTable"))
@@ -785,6 +790,15 @@ bool hasSlot(const Cr3Gene& g, int type, int id) {
 const Cr3OfflineDb::GeneInfo* Cr3OfflineDb::geneInfo(int id) const {
     const auto it = genes_.find(id);
     return it != genes_.end() ? &it->second : nullptr;
+}
+
+std::array<int, 6> Cr3OfflineDb::geneStats(const Cr3Gene& g) const {
+    std::array<int, 6> out{};
+    const GeneInfo* i = geneInfo(g.master);
+    if (!i) return out;
+    const int level = geneLevel(g);
+    for (int k = 0; k < 6; ++k) out[size_t(k)] = i->base[k] + (level - 1) * i->growth[k] / 100 + (k >= 2 ? g.adds[k - 2] : 0);
+    return out;
 }
 
 int Cr3OfflineDb::geneExp(int id, int level) const {

@@ -301,6 +301,48 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "global";
     for (int v : globalWork) o << ' ' << v;
     o << '\n';
+    // the offline database's (cr3Db: what the Vita's DBEmu keeps in its save) - the party, items,
+    // equipment, money, genes, item sheets, presents, quests and the days' marks
+    o << "cr3party";
+    for (int c : cr3Party) o << ' ' << c;
+    o << '\n';
+    for (const auto& [id, n] : cr3Items) o << "cr3item " << id << ' ' << n << '\n';
+    for (const auto& [c, a] : cr3Armour) o << "cr3armour " << c << ' ' << a << '\n';
+    for (const auto& [id, a] : cr3Attachments) o << "cr3attach " << id << ' ' << a.first << ' ' << a.second << '\n';
+    o << "cr3money " << cr3Money << ' ' << cr3Coins << ' ' << cr3CoinsSpent << ' ' << cr3GP << ' ' << cr3GPSpent << ' ' << cr3GeneStock << '\n';
+    o << "cr3days " << cr3Daily << ' ' << cr3VipDays << ' ' << int(cr3VipTrial) << ' ' << cr3LastLogin << ' ' << cr3Cheer << '\n';
+    auto gene = [&o](const Cr3Gene& g) {
+        o << g.master << ' ' << g.exp << ' ' << int(g.locked) << ' ' << int(g.stocked) << ' ' << int(g.fresh);
+        for (const auto& sl : g.slots) o << ' ' << sl[0] << ' ' << sl[1];
+        for (int a : g.adds) o << ' ' << a;
+    };
+    for (const Cr3Gene& g : cr3Genes) {
+        o << "cr3gene ";
+        gene(g);
+        o << '\n';
+    }
+    o << "cr3book";
+    for (int id : cr3GeneBook) o << ' ' << id;
+    o << '\n';
+    for (const auto& [name, p] : cr3Sheets) {
+        o << "cr3sheet " << name << ' ' << p.completed << ' ' << int(p.completedNew) << ' ' << int(p.completedSeen) << ' ' << p.opened.size();
+        for (size_t k = 0; k < p.opened.size(); ++k) o << ' ' << p.opened[k] << ' ' << int(k < p.mark.size() && p.mark[k]);
+        o << '\n';
+    }
+    for (const Cr3Present& p : cr3Presents) {
+        o << "cr3present " << p.item << ' ' << p.count << ' ' << p.from << ' ' << int(p.gene);
+        if (p.gene) o << ' ', gene(p.geneData);
+        o << '\n';
+    }
+    o << "cr3quests " << cr3Quests.state << ' ' << cr3Quests.endedCount << ' ' << cr3Quests.selected << '\n';
+    for (const auto& [key, ids] : {std::pair<const char*, const std::set<int>*>{"cr3begun", &cr3Quests.begun}, {"cr3ended", &cr3Quests.ended}}) {
+        o << key;
+        for (int id : *ids) o << ' ' << id;
+        o << '\n';
+    }
+    o << "cr3offered";
+    for (int id : cr3Quests.offered) o << ' ' << id;
+    o << '\n';
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
     return o.str();
 }
@@ -313,6 +355,16 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
         return false;
     }
     flags.clear();
+    cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear();
+    cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests();
+    auto readGene = [](std::istringstream& l, Cr3Gene& g) {
+        int locked = 0, stocked = 0, fresh = 0;
+        if (!(l >> g.master >> g.exp >> locked >> stocked >> fresh)) return false;
+        g.locked = locked != 0, g.stocked = stocked != 0, g.fresh = fresh != 0;
+        for (auto& sl : g.slots) l >> sl[0] >> sl[1];
+        for (int& a : g.adds) l >> a;
+        return true;
+    };
     std::vector<std::pair<int, int>> oldWork;
     for (short& n : itemCount) n = 0;
     while (std::getline(in, line)) {
@@ -363,6 +415,55 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
                 }
         } else if (key == "global") {
             for (int& v : globalWork) l >> v;
+        } else if (key == "cr3party") {
+            for (int& c : cr3Party) l >> c;
+        } else if (key == "cr3item") {
+            int id = 0, n = 0;
+            if (l >> id >> n) cr3Items[id] = n;
+        } else if (key == "cr3armour") {
+            int c = 0, a = 0;
+            if (l >> c >> a) cr3Armour[c] = a;
+        } else if (key == "cr3attach") {
+            int id = 0, m = 0, lv = 0;
+            if (l >> id >> m >> lv) cr3Attachments[id] = {m, lv};
+        } else if (key == "cr3money") {
+            l >> cr3Money >> cr3Coins >> cr3CoinsSpent >> cr3GP >> cr3GPSpent >> cr3GeneStock;
+        } else if (key == "cr3days") {
+            int trial = 0;
+            l >> cr3Daily >> cr3VipDays >> trial >> cr3LastLogin >> cr3Cheer;
+            cr3VipTrial = trial != 0;
+        } else if (key == "cr3gene") {
+            Cr3Gene g;
+            if (readGene(l, g)) cr3Genes.push_back(g);
+        } else if (key == "cr3book") {
+            for (int id; l >> id;) cr3GeneBook.insert(id);
+        } else if (key == "cr3sheet") {
+            std::string name;
+            Cr3SheetProgress p;
+            int cn = 0, cs = 0;
+            size_t n = 0;
+            if (!(l >> name >> p.completed >> cn >> cs >> n) || n > 10000) continue;
+            p.completedNew = cn != 0, p.completedSeen = cs != 0;
+            p.opened.resize(n), p.mark.resize(n);
+            for (size_t k = 0; k < n; ++k) {
+                int m = 0;
+                l >> p.opened[k] >> m;
+                p.mark[k] = m != 0;
+            }
+            cr3Sheets[name] = p;
+        } else if (key == "cr3present") {
+            Cr3Present p;
+            int g = 0;
+            if (!(l >> p.item >> p.count >> p.from >> g)) continue;
+            p.gene = g != 0;
+            if (p.gene && !readGene(l, p.geneData)) continue;
+            cr3Presents.push_back(p);
+        } else if (key == "cr3quests") {
+            l >> cr3Quests.state >> cr3Quests.endedCount >> cr3Quests.selected;
+        } else if (key == "cr3begun" || key == "cr3ended") {
+            for (int id; l >> id;) (key == "cr3begun" ? cr3Quests.begun : cr3Quests.ended).insert(id);
+        } else if (key == "cr3offered") {
+            for (int id; l >> id;) cr3Quests.offered.push_back(id);
         } else if (extra) {
             std::string rest;
             std::getline(l >> std::ws, rest);

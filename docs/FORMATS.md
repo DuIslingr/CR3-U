@@ -322,11 +322,57 @@ puts the portrait 0.87 lower), HeaderMenu (0x42), GeneSynthesisFutter (0xa0) and
 - GeneSynthesisFutter: `comFtrMixMenu` at `comFtrPosition`'s fit4; content 0 the genes held of 50
   (`comFtrMixGenesPanel`) and the stock of its room (`comFtrMixBoxPanel`) - `comListNum_fr00`
   digits 0.19 apart from `call_comListNum_fr00_001` / `_002`; content 1 (a list) the tabs
-  `comFtrMixTabTap_fr00` frames 0 .. 3 (All, N, R, SR) instead. Its back button (ComBackButton:
-  `comBackMenu` at `call_comBackMenu_001_fit6`) closes the lab.
+  `comFtrMixTabTap_fr00` frames 0 .. 3 (ALL, N, R, SR; + 6 the one chosen - a radio, ALL to begin
+  with) instead. Its back button (ComBackButton: `comBackMenu` at `call_comBackMenu_001_fit6`)
+  closes the lab.
+- The help line: SetHeaderSentence's text at `comHeMenu`'s `typeM_L01` - Cr3UtilGetMnlCmpAnnounceData,
+  `message\AnnounceMenuName.dat` (u32 the records' offset, the texts', the count; a record two
+  u32s, the Japanese text's and the English's, by number from 1; `\r\n` a line break).
+
+Combine Genes (GeneSynthesisMain 9 ..): its own two buttons - Combine (30) and Enhance (31), Friends
+(32) only with friends - from slot 004; Combine takes the clerk away (EndCutInMenu(2)) and the
+footer, and:
+
+- The base gene (GeneChangeMenu 0xa5; title frame 31, help 0x18e): `geneCngStsMenu` at
+  `geneCngStsPositon`'s `call_geneCngStsMenu` (-4.59, 2.19; its own animation slides it in from
+  2.8 to the right) - the eight commands and skills at `typeM_L01` .. `L08` (those its levels still
+  teach after them, dimmed), the element `btStAtbIcon_fr00` (frame its kind), the lock
+  `geneCnglockBtn_fr00` (1 locked), `camEquJenePanel` at `call_ccamEquJenePanel` with the name
+  (`typeM_L01`), the level (`camEquNumLv_num00`: `comNum04_fr00` x 3, "MAX" frames 10 .. 12), the six
+  numbers (`geneCngStsNum_num00` at `call_camEquNumSts_num00_000` .. `005`: `comNum00_fr00` x 5 - HP,
+  MP, attack, defence, speed, luck: gene_para's base + (level - 1) x growth / 100, the items'
+  additions to the last four) and the HP / MP bars. The cards: `geneCngListMenu` at
+  `geneCngListPosition`'s fit6, its nine `call_geneCngListPanel` joints an arc - the card in focus
+  at the fifth (the arc's left-most) at 4 x, the others at 3 x, (x, y + 0.25); the focus and count
+  in `geneCngListNum_num00`'s `geneCngNum_fr00` digits. Tapping the card in focus chooses it.
+- CardModel: `card_default` with materials `picture` (`card_<series:03>`), `rarity`
+  (`card_rar_<grade:02>`), `attribute` (`card_att_<kind:02>`), `star_1` .. `star_5` (the first
+  `stars` at full diffuse, the rest at a tenth); its sheen `card_eff_<min(grade, 2):02>` (a looping
+  figure) at its place and scale; half bright where it can't be chosen. gene_para Gene +0x58 is the
+  stars.
+- The material (state 0x10 ..; help 0x177): GeneSynthesisListMenu (`comListMenu` at
+  `comListPosition`, its `_io` in) - the merges PreviewMergeGene offers with genes neither stocked
+  nor locked, by the footer's tab (the result's grade), three rows 1.24 apart from
+  `call_comListPanel`: `comListLPanel`, at its `call_comListLMixing` a `comListLMixing` with the
+  result's picture (`comListGeneIcon_id00`'s `mat_card_001`), element, grade (`comListRare_fr00`),
+  stars (`mixStar_fr00`, frame stars - 1), dark name (`typeM_L01`), level (`comListLv_txt`'s
+  `comListNumUn_num00`: `comListNum_fr00` + 10, "MAX" 40 ..) and gold (`comListNumUn_num00` at `_001`:
+  `comListUnIcon_fr00` frame 2, seven digits + 30) - dimmed where unaffordable. NormalSynthesisMenu
+  beside it: `mixMtrPositon`'s `call_mixMtrMenu_001` / `_002` a MaterialGenePanel each (`mixMtrMenu`:
+  `mixMtrText_fr00` 0 / 1, `mixMtrPanel` with picture, element, grade and name at `typeM_L00`,
+  `mixMtrLvPanel`'s level, `mixStar_fr00`) - the base and the row's partner; `mixBtn_fr00` at
+  `call_mixBtn_fr00` swaps them for the result's card (9 x, at `call_GeneCard` - (0.25, 0.02)).
+- Choosing a row (again) asks: the list and footer gone, the two at `mixOkMtrPositon`'s joints, the
+  system window (`comMsgSMenu` at `comMsgSPosition`'s fit2, lines at `typeM_L05` .. `L07`:
+  AnnounceMenuName 0x175) and YNChoiceButton (interface 0xf: `comBtnMenu`'s buttons from its joint
+  10 on - slots 005 / 006 - OK, icon and text 10, and Cancel, 11). OK merges (DBEmu MergeGene: 100
+  gold a level of the two) - the header away, GeneSynthesizeEffect (`ue002jene01`; CR3-U a white
+  flash for now), then the new gene.
 
 `cr3view --area t0108 --flag 2001 --input call:c115_00,lab:talk|combine|sell|repository|back`
-(call:<function> runs an area function as if tapped).
+(call:<function> runs an area function as if tapped); after Combine `lab:normal`, `lab:card<n>`,
+`lab:row<n>`, `lab:tab<n>`, `lab:mix`, `lab:yes` / `lab:no`, `lab:up` / `lab:down`. `--gene
+<id>[:<level>]` and `--gold <n>` give genes and gold to begin with.
 
 ## Battles (CR3)
 

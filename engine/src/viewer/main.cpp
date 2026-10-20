@@ -5623,18 +5623,26 @@ struct Viewer {
         }
         const bool scripted = areaEvents && areaEvents->running();
         if (scripted) sx = sy = 0; // (PauseMove: the player held while the area's script runs)
-        // (the gene lab: its clock since it opened; --input lab:talk / combine / sell / repository /
-        // back - its buttons, for tests)
+        // (the gene lab: its clock since it opened, the screen's; --input lab:talk / combine / sell /
+        // repository / back / normal / enhance - its buttons -, lab:card<n> / row<n> / tab<n> / mix /
+        // yes / no / down / up, for tests)
         if (areaEvents && areaEvents->geneLab().open) {
-            if (!geneLabWasOpen) geneLabClock = 0, geneLabFocus = 0;
+            if (!geneLabWasOpen) geneLabClock = 0, geneLabFocus = 0, geneMenu = Cr3GeneMenu();
             geneLabClock += dt;
-            if (!inputScript.empty() && inputScript.front().compare(0, 4, "lab:") == 0 && geneLabClock > 1.0f && uiClock >= inputNext &&
-                !areaEvents->geneLab().talking) {
-                static const std::map<std::string, int> kLab = {{"talk", 17}, {"combine", 28}, {"sell", 21}, {"repository", 29}, {"back", -1}};
-                const auto it = kLab.find(inputScript.front().substr(4));
+            geneMenu.since += dt;
+            if (geneMenu.screen == 5 && geneMenu.since >= 1.5f) geneMenu.screen = 6, geneMenu.since = 0.75f; // (the flash over: its card)
+            if (!inputScript.empty() && inputScript.front().compare(0, 4, "lab:") == 0 && geneLabClock > 1.0f && geneMenu.since > 0.5f &&
+                uiClock >= inputNext && !areaEvents->geneLab().talking) {
+                static const std::map<std::string, int> kLab = {{"talk", 17},  {"combine", 28},  {"sell", 21},    {"repository", 29}, {"back", -1},
+                                                                {"normal", 30}, {"enhance", 31}, {"mix", kTapMix}, {"yes", kTapYes},   {"no", kTapNo}};
+                const std::string want = inputScript.front().substr(4);
                 inputScript.pop_front();
                 inputNext = uiClock + 0.5f;
-                if (it != kLab.end()) chooseGeneLab(*areaEvents, it->second);
+                if (const auto it = kLab.find(want); it != kLab.end()) chooseGeneLab(*areaEvents, it->second);
+                else if (want == "down" || want == "up") geneLabKey(want == "down" ? SDLK_DOWN : SDLK_UP);
+                else if (want.compare(0, 4, "card") == 0) chooseGeneLab(*areaEvents, kTapCard + std::atoi(want.c_str() + 4));
+                else if (want.compare(0, 3, "row") == 0) chooseGeneLab(*areaEvents, kTapRow + std::atoi(want.c_str() + 3));
+                else if (want.compare(0, 3, "tab") == 0) chooseGeneLab(*areaEvents, kTapTab + std::atoi(want.c_str() + 3));
             }
         }
         geneLabWasOpen = areaEvents && areaEvents->geneLab().open;
@@ -11846,25 +11854,70 @@ struct Viewer {
     // The gene lab's screen (EventRuntime::GeneLab: GeneSynthesisMain and its company). Behind the
     // clerk: shBgMenu at shBgPositon's call_shBgMenu_fit0. Over it: the header (HeaderMenu 0x42 -
     // comHePosition sliding in by comHePosition_io, comHeMenu at its fit7 with the title
-    // comHeTitle_fr00 at frame 30 (37 in VS), comHeIconMenu's battery, comHeInfoAMenu's money
+    // comHeTitle_fr00 at frame 30 (37 in VS), 31 choosing genes, and the help line at its typeM_L01
+    // (SetHeaderSentence: AnnounceMenuName's), comHeIconMenu's battery, comHeInfoAMenu's money
     // (comHeMlPanel: 7 comHeNum_fr00 digits, frames 0..9), clock (comHeTimePanel: HHMM, frames 30..,
     // the hours' tens hidden under 10) and Oz coins (comHeCoinPanel: 5, frames 20..) - InterfaceMain::
-    // SetViewNumbers: leading zeros hidden); the buttons (comBtnMenu 0x2c, slots 004..007:
+    // SetViewNumbers: leading zeros hidden); the buttons (comBtnMenu 0x2c, from slot 004 on:
     // SetGeneSynthesisTopButton's Talk 17, Combine Genes 28, Sell 21, Gene Repository 29 - the last
-    // three off while flags 3613 / 3614 / 3615 are set); the footer and its back button
+    // three off while flags 3613 / 3614 / 3615 are set; Combine's SetGeneSynthesisSecondButton:
+    // Combine 30, Enhance 31 - Friends 32 only with friends, none offline); the footer and its back
+    // button. Combine Genes (GeneSynthesisMain 0xb ..): the clerk away, the base gene chosen from
+    // the cards (GeneChangeMenu), then the material from the merges it could make (GeneSynthesisList
+    // Menu: their results, by the footer's grade tabs) beside the two (NormalSynthesisMenu - the mix
+    // button shows the result's card instead), asked (AnnounceMenuName 0x175), merged (DBEmu
+    // MergeGene), its card shown
     struct Cr3GeneLabTap {
         float x0, y0, x1, y1;
-        int id; // (a button's: 17, 28, 21, 29; -1 back)
+        int id; // (a button's: 17, 28, 21, 29, 30, 31; -1 back; kTapCard + n a card, kTapRow + n a row, kTapTab + n a tab; kTapMix the mix button; kTapYes / kTapNo)
     };
+    static constexpr int kTapCard = 1000, kTapRow = 2000, kTapTab = 3000, kTapMix = 4000, kTapYes = 4001, kTapNo = 4002;
     std::vector<Cr3GeneLabTap> geneLabTaps;
     bool geneLabWasOpen = false;
-    bool geneLabFooterTabs = false; // (GeneSynthesisFutter +0xd4: 0 the counts, 1 the list's tabs)
     int geneLabFocus = 0;
     float geneLabClock = 0; // (since it opened: the header's and buttons' io)
-    static constexpr int kGeneLabButtons[4] = {17, 28, 21, 29};
-    bool geneLabButtonOn(int k) const {
-        static constexpr int kFlags[4] = {0, 3613, 3614, 3615};
-        return k == 0 || !game.flag(kFlags[k]);
+    struct Cr3GeneMenu {
+        // 0 the lab's buttons, 1 Combine's, 2 the base gene (GeneChangeMenu), 3 the material
+        // (GeneSynthesisListMenu, NormalSynthesisMenu), 4 asked, 5 the merge's flash, 6 its card
+        int screen = 0;
+        float since = 0;         // (the screen's clock)
+        std::vector<int> genes;  // (2: the cards - cr3Genes' held ones, in order)
+        int focus = 0;           // (2: the card in focus)
+        int base = -1;           // (3 ..: the base, its cr3Genes index)
+        std::vector<int> rows;   // (3: the merges listed - mergePreviews() indices, by the tab)
+        int tab = 0;             // (3: GeneSynthesisFutter's tab - 0 ALL, 1 .. 3 N, R, SR: the result's grade + 1)
+        int row = 0;             // (3: the row in focus)
+        bool result = false;     // (3: the mix button's - the result's card over the two)
+        int made = -1;           // (6: the new gene - its cr3Genes index)
+        std::string message;     // (an alert's, over it)
+    } geneMenu;
+    void geneMenuScreen(int screen) { geneMenu.screen = screen, geneMenu.since = 0, geneLabFocus = 0; }
+    std::vector<int> geneLabButtons() const {
+        if (geneMenu.screen == 1) return {30, 31};
+        return {17, 28, 21, 29};
+    }
+    int geneLabHeld() const {
+        return int(std::count_if(game.cr3Genes.begin(), game.cr3Genes.end(), [](const cr3::Cr3Gene& g) { return !g.stocked; }));
+    }
+    bool geneLabButtonOn(int id) const {
+        if (id == 28) return !game.flag(3613) && geneLabHeld() >= 2; // (Combine: two genes at least)
+        if (id == 21) return !game.flag(3614);
+        if (id == 29) return !game.flag(3615);
+        return true;
+    }
+    // AnnounceData (message\AnnounceMenuName.dat - Cr3UtilGetMnlCmpAnnounceData's): u32 the
+    // records' offset, the texts', the count; a record two u32s - the Japanese text's, the
+    // English's - by number from 1; "\r\n" in them a line break
+    std::string menuAnnounce(int id) {
+        std::vector<uint8_t>& d = messageFiles["AnnounceMenuName"];
+        if (d.empty() && !archive.read("message\\AnnounceMenuName.dat", d)) return {};
+        auto u32 = [&](size_t o) { return o + 4 <= d.size() ? uint32_t(d[o] | d[o + 1] << 8 | d[o + 2] << 16 | uint32_t(d[o + 3]) << 24) : 0u; };
+        if (id < 1 || uint32_t(id) > u32(8)) return {};
+        const size_t o = size_t(u32(4)) + u32(size_t(u32(0)) + size_t(id - 1) * 8 + (optionLanguage == 0 ? 0 : 4));
+        std::string s;
+        for (size_t k = o; k < d.size() && d[k]; ++k) s += char(d[k]);
+        for (size_t p; (p = s.find('\r')) != std::string::npos;) s.erase(p, 1);
+        return s;
     }
     // a value in a panel's numbered digit joints (call_<prefix>_001 ..): InterfaceMain::SetViewNumbers
     void cr3UiDigits(const UiFig& panel, const std::string& prefix, const std::string& figure, long value, int places, int offset,
@@ -11884,6 +11937,87 @@ struct Viewer {
             if (cr3UiCall(panel, joint, x, y)) cr3UiPut(figure, "", float(d + offset) / 30, x, y, view);
         }
     }
+    // a number's digits on a panel's numbered joints, `fig` posed at each (frame digit + offset)
+    // - its leading zeros left out; "MAX" (frames 40, 41, 42 / 10, 11, 12) where `max` and 3 places
+    void cr3UiNumber(const UiFig& panel, const std::string& prefix, const std::string& fig, long value, int places, int offset, const Mat4& view,
+                     float alpha = 1, int maxFrame = -1) {
+        long most = 1;
+        for (int k = 0; k < places; ++k) most *= 10;
+        value = std::clamp(value, 0L, most - 1);
+        bool shown = false;
+        for (int k = 0; k < places; ++k) {
+            most /= 10;
+            const int d = int(value / most % 10);
+            if (d > 0 || k == places - 1) shown = true;
+            if (!shown && maxFrame < 0) continue;
+            char joint[64];
+            std::snprintf(joint, sizeof joint, "%s_%03d", prefix.c_str(), k + 1);
+            float x, y;
+            if (cr3UiCall(panel, joint, x, y)) cr3UiPut(fig, "", float(maxFrame >= 0 ? maxFrame + k : d + offset) / 30, x, y, view, alpha);
+        }
+    }
+    // a figure's meshes of one material drawn with another image (PartsBase::SetMaterialColorSampler;
+    // its own where the release has no such image)
+    std::map<std::string, std::vector<cr3::Texture*>> uiOwnTextures;
+    void cr3UiMaterial(UiFig& u, const std::string& material, const std::string& image) {
+        std::vector<cr3::Texture*>& own = uiOwnTextures[u.fig.name];
+        if (own.size() != u.fig.meshes.size()) {
+            own.clear();
+            for (const ViewMesh& vm : u.fig.meshes) own.push_back(vm.texture);
+        }
+        cr3::Texture* t = texture(image);
+        for (size_t k = 0; k < u.fig.meshes.size(); ++k) {
+            const uint32_t mi = u.fig.meshes[k].source.material;
+            if (mi < u.materials.size() && u.materials[mi] == material) u.fig.meshes[k].texture = t ? t : own[k];
+        }
+    }
+    // CardModel: card_default with the gene's picture (card_<series>), rarity (card_rar_<grade>)
+    // and element (card_att_<kind>) on those materials, star_1 .. star_<stars> lit and the rest
+    // at a tenth (SetStarBrightness), the sheen card_eff_<grade, 2 at most> over it, looping -
+    // at (x, y, z), `scale` x; dimmed to half where it can't be chosen (SetSelectabile false)
+    void drawCr3Card(int master, float x, float y, float z, float scale, const Mat4& view, float alpha = 1, bool selectable = true) {
+        const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(master) : nullptr;
+        if (!gi) return;
+        UiFig& u = uiFig("card_default");
+        u.fig.place = cr3::Mat34();
+        u.fig.place.m[0] = u.fig.place.m[5] = u.fig.place.m[10] = scale;
+        u.fig.place.m[3] = x, u.fig.place.m[7] = y, u.fig.place.m[11] = z;
+        poseUi(u, "card_default", 0);
+        char name[32];
+        std::snprintf(name, sizeof name, "card_%03d", gi->series);
+        cr3UiMaterial(u, "picture", name);
+        std::snprintf(name, sizeof name, "card_rar_%02d", gi->grade);
+        cr3UiMaterial(u, "rarity", name);
+        std::snprintf(name, sizeof name, "card_att_%02d", gi->kind);
+        cr3UiMaterial(u, "attribute", name);
+        const float dim = selectable ? 1.0f : 0.5f;
+        for (ViewMesh& vm : u.fig.meshes) {
+            const uint32_t mi = vm.source.material;
+            const std::string mn = mi < u.materials.size() ? u.materials[mi] : "";
+            float b = mn == "picture" || mn == "rarity" || mn == "attribute" ? dim : -1;
+            if (mn.compare(0, 5, "star_") == 0) b = (std::atoi(mn.c_str() + 5) <= gi->stars ? 1.0f : 0.1f) * dim;
+            if (b < 0) continue;
+            vm.material.params[0x33] = {b, b, b, 1};
+        }
+        u.fig.tint[3] = alpha;
+        drawFigure(u.fig, view.data());
+        if (!selectable) return;
+        std::snprintf(name, sizeof name, "card_eff_%02d", std::min(gi->grade, 2));
+        UiFig& e = uiFig(name);
+        e.fig.place = u.fig.place;
+        poseUi(e, name, uiClock, true);
+        e.fig.tint[3] = alpha;
+        drawFigure(e.fig, view.data());
+    }
+    // the help line (SetHeaderSentence: comHeMenu's typeM_L01)
+    void drawGeneLabSentence(const UiFig& menu, const std::string& text, int w, int h) {
+        float tx, ty;
+        if (text.empty() || !cr3UiCall(menu, "typeM_L01", tx, ty)) return;
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        const size_t nl = text.find("\\n");
+        drawUiText(text.substr(0, nl), 24, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+        if (nl != std::string::npos) drawUiText(text.substr(nl + 2), 24, (tx + 0.075f) / 10, (ty - 0.15f - 0.3f) / 10, w, h, true, 1.0f);
+    }
     void drawCr3GeneLab(cr3::EventRuntime& ev, int w, int h, bool front) {
         const cr3::EventRuntime::GeneLab& lab = ev.geneLab();
         if (!lab.open || lab.talking) return;
@@ -11900,13 +12034,18 @@ struct Viewer {
             return;
         }
         dev->clearDepth();
+        geneLabTaps.clear();
+        const int screen = geneMenu.screen;
+        if (screen >= 5) return drawGeneMerge(w, h, view);
         const float t = geneLabClock;
         // the header
         UiFig& head = cr3UiPut("comheposition", "", t, 0, 0, view); // (HeaderMenu::InterfaceOpenAnimeSet: its own animation - the io animator closes it)
         if (cr3UiCall(head, "call_comHeMenu", x, y, w, h)) {
             UiFig& menu = cr3UiPut("comhemenu", "", 0, x, y, view);
             float tx, ty;
-            if (cr3UiCall(menu, "call_comHeTitle_fr00", tx, ty)) cr3UiPut("comhetitle_fr00", "", 30.0f / 30, tx, ty, view);
+            if (cr3UiCall(menu, "call_comHeTitle_fr00", tx, ty)) cr3UiPut("comhetitle_fr00", "", (screen >= 2 ? 31.0f : 30.0f) / 30, tx, ty, view);
+            if (screen == 2) drawGeneLabSentence(menu, menuAnnounce(0x18e), w, h);
+            if (screen == 3) drawGeneLabSentence(menu, menuAnnounce(0x177), w, h); // (asked: " ")
         }
         if (cr3UiCall(head, "call_comHeIconMenu", x, y, w, h)) {
             UiFig& icon = cr3UiPut("comheiconmenu", "", 0, x, y, view);
@@ -11946,44 +12085,49 @@ struct Viewer {
             }
         }
         // the buttons
-        geneLabTaps.clear();
-        UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
-        if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
-            UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", t, x, y, view);
-            for (int b = 0; b < 4; ++b) {
-                float px, py;
-                if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(4 + b), px, py)) continue;
-                const int id = kGeneLabButtons[b];
-                const bool off = !geneLabButtonOn(b);
+        if (screen <= 1) {
+            const std::vector<int> ids = geneLabButtons();
+            UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
+            if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", screen == 0 ? t : geneMenu.since, x, y, view);
+                for (int b = 0; b < int(ids.size()); ++b) {
+                    float px, py;
+                    if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(4 + b), px, py)) continue;
+                    const int id = ids[size_t(b)];
+                    const bool off = !geneLabButtonOn(id);
+                    for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
+                        UiFig& u = uiFig(part);
+                        u.fig.tint[0] = u.fig.tint[1] = off ? 0.549f : 1.0f, u.fig.tint[2] = off ? 0.655f : 1.0f;
+                    }
+                    UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
+                    float cx, cy;
+                    if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy))
+                        cr3UiPut(b == geneLabFocus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
+                    float ax, ay, bx, by;
+                    if (!off && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, id});
+                }
                 for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
                     UiFig& u = uiFig(part);
-                    u.fig.tint[0] = u.fig.tint[1] = off ? 0.549f : 1.0f, u.fig.tint[2] = off ? 0.655f : 1.0f;
+                    u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = 1.0f;
                 }
-                UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
-                float cx, cy;
-                if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
-                if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
-                if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy))
-                    cr3UiPut(b == geneLabFocus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
-                if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
-                float ax, ay, bx, by;
-                if (!off && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, id});
-            }
-            for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
-                UiFig& u = uiFig(part);
-                u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = 1.0f;
             }
         }
+        if (screen == 2) drawGeneBase(w, h, view);
+        if (screen == 3 || screen == 4) drawGeneMaterials(w, h, view);
         // the footer (GeneSynthesisFutter 0xa0: comFtrMixMenu at comFtrPosition's fit4 - the genes
         // held of 50 (comFtrMixGenesPanel), the stock of its room (comFtrMixBoxPanel), each a
         // comListNum_fr00 digit 0.19 apart from its call_comListNum_fr00_001 / _002 (SetNumberOfGene:
-        // leading zeros hidden) - or, with a list (+0xd4 1), the tabs comFtrMixTabTap_fr00 frames 0 ..
-        // 3 on comFtrMixTabPanel)
+        // leading zeros hidden) - or, with a list (+0xd4 1), the tabs comFtrMixTabTap_fr00 on
+        // comFtrMixTabPanel: frames 0 .. 3 ALL, N, R, SR, + 6 the one chosen - a radio, ALL to begin with); none while the base
+        // is chosen (EndGeneSynthesisFooter - GeneChangeMenu's own footer has only its back)
         // and its back button (ComBackButton: comBackMenu at comFtrPosition's call_comBackMenu_001_fit6)
         UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
-        if (cr3UiCall(foot, "call_comFtrMixMenu", x, y, w, h)) {
+        if (screen != 2 && screen != 4 && cr3UiCall(foot, "call_comFtrMixMenu", x, y, w, h)) {
             UiFig& mix = cr3UiPut("comftrmixmenu", "", 0, x, y, view);
-            const int held = int(std::count_if(game.cr3Genes.begin(), game.cr3Genes.end(), [](const cr3::Cr3Gene& g) { return !g.stocked; }));
+            const int held = geneLabHeld();
             const int stocked = int(game.cr3Genes.size()) - held;
             const int capacity = game.cr3Db ? game.cr3Db->constant("GENE_CAPACITY", 50) : 50;
             auto number = [&](const UiFig& panel, const std::string& joint, int value, int places) {
@@ -12001,72 +12145,522 @@ struct Viewer {
                 }
             };
             float px, py;
-            if (!geneLabFooterTabs && cr3UiCall(mix, "call_comFtrMixGenesPanel", px, py)) {
+            const bool tabs = screen == 3 || screen == 4;
+            if (!tabs && cr3UiCall(mix, "call_comFtrMixGenesPanel", px, py)) {
                 UiFig& genes = cr3UiPut("comftrmixgenespanel", "", 0, px, py, view);
                 number(genes, "call_comListNum_fr00_001", held, 2);
                 number(genes, "call_comListNum_fr00_002", capacity, 2);
             }
-            if (!geneLabFooterTabs && cr3UiCall(mix, "call_comFtrMixBoxPanel", px, py)) {
+            if (!tabs && cr3UiCall(mix, "call_comFtrMixBoxPanel", px, py)) {
                 UiFig& box = cr3UiPut("comftrmixboxpanel", "", 0, px, py, view);
                 number(box, "call_comListNum_fr00_001", stocked, 3);
                 number(box, "call_comListNum_fr00_002", game.cr3GeneStock, 3);
             }
-            if (geneLabFooterTabs && cr3UiCall(mix, "call_comFtrMixTabPanel", px, py)) {
-                UiFig& tabs = cr3UiPut("comftrmixtabpanel", "", 0, px, py, view);
+            if (tabs && cr3UiCall(mix, "call_comFtrMixTabPanel", px, py)) {
+                UiFig& panel = cr3UiPut("comftrmixtabpanel", "", 0, px, py, view);
                 for (int k = 0; k < 4; ++k) {
                     float tx, ty;
-                    if (cr3UiCall(tabs, "call_comFtrMixTabTap_fr00_00" + std::to_string(k + 1), tx, ty))
-                        cr3UiPut("comftrmixtabtap_fr00", "", float(k) / 30, tx, ty, view);
+                    if (cr3UiCall(panel, "call_comFtrMixTabTap_fr00_00" + std::to_string(k + 1), tx, ty))
+                        cr3UiPut("comftrmixtabtap_fr00", "", float(k + (k == geneMenu.tab ? 6 : 0)) / 30, tx, ty, view); // (TouchGestureTap: the chosen one's frame + 6)
+                    float ax, ay, bx, by;
+                    if (cr3UiCall(panel, "tapAreaS0" + std::to_string(k + 1), ax, ay) && cr3UiCall(panel, "tapAreaE0" + std::to_string(k + 1), bx, by))
+                        geneLabTaps.push_back({ax, ay, bx, by, kTapTab + k});
                 }
             }
         }
-        if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+        if (screen != 4 && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
             UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
             float cx, cy, ax, ay, bx, by;
             if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
             if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, -1});
         }
+        if (screen == 4) drawGeneAsk(w, h, view);
     }
-    // a choice in the lab: Talk (the clerk's script's), Back (closes it); the rest to come
+    // the base gene (GeneChangeMenu 0xa5, CreateBaseGeneSelectMenu): its status at the left -
+    // geneCngStsMenu at geneCngStsPositon's call_geneCngStsMenu: the eight commands and skills at
+    // typeM_L01 .. L08 (those to come dim), the element (btStAtbIcon_fr00, frame the kind), the lock
+    // (geneCnglockBtn_fr00: 1 locked), camEquJenePanel at call_ccamEquJenePanel - the name at its
+    // typeM_L01, the level (camEquNumLv_num00: comNum04_fr00's three - 10, 11, 12 "MAX"), the six
+    // numbers (geneCngStsNum_num00 at call_camEquNumSts_num00_000 .. 005: comNum00_fr00's five), the
+    // HP and MP bars full; the cards at the right - geneCngListMenu at geneCngListPosition's fit6,
+    // its nine call_geneCngListPanel joints the places (x, y + 0.25, z x 10), the one in focus the
+    // fifth at 4 x, the rest 3 x
+    void drawGeneBase(int w, int h, const Mat4& view) {
+        const float t = geneMenu.since, alpha = std::min(t / 0.2f, 1.0f);
+        const std::vector<cr3::Cr3Gene>& genes = game.cr3Genes;
+        geneMenu.focus = std::clamp(geneMenu.focus, 0, std::max(int(geneMenu.genes.size()) - 1, 0));
+        float x, y;
+        UiFig& lp = cr3UiPut("genecnglistposition", "genecnglistposition_io", t, 0, 0, view, alpha);
+        if (cr3UiCall(lp, "call_geneCngListMenu", x, y, w, h)) {
+            UiFig& list = cr3UiPut("genecnglistmenu", "genecnglistmenu_io", t, x, y, view, alpha);
+            float px[9], py[9], pz[9];
+            int slots = 0;
+            for (const std::string& j : list.joints) {
+                if (j.compare(0, 21, "call_geneCngListPanel") != 0 || slots >= 9) continue;
+                if (!uiJoint(list, j, px[slots], py[slots])) continue;
+                pz[slots] = 0; // (the joints' depth: drawn back to front instead)
+                ++slots;
+            }
+            // (the list's count: the one in focus, of all - geneCngListNum_num00's comNum00 digits)
+            for (int k = 0; k < 2; ++k) {
+                float nx, ny;
+                if (!cr3UiCall(list, "call_geneCngListNum_num00_00" + std::to_string(k + 1), nx, ny)) continue;
+                UiFig& num = cr3UiPut("genecnglistnum_num00", "", 0, nx, ny, view, alpha);
+                cr3UiNumber(num, "call_geneCngNum_fr00", "genecngnum_fr00", k == 0 ? geneMenu.focus + 1 : int(geneMenu.genes.size()), 3, 0, view, alpha);
+            }
+            if (slots == 9) {
+                dev->clearDepth();
+                // (back to front: the far ones first, the one in focus last)
+                std::vector<int> order;
+                for (int s = 1; s <= 8; ++s) order.push_back(s);
+                std::sort(order.begin(), order.end(), [](int a, int b) { return std::abs(a - 5) > std::abs(b - 5); });
+                for (const int s : order) {
+                    const int g = geneMenu.focus + s - 5;
+                    if (g < 0 || g >= int(geneMenu.genes.size())) continue;
+                    const cr3::Cr3Gene& gene = genes[size_t(geneMenu.genes[size_t(g)])];
+                    const float scale = s == 5 ? 4.0f : 3.0f;
+                    drawCr3Card(gene.master, px[s], py[s] + 0.25f, pz[s] + float(8 - std::abs(s - 5)) * 0.1f, scale, view, alpha);
+                    const float hw = 0.15f * scale, hh = 0.22f * scale; // (its tap: the card's face)
+                    geneLabTaps.push_back({px[s] - hw, py[s] + 0.25f - hh, px[s] + hw, py[s] + 0.25f + hh, kTapCard + g});
+                }
+            }
+        }
+        if (geneMenu.genes.empty()) return;
+        const cr3::Cr3Gene& gene = genes[size_t(geneMenu.genes[size_t(geneMenu.focus)])];
+        const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(gene.master) : nullptr;
+        if (!gi) return;
+        dev->clearDepth();
+        UiFig& sp = cr3UiPut("genecngstspositon", "", t, 0, 0, view, alpha); // (its own animation: in from the right)
+        if (!cr3UiCall(sp, "call_geneCngStsMenu", x, y)) return;
+        UiFig& sts = cr3UiPut("genecngstsmenu", "", 0, x, y, view, alpha);
+        float cx, cy;
+        if (cr3UiCall(sts, "call_btStAtbIcon_fr00", cx, cy)) cr3UiPut("btstatbicon_fr00", "", float(gi->kind) / 30, cx, cy, view, alpha);
+        if (cr3UiCall(sts, "call_geneCnglockBtn_fr00", cx, cy)) cr3UiPut("genecnglockbtn_fr00", "", gene.locked ? 1.0f / 30 : 0.0f, cx, cy, view, alpha);
+        const int level = game.cr3Db->geneLevel(gene);
+        const std::array<int, 6> stats = game.cr3Db->geneStats(gene);
+        if (cr3UiCall(sts, "call_ccamEquJenePanel", cx, cy)) {
+            UiFig& panel = cr3UiPut("camequjenepanel", "", 0, cx, cy, view, alpha);
+            float nx, ny;
+            if (cr3UiCall(panel, "call_camEquHp_per", nx, ny)) cr3UiPut("camequhp_per", "", 100.0f / 30, nx, ny, view, alpha);
+            if (cr3UiCall(panel, "call_camEquMp_per", nx, ny)) cr3UiPut("cameqump_per", "", 100.0f / 30, nx, ny, view, alpha);
+            if (cr3UiCall(panel, "call_camEquNumLv_num00", nx, ny)) {
+                UiFig& lv = cr3UiPut("camequnumlv_num00", "", 0, nx, ny, view, alpha);
+                cr3UiNumber(lv, "call_comNum04_fr00", "comnum04_fr00", level, 3, 0, view, alpha, level >= gi->maxLevel ? 10 : -1);
+            }
+            for (int k = 0; k < 6; ++k) {
+                char joint[40];
+                std::snprintf(joint, sizeof joint, "call_camEquNumSts_num00_%03d", k);
+                if (!cr3UiCall(panel, joint, nx, ny)) continue;
+                UiFig& num = cr3UiPut("genecngstsnum_num00", "", 0, nx, ny, view, alpha);
+                cr3UiNumber(num, "call_comNum00_fr00", "comnum00_fr00", stats[size_t(k)], 5, 0, view, alpha);
+            }
+            if (cr3UiCall(panel, "typeM_L01", nx, ny)) {
+                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                drawUiText(cr3NameOf("gene_name.mbe", "GeneName", gene.master), 26, (nx + 0.075f) / 10, (ny - 0.15f) / 10, w, h, true, 0.26f); // (dark on the light panel)
+            }
+        }
+        // the eight: its slots' commands and skills, then (dim) those its levels still to come teach
+        std::vector<std::pair<std::string, bool>> lines;
+        for (int s = 0; s < 8; ++s) {
+            const int type = gene.slots[s][0], id = gene.slots[s][1];
+            if (id < 0) continue;
+            lines.push_back({type == 1 ? cr3NameOf("skill_name.mbe", "SkillName", id) : cr3NameOf("command_name.mbe", "CommandName", id), true});
+        }
+        for (const auto& l : gi->learns)
+            if (l[0] > level && lines.size() < 8) lines.push_back({l[1] == 1 ? cr3NameOf("skill_name.mbe", "SkillName", l[2]) : cr3NameOf("command_name.mbe", "CommandName", l[2]), false});
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        for (size_t k = 0; k < lines.size() && k < 8; ++k) {
+            char joint[16];
+            std::snprintf(joint, sizeof joint, "typeM_L%02zu", k + 1);
+            if (cr3UiCall(sts, joint, cx, cy)) drawUiText(lines[k].first, 24, (cx + 0.075f) / 10, (cy - 0.15f) / 10, w, h, true, lines[k].second ? 0.26f : 0.6f);
+        }
+    }
+    // the materials (GeneSynthesisListMenu 0xa2: comListMenu at comListPosition's call_comListMenu,
+    // its io animator in; three rows 1.24 apart from call_comListPanel - comListLPanel, at its
+    // call_comListLMixing comListLMixing: the result's picture (comListGeneIcon_id00's mat_card_001),
+    // element, grade (comListRare_fr00), stars (mixStar_fr00: stars - 1), name (typeM_L01, dark),
+    // level (comListLv_txt's comListNumUn - comListNum_fr00 + 10; "MAX" 40 ..) and the gold (comListNumUn
+    // at _001: comListUnIcon_fr00 2, 7 digits + 30), the cursor comListLCursor on the one in focus,
+    // those not affordable dimmed) beside NormalSynthesisMenu (0xa1: mixMtrPositon - the base and
+    // the material in mixMtrMenu at call_mixMtrMenu_001 / _002, titled mixMtrText_fr00 0 / 1, each
+    // its picture, element, grade, name, stars and level (mixMtrLvPanel); the mix button
+    // mixBtn_fr00 at call_mixBtn_fr00 - the result's card (9 x, at call_GeneCard - 0.25, - 0.02) in
+    // their place)
+    void drawGeneRowParts(const UiFig& mixing, int master, int level, int maxLevel, int gold, const Mat4& view, float alpha, int w, int h) {
+        const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(master) : nullptr;
+        if (!gi) return;
+        float cx, cy;
+        if (cr3UiCall(mixing, "call_comListGeneIcon_id00", cx, cy)) {
+            UiFig& icon = uiFig("comlistgeneicon_id00");
+            char pic[16];
+            std::snprintf(pic, sizeof pic, "card_%03d", gi->series);
+            cr3UiMaterial(icon, "mat_card_001", pic);
+            cr3UiPut("comlistgeneicon_id00", "", 0, cx, cy, view, alpha);
+        }
+        if (cr3UiCall(mixing, "call_btStAtbIcon_fr00", cx, cy)) cr3UiPut("btstatbicon_fr00", "", float(gi->kind) / 30, cx, cy, view, alpha);
+        if (cr3UiCall(mixing, "call_comListRare_fr00", cx, cy)) cr3UiPut("comlistrare_fr00", "", float(gi->grade) / 30, cx, cy, view, alpha);
+        if (cr3UiCall(mixing, "call_mixStar_fr00", cx, cy)) cr3UiPut("mixstar_fr00", "", float(gi->stars - 1) / 30, cx, cy, view, alpha);
+        if (cr3UiCall(mixing, "call_comListLv_txt", cx, cy)) {
+            UiFig& lv = cr3UiPut("comlistlv_txt", "", 0, cx, cy, view, alpha);
+            float nx, ny;
+            if (cr3UiCall(lv, "call_comListNumUn_num00_001", nx, ny)) {
+                UiFig& num = cr3UiPut("comlistnumun_num00", "", 0, nx, ny, view, alpha);
+                const bool top = level >= maxLevel;
+                // (its seven places: the level in the last three)
+                for (int k = 0; k < 3; ++k) {
+                    float dx, dy;
+                    const int p = k == 0 ? 100 : k == 1 ? 10 : 1;
+                    if ((!top && level < p && k < 2) || !cr3UiCall(num, "call_comListNum_fr00_00" + std::to_string(5 + k), dx, dy)) continue;
+                    cr3UiPut("comlistnum_fr00", "", float(top ? 40 + k : level / p % 10 + 10) / 30, dx, dy, view, alpha);
+                }
+            }
+        }
+        if (gold >= 0 && cr3UiCall(mixing, "call_comListNumUn_num00_001", cx, cy)) {
+            UiFig& num = cr3UiPut("comlistnumun_num00", "", 0, cx, cy, view, alpha);
+            float ix, iy;
+            if (cr3UiCall(num, "call_comListUnIcon_fr00", ix, iy)) cr3UiPut("comlistunicon_fr00", "", 2.0f / 30, ix, iy, view, alpha);
+            cr3UiNumber(num, "call_comListNum_fr00", "comlistnum_fr00", gold, 7, 30, view, alpha);
+        }
+        if (cr3UiCall(mixing, "typeM_L01", cx, cy)) {
+            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+            drawUiText(cr3NameOf("gene_name.mbe", "GeneName", master), 26, (cx + 0.075f) / 10, (cy - 0.15f) / 10, w, h, true, 0.26f);
+        }
+    }
+    void geneMenuRows() {
+        geneMenu.rows.clear();
+        if (!game.cr3Db) return;
+        const auto& previews = game.cr3Db->mergePreviews();
+        for (size_t k = 0; k < previews.size(); ++k) {
+            const cr3::Cr3Gene& partner = game.cr3Genes[size_t(previews[k].partner)];
+            if (partner.stocked || partner.locked) continue; // (the 50 alone; a locked one never given up)
+            const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(previews[k].result.master);
+            if (geneMenu.tab > 0 && (!gi || gi->grade != geneMenu.tab - 1)) continue;
+            geneMenu.rows.push_back(int(k));
+        }
+        geneMenu.row = std::clamp(geneMenu.row, 0, std::max(int(geneMenu.rows.size()) - 1, 0));
+    }
+    void drawGeneMaterials(int w, int h, const Mat4& view) {
+        if (!game.cr3Db || geneMenu.base < 0 || size_t(geneMenu.base) >= game.cr3Genes.size()) return;
+        const float t = geneMenu.since;
+        const auto& previews = game.cr3Db->mergePreviews();
+        const cr3::Cr3Gene& base = game.cr3Genes[size_t(geneMenu.base)];
+        const cr3::Cr3OfflineDb::MergePreview* chosen =
+            geneMenu.row < int(geneMenu.rows.size()) ? &previews[size_t(geneMenu.rows[size_t(geneMenu.row)])] : nullptr;
+        float x, y;
+        // the two and the mix button
+        // (asked: SetConfirmationNormalSynthesisMenu - the two at mixOkMtrPositon's, the list and
+        // the footer gone)
+        const bool asked = geneMenu.screen == 4;
+        UiFig& mp = cr3UiPut(asked ? "mixokmtrpositon" : "mixmtrpositon", "", asked ? t : 0, 0, 0, view, std::min(t / 0.2f, 1.0f));
+        auto panel = [&](int k, const cr3::Cr3Gene& g) {
+            const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(g.master);
+            float px, py;
+            if (!gi || !cr3UiCall(mp, "call_mixMtrMenu_00" + std::to_string(k + 1), px, py)) return;
+            UiFig& menu = cr3UiPut("mixmtrmenu", "", 0, px, py, view);
+            float cx, cy;
+            if (cr3UiCall(menu, "call_mixMtrText_fr00", cx, cy)) cr3UiPut("mixmtrtext_fr00", "", float(k) / 30, cx, cy, view);
+            if (cr3UiCall(menu, "call_mixStar_fr00", cx, cy)) cr3UiPut("mixstar_fr00", "", float(gi->stars - 1) / 30, cx, cy, view);
+            if (cr3UiCall(menu, "call_mixMtrPanel", cx, cy)) {
+                UiFig& p = cr3UiPut("mixmtrpanel", "", 0, cx, cy, view);
+                float ix, iy;
+                if (cr3UiCall(p, "call_comListGeneIcon_id00", ix, iy)) {
+                    UiFig& icon = uiFig("comlistgeneicon_id00");
+                    char pic[16];
+                    std::snprintf(pic, sizeof pic, "card_%03d", gi->series);
+                    cr3UiMaterial(icon, "mat_card_001", pic);
+                    cr3UiPut("comlistgeneicon_id00", "", 0, ix, iy, view);
+                }
+                if (cr3UiCall(p, "call_btStAtbIcon_fr00", ix, iy)) cr3UiPut("btstatbicon_fr00", "", float(gi->kind) / 30, ix, iy, view);
+                if (cr3UiCall(p, "call_comListRare_fr00", ix, iy)) cr3UiPut("comlistrare_fr00", "", float(gi->grade) / 30, ix, iy, view);
+                if (cr3UiCall(p, "typeM_L00", ix, iy)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(cr3NameOf("gene_name.mbe", "GeneName", g.master), 26, (ix + 0.075f) / 10, (iy - 0.15f) / 10, w, h, true, 0.26f);
+                }
+            }
+            if (cr3UiCall(menu, "call_mixMtrLvPanel", cx, cy)) {
+                UiFig& lv = cr3UiPut("mixmtrlvpanel", "", 0, cx, cy, view);
+                float nx, ny;
+                const int level = game.cr3Db->geneLevel(g);
+                if (cr3UiCall(lv, "call_comListNum_fr00_001", nx, ny)) {
+                    const bool top = level >= gi->maxLevel;
+                    bool shown = top;
+                    for (int d = 0, p = 100; d < 3; ++d, p /= 10, nx += 0.19f) {
+                        if (level / p % 10 > 0 || d == 2) shown = true;
+                        if (shown) cr3UiPut("comlistnum_fr00", "", float(top ? 40 + d : level / p % 10) / 30, nx, ny, view);
+                    }
+                }
+            }
+        };
+        if (geneMenu.result && chosen && !asked) {
+            float gx, gy;
+            if (cr3UiCall(mp, "call_GeneCard", gx, gy)) {
+                dev->clearDepth();
+                drawCr3Card(chosen->result.master, gx - 0.25f, gy - 0.02f, 1.0f, 9.0f, view);
+            }
+        } else {
+            panel(0, base);
+            if (chosen) panel(1, game.cr3Genes[size_t(chosen->partner)]);
+        }
+        if (asked) return;
+        if (chosen && cr3UiCall(mp, "call_mixBtn_fr00", x, y)) {
+            UiFig& b = cr3UiPut("mixbtn_fr00", "", geneMenu.result ? 1.0f / 30 : 0.0f, x, y, view);
+            float ax, ay, bx, by;
+            if (cr3UiCall(b, "tapAreaCP01", ax, ay) && cr3UiCall(b, "tapAreaAP01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, kTapMix});
+        }
+        // the list
+        UiFig& pos = cr3UiPut("comlistposition", "comlistposition_io", t, 0, 0, view);
+        if (!cr3UiCall(pos, "call_comListMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+        float lx, ly;
+        if (!cr3UiCall(menu, "call_comListPanel", lx, ly)) return;
+        const int top = std::clamp(geneMenu.row - 1, 0, std::max(int(geneMenu.rows.size()) - 3, 0));
+        for (int k = top; k < int(geneMenu.rows.size()) && k < top + 3; ++k) {
+            const cr3::Cr3OfflineDb::MergePreview& p = previews[size_t(geneMenu.rows[size_t(k)])];
+            const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(p.result.master);
+            if (!gi) continue;
+            const bool affordable = game.cr3Money >= p.gold;
+            const float alpha = affordable ? 1.0f : 0.5f;
+            const float ry = ly - 1.24f * float(k - top);
+            UiFig& row = cr3UiPut("comlistlpanel", "", 0, lx, ry, view, alpha);
+            float cx, cy;
+            if (k == geneMenu.row && cr3UiCall(row, "call_comListLCursor", cx, cy)) cr3UiPut("comlistlcursor", "", 0, cx, cy, view);
+            if (cr3UiCall(row, "call_comListLMixing", cx, cy)) {
+                UiFig& mixing = cr3UiPut("comlistlmixing", "", 0, cx, cy, view, alpha);
+                drawGeneRowParts(mixing, p.result.master, game.cr3Db->geneLevel(p.result), gi->maxLevel, p.gold, view, alpha, w, h);
+            }
+            float ax, ay, bx, by;
+            if (affordable && cr3UiCall(row, "tapAreaS01", ax, ay) && cr3UiCall(row, "tapAreaE01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, kTapRow + k});
+        }
+    }
+    // asked (SetBasicYNChoice2Window: the system window - comMsgSMenu at comMsgSPosition's fit2,
+    // the question at typeM_L05 .. L07 (SetSystemMessageWindowParameter), AnnounceMenuName 0x175 -
+    // and YNChoiceButton, interface 0xf: comBtnMenu's buttons from its joint 10 on - slots 005 and
+    // 006 -, Yes (icon and text 10) and No (11))
+    void drawGeneAsk(int w, int h, const Mat4& view) {
+        const float t = geneMenu.since;
+        dev->clearDepth();
+        float x, y;
+        UiFig& sp = cr3UiPut("commsgsposition", "", 0, 0, 0, view);
+        if (cr3UiCall(sp, "call_comMsgSMenu", x, y, w, h)) {
+            UiFig& win = cr3UiPut("commsgsmenu", "", 0, x, y, view, std::min(t / 0.2f, 1.0f));
+            const std::string text = geneMenu.message.empty() ? menuAnnounce(0x175) : geneMenu.message;
+            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+            size_t from = 0;
+            for (int line = 5; line <= 7 && from <= text.size(); ++line) {
+                const size_t at = text.find("\\n", from);
+                float tx, ty;
+                if (cr3UiCall(win, "typeM_L0" + std::to_string(line), tx, ty))
+                    drawUiText(text.substr(from, at == std::string::npos ? std::string::npos : at - from), 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 0.3f);
+                if (at == std::string::npos) break;
+                from = at + 2;
+            }
+        }
+        UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
+        if (!cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", t, x, y, view);
+        for (int b = 0; b < 2; ++b) {
+            float px, py, cx, cy;
+            if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(5 + b), px, py)) continue;
+            const int id = 10 + b;
+            UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
+            if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
+            if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
+            if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy)) cr3UiPut(b == geneLabFocus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
+            if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
+            float ax, ay, bx, by;
+            if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, b == 0 ? kTapYes : kTapNo});
+        }
+    }
+    // the merge (GeneSynthesizeEffect: a white flash here - the ue002jene01 scene to come) and the
+    // new gene's card, 9 x, its name under it; a tap back to the lab's buttons
+    void drawGeneMerge(int w, int h, const Mat4& view) {
+        const float t = geneMenu.since;
+        if (geneMenu.made < 0 || size_t(geneMenu.made) >= game.cr3Genes.size()) return;
+        const cr3::Cr3Gene& g = game.cr3Genes[size_t(geneMenu.made)];
+        if (geneMenu.screen == 5) {
+            const float a = t < 0.75f ? t / 0.75f : std::max(1.0f - (t - 0.75f) / 0.75f, 0.0f);
+            static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+            const Mat4 id = cr3::mat4Identity();
+            const float rgba[4] = {1, 1, 1, a};
+            if (white.id) dev->drawQuad(white, kScreen, id.data(), rgba);
+            if (t < 0.75f) return;
+        }
+        dev->clearDepth();
+        drawCr3Card(g.master, 0, 0.3f, 1.0f, 9.0f, view, std::min(t / 0.3f, 1.0f));
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(g.master) : nullptr;
+        char lv[32];
+        std::snprintf(lv, sizeof lv, "Lv %d", game.cr3Db ? game.cr3Db->geneLevel(g) : 1);
+        drawUiText(cr3NameOf("gene_name.mbe", "GeneName", g.master), 30, 0, -2.3f / 10, w, h, false, 1.0f);
+        if (gi) drawUiText(lv, 26, 0, -2.7f / 10, w, h, false, 1.0f);
+        geneLabTaps.push_back({-4.8f, -3.2f, 4.8f, 3.2f, -1});
+    }
+    // a choice in the lab: Talk (the clerk's script's), Combine (its own two), Back (a screen back;
+    // the lab closed from its buttons); the rest to come
     void chooseGeneLab(cr3::EventRuntime& ev, int id) {
+        const int screen = geneMenu.screen;
         if (id == -1) {
             audio.playSe("com_004", false);
-            ev.geneLabEnd();
-            SDL_Log("gene lab: closed");
+            if (screen == 0) {
+                ev.geneLabEnd();
+                SDL_Log("gene lab: closed");
+            } else if (screen == 1 || screen >= 5) {
+                if (screen >= 5) ev.geneLabClerk(true);
+                geneMenuScreen(0);
+            } else if (screen == 2) {
+                ev.geneLabClerk(true);
+                geneMenuScreen(1);
+            } else if (screen == 3) {
+                geneMenuScreen(2);
+            } else if (screen == 4) {
+                geneMenuScreen(3);
+            }
             return;
         }
-        audio.playSe("com_003", false);
-        if (id == 17) {
-            ev.geneLabTalk();
-            SDL_Log("gene lab: talk");
-        } else
-            SDL_Log("gene lab: button %d (its menu not in yet)", id);
+        if (screen == 0) {
+            audio.playSe("com_003", false);
+            if (id == 17) {
+                ev.geneLabTalk();
+                SDL_Log("gene lab: talk");
+            } else if (id == 28) {
+                geneMenuScreen(1);
+                SDL_Log("gene lab: combine");
+            } else
+                SDL_Log("gene lab: button %d (its menu not in yet)", id);
+            return;
+        }
+        if (screen == 1) {
+            audio.playSe("com_003", false);
+            if (id == 30) {
+                ev.geneLabClerk(false);
+                geneMenu.genes.clear();
+                for (size_t k = 0; k < game.cr3Genes.size(); ++k)
+                    if (!game.cr3Genes[k].stocked) geneMenu.genes.push_back(int(k));
+                geneMenu.focus = 0;
+                geneMenuScreen(2);
+                SDL_Log("gene lab: the base gene (%zu cards)", geneMenu.genes.size());
+            } else
+                SDL_Log("gene lab: button %d (its menu not in yet)", id);
+            return;
+        }
+        if (screen == 2 && id >= kTapCard && id < kTapRow) {
+            const int g = id - kTapCard;
+            if (g != geneMenu.focus) {
+                geneMenu.focus = g;
+                audio.playSe("com_002", false);
+                return;
+            }
+            audio.playSe("com_003", false);
+            geneMenu.base = geneMenu.genes[size_t(g)];
+            if (game.cr3Db) game.cr3Db->previewMergeGene(game, geneMenu.base);
+            geneMenu.tab = 0, geneMenu.row = 0, geneMenu.result = false;
+            geneMenuRows();
+            geneMenuScreen(3);
+            SDL_Log("gene lab: base %d (gene %d) - %zu merges", geneMenu.base, game.cr3Genes[size_t(geneMenu.base)].master, geneMenu.rows.size());
+            return;
+        }
+        if (screen == 3) {
+            if (id >= kTapTab && id < kTapTab + 4) { // (a radio: the chosen one stays chosen)
+                if (geneMenu.tab == id - kTapTab) return;
+                audio.playSe("com_002", false);
+                geneMenu.tab = id - kTapTab, geneMenu.row = 0;
+                geneMenuRows();
+            } else if (id == kTapMix) {
+                audio.playSe("com_003", false);
+                geneMenu.result = !geneMenu.result;
+            } else if (id >= kTapRow && id < kTapTab) {
+                const int r = id - kTapRow;
+                if (r != geneMenu.row) {
+                    geneMenu.row = r;
+                    audio.playSe("com_002", false);
+                    return;
+                }
+                audio.playSe("com_003", false);
+                geneMenu.message.clear();
+                geneMenuScreen(4);
+            }
+            return;
+        }
+        if (screen == 4 && (id == kTapYes || id == kTapNo)) {
+            if (id == kTapNo) {
+                audio.playSe("com_004", false);
+                geneMenuScreen(3);
+                return;
+            }
+            audio.playSe("com_003", false);
+            const int preview = geneMenu.rows[size_t(geneMenu.row)];
+            const int r = game.cr3Db ? game.cr3Db->mergeGene(game, preview, false) : 500;
+            SDL_Log("gene lab: merge %d -> %d", preview, r);
+            if (r != cr3::kDbOk) {
+                geneMenuScreen(3);
+                return;
+            }
+            geneMenu.made = int(game.cr3Genes.size()) - 1;
+            audio.playSe("com_024", false);
+            geneMenuScreen(5);
+            SDL_Log("gene lab: made gene %d", game.cr3Genes.back().master);
+        }
     }
     bool geneLabClick(float fx, float fy) {
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !ev->geneLab().open || ev->geneLab().talking) return false;
+        if (geneMenu.screen == 5) return true;
         const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
         const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
-        for (const Cr3GeneLabTap& t : geneLabTaps)
+        // (the last drawn on top first: the cards in focus, the question)
+        for (auto it = geneLabTaps.rbegin(); it != geneLabTaps.rend(); ++it) {
+            const Cr3GeneLabTap& t = *it;
             if (ux >= std::min(t.x0, t.x1) && ux <= std::max(t.x0, t.x1) && uy >= std::min(t.y0, t.y1) && uy <= std::max(t.y0, t.y1)) {
                 chooseGeneLab(*ev, t.id);
                 return true;
             }
+        }
         return true; // (the lab holds the screen)
     }
-    // the keys: up / down the buttons, Enter chooses, Escape / Backspace goes back
+    // the keys: up / down the buttons, the cards, the rows; left / right the tabs; Tab the mix
+    // button; Enter chooses (Y / N asked), Escape / Backspace goes back
     bool geneLabKey(SDL_Keycode key) {
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !ev->geneLab().open || ev->geneLab().talking) return false;
-        if (key == SDLK_UP || key == SDLK_DOWN) {
-            for (int step = 0; step < 4; ++step) {
-                geneLabFocus = (geneLabFocus + (key == SDLK_DOWN ? 1 : 3)) % 4;
-                if (geneLabButtonOn(geneLabFocus)) break;
-            }
-            audio.playSe("com_002", false);
-        } else if (key == SDLK_RETURN || key == SDLK_SPACE)
-            chooseGeneLab(*ev, kGeneLabButtons[geneLabFocus]);
-        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE)
+        const int screen = geneMenu.screen;
+        const bool up = key == SDLK_UP, down = key == SDLK_DOWN, enter = key == SDLK_RETURN || key == SDLK_SPACE;
+        if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) {
+            chooseGeneLab(*ev, -1);
+            return true;
+        }
+        if (screen <= 1) {
+            const std::vector<int> ids = geneLabButtons();
+            const int n = int(ids.size());
+            if (up || down) {
+                for (int step = 0; step < n; ++step) {
+                    geneLabFocus = (geneLabFocus + (down ? 1 : n - 1)) % n;
+                    if (geneLabButtonOn(ids[size_t(geneLabFocus)])) break;
+                }
+                audio.playSe("com_002", false);
+            } else if (enter && geneLabFocus < n && geneLabButtonOn(ids[size_t(geneLabFocus)]))
+                chooseGeneLab(*ev, ids[size_t(geneLabFocus)]);
+        } else if (screen == 2) {
+            if ((up || down) && !geneMenu.genes.empty()) {
+                const int f = std::clamp(geneMenu.focus + (down ? 1 : -1), 0, int(geneMenu.genes.size()) - 1);
+                if (f != geneMenu.focus) chooseGeneLab(*ev, kTapCard + f);
+            } else if (enter && !geneMenu.genes.empty())
+                chooseGeneLab(*ev, kTapCard + geneMenu.focus);
+        } else if (screen == 3) {
+            if ((up || down) && !geneMenu.rows.empty()) {
+                const int r = std::clamp(geneMenu.row + (down ? 1 : -1), 0, int(geneMenu.rows.size()) - 1);
+                if (r != geneMenu.row) chooseGeneLab(*ev, kTapRow + r);
+            } else if (key == SDLK_LEFT || key == SDLK_RIGHT)
+                chooseGeneLab(*ev, kTapTab + (geneMenu.tab + (key == SDLK_RIGHT ? 1 : 3)) % 4);
+            else if (key == SDLK_TAB)
+                chooseGeneLab(*ev, kTapMix);
+            else if (enter && !geneMenu.rows.empty() && game.cr3Money >= game.cr3Db->mergePreviews()[size_t(geneMenu.rows[size_t(geneMenu.row)])].gold)
+                chooseGeneLab(*ev, kTapRow + geneMenu.row);
+        } else if (screen == 4) {
+            if (up || down || key == SDLK_LEFT || key == SDLK_RIGHT) geneLabFocus ^= 1, audio.playSe("com_002", false);
+            else if (enter) chooseGeneLab(*ev, geneLabFocus == 0 ? kTapYes : kTapNo);
+            else if (key == SDLK_Y) chooseGeneLab(*ev, kTapYes);
+            else if (key == SDLK_N) chooseGeneLab(*ev, kTapNo);
+        } else if (screen == 6 && enter)
             chooseGeneLab(*ev, -1);
         return true;
     }
@@ -12587,6 +13181,8 @@ int main(int argc, char** argv) {
     int fightMode = 0;
     std::string inputArg; // (--input: the commands chosen, as tokens)
     std::vector<int> flagsArg;
+    std::vector<std::pair<int, int>> genesArg; // (--gene id[:level]: a gene held to begin with - tests)
+    int goldArg = -1;
     bool continueSave = false;
     std::string gameSavePath;
     bool titleScreen = false; // (--title: the game's title screen first)
@@ -12641,6 +13237,11 @@ int main(int argc, char** argv) {
         else if (a == "--fight" && next) fightMode = !std::strcmp(next, "pair") ? 2 : !std::strcmp(next, "manual") ? 3 : 1, ++i;
         else if (a == "--input" && next) inputArg = next, ++i;
         else if (a == "--flag" && next) flagsArg.push_back(std::atoi(next)), ++i; // (a story flag set to begin with: tests)
+        else if (a == "--gene" && next) { // (a gene held to begin with, at its level: tests)
+            const char* colon = std::strchr(next, ':');
+            genesArg.push_back({std::atoi(next), colon ? std::atoi(colon + 1) : 1}), ++i;
+        } else if (a == "--gold" && next)
+            goldArg = std::atoi(next), ++i;
         else if (a == "--sopia" && next) { // (a sopia's level: id:level, tests)
             int id = 0, level = 0;
             if (std::sscanf(next, "%d:%d", &id, &level) == 2) sopiaArg.push_back({id, level});
@@ -12952,6 +13553,15 @@ int main(int argc, char** argv) {
     v.newGame();
     // (the test's story flags and sopia levels: before the field's entry or the battle runs)
     for (int f : flagsArg) v.game.setFlag(f, true);
+    if (v.game.cr3Db) { // (utils::GetGene's: its level's EXP, its own commands and skills)
+        for (const auto& [id, lv] : genesArg) {
+            cr3::Cr3Gene g(id, v.game.cr3Db->geneExp(id, std::max(lv, 1)));
+            v.game.cr3Db->initGene(g);
+            v.game.cr3Genes.push_back(g);
+            v.game.cr3GeneBook.insert(id);
+        }
+        if (goldArg >= 0) v.game.cr3Money = goldArg;
+    }
     for (const auto& [id, level] : sopiaArg)
         if (id >= 0 && id < 32) v.game.sopiaLevel[id] = static_cast<signed char>(level);
     for (const auto& [id, n] : itemArg)

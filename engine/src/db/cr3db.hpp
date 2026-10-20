@@ -140,13 +140,20 @@ public:
     // genes (gene_para.mbe Gene / ExpTable, gene_command_skill.mbe, data\mergeGene2, the collection
     // book): a gene's numbers (MbGeneInfo: +4 its series, +8 grade, +0xc top level, +0x10 EXP curve,
     // +0x14 rank, +0x18 type, +0x20 / +0x24 its EXP worth at level 1 / a level more, +0x28 / +0x2c
-    // its price likewise, +0x30 kind)
+    // its price likewise, +0x30 kind - its element, +0x34 HP, +0x38 MP, +0x3c attack | defence and
+    // +0x40 speed | luck (s16s), +0x44 .. +0x50 their growth a level (in hundredths), +0x58 its card's
+    // stars)
     struct GeneInfo {
         int id = 0, series = 0, grade = 0, maxLevel = 1, curve = 0, rank = 0, type = 0;
-        int worth = 0, worthPerLevel = 0, price = 0, pricePerLevel = 0, kind = 0;
+        int worth = 0, worthPerLevel = 0, price = 0, pricePerLevel = 0, kind = 0, stars = 0;
+        int base[6] = {}, growth[6] = {}; // (HP, MP, attack, defence, speed, luck)
         std::vector<std::array<int, 3>> learns; // (gene_command_skill: level, type, id - in order)
     };
     const GeneInfo* geneInfo(int id) const;
+    // MbGeneInfo::GetHp / GetMp, CrxGene::GetAttack ..: its numbers at its level (base + (level - 1)
+    // x growth / 100), what items added to the four after (Cr3Gene::adds) - HP, MP, attack,
+    // defence, speed, luck
+    std::array<int, 6> geneStats(const Cr3Gene& g) const;
     int geneExp(int id, int level) const;   // (MbGeneInfo::GetExp: the EXP a level needs; the top one's past it)
     int geneLevel(const Cr3Gene& g) const;  // (MbGeneInfo::GetLevel: the highest its EXP reaches; 1 at least)
     int geneRarity(int id) const;           // (CrxGameTable::GetGeneRarity: its place in its collection line, 0 ..)

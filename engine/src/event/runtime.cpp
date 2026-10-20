@@ -576,6 +576,18 @@ void EventRuntime::geneLabEnd() {
     if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
 }
 
+void EventRuntime::geneLabClerk(bool shown) {
+    if (!geneLab_.open) return;
+    if (!shown) {
+        if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
+        return;
+    }
+    if (cutIns_[2].open && cutIns_[2].shop && !cutIns_[2].closing) return;
+    Portrait p{true, false, 0, kClerkFace, 1};
+    p.shop = true;
+    cutIns_[2] = p;
+}
+
 std::string EventRuntime::cutInImage(int id) const {
     for (const auto& [i, image] : cutInImages_)
         if (i == id) return image;
