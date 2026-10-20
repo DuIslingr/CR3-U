@@ -183,6 +183,12 @@ public:
     // EnhanceGene (InterfaceMain::StartIntensificationSynthesis): the genes fed give their worth at
     // their level, 1% more for each of the target's kind; 100 gold a fed gene x the target's level
     int enhanceGene(GameState& s, int gene, const std::vector<int>& fed);
+    // what EnhanceGene would give and take (InterfaceMain::GetIntensificationData): the EXP, the gold
+    struct Enhance {
+        int exp = 0, gold = 0;
+    };
+    Enhance enhanceGain(const GameState& s, int gene, const std::vector<int>& fed) const;
+    int genePrice(const Cr3Gene& g) const; // (SellGenes: its price at its level)
     // EnforceGene(gene, mode, item, n): mode 1 a seed's amounts x n added (*_SEED_MASTER_ID /
     // _AMOUNTS; GENE_ADD_MAX in all), 2 its EXP set (exp), 4 its slots (slots); 2 / 4 / 8 use n of
     // the item

@@ -369,9 +369,31 @@ footer, and:
   gold a level of the two) - the header away, GeneSynthesizeEffect (`ue002jene01`; CR3-U a white
   flash for now), then the new gene.
 
+Combine and Sell want more than five genes held (CheckSynthesisGeneCount(0); else AlertwindowMenu -
+`comMsgSMenu` with `comMsgBtn`, gone by itself - says AnnounceMenuName 0x31e), and each gene picked
+must leave five.
+
+- Enhance (31; title 32, help 0x176): the base from the cards (those at their top level can't be
+  chosen - SetLevelLockSynthesisListMenu), then the genes to feed it (help 0x177): the rows the held
+  genes but the base and the locked, by grade (InitializeL 2: the level's bar `comListLv_per` at its
+  share of the top level and `comListNumL_num00`'s digits + 10), a tap checking one
+  (`comListCheck`; 20 at most); IntensificationSynthesisMenu (0xaa) at `mixMtrPositon`'s
+  `call_mixUpMenu`: `mixUpMenu` - Components, Additional EXP, Total Cost (0x184 .. 0x186) at
+  `typeM_L01` .. `L03`, the count and 20 in `call_comListNum_fr00_001` / `_002`, the EXP in `_003`,
+  the gold in `_004` (SetNumbers: 0.19 apart from the joint, leading zeros blank) - the base's
+  `mixMtrPanel`, `mixMtrLvwPanel` (the level now and after; "MAX" 40 ..) and stars; the mix button
+  shows its card. The footer's second ComBackButton (`call_comBackMenu_002_fit6`, `comBack_fr00`
+  frame 1) is OK, dim with nothing checked. Asked (0x178, {basegene} the base's name) with the cards
+  over it (SynthesisCardListMenu: `mixOkCardMenu` at `mixOkCardPositon`, 3.2 x and 1.1 apart from its
+  `call_GeneCard`), then DBEmu EnhanceGene and the base's card.
+- Sell (21; title 34, help 0x273): the rows the held genes but the locked, with their price
+  (gene_para price + (level - 1) x its rise); GeneSellPanel at `call_mixSelMenu`: `mixSellMenu` -
+  Genes to Sell, Additional ML (0x17a, 0x17b), the count / 20, the gold (+ 30). Asked (0x182) with
+  the cards, then DBEmu SellGenes and the lab's buttons.
+
 `cr3view --area t0108 --flag 2001 --input call:c115_00,lab:talk|combine|sell|repository|back`
-(call:<function> runs an area function as if tapped); after Combine `lab:normal`, `lab:card<n>`,
-`lab:row<n>`, `lab:tab<n>`, `lab:mix`, `lab:yes` / `lab:no`, `lab:up` / `lab:down`. `--gene
+(call:<function> runs an area function as if tapped); after Combine `lab:enhance`, and `lab:normal`, `lab:card<n>`,
+`lab:row<n>`, `lab:tab<n>`, `lab:mix`, `lab:ok`, `lab:yes` / `lab:no`, `lab:up` / `lab:down`. `--gene
 <id>[:<level>]` and `--gold <n>` give genes and gold to begin with.
 
 ## Battles (CR3)

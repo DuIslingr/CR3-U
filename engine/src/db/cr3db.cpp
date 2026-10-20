@@ -962,28 +962,43 @@ int Cr3OfflineDb::mergeGene(GameState& s, int preview, bool coins) {
     return finish(kDbOk);
 }
 
-int Cr3OfflineDb::enhanceGene(GameState& s, int gene, const std::vector<int>& fed) {
-    if (gene < 0 || size_t(gene) >= s.cr3Genes.size()) return finish(kDbBad);
+Cr3OfflineDb::Enhance Cr3OfflineDb::enhanceGain(const GameState& s, int gene, const std::vector<int>& fed) const {
+    Enhance e;
+    if (gene < 0 || size_t(gene) >= s.cr3Genes.size()) return e;
     const GeneInfo* it = geneInfo(s.cr3Genes[size_t(gene)].master);
-    if (!it) return finish(kDbBad);
+    if (!it) return e;
     const int level = geneLevel(s.cr3Genes[size_t(gene)]);
-    int worth = 0, same = 0, gold = 0;
+    int worth = 0, same = 0;
     for (const int f : fed) {
-        if (f < 0 || size_t(f) >= s.cr3Genes.size() || f == gene) return finish(kDbBad);
+        if (f < 0 || size_t(f) >= s.cr3Genes.size() || f == gene) continue;
         const Cr3Gene& g = s.cr3Genes[size_t(f)];
         const GeneInfo* i = geneInfo(g.master);
         if (!i) continue;
         worth += i->worth + (geneLevel(g) - 1) * i->worthPerLevel;
         same += i->kind == it->kind;
-        gold += level * 100;
+        e.gold += level * 100;
     }
-    if (s.cr3Money < gold) return finish(kDbNoGold);
-    addGeneExp(s.cr3Genes[size_t(gene)], same * worth / 100 + worth);
+    e.exp = same * worth / 100 + worth;
+    return e;
+}
+
+int Cr3OfflineDb::genePrice(const Cr3Gene& g) const {
+    const GeneInfo* i = geneInfo(g.master);
+    return i ? i->price + (geneLevel(g) - 1) * i->pricePerLevel : 0;
+}
+
+int Cr3OfflineDb::enhanceGene(GameState& s, int gene, const std::vector<int>& fed) {
+    if (gene < 0 || size_t(gene) >= s.cr3Genes.size() || !geneInfo(s.cr3Genes[size_t(gene)].master)) return finish(kDbBad);
+    for (const int f : fed)
+        if (f < 0 || size_t(f) >= s.cr3Genes.size() || f == gene) return finish(kDbBad);
+    const Enhance e = enhanceGain(s, gene, fed);
+    if (s.cr3Money < e.gold) return finish(kDbNoGold);
+    addGeneExp(s.cr3Genes[size_t(gene)], e.exp);
     std::vector<int> gone = fed;
     std::sort(gone.rbegin(), gone.rend());
     gone.erase(std::unique(gone.begin(), gone.end()), gone.end());
     for (const int f : gone) s.cr3Genes.erase(s.cr3Genes.begin() + f);
-    s.cr3Money -= gold;
+    s.cr3Money -= e.gold;
     return finish(kDbOk);
 }
 
@@ -1039,7 +1054,7 @@ int Cr3OfflineDb::sellGenes(GameState& s, std::vector<int> genes) {
         if (k < 0 || size_t(k) >= s.cr3Genes.size()) return finish(kDbBad);
         const GeneInfo* i = geneInfo(s.cr3Genes[size_t(k)].master);
         if (!i) return finish(kDbNone);
-        gold += i->price + (geneLevel(s.cr3Genes[size_t(k)]) - 1) * i->pricePerLevel;
+        gold += genePrice(s.cr3Genes[size_t(k)]);
     }
     s.cr3Money += gold;
     std::sort(genes.rbegin(), genes.rend());
