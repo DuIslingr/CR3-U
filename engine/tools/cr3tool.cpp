@@ -425,7 +425,42 @@ int db(const char* path, const char* sheet) {
     r = d.pollMessage(s, now, true, true);
     std::printf("news %d: %zu today", r, d.messages().size());
     for (const int m : d.messages()) std::printf(" %d", m);
-    std::printf("\nfinally: %d items (%zu kinds), %zu genes, %zu presents, gold %d, coins %d (spent %d), GP %d (spent %d)\n", items(),
+    // VS: the tournaments open today (a fixed day: 2026-06-20, in a season), one begun with a boost,
+    // three battles won, ended; the day's mission; the wildcards
+    std::tm vd{};
+    vd.tm_year = 126, vd.tm_mon = 5, vd.tm_mday = 20, vd.tm_hour = 12, vd.tm_isdst = -1;
+    const std::time_t vsDay = std::mktime(&vd);
+    s.setFlag(7100, true);
+    r = d.getVSTournaments(s, vsDay);
+    std::printf("\nVS %d: %zu tournaments open", r, d.vsTournaments().size());
+    int pick = -1;
+    for (size_t k = 0; k < d.vsTournaments().size(); ++k)
+        if (d.vsTournaments()[k].prizeCategory == 6 && d.vsTournaments()[k].count == 3) pick = int(k);
+    if (pick < 0 && !d.vsTournaments().empty()) pick = 0;
+    r = d.getVSMission(s);
+    std::printf("; mission %d: %d (type %d, goal %d, boost %d)\n", r, s.cr3Vs.mission, s.cr3Vs.missionType, s.cr3Vs.missionGoal, s.cr3Vs.missionBoost);
+    if (pick >= 0) {
+        const auto& t = d.vsTournaments()[size_t(pick)];
+        std::printf("  tournament %d: mode %d, couplings %d %d %d, count %d, rule %d (%zu wildcards), prize %d/%d gold %d\n", t.id, t.mode,
+                    t.coupling[0], t.coupling[1], t.coupling[2], t.count, t.rule, t.wildcards.size(), t.prizeCategory, t.prizeId, t.prizeGold);
+        const int coins0 = s.cr3Coins;
+        r = d.beginVSTournament(s, pick, {1}, vsDay);
+        std::printf("  begun %d (boost 1 bought: coins %d -> %d), season %d (count %d, drop %d)\n", r, coins0, s.cr3Coins, s.cr3Vs.season,
+                    s.cr3Vs.seasonCount, int(s.cr3Vs.seasonDrop));
+        r = d.pickWildcard();
+        std::printf("  wildcards %d:", r);
+        for (const int w : d.wildcards()) std::printf(" %d", w);
+        for (int b = 0; b < 3; ++b) d.endVSBattle(s, 1200 + 100 * b, 5, false);
+        d.endVSBattle(s, 999, 9, true);
+        std::printf("\n  battles %d, score %d, tally %d\n", s.cr3Vs.battles, s.cr3Vs.score, s.cr3Vs.missionTally);
+        const size_t items0 = s.cr3Items.size();
+        r = d.endVSTournament(s, vsDay);
+        const auto& rw = d.vsRewards();
+        std::printf("  ended %d: won %d, gp +%d, gold %d, item %d, genes %zu, score draws %d, mission %d; week %d, cleared %zu, flag %d %d, kinds +%zd\n", r,
+                    int(rw.won), rw.gp, rw.gold, rw.item, rw.genes.size(), rw.scoreSheetDraws, int(rw.mission), s.cr3Vs.weekScore,
+                    s.cr3Vs.cleared.size(), t.clearFlag, int(t.clearFlag > 0 && s.flag(t.clearFlag)), std::ptrdiff_t(s.cr3Items.size()) - std::ptrdiff_t(items0));
+    }
+    std::printf("finally: %d items (%zu kinds), %zu genes, %zu presents, gold %d, coins %d (spent %d), GP %d (spent %d)\n", items(),
                 s.cr3Items.size(), s.cr3Genes.size(), s.cr3Presents.size(), s.cr3Money, s.cr3Coins, s.cr3CoinsSpent, s.cr3GP, s.cr3GPSpent);
     return 0;
 }

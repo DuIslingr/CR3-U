@@ -43,6 +43,7 @@ struct GameState {
     std::set<int> cr3GeneBook; // (the genes ever had: utils::CheckNewGene - CrxGameData +0x28198's bits)
     std::vector<Cr3Present> cr3Presents;
     Cr3Quests cr3Quests;
+    Cr3Vs cr3Vs;
     int cr3Money = 0; // (Cr3System.GoldSet / GoldGet; battles' winnings - CrxGameData +0x1ebc4)
     // the Oz coins and GP, each with what has been spent of it (CrxGameData +0x1e76c / +0x1e770,
     // +0x1e774 / +0x1e778), the gene stock's room (+0x1e768) - a new game's all 0

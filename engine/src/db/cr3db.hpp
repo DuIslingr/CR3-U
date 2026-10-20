@@ -62,6 +62,28 @@ struct Cr3Gene {
     Cr3Gene(int m, int e = 0) : master(m), exp(e) {}
 };
 
+// the VS mode's part of the save (CrxGameData +0x28550 ..; the Vita's DBEmu keeps it at 0x81641b38 ..)
+struct Cr3Vs {
+    int score = 0;          // (b38: the tournament's - EndVSBattle's, VS_SCORE_MAX at most)
+    int weekScore = 0;      // (b3c: the week's, from Monday - CheckVSScoreReset; 999999999 at most)
+    int weekRewarded = 0;   // (b40: the week's score its rewards were given up to)
+    int64_t weekFrom = 0;   // (b48: when the week's score began, epoch seconds; 0 never)
+    // the day's mission (GetVSMission - vsmissions_cli: b50 its _id, b54 this tournament's tally,
+    // b58 the day's, b5c the goal, b60 its level, b64 its type, b68 the boost item it gives, b6c done)
+    int mission = 0, missionTally = 0, missionTotal = 0, missionGoal = 0, missionLevel = 0, missionType = 0, missionBoost = 0;
+    bool missionCleared = false;
+    int missionRank[2] = {1, 1}, missionBest[2] = {1, 1}; // (b70 / b74 the rank - type 0's, the others' -, b78 / b7c the best)
+    int missionsCleared = 0;                               // (b80)
+    // the season (be0 ..: vsseasons' row whose dates hold): its _id (-1 none), its points
+    int season = -1, seasonPoints = 0, seasonCount = 0;
+    bool seasonDrop = false; // (be4: this tournament may drop the season's item - season_prob, or the bonus boost)
+    std::map<int, int> boosts; // (c00 ..: vsboostitems _id -> how many held, VS_BOOST_ITEM_COUNT_MAX at most)
+    // the tournament (c68 ..): playing, its battles won, its prize given, the last of each mode
+    bool playing = false, rewarded = false;
+    int battles = 0, last[2] = {-1, -1};
+    std::set<int> cleared; // (DBSystem::CheckVSCompletedFlag: the tournaments cleared)
+};
+
 // the presents box (dbutils::SendPresent: 100 at most, the oldest dropped; from PRESENT_FROM_*)
 struct Cr3Present {
     int item = 0, count = 0, from = 0;
@@ -292,6 +314,51 @@ public:
     bool ticketReceived() const { return ticket_; } // (utils::CheckTicketReceivedResult)
     int receiveTicket(GameState& s);
 
+    // DBEmu: the VS mode. GetVSTournaments: vstournaments_cli's rows whose dates (sdate / edate:
+    // five MMDD windows; none - always) hold and whose flags are all set, each with its rule's
+    // wildcards (vsrules), whether it is cleared and when its window ends
+    struct VsTournament {
+        int id = 0, mode = 0, ghost = 0, icon = 0, level = 1, bgm = 0, clearFlag = 0, exp = 0, mapId = 0, count = 0, rule = 0;
+        int flags[3] = {}, coupling[3] = {-1, -1, -1};
+        int prizeGold = 0, prizeIcon = 0, prizeCategory = 0, prizeId = 0, prizeCount = 0, seasonItem = -1, seasonProb = 0;
+        bool perfect = false, cleared = false, seasonDrop = false;
+        std::string banner;
+        std::vector<int> wildcards; // (vsrules: WILDCARD_NUM flags, the wildcards it may draw)
+        std::time_t ends = 0;       // (its window's end; 0 none)
+    };
+    int getVSTournaments(const GameState& s, std::time_t now);
+    const std::vector<VsTournament>& vsTournaments() const { return vsTournaments_; }
+    // BeginVSTournament(k, boosts): the k-th listed, if its window holds - the boost items chosen
+    // used (one each, or bought with Oz coins at their price where none is held: 0x3f2 short), the
+    // score and battles cleared, the week checked, the season's drop drawn (season_prob %, or
+    // certain with VS_BOOST_DROP_RATE_BONUS_MASTER_ID's boost)
+    int beginVSTournament(GameState& s, int k, const std::vector<int>& boosts, std::time_t now);
+    // BeginVSBattle; EndVSBattle(score, mission, lost): a won battle's score and mission tally
+    int beginVSBattle() { return finish(kDbOk); }
+    int endVSBattle(GameState& s, int score, int mission, bool lost);
+    // EndVSTournament: the score to the week's, the tally to the mission's - its goal reached: a
+    // boost item (its own), the rank up; the week's score rewards (vsscorerewards' item sheet in its
+    // dates, a draw for each of vsscore's totals passed); then EarnVSTournamentReward - the
+    // tournament won (its count of battles): OBTAIN_GP_VS_END_TOURNAMENT GP, its prize (category 6:
+    // one of vsprizes' items; 3: its gene box), the season's points, cleared, its clear flag
+    struct VsRewards {
+        int gold = 0, gp = 0, item = 0, scoreSheetDraws = 0;
+        std::vector<Cr3Gene> genes;
+        bool won = false, mission = false;
+    };
+    int endVSTournament(GameState& s, std::time_t now);
+    const VsRewards& vsRewards() const { return vsRewards_; }
+    // GetVSMission: the day's mission (once a day - the daily mark 8): the last one not done lowers
+    // its rank (to the best - 5, 1 at least); one drawn among those whose count of missions done is
+    // reached (not the last), its goal drawn from its scores at the rank, a boost item 1 .. 8
+    int getVSMission(GameState& s);
+    // PickWildcard: the tournament chosen's wildcards, shuffled, PICK_WILDCARD_NUM of them
+    int pickWildcard();
+    const std::vector<int>& wildcards() const { return wildcards_; }
+    int vsChosen() const { return vsChosen_; }
+    // CheckVSScoreReset: the week's score cleared on the first Monday since it began
+    void checkVSScoreReset(GameState& s, std::time_t now);
+
     // DBEmu::Sync2(name): an event's own gifts (the tutorials' genes, s272's two gifts, ...)
     int sync2(GameState& s, const std::string& name);
 
@@ -325,6 +392,10 @@ private:
     std::vector<std::array<int, 3>> mergePairs_; // (a, b, result)
     std::map<int, int> rarity_;
     std::vector<MergePreview> previews_;
+    std::vector<VsTournament> vsTournaments_;
+    int vsChosen_ = -1;
+    VsRewards vsRewards_;
+    std::vector<int> wildcards_;
     std::vector<int> messages_;
     int previewGene_ = -1;
     Month month_;

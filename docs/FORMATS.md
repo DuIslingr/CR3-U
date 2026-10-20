@@ -782,14 +782,31 @@ The rest of DBEmu (libcrx 0x71b350 .. ; the Vita's Sync2 at 0x8107a1b0 reads cle
   daily bit 4) dbutils::SendVIPLoginBonus: a gold key and item 106 as presents. PollMessage: the
   `news` rows whose dates hold today (their text ids); the emergencies are the server's (the table
   is empty in every release).
-- Not yet: the VS mode's rules (GetVSTournaments - `vsTournaments_cli`, 36 ints: _id, mode, ghost,
-  icon, level, bgm, flags x 3, clear_flag, exp, mapId, coupling x 3, count, rule, prize_gold /
-  _icon / _category / _id / _count, season_item_id, season_prob, sdate x 5, edate x 5 (MMDD
-  windows), perfect_flag, banner -; Begin / EndVSTournament, EndVSBattle(score, mission), the
-  weekly score from Monday, the daily mission, seasons, boost items, PickWildcard): their state is
-  a block of the save (CrxGameData +0x28550 ..: the tournament's and the week's score, the mission,
-  the two rating ranks at +0x28580, the season's points and level, the boosts), to be ported with
-  the VS mode itself; and the menus.
+- The VS mode's rules (the Vita's DBEmu; their state a block of the save - CrxGameData +0x28550 ..,
+  the Vita's 0x81641b38 ..; CR3-U's `cr3vs` lines): GetVSTournaments lists `vstournaments_cli`'s
+  rows (_id, mode 0 / 1, ghost, icon, level, bgm, flags, clear_flag, exp, mapId, three couplings,
+  count - the battles to win -, rule, prize_gold / _icon / _category / _id / _count, season_item_id,
+  season_prob, perfect_flag, banner, sdate / edate: up to five MMDD windows) whose window holds today
+  (none: always) and whose flags are set, with their rule's wildcards (`vsrules`: 22 flags) and
+  whether cleared. BeginVSTournament(k, boosts): its window still holding (else 0x7d6); the boost
+  items chosen (`vsboostitems`: _id, type, const, prob, price, icon) used, one each, or bought with
+  Oz coins at their price where none is held (0x3f2 short); the score and battles cleared; the
+  week's score cleared on the first Monday since it began (CheckVSScoreReset); the season
+  (`vsseasons` in its dates: a new one's points from 0, its count the points a level) and whether
+  its item may drop (season_prob %, or certain with boost VS_BOOST_DROP_RATE_BONUS_MASTER_ID).
+  EndVSBattle(score, mission, lost): a won battle adds its score (VS_SCORE_MAX at most) and mission
+  tally. EndVSTournament: the score to the week's (999999999 at most), the tally to the day's
+  mission - its goal reached: a boost item (the mission's: 1 .. 8; VS_BOOST_ITEM_COUNT_MAX), its type's
+  rank up -; a draw from the month's `vsscorerewards` sheet for each of `vsscore`'s totals the week's
+  score passed; then EarnVSTournamentReward - its count of battles won: OBTAIN_GP_VS_END_TOURNAMENT GP,
+  its prize (category 6: one of `vsprizes`' items at random; 3: its gene box; prize_gold is shown,
+  not given by DBEmu), the season's point (a level per its count: a draw from
+  `vsseasonscorerewards`' sheet), the tournament cleared and its clear flag set. GetVSMission, once a
+  day (daily mark 8): an undone mission's rank down (to its best - 5, 1 at least), then one of
+  `vsmissions_cli` (_id, count - missions done it needs -, type, level, 150 (low, high) goal pairs by
+  rank) not the last, its goal drawn from its rank's pair. PickWildcard: the chosen tournament's
+  wildcards shuffled, PICK_WILDCARD_NUM of them. `vsscore` is one object, not an array. `cr3tool db`
+  runs a tournament on a fixed day; the VS mode itself (VSMain, its menus) is still to come.
 
 ## Scripts (`script\*.nut`, `script64\*.nut`)
 

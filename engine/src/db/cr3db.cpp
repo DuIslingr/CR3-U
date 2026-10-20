@@ -1063,6 +1063,274 @@ int Cr3OfflineDb::sellGenes(GameState& s, std::vector<int> genes) {
     return finish(kDbOk);
 }
 
+// --- the VS mode ---
+
+namespace {
+// (FUN_81077278: which of a row's five MMDD windows - sdate / edate - holds today; 0 with none, -1
+// none holding)
+int vsWindow(const BsonValue& r, std::time_t now) {
+    const BsonValue* sd = r.get("sdate");
+    const BsonValue* ed = r.get("edate");
+    if (!sd || !ed || !sd->isArray() || !ed->isArray() || sd->items.empty()) return 0;
+    for (size_t k = 0; k < sd->items.size() && k < ed->items.size() && k < 5; ++k)
+        if (checkDate(sd->items[k].asInt(), ed->items[k].asInt(), now)) return int(k);
+    return -1;
+}
+std::vector<int> ints(const BsonValue& r, const char* key) {
+    std::vector<int> out;
+    if (const BsonValue* v = r.get(key); v && v->isArray())
+        for (const BsonValue& i : v->items) out.push_back(i.asInt());
+    return out;
+}
+} // namespace
+
+int Cr3OfflineDb::getVSTournaments(const GameState& s, std::time_t now) {
+    vsTournaments_.clear();
+    const BsonValue* t = table("vstournaments_cli");
+    if (!t) return finish(kDbNone);
+    const BsonValue* rules = table("vsrules");
+    for (const BsonValue& r : t->items) {
+        const int window = vsWindow(r, now);
+        if (window < 0) continue;
+        VsTournament v;
+        const std::vector<int> flags = ints(r, "flags");
+        bool held = true;
+        for (size_t k = 0; k < flags.size() && k < 3; ++k) {
+            v.flags[k] = flags[k];
+            if (flags[k] > 0 && !s.flag(flags[k])) held = false;
+        }
+        if (!held) continue;
+        v.id = r.integer("_id"), v.mode = r.integer("mode"), v.ghost = r.integer("ghost"), v.icon = r.integer("icon");
+        v.level = r.integer("level", 1), v.bgm = r.integer("bgm"), v.clearFlag = r.integer("clear_flag"), v.exp = r.integer("exp");
+        v.mapId = r.integer("mapId"), v.count = r.integer("count"), v.rule = r.integer("rule");
+        const std::vector<int> cp = ints(r, "coupling");
+        for (size_t k = 0; k < cp.size() && k < 3; ++k) v.coupling[k] = cp[k];
+        v.prizeGold = r.integer("prize_gold"), v.prizeIcon = r.integer("prize_icon"), v.prizeCategory = r.integer("prize_category");
+        v.prizeId = r.integer("prize_id"), v.prizeCount = r.integer("prize_count"), v.seasonItem = r.integer("season_item_id", -1);
+        v.seasonProb = r.integer("season_prob"), v.perfect = r.integer("perfect_flag") == 1, v.banner = r.string("banner");
+        v.cleared = s.cr3Vs.cleared.count(v.id) != 0;
+        if (rules)
+            for (const BsonValue& rule : rules->items)
+                if (rule.integer("_id") == v.rule) v.wildcards = ints(rule, "wildcards");
+        if (const std::vector<int> ed = ints(r, "edate"); size_t(window) < ed.size() && ed[size_t(window)] > 0) {
+            // (the window's last day, to its end: the next day's start)
+            std::tm e = localTime(now);
+            e.tm_mon = ed[size_t(window)] / 100 - 1, e.tm_mday = ed[size_t(window)] % 100 + 1, e.tm_hour = e.tm_min = e.tm_sec = 0, e.tm_isdst = -1;
+            v.ends = std::mktime(&e);
+        }
+        vsTournaments_.push_back(v);
+    }
+    return finish(kDbOk);
+}
+
+void Cr3OfflineDb::checkVSScoreReset(GameState& s, std::time_t now) {
+    Cr3Vs& vs = s.cr3Vs;
+    if (vs.weekFrom > 0) {
+        // (the first Monday after the week began, from its start)
+        std::tm m = localTime(std::time_t(vs.weekFrom));
+        m.tm_hour = m.tm_min = m.tm_sec = 0, m.tm_isdst = -1;
+        do {
+            m.tm_mday += 1;
+            std::time_t t = std::mktime(&m);
+            m = localTime(t);
+        } while (m.tm_wday != 1);
+        if (now < std::mktime(&m)) return;
+    }
+    vs.weekScore = vs.weekRewarded = 0;
+    vs.weekFrom = now;
+}
+
+int Cr3OfflineDb::beginVSTournament(GameState& s, int k, const std::vector<int>& boosts, std::time_t now) {
+    Cr3Vs& vs = s.cr3Vs;
+    if (k < 0 || size_t(k) >= vsTournaments_.size()) return finish(kDbBad);
+    VsTournament& t = vsTournaments_[size_t(k)];
+    const BsonValue* rows = table("vstournaments_cli");
+    const BsonValue* row = nullptr;
+    if (rows)
+        for (const BsonValue& r : rows->items)
+            if (r.integer("_id") == t.id) row = &r;
+    if (!row) return finish(kDbBad);
+    if (vsWindow(*row, now) < 0) return finish(0x7d6); // (its time is over)
+    if (t.mode == 0 || t.mode == 1) vs.last[t.mode] = t.id;
+    // the boost items: one of each used, or bought at its price where none is held
+    int cost = 0;
+    bool bonus = false;
+    const BsonValue* items = table("vsboostitems");
+    for (const int b : boosts) {
+        const BsonValue* bi = nullptr;
+        if (items)
+            for (const BsonValue& r : items->items)
+                if (r.integer("_id") == b) bi = &r;
+        if (!bi) return finish(kDbNone);
+        if (vs.boosts[b] <= 0) cost += bi->integer("price");
+        if (b == constant("VS_BOOST_DROP_RATE_BONUS_MASTER_ID", 8)) bonus = true;
+    }
+    if (s.cr3Coins < cost) return finish(kDbNoCoins);
+    s.cr3Coins -= cost, s.cr3CoinsSpent += cost;
+    for (const int b : boosts) vs.boosts[b] = std::max(vs.boosts[b] - 1, 0);
+    vs.battles = 0, vs.playing = true, vs.rewarded = false, vs.score = 0, vs.missionTally = 0;
+    checkVSScoreReset(s, now);
+    // the season: vsseasons' row whose dates hold - a new one's points from 0; the season's item may
+    // drop this time (season_prob %, certain with the bonus boost)
+    const BsonValue* season = nullptr;
+    if (const BsonValue* ss = table("vsseasons"))
+        for (const BsonValue& r : ss->items)
+            if (checkDate(r.integer("sdate"), r.integer("edate"), now)) {
+                season = &r;
+                break;
+            }
+    vs.seasonDrop = false;
+    if (!season) {
+        vs.season = -1, vs.seasonPoints = vs.seasonCount = 0;
+    } else {
+        if (vs.season != season->integer("_id")) vs.seasonCount = season->integer("count"), vs.seasonPoints = 0, vs.season = season->integer("_id");
+        vs.seasonDrop = int(random() % 100) < t.seasonProb || bonus;
+    }
+    t.seasonDrop = vs.seasonDrop;
+    vsRewards_ = VsRewards();
+    vsChosen_ = k;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::endVSBattle(GameState& s, int score, int mission, bool lost) {
+    Cr3Vs& vs = s.cr3Vs;
+    if (!lost) {
+        vs.score = std::clamp(vs.score + score, 0, constant("VS_SCORE_MAX", 9999999));
+        vs.missionTally += mission;
+        ++vs.battles;
+    }
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::endVSTournament(GameState& s, std::time_t now) {
+    Cr3Vs& vs = s.cr3Vs;
+    lastGenes_.clear();
+    vs.playing = false;
+    vs.weekScore = std::clamp(vs.weekScore + vs.score, 0, 999999999);
+    vs.missionTotal += vs.missionTally;
+    const BsonValue* missions = table("vsmissions_cli");
+    auto ranks = [&](int type) { // (a mission's ranks: its scores' pairs)
+        if (missions)
+            for (const BsonValue& r : missions->items)
+                if (r.integer("type") == type) return std::max(int(ints(r, "scores").size() / 2), 1);
+        return 1;
+    };
+    if (vs.mission > 0 && vs.missionGoal <= vs.missionTotal && !vs.missionCleared) {
+        vs.missionCleared = true, vs.missionsCleared++;
+        vs.boosts[vs.missionBoost] = std::min(vs.boosts[vs.missionBoost] + 1, constant("VS_BOOST_ITEM_COUNT_MAX", 99));
+        const int k = vs.missionType == 0 ? 0 : 1;
+        vs.missionRank[k] = std::min(vs.missionRank[k] + 1, ranks(vs.missionType));
+        vs.missionBest[k] = std::max(vs.missionBest[k], vs.missionRank[k]);
+        vsRewards_.mission = true;
+    }
+    // the week's score rewards (vsscorerewards' sheet in its dates: a draw for each of vsscore's
+    // totals passed since the last)
+    if (const BsonValue* sr = table("vsscorerewards"))
+        for (const BsonValue& r : sr->items) {
+            if (!checkDate(r.integer("sdate"), r.integer("edate"), now)) continue;
+            const BsonValue* sc = table("vsscore"); // (one row: an object, or an array of one)
+            if (sc && sc->isArray()) sc = sc->items.empty() ? nullptr : &sc->items[0];
+            if (sc)
+                for (const int total : ints(*sc, "totals")) {
+                    if (total <= vs.weekRewarded) continue;
+                    if (vs.weekScore < total) break;
+                    openLuckyBox(s, r.string("bingo"), 1, 0);
+                    ++vsRewards_.scoreSheetDraws;
+                }
+            vs.weekRewarded = vs.weekScore;
+            break;
+        }
+    // EarnVSTournamentReward: the tournament won
+    if (vsChosen_ >= 0 && size_t(vsChosen_) < vsTournaments_.size()) {
+        VsTournament& t = vsTournaments_[size_t(vsChosen_)];
+        if (t.count <= vs.battles && !vs.rewarded) {
+            vs.rewarded = true;
+            vsRewards_.won = true;
+            s.cr3GP += constant("OBTAIN_GP_VS_END_TOURNAMENT", 1), vsRewards_.gp = constant("OBTAIN_GP_VS_END_TOURNAMENT", 1);
+            vsRewards_.gold = t.prizeGold;
+            if (t.prizeCategory == 6) { // (one of vsprizes' items, at random)
+                if (const BsonValue* pz = table("vsprizes"))
+                    for (const BsonValue& r : pz->items)
+                        if (r.integer("_id") == t.prizeId) {
+                            std::vector<int> items;
+                            for (const int i : ints(r, "items"))
+                                if (i > 0) items.push_back(i);
+                            if (!items.empty()) {
+                                vsRewards_.item = items[random() % items.size()];
+                                earnItemPrize(s, vsRewards_.item, 1);
+                            }
+                        }
+            } else if (t.prizeCategory == 3) { // (its gene box)
+                if (openGeneBox(s, t.prizeId, 1, 0) == kDbOk) vsRewards_.genes = lastGenes_;
+            }
+            // the season's points: a season's count of them one more level, a draw from its sheet
+            if (t.seasonItem > 0 && vs.seasonDrop && vs.seasonCount > 0) {
+                vs.seasonPoints += 1;
+                while (vs.seasonPoints >= vs.seasonCount) {
+                    vs.seasonPoints -= vs.seasonCount;
+                    if (const BsonValue* ssr = table("vsseasonscorerewards"))
+                        for (const BsonValue& r : ssr->items)
+                            if (checkDate(r.integer("sdate"), r.integer("edate"), now)) {
+                                openLuckyBox(s, r.string("bingo"), 1, 0);
+                                break;
+                            }
+                }
+            }
+            vs.cleared.insert(t.id);
+            t.cleared = true;
+            if (t.clearFlag > 0) s.setFlag(t.clearFlag, true);
+        }
+    }
+    finish(kDbOk);
+    return kDbOk;
+}
+
+int Cr3OfflineDb::getVSMission(GameState& s) {
+    Cr3Vs& vs = s.cr3Vs;
+    if (vs.mission > 0 && (s.cr3Daily & 8)) return finish(kDbOk); // (the day's drawn)
+    if (vs.mission > 0 && !vs.missionCleared) { // (not done: the rank down, to the best - 5)
+        const int k = vs.missionType == 0 ? 0 : 1;
+        vs.missionRank[k] = std::max(vs.missionRank[k] - 1, std::max(vs.missionBest[k] - 5, 1));
+    }
+    const BsonValue* t = table("vsmissions_cli");
+    if (!t) return finish(400);
+    std::vector<const BsonValue*> pool;
+    const BsonValue* same = nullptr;
+    for (const BsonValue& r : t->items) {
+        if (r.integer("count") > vs.missionsCleared) continue;
+        if (r.integer("_id") == vs.mission) same = &r;
+        else pool.push_back(&r);
+    }
+    const BsonValue* m = pool.empty() ? same : pool[random() % pool.size()];
+    if (!m) return finish(400);
+    vs.mission = m->integer("_id"), vs.missionLevel = m->integer("level"), vs.missionType = m->integer("type");
+    vs.missionBoost = int(random() & 7) + 1;
+    vs.missionTally = vs.missionTotal = 0, vs.missionCleared = false;
+    const int k = vs.missionType == 0 ? 0 : 1;
+    const std::vector<int> scores = ints(*m, "scores");
+    const size_t r = size_t(std::max(vs.missionRank[k], 1) - 1) * 2;
+    if (r + 1 < scores.size()) {
+        const int lo = scores[r], hi = scores[r + 1];
+        vs.missionGoal = lo + (hi > lo ? int(random() % uint32_t(hi - lo + 1)) : 0);
+    }
+    s.cr3Daily |= 8;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::pickWildcard() {
+    wildcards_.clear();
+    if (vsChosen_ < 0 || size_t(vsChosen_) >= vsTournaments_.size()) return finish(kDbBad);
+    std::vector<int> pool;
+    const std::vector<int>& w = vsTournaments_[size_t(vsChosen_)].wildcards;
+    for (size_t k = 0; k < w.size() && k < 22; ++k)
+        if (w[k]) pool.push_back(int(k));
+    if (pool.empty()) return finish(kDbNone);
+    for (int n = 0; n < 100; ++n) std::swap(pool[random() % pool.size()], pool[random() % pool.size()]);
+    pool.resize(std::min(pool.size(), size_t(constant("PICK_WILDCARD_NUM", 5))));
+    wildcards_ = pool;
+    return finish(kDbOk);
+}
+
 // --- quests ---
 
 int Cr3OfflineDb::findQuests(GameState& s, std::time_t now) {

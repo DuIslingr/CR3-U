@@ -343,6 +343,18 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "cr3offered";
     for (int id : cr3Quests.offered) o << ' ' << id;
     o << '\n';
+    const Cr3Vs& v = cr3Vs;
+    o << "cr3vs " << v.score << ' ' << v.weekScore << ' ' << v.weekRewarded << ' ' << v.weekFrom << ' ' << v.mission << ' ' << v.missionTally << ' '
+      << v.missionTotal << ' ' << v.missionGoal << ' ' << v.missionLevel << ' ' << v.missionType << ' ' << v.missionBoost << ' '
+      << int(v.missionCleared) << ' ' << v.missionRank[0] << ' ' << v.missionRank[1] << ' ' << v.missionBest[0] << ' ' << v.missionBest[1] << ' '
+      << v.missionsCleared << ' ' << v.season << ' ' << v.seasonPoints << ' ' << v.seasonCount << ' ' << int(v.seasonDrop) << ' ' << int(v.playing)
+      << ' ' << int(v.rewarded) << ' ' << v.battles << ' ' << v.last[0] << ' ' << v.last[1] << '\n';
+    o << "cr3vsboosts";
+    for (const auto& [id, n] : v.boosts) o << ' ' << id << ' ' << n;
+    o << '\n';
+    o << "cr3vscleared";
+    for (int id : v.cleared) o << ' ' << id;
+    o << '\n';
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
     return o.str();
 }
@@ -356,7 +368,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
     }
     flags.clear();
     cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear();
-    cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests();
+    cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests(), cr3Vs = Cr3Vs();
     auto readGene = [](std::istringstream& l, Cr3Gene& g) {
         int locked = 0, stocked = 0, fresh = 0;
         if (!(l >> g.master >> g.exp >> locked >> stocked >> fresh)) return false;
@@ -462,6 +474,17 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             l >> cr3Quests.state >> cr3Quests.endedCount >> cr3Quests.selected;
         } else if (key == "cr3begun" || key == "cr3ended") {
             for (int id; l >> id;) (key == "cr3begun" ? cr3Quests.begun : cr3Quests.ended).insert(id);
+        } else if (key == "cr3vs") {
+            Cr3Vs& v = cr3Vs;
+            int mc = 0, sd = 0, pl = 0, rw = 0;
+            l >> v.score >> v.weekScore >> v.weekRewarded >> v.weekFrom >> v.mission >> v.missionTally >> v.missionTotal >> v.missionGoal >>
+                v.missionLevel >> v.missionType >> v.missionBoost >> mc >> v.missionRank[0] >> v.missionRank[1] >> v.missionBest[0] >>
+                v.missionBest[1] >> v.missionsCleared >> v.season >> v.seasonPoints >> v.seasonCount >> sd >> pl >> rw >> v.battles >> v.last[0] >> v.last[1];
+            v.missionCleared = mc != 0, v.seasonDrop = sd != 0, v.playing = pl != 0, v.rewarded = rw != 0;
+        } else if (key == "cr3vsboosts") {
+            for (int id, n; l >> id >> n;) cr3Vs.boosts[id] = n;
+        } else if (key == "cr3vscleared") {
+            for (int id; l >> id;) cr3Vs.cleared.insert(id);
         } else if (key == "cr3offered") {
             for (int id; l >> id;) cr3Quests.offered.push_back(id);
         } else if (extra) {
