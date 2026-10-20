@@ -133,6 +133,13 @@ public:
         int adds[4] = {};                      // (attack, defence, speed, luck added by items)
     };
     std::map<int, PartyGene> partyGenes;
+    // the party's MP from the battle before (InterfaceMain::SaveCharacterMp: what is left carries
+    // over - items, the camp and the VS mode's recovery put it back), by char_para id; none - full
+    std::map<int, int> partyMpLeft;
+    // what each wears (the save's: weapon, armour, accessory table ids - -1 the char_para row's, 0
+    // none), by char_para id; a guest its row's always
+    std::map<int, std::array<int, 3>> partyEquip;
+    bool playerStats(const Cr3BattleTables& tables, int character, Cr3Fighter& out) const;
     // the VS mode's tallies (BtlStatus::TakeDamageToDirection: the party's damage to the monsters -
     // the battle's score, DAT_014a7d88, 9999999 at most; ConsumeMpToDirection: the party's MP used -
     // the clear bonus's percentage; GetNumberOfKilledNonPlayer)

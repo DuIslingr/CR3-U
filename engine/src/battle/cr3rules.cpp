@@ -35,6 +35,68 @@ float Cr3BattleRules::random() {
     return float((rng_ >> 8) & 0xffffff) / float(0x1000000);
 }
 
+// a party member's numbers (MbCharInfo at level 1, its equipment, its gene's at its level)
+bool Cr3BattleRules::playerStats(const Cr3BattleTables& t, int character, Cr3Fighter& f) const {
+    MbeFile::Row r;
+        // (MbCharInfo: the level the save's - a character at 1 until those are kept)
+        if (!t.character.find("Char", character, kCharStats, r)) return false;
+        f.id = character, f.level = 1;
+        f.maxHp = grown(r.i(13), r.i(17), f.level), f.maxMp = grown(r.i(14), r.i(18), f.level);
+        f.attack = grown(low16(r.i(15)), low16(r.i(19)), f.level), f.defence = grown(high16(r.i(15)), high16(r.i(19)), f.level);
+        f.speed = grown(low16(r.i(16)), low16(r.i(20)), f.level), f.luck = grown(high16(r.i(16)), high16(r.i(20)), f.level);
+        f.attackCommand = r.i(8); // (+0x20: BtlCharacterStatus::VGetAttackCommandId)
+        // its equipment (CrxCharacter::initialize: a guest's - +0x0c bit 0 - its row's; anyone
+        // else's the save's - partyEquip -, where it has none put on yet the row's)
+        const bool guest = (r.i(3) & 1) != 0;
+        const auto worn = partyEquip.find(character);
+        const auto equip = [&](int k) { return !guest && worn != partyEquip.end() && worn->second[size_t(k)] >= 0 ? worn->second[size_t(k)] : r.i(4 + size_t(k)); };
+        MbeFile::Row e;
+        if (equip(0) > 0 && t.item.find("Weapon", equip(0), kWeapon, e)) {
+            f.weaponConstant = e.i(14), f.weaponHits = e.i(15), f.weaponBreak = e.i(16), f.consumption = float(e.i(17)) * 0.01f;
+            f.lowerPhysical = e.i(18), f.lowerMagic = e.i(19);
+            for (size_t k = 0; k < 7; ++k) f.lowerElement[k] = e.i(20 + k);
+        }
+        if (equip(1) > 0 && t.item.find("Armor", equip(1), kArmor, e)) {
+            f.physical = e.i(15), f.magic = e.i(16);
+            for (size_t k = 0; k < 7; ++k) f.elementResist[k] = e.i(17 + k);
+        }
+        if (equip(2) > 0 && t.item.find("Accessory", equip(2), kAccessory, e)) {
+            f.maxHp += e.i(12), f.maxMp += e.i(13), f.attack += e.i(14), f.defence += e.i(15), f.speed += e.i(16), f.luck += e.i(17);
+        }
+        // a guest's gene (CrxGene(int): GuestGene - its gene at its level, its commands; the
+        // prologue hero's row 1: gene 453 at 50, Rakshasa Lotus, Augmented Electra, Augmented
+        // Aquinas, Augmented Healing (All), as the reference's list) - its numbers added
+        MbeFile::Row g, gi;
+        if (r.i(7) > 0 && t.gene.find("GuestGene", r.i(7), kGuestGene, g)) {
+            f.geneLevel = g.i(2);
+            for (size_t k = 3; k + 1 < 19; k += 2) {
+                if (g.i(k + 1) <= 0) continue;
+                (g.i(k) == 1 ? f.skills : f.geneCommands).push_back(g.i(k + 1));
+            }
+            if (t.gene.find("Gene", g.i(1), kGene, gi)) {
+                const int lv = f.geneLevel;
+                f.maxHp += grown(gi.i(13), gi.i(17), lv), f.maxMp += grown(gi.i(14), gi.i(18), lv);
+                f.attack += grown(low16(gi.i(15)), low16(gi.i(19)), lv), f.defence += grown(high16(gi.i(15)), high16(gi.i(19)), lv);
+                f.speed += grown(low16(gi.i(16)), low16(gi.i(20)), lv), f.luck += grown(high16(gi.i(16)), high16(gi.i(20)), lv);
+            }
+        }
+        // (anyone else's: the gene it wears - its level, slots and numbers, the items' additions)
+        if (const auto pg = partyGenes.find(character); pg != partyGenes.end() && !(r.i(7) > 0 && t.gene.find("GuestGene", r.i(7), kGuestGene, g))) {
+            f.geneLevel = pg->second.level;
+            for (const auto& sl : pg->second.slots) (sl[0] == 1 ? f.skills : f.geneCommands).push_back(sl[1]);
+            if (t.gene.find("Gene", pg->second.master, kGene, gi)) {
+                const int lv = f.geneLevel;
+                f.maxHp += grown(gi.i(13), gi.i(17), lv), f.maxMp += grown(gi.i(14), gi.i(18), lv);
+                f.attack += grown(low16(gi.i(15)), low16(gi.i(19)), lv) + pg->second.adds[0];
+                f.defence += grown(high16(gi.i(15)), high16(gi.i(19)), lv) + pg->second.adds[1];
+                f.speed += grown(low16(gi.i(16)), low16(gi.i(20)), lv) + pg->second.adds[2];
+                f.luck += grown(high16(gi.i(16)), high16(gi.i(20)), lv) + pg->second.adds[3];
+            }
+        }
+        f.attack = std::max(f.attack, 1), f.defence = std::max(f.defence, 1);
+    return true;
+}
+
 bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int monsterLevel, uint32_t seed, std::string* error) {
     partyDamage = 0, partyMp = 0, killed = 0;
     tables_ = &t;
@@ -54,59 +116,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
         f.unit = int(k), f.player = u.player;
         MbeFile::Row r;
         if (u.player) {
-            // (MbCharInfo: the level the save's - a character at 1 until those are kept)
-            if (!t.character.find("Char", u.character, kCharStats, r)) continue;
-            f.id = u.character, f.level = 1;
-            f.maxHp = grown(r.i(13), r.i(17), f.level), f.maxMp = grown(r.i(14), r.i(18), f.level);
-            f.attack = grown(low16(r.i(15)), low16(r.i(19)), f.level), f.defence = grown(high16(r.i(15)), high16(r.i(19)), f.level);
-            f.speed = grown(low16(r.i(16)), low16(r.i(20)), f.level), f.luck = grown(high16(r.i(16)), high16(r.i(20)), f.level);
-            f.attackCommand = r.i(8); // (+0x20: BtlCharacterStatus::VGetAttackCommandId)
-            // its equipment (CrxCharacter::initialize: a guest's - +0x0c bit 0 - its row's; anyone
-            // else's the save's, not kept yet: the row's too)
-            MbeFile::Row e;
-            if (r.i(4) > 0 && t.item.find("Weapon", r.i(4), kWeapon, e)) {
-                f.weaponConstant = e.i(14), f.weaponHits = e.i(15), f.weaponBreak = e.i(16), f.consumption = float(e.i(17)) * 0.01f;
-                f.lowerPhysical = e.i(18), f.lowerMagic = e.i(19);
-                for (size_t k = 0; k < 7; ++k) f.lowerElement[k] = e.i(20 + k);
-            }
-            if (r.i(5) > 0 && t.item.find("Armor", r.i(5), kArmor, e)) {
-                f.physical = e.i(15), f.magic = e.i(16);
-                for (size_t k = 0; k < 7; ++k) f.elementResist[k] = e.i(17 + k);
-            }
-            if (r.i(6) > 0 && t.item.find("Accessory", r.i(6), kAccessory, e)) {
-                f.maxHp += e.i(12), f.maxMp += e.i(13), f.attack += e.i(14), f.defence += e.i(15), f.speed += e.i(16), f.luck += e.i(17);
-            }
-            // a guest's gene (CrxGene(int): GuestGene - its gene at its level, its commands; the
-            // prologue hero's row 1: gene 453 at 50, Rakshasa Lotus, Augmented Electra, Augmented
-            // Aquinas, Augmented Healing (All), as the reference's list) - its numbers added
-            MbeFile::Row g, gi;
-            if (r.i(7) > 0 && t.gene.find("GuestGene", r.i(7), kGuestGene, g)) {
-                f.geneLevel = g.i(2);
-                for (size_t k = 3; k + 1 < 19; k += 2) {
-                    if (g.i(k + 1) <= 0) continue;
-                    (g.i(k) == 1 ? f.skills : f.geneCommands).push_back(g.i(k + 1));
-                }
-                if (t.gene.find("Gene", g.i(1), kGene, gi)) {
-                    const int lv = f.geneLevel;
-                    f.maxHp += grown(gi.i(13), gi.i(17), lv), f.maxMp += grown(gi.i(14), gi.i(18), lv);
-                    f.attack += grown(low16(gi.i(15)), low16(gi.i(19)), lv), f.defence += grown(high16(gi.i(15)), high16(gi.i(19)), lv);
-                    f.speed += grown(low16(gi.i(16)), low16(gi.i(20)), lv), f.luck += grown(high16(gi.i(16)), high16(gi.i(20)), lv);
-                }
-            }
-            // (anyone else's: the gene it wears - its level, slots and numbers, the items' additions)
-            if (const auto pg = partyGenes.find(u.character); pg != partyGenes.end() && !(r.i(7) > 0 && t.gene.find("GuestGene", r.i(7), kGuestGene, g))) {
-                f.geneLevel = pg->second.level;
-                for (const auto& sl : pg->second.slots) (sl[0] == 1 ? f.skills : f.geneCommands).push_back(sl[1]);
-                if (t.gene.find("Gene", pg->second.master, kGene, gi)) {
-                    const int lv = f.geneLevel;
-                    f.maxHp += grown(gi.i(13), gi.i(17), lv), f.maxMp += grown(gi.i(14), gi.i(18), lv);
-                    f.attack += grown(low16(gi.i(15)), low16(gi.i(19)), lv) + pg->second.adds[0];
-                    f.defence += grown(high16(gi.i(15)), high16(gi.i(19)), lv) + pg->second.adds[1];
-                    f.speed += grown(low16(gi.i(16)), low16(gi.i(20)), lv) + pg->second.adds[2];
-                    f.luck += grown(high16(gi.i(16)), high16(gi.i(20)), lv) + pg->second.adds[3];
-                }
-            }
-            f.attack = std::max(f.attack, 1), f.defence = std::max(f.defence, 1);
+            if (!playerStats(t, u.character, f)) continue;
         } else {
             if (!t.monster.find("Monster", u.monster, kMonsterStats, r)) continue;
             // (BtlMonsterStatus::vInitialize: its own level, +0x14, where it has one - Gunner's and
@@ -134,6 +144,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
                 }
         }
         f.hp = f.maxHp, f.mp = f.maxMp;
+        if (const auto left = partyMpLeft.find(f.id); f.player && left != partyMpLeft.end()) f.mp = std::clamp(left->second, 0, f.maxMp);
         fighters.push_back(f);
     }
     if (fighters.empty()) {
@@ -189,12 +200,14 @@ int Cr3BattleRules::skillConstant(const Cr3Fighter& f, int kind) const {
 
 int Cr3BattleRules::mpCost(const Cr3Fighter& f, const Cr3Command& c) const {
     // (MbCommandInfo::GetMpCost: 0 the value; 1 / 2 its percentage of the max MP, at least 1; 3 x
-    // the weapon's consumption - CrxWeapon::GetConsumptionFactor, Weapon +0x44 / 100 -, at least 1)
+    // the weapon's consumption - CrxWeapon::GetConsumptionFactor, Weapon +0x44 / 100 -, at least 1;
+    // the party's x GetMpCostPercent - kind 129's constants / 100, multiplied: a lifeline item's 0.5)
+    const float less = f.player ? effectMultiplier(f, 129) : 1.0f;
     switch (c.mpKind) {
-    case 0: return c.mpCost;
+    case 0: return c.mpCost > 0 ? std::max(int(float(c.mpCost) * less), 1) : 0;
     case 1:
     case 2: return 0; // (not used by a command CR3-U plays yet)
-    case 3: return c.mpCost > 0 ? std::max(int(float(c.mpCost) * f.consumption), 1) : 0;
+    case 3: return c.mpCost > 0 ? std::max(int(float(c.mpCost) * f.consumption * less), 1) : 0;
     default: return 0;
     }
 }
@@ -327,7 +340,9 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
         if (c.flags & 0x20) crit = true;
         else {
             const float luck = float(luckOf(s)) / float(luckOf(t));
-            const int chance = luck < 0.5f ? 8 : luck < 0.7f ? 13 : luck < 0.9f ? 18 : luck < 1.1f ? 24 : luck < 1.3f ? 29 : luck < 1.5f ? 34 : 39;
+            // (+ BtlStatusEffectUtility::GetCriticalHitChance: kind 44's constants - a lifeline item's 50)
+            const int chance = (luck < 0.5f ? 8 : luck < 0.7f ? 13 : luck < 0.9f ? 18 : luck < 1.1f ? 24 : luck < 1.3f ? 29 : luck < 1.5f ? 34 : 39) +
+                               effectSum(s, 44);
             crit = int(random() * 256.0f) < chance;
         }
     }

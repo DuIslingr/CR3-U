@@ -37,6 +37,9 @@ struct GameState {
     // and the rest a character wears (CrxCharacter: the weapon's and accessory's table ids, the
     // gene's uid - Cr3Gene::uid): utils::SetItem, Cr3System.GeneSet, the camp's
     std::map<int, int> cr3Weapon, cr3Accessory, cr3GeneOf;
+    // a character's MP left from its last battle (cr3_player_data +0 - SaveCharacterMp); none full
+    // (Cr3System.MPFullRecovery, a new game)
+    std::map<int, int> cr3Mp;
     int cr3GeneUid = 0; // (the last gene uid given)
     int geneUid(Cr3Gene& g) { return g.uid > 0 ? g.uid : (g.uid = ++cr3GeneUid); }
     // a character's gene (its index in cr3Genes; -1 none) and a gene's wearer (0 none)

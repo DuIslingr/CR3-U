@@ -258,6 +258,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3System", "MPFullRecovery", [&state](NativeCall&) {
         for (int& m : state.mp) m = -1;
+        state.cr3Mp.clear();
     });
     vm.setNative("Cr3System", "SetPopPoint", [&next](NativeCall& c) { next.popPoint = c.string(0); }); // (FldUtilSetPopPoint)
     vm.setNative("Cr3System", "SetComeFromBattleToField", [&next](NativeCall&) { next.fieldMode = 1; });
@@ -390,6 +391,9 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "cr3vscleared";
     for (int id : v.cleared) o << ' ' << id;
     o << '\n';
+    o << "cr3mp";
+    for (const auto& [ch, mp] : cr3Mp) o << ' ' << ch << ' ' << mp;
+    o << '\n';
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
     return o.str();
 }
@@ -403,7 +407,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
     }
     flags.clear();
     cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear();
-    cr3Weapon.clear(), cr3Accessory.clear(), cr3GeneOf.clear(), cr3GeneUid = 0;
+    cr3Weapon.clear(), cr3Accessory.clear(), cr3GeneOf.clear(), cr3Mp.clear(), cr3GeneUid = 0;
     cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests(), cr3Vs = Cr3Vs();
     auto readGene = [](std::istringstream& l, Cr3Gene& g) {
         int locked = 0, stocked = 0, fresh = 0;
@@ -525,6 +529,8 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             for (int id, n; l >> id >> n;) cr3Vs.boosts[id] = n;
         } else if (key == "cr3vscleared") {
             for (int id; l >> id;) cr3Vs.cleared.insert(id);
+        } else if (key == "cr3mp") {
+            for (int ch, mp; l >> ch >> mp;) cr3Mp[ch] = mp;
         } else if (key == "cr3offered") {
             for (int id; l >> id;) cr3Quests.offered.push_back(id);
         } else if (extra) {

@@ -438,8 +438,69 @@ character) - the starting kits' - puts on a held gene of that kind no one wears,
 UnequipGene and GetEquip* / Unequip* read and clear them. In battle a party member who is no guest
 fights with its gene's level, commands, skills and numbers (and the items' additions). The lab never
 offers a worn gene as a partner, food, sale or store (SetEquipLockSynthesisListMenu).
-`cr3view --input camp:open,camp:genes,camp:row<n>,camp:card<n>,camp:back` (or `camp:field<n>`, a
-field button; C opens the camp with flag 27).
+The buttons dispatch by their place (InterfaceMain::Update 0x1d): 0 Items, 1 Equipment, 2 Gene Swap,
+3 Fuse Gifts, 4 Quests, 5 Status, 6 Options. Each opens with the header (HeaderMenu 0x42: `comHeMenu`'s
+`comHeTitle_fr00` at the screen's frame - 1 Items, 2 Equipment, 3 Gene Swap, 4 Fuse Gifts, 5 Quests, 6
+Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the footer
+(CampFutterMenu / ItemFutterMenu: `comFtrTeamMenu` - the team's name at `typeM_L01` - and the back).
+
+- Items (CampItemMain 0x61): `comListMenu` with its category buttons (CategoryBtnPanel:
+  `comListCategoryBtn` 0.57 apart from `call_comListCategoryBtn`, six shown, the focused raised
+  (-0.072, +0.057), `comListCBtnIcon_fr00` at the value's frame, the focused's name - AnnounceMenuName
+  value + 0x29 - at its `typeM_C01`): 0x13, 0x14, 2, 0, 0x15, 0x16, 0x17, 1, 3, 4, 5 -
+  CreateCampItemListItem's categories 0 all, 1 Items of type (item_para +8) 0, 2 gifts, 3 type 0x12, 4
+  type 1, 5 type 0x13, 6 type 0x14, 7 event items, 8 weapons, 9 armour, 10 accessories. A row
+  (`comListPanel`, 0.76 apart, five in the mask): the icon - comListIcon::SetIconPattern: icon n is
+  frame n % 36 of `icon_panel_<n / 36 + 1>` (and its `..A` alpha) -, the name at `typeM_L01`, the count
+  in `comListNumI_num00`; an Item without a field effect (MbItemInfo::HasFieldItemEffect) dimmed; a
+  worn weapon / armour its wearer's `camEquChr_fr00`; the help across the header. Chosen: a gift -
+  ItemizeGift asked (0x1d0), "Obtained: %s" (0xfb); an Item by its field effect (`field_item.mbe`'s
+  FieldItem: the id, four (kind, value) - 1 .. 4 attack / defence / speed / luck, 5 levels, 6 MP, 7 a
+  command, 8 a skill): how many first (CampItemMenu 0x60: `camItemPosition`'s two digit reels -
+  `camItemReelMenu`'s `mat_num_01/02` the tens, `03/04` the ones, a digit 0.14 of the strip's V offset,
+  digit d at 0.14 x (2 - d), the second strip 0.7 the other way, U 0.13 - and the count held in
+  `camItemStock_num00`, with the system window's 0xdc; Yes only for 1 .. held), then the target: a
+  gene's card (1 .. 4 EnforceGene mode 9, 5 the levels' EXP - mode 6 -, 7 / 8 the command or skill in
+  slot 6, else 7 - mode 4) or a character (6, CreateGeneCharaListMenuListOnly: its MP up to its most).
+  CrxUtilGetItemEfficacyTarget (libcrx 0xe428b4, items 2 ..): 3 a gene, 1 a character.
+- MP is kept between battles (InterfaceMain::SaveCharacterMp; CR3-U's `cr3mp` line - a character's
+  MP left, none full; Cr3System.MPFullRecovery clears it). A character's numbers
+  (Cr3BattleRules::playerStats): its char_para row at level 1, its gene's at the gene's level and the
+  seeds' additions, its accessory's; its worn weapon / armour / accessory (CR3-U's lines, else the
+  row's - j001's armour 83) - the battles' now too.
+- Equipment (CampEquipMenuMain 0x68, CampEquip2Menu 0x6d, CampEquipFutterMenu 0x69): the three slots
+  (header line 0x18b), then a slot's candidates - the held ones of its kind the character may wear
+  (item_para +0x2c: a bit a character), the worn one in focus, an accessory's "none" last; one only
+  others wear is taken and each given the old one (SetEquipPartsDirect). `camEquPosition` (its own
+  animation slides it in over 5 frames) holds `camEquWepPanel` / `camEquJewPanel` (the character's
+  name, the item in focus); the footer's `comFtrEquipMenu` has the party's `comFtrCharaBtn_fr00` - the
+  frame 0 .. 4 the chosen character, 5 .. 9 the others, 10 / 11 past five (libcrx 0xe63198 / 0xe631d4).
+  New armour re-dresses the field's player (its body model).
+- Fuse Gifts (GiftSynthesizeMain 0x71): `data\mergegifts` (category, gene_id, items - the gifts'
+  codes, available - a flag or -1) by the buttons 6, 7, 8 (categories 0, 1, 3); a gift's code is its
+  gift_color + gift_number (item_para's Gift +0x40 / +0x44). Rows `comListLPanel` + `comListLMixing`
+  (the gene), those missing a gift dimmed; the focused one's gifts on `camConpoListMenu`'s six panels
+  (dimmed where not held) and its card at `mixMtrPositon`'s `call_GeneCard` + (-0.5, -1.17, +1), 4.5 x.
+  With GENE_CAPACITY genes held - 0x232; else asked (0x118) and MergeGift.
+- Quests (QuestMenuMain 0x6a, mode 1): FindQuests, then the buttons 9, 10, 0x12, 0x10 - Main Quest
+  (rank 0), Sub Quests (the drawn), Tutorial (rank 6), Current (begun, not ended); a row (CopyQuest:
+  id, rank, level, item, count) its icon rank + 0xae, its title `message\Quest_Title` by the id, ended
+  ones `comListClear`, those whose item isn't held dimmed. Its detail (QuestDitailMenu: `comBgMenu`,
+  `spQstPosition`, `spQstMenu` - the title at `typeM_C01`, `Quest_text`'s lines at `spQstText`'s, the
+  reward - questprizes - at `typeM_L01` .., `spQstBtn`).
+- Status (StatusMain 0xbc, StatusMenu 0xbd): `camStaCut` (the character's picture, frame its id - 1)
+  at `camStaPosition`'s `call_camStaCut` + (1.92, -2.56); categories Equipment Stats
+  (`camEqustaJPanel`: the gene's name, HP and MP - the MP left - bars and five-digit numbers
+  `camEquNumSts_num00` / `comNum00_fr00`, attack, defence, speed, luck), Skills (the gene's slots),
+  Equipment (the worn three); the characters' buttons below.
+- Options (OptionMain 0xac, OptionMenu 0xad): `optTopPositon`'s `optTab_fr00` (Sound, Controls, Other),
+  Sound's three `optSltPanel` (BGM, Sound Effects, Voiceovers) with `optSltBar_fr00` at the volume's
+  frame and `optSltBarCursor` along the bar (SetBarControlPoint), Controls' `optHnd_fr00` pair, Other's
+  Resolution (`optSltLRPanel`); the volumes saved on the way out.
+
+`cr3view --input camp:open,camp:button<n>,camp:cat<n>,camp:row<n>,camp:card<n>,camp:reel<n>,camp:chara<n>,
+camp:yes,camp:no,camp:ok,camp:back` (or `camp:genes`, `camp:field<n>` - a field button; C opens the
+camp with flag 27); `--cr3-party a,b,c` and `--item id:n` set a test's party and items.
 
 ### The VS mode (CR3)
 
@@ -467,11 +528,47 @@ A VS battle's score is the party's damage to the monsters (BtlStatus::TakeDamage
 frames and out from 15: `clVsNumLPanel` the score, three `clVsNumSPanel` with `clText_fr00` 0 .. 2 -
 the MP the party used as a percentage of the score, the lifeline items', the wildcards'), and
 EndVSBattle(score with them, the mission's tally - by its type: the score, or a battle count -
-CR3-U the monsters killed -, lost). The last won, or one lost (no game over): EndVSTournament, its
-prizes, back to B. `cr3view --input vs:open,vs:battle,vs:normal,vs:row<n>,vs:ok,...,vs:next` (the
-field's Battle button opens it; `camp:field3`). Not in yet: the boost items' choice, the wildcards'
-screen, Sp Shop, MP recovery, the VS mode's own gene lab and camp, the missions' and achievements'
-screens (VsAchieveProductionMenu - CR3-U sums up the prizes on the system window).
+CR3-U the monsters killed -, lost). The last won, or one lost (no game over): EndVSTournament, the
+results, the prizes, back to B.
+
+- Lifeline items (the list screen's `VsMainLsideC` - `VsListItemMenu`): the eight of
+  `data\vsboostitems` (by _id: icon, type, const, price) as `VsListItemB_fr00` (frame id - 1) with
+  `VsListStock` (three `VsListNum_fr00`: the count held - digits from 10 -, `VsListTxt_fr00` frame 1
+  "Left"; else the price, frame 0), up to four chosen as `VsListItemA_fr00`, the focused one's name
+  (boost.mbe's BoostItemName) at `typeM_C01`; the footer `VsFtrList`'s `VsFteCoin` - the coins the
+  chosen cost (one held of each used, else its price). Entering asks 0x2bf (with the coins) or 0x306,
+  then BeginVSTournament(the chosen). In battle (BtlBoostItem) type 0 gives the party its status
+  effect for the battle (110 critical +50/256 - kind 44, 111 the four stats x1.5, 112 MP cost x0.5 -
+  kind 129, 113 the score's bonus +10 - kind 130, 115 30% HP a turn, 116 damage taken x0.5, 117 rare
+  drops); type 1 (79, Format) cures the party's passing effects at each turn's end.
+- Wildcards (BtlSysStateSelect::phaseOpenWildCard, at each VS battle's start before the first turn):
+  the five picked (PickWildcard) as WildCardMenu's cards - `VsWildNull` (`_in`), `VsWildTouch` 1.86
+  apart, each `w_card_default` with `w_card_<id>` on its `picture` material (4.6 x) and its bonus on
+  `VsWildBonus`; AnnounceBattle 0x31 told. One chosen a battle (BtlWildCard::Select: three slots),
+  then Apply by its effect (wildcard.mbe's WildCard: +4 bonus %, +8 target - 1 the party, 2 the
+  monsters, 3 everyone, 4 / 5 characters with char_para +0x0c bit 1 / 2 -, +0xc effect - 1 status
+  effects (its constants: the pointed-at array), 2 the break gauge set, 3 the targets' HP to that
+  percent, 4 a first-damage effect -, +0x28 bit 0 that battle only, else the later ones too).
+- The score's bonuses (phaseColosseumResult): MP - the MP used x score / 100; lifeline - (BoostItemBonus
+  by how many chosen: 0, 2, 4, 8, 10, + the party's most kind-130 effect) x score / 100; wildcards -
+  the chosen ones' bonuses summed x score / 100.
+- B's four small buttons (`VsMainBtn05_fr00` x 4, frame its place): the gene lab, the camp (its Gene
+  Swap off), MP recovery (0x2a9 - BuyMP, VS_MP_PRICE coins: the party's MP full), My Page. The
+  party's MP carries over from battle to battle (and the camp's).
+- Sp Shop (A's Btn02 - PiuComMenu, header title 9): `data\shops`' "com_1" goods (GP or coins), a
+  `comListPanel` each - the goods' icon, its first item and count, its price on
+  `comListNumUn_num00` (`comListUnIcon_fr00` 0 coins, 1 GP, 2 ML); tapped again 0x123, BuyGoods -
+  or not enough (0xfe / 0xff / 0x100).
+- The results (VSMain 0xb - VsAchieveProductionMenu, `call_VsResultMenu`): the tournament's score
+  (`VsResultNumL_fr00` x 7), the week's (`VsResultNumMPanel` x 9), how far vsscore's next total is
+  (`VsResultNumSPanel` x 7) with the bar from the last; `VsResultDayPanel` - the day's mission
+  (`message\vsmission_name`, {score} its goal), its tally's bar, `VsResultComplete` once done;
+  `VsResultMonthPanel` the season's. A tap: the prizes.
+
+`cr3view --input vs:open,vs:battle,vs:normal,vs:boost<n>,vs:row<n>,vs:ok,vs:yes,vs:wild<n>,attack,t0,
+...,vs:next,...,vs:results,vs:prizes` (also `vs:shop`, `vs:goods<n>`, `vs:side<n>` - B's small
+buttons -, `vs:unboost<n>`, `vs:no`, `vs:told`; the field's Battle button opens it - `camp:field3`).
+Not in the port: the VS mode's own gene lab and My Page (Square Enix's servers').
 
 ## Battles (CR3)
 
