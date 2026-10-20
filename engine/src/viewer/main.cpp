@@ -5652,6 +5652,20 @@ struct Viewer {
         // (CR3's camp: its clock; --input camp:open / genes / row<n> / card<n> / back / field<n> - a
         // field button, 0 Open .. 6 Shop)
         cr3Camp.since += dt;
+        vs.since += dt;
+        // (--input vs:open / battle / normal / special / row<n> / ok / next / back: the VS mode's, for tests)
+        if (!inputScript.empty() && inputScript.front().compare(0, 3, "vs:") == 0 && uiClock >= inputNext && !cr3BattleMode && vs.screen != 5) {
+            const std::string want = inputScript.front().substr(3);
+            inputScript.pop_front();
+            inputNext = uiClock + 0.5f;
+            if (want == "open") openVs();
+            else if (want == "battle") chooseVs(1);
+            else if (want == "normal" || want == "special") chooseVs(want == "normal" ? 3 : 4);
+            else if (want.compare(0, 3, "row") == 0) chooseVs(100 + std::atoi(want.c_str() + 3));
+            else if (want == "ok") chooseVs(200);
+            else if (want == "next") chooseVs(300);
+            else if (want == "back") chooseVs(-1);
+        }
         if (!inputScript.empty() && inputScript.front().compare(0, 5, "camp:") == 0 && uiClock >= inputNext && (cr3Camp.stage > 0 || cr3FieldIdle())) {
             const std::string want = inputScript.front().substr(5);
             inputScript.pop_front();
@@ -6089,11 +6103,18 @@ struct Viewer {
             }
         } else if (cr3BattleStage == Cr3BattleStage::Action) {
             if (!scripted) stepCr3Action(); // (a battle script's direction - Battle_Direction_End's cut-in - first)
+        } else if (cr3BattleStage == Cr3BattleStage::Won && vs.screen == 6) { // (VS: the score up - a tap, or --input vs:next, goes on)
+            while (!inputScript.empty() && inputScript.front() != "vs:next" &&
+                   (inputScript.front() == "battle" || inputScript.front() == "attack" || inputScript.front() == "guard" ||
+                    (inputScript.front().size() > 1 && inputScript.front()[0] == 't')))
+                inputScript.pop_front(); // (the battle's leftover choices)
+            if (!inputScript.empty() && inputScript.front() == "vs:next" && uiClock - vs.scoreAt > 1.0f) inputScript.pop_front(), vsBattleOver(true);
         } else if (cr3BattleStage == Cr3BattleStage::Won) {
             // (BtlSysStateAction::phaseVictory: then a half-second fade - and the result unless
             // story flag 5051 - DAT_014cfb67 bit 3 - is on, as for the ship's battles)
             if (!scripted && cr3BattleClock - cr3StageStart > 2.5f) {
-                if (game.flag(5051)) endCr3Battle();
+                if (vs.screen == 5) vsBattleOver(true); // (VS: its score - VsColosseumResultMenu)
+                else if (game.flag(5051)) endCr3Battle();
                 else enterCr3Result();
             }
         } else if (cr3BattleStage == Cr3BattleStage::Result) {
@@ -6105,7 +6126,10 @@ struct Viewer {
                 inputScript.pop_front();
             if (!inputScript.empty() && inputScript.front() == "result" && cr3BattleClock - cr3StageStart > 1.5f) inputScript.pop_front(), endCr3Battle();
         } else if (cr3BattleStage == Cr3BattleStage::Lost) {
-            if (cr3BattleClock - cr3StageStart > 2.5f) endCr3Battle();
+            if (cr3BattleClock - cr3StageStart > 2.5f) {
+                if (vs.screen == 5) vsBattleOver(false); // (VS: the tournament lost, no game over)
+                else endCr3Battle();
+            }
         }
         // the units' motions: one played out goes back to the stance (a fall's held)
         for (size_t k = 0; k < cr3BattleUnits.size(); ++k) {
@@ -11986,7 +12010,7 @@ struct Viewer {
     // a number's digits on a panel's numbered joints, `fig` posed at each (frame digit + offset)
     // - its leading zeros left out; "MAX" (frames 40, 41, 42 / 10, 11, 12) where `max` and 3 places
     void cr3UiNumber(const UiFig& panel, const std::string& prefix, const std::string& fig, long value, int places, int offset, const Mat4& view,
-                     float alpha = 1, int maxFrame = -1) {
+                     float alpha = 1, int maxFrame = -1, int suffix = 3) {
         long most = 1;
         for (int k = 0; k < places; ++k) most *= 10;
         value = std::clamp(value, 0L, most - 1);
@@ -11997,7 +12021,7 @@ struct Viewer {
             if (d > 0 || k == places - 1) shown = true;
             if (!shown && maxFrame < 0) continue;
             char joint[64];
-            std::snprintf(joint, sizeof joint, "%s_%03d", prefix.c_str(), k + 1);
+            std::snprintf(joint, sizeof joint, "%s_%0*d", prefix.c_str(), suffix, k + 1);
             float x, y;
             if (cr3UiCall(panel, joint, x, y)) cr3UiPut(fig, "", float(maxFrame >= 0 ? maxFrame + k : d + offset) / 30, x, y, view, alpha);
         }
@@ -13182,7 +13206,7 @@ struct Viewer {
     static constexpr int kCampButtons[7] = {0, 1, 2, 5, 4, 3, 6};
     std::vector<Cr3GeneLabTap> cr3CampTaps;
     bool cr3FieldIdle() {
-        return areaMode && !eventMode && !battleMode && !cr3BattleMode && areaEvents && !areaEvents->running() && !areaEvents->geneLab().open &&
+        return areaMode && !eventMode && !battleMode && !cr3BattleMode && vs.screen == 0 && areaEvents && !areaEvents->running() && !areaEvents->geneLab().open &&
                !titleMenu.stage && shop.stage == 0 && world.stage == 0 && party.stage == 0 && !mapOpen && !saveStage;
     }
     std::vector<int> cr3PartyMembers() const {
@@ -13435,6 +13459,8 @@ struct Viewer {
                 audio.playSe("com_002", false);
             } else if (id == 104)
                 openCr3Camp();
+            else if (id == 103) // (feBtnBattle: the VS mode)
+                openVs();
             else if (id == 102) {
                 encountersOff = !encountersOff;
                 audio.playSe("com_003", false);
@@ -13531,6 +13557,382 @@ struct Viewer {
         return true;
     }
 
+    // ---- CR3's VS mode (VSMain, VsModeMain, VsModeMenu ...) ----
+    // VSMain::OnUpdate: GetVSTournaments and the day's mission, VsModeMenu (VsPosition's joints: the
+    // dark VsMainBlack, VsHeMenu - its typeM_L01, the coins / ML / clock in VsHeNum_fr00 digits -,
+    // VsFtrMenu - VsFtrTop's week score (VsFtrNumL_fr00) and the tournament's (VsFtrNumS_fr00) - and
+    // by the screen: A VsMainLsideA (the banner, the team's level) and VsMainRsideA (VsMainBtn01 -
+    // Battle - and 02); B VsMainLsideB (the party: VsMainParty x 3, a gene's card and its level, HP,
+    // MP) and VsMainRsideB (VsMainBtn03 normal tournaments, 04 special); the list VsMainRsideC
+    // (VsModeListMenu: VsListTitel, VsListList rows 1.4 apart - the tournament's name, VSmode_name,
+    // at typeM_L00, its level at typeM_R00, VsListClear once cleared, VsListBoss_fr00 its icon);
+    // the detail VsContMenu (TournamentDitailMenu: VsContBase - the name at typeM_C01, VSmode_help's
+    // lines at typeM_L01_001 .., the prize's VsContItem_fr00, VsContOk). OK: BeginVSTournament, then
+    // VS_BattleIn - FldUtilReserveVsBattleIN: the tournament's field (mapId), level, music, its
+    // couplings in turn. A battle won: its score (the party's damage) and the clear bonus (score x
+    // the MP the party used / 100) on VsColosseumResultMenu (clVsPositon: clVsNumLPanel, three
+    // clVsNumSPanel with clText_fr00 0 .. 2), EndVSBattle(score, mission); the last won or one
+    // lost: EndVSTournament and its prizes, back to B
+    struct Cr3VsMode {
+        int screen = 0;        // 0 off, 1 the top (A), 2 Battle (B), 3 the list, 4 the detail, 5 the battles, 6 a battle's score, 7 the tournament's end
+        float since = 0;
+        int mode = 0;          // (the list's: vstournaments' mode - 0 normal, 1 special)
+        std::vector<int> rows; // (vsTournaments() indices)
+        int row = 0;
+        int chosen = -1;       // (vsTournaments() index)
+        int battle = 0;        // (the coupling in course)
+        long score = 0, mpBonus = 0, total = 0; // (the last battle's)
+        bool lost = false;
+        float scoreAt = 0;     // (6: when the score came up - uiClock)
+    } vs;
+    std::vector<Cr3GeneLabTap> vsTaps;
+    std::string vsText(const char* file, int id) {
+        std::vector<uint8_t>& d = messageFiles[file];
+        if (d.empty() && !archive.read(std::string("message\\") + file + ".dat", d)) return {};
+        auto u32 = [&](size_t o) { return o + 4 <= d.size() ? uint32_t(d[o] | d[o + 1] << 8 | d[o + 2] << 16 | uint32_t(d[o + 3]) << 24) : 0u; };
+        if (id < 1 || uint32_t(id) > u32(8)) return {};
+        const size_t o = size_t(u32(4)) + u32(size_t(u32(0)) + size_t(id - 1) * 8 + (optionLanguage == 0 ? 0 : 4));
+        std::string s;
+        for (size_t k = o; k < d.size() && d[k]; ++k) s += char(d[k]);
+        for (size_t p; (p = s.find('\r')) != std::string::npos;) s.erase(p, 1);
+        return s;
+    }
+    void openVs() {
+        if (!game.cr3Db) return;
+        game.cr3Db->getVSTournaments(game, std::time(nullptr));
+        game.cr3Db->getVSMission(game);
+        vs = Cr3VsMode();
+        vs.screen = 1;
+        audio.playSe("com_003", false);
+        SDL_Log("vs: open - %zu tournaments, mission %d (goal %d)", game.cr3Db->vsTournaments().size(), game.cr3Vs.mission, game.cr3Vs.missionGoal);
+    }
+    void vsList(int mode) {
+        vs.mode = mode, vs.rows.clear(), vs.row = 0;
+        const auto& ts = game.cr3Db->vsTournaments();
+        for (size_t k = 0; k < ts.size(); ++k)
+            if (ts[k].mode == mode) vs.rows.push_back(int(k));
+        vs.screen = 3, vs.since = 0;
+        SDL_Log("vs: %zu %s tournaments", vs.rows.size(), mode ? "special" : "normal");
+    }
+    void vsDigits(const UiFig& panel, const std::string& prefix, const std::string& fig, long value, int places, const Mat4& view, int offset = 0) {
+        cr3UiNumber(panel, prefix, fig, value, places, offset, view);
+    }
+    void drawVs(int w, int h) {
+        vsTaps.clear();
+        if (vs.screen == 0 || vs.screen == 5 || vs.screen == 6) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        const float t = vs.since;
+        float x, y, cx, cy;
+        UiFig& pos = cr3UiPut("vsposition", "", 0, 0, 0, view);
+        if (cr3UiCall(pos, "call_VsMainBlack", x, y, w, h)) cr3UiPut("vsmainblack", "", 0, x, y, view);
+        dev->clearDepth();
+        // the header
+        if (cr3UiCall(pos, "call_VsHeMenu", x, y, w, h)) {
+            UiFig& he = cr3UiPut("vshemenu", "", 0, x, y, view);
+            if (cr3UiCall(he, "call_VSHeInfoAMenu", cx, cy)) {
+                UiFig& info = cr3UiPut("vsheinfoamenu", "", 0, cx, cy, view);
+                float px, py;
+                if (cr3UiCall(info, "call_cVsHeCoinPanel", px, py)) vsDigits(cr3UiPut("vshecoinpanel", "", 0, px, py, view), "call_VsHeNum_fr00", "vshenum_fr00", game.cr3Coins, 5, view);
+                if (cr3UiCall(info, "call_VsHeMlPanel", px, py)) vsDigits(cr3UiPut("vshemlpanel", "", 0, px, py, view), "call_VsHeNum_fr00", "vshenum_fr00", game.cr3Money, 7, view);
+            }
+            const char* title = vs.screen == 1 ? "VS" : vs.screen == 2 ? "Battle" : nullptr;
+            (void)title;
+        }
+        // the footer: the week's score, the tournament's
+        if (cr3UiCall(pos, "call_VsFtrMenu", x, y, w, h)) {
+            UiFig& ftr = cr3UiPut("vsftrmenu", "", 0, x, y, view);
+            if (cr3UiCall(ftr, "call_VsFtrTop", cx, cy)) {
+                UiFig& top = cr3UiPut("vsftrtop", "", 0, cx, cy, view);
+                float px, py;
+                // (VsModeMenu::SetTotalScore / SetNowScore: the week's in ten, the tournament's in seven - _01 ..)
+                if (cr3UiCall(top, "call_VsFteTotal", px, py))
+                    cr3UiNumber(cr3UiPut("vsftetotal", "", 0, px, py, view), "call_VsFtrNumL_fr00", "vsftrnuml_fr00", game.cr3Vs.weekScore, 10, 0, view, 1, -1, 2);
+                if (cr3UiCall(top, "call_VsFtrNow", px, py))
+                    cr3UiNumber(cr3UiPut("vsftrnow", "", 0, px, py, view), "call_VsFtrNumS_fr00", "vsftrnums_fr00", game.cr3Vs.score, 7, 0, view, 1, -1, 2);
+            }
+        }
+        const auto& ts = game.cr3Db->vsTournaments();
+        if (vs.screen == 1) {
+            if (cr3UiCall(pos, "call_VsMainLsideA", x, y, w, h)) {
+                UiFig& l = cr3UiPut("vsmainlsidea", "", 0, x, y, view);
+                if (cr3UiCall(l, "call_VsMainBanner", cx, cy)) cr3UiPut("vsmainbanner", "", 0, cx, cy, view);
+                if (cr3UiCall(l, "call_VsMainTeLv", cx, cy)) cr3UiPut("vsmaintelv", "", 0, cx, cy, view);
+            }
+            if (cr3UiCall(pos, "call_VsMainRsideA", x, y, w, h)) {
+                UiFig& r = cr3UiPut("vsmainrsidea", "", 0, x, y, view);
+                for (const auto& [joint, fig, id] : {std::tuple<const char*, const char*, int>{"call_VsMainBtn01_fr00", "vsmainbtn01_fr00", 1},
+                                                     {"call_VsMainBtn02_fr00", "vsmainbtn02_fr00", 2}}) {
+                    if (!cr3UiCall(r, joint, cx, cy)) continue;
+                    UiFig& b = cr3UiPut(fig, "", 0, cx, cy, view);
+                    vsTaps.push_back({cx - 1.4f, cy - 0.45f, cx + 1.4f, cy + 0.45f, id}); // (its face: ProvisionalCheckHitTapCollision on the figure)
+                    (void)b;
+                }
+                if (cr3UiCall(r, "call_VsMainChr", cx, cy)) cr3UiPut("vsmainchr", "", 0, cx, cy, view);
+            }
+        } else if (vs.screen == 2) {
+            if (cr3UiCall(pos, "call_VsMainLsideB", x, y, w, h)) {
+                UiFig& l = cr3UiPut("vsmainlsideb", "", 0, x, y, view);
+                const std::vector<int> members = cr3PartyMembers();
+                int k = 0;
+                for (const std::string& j : l.joints) {
+                    if (j.compare(0, 16, "call_VsMainParty") != 0 || !uiJoint(l, j, cx, cy)) continue;
+                    UiFig& party = cr3UiPut("vsmainparty", "", 0, cx, cy, view);
+                    if (k < int(members.size())) {
+                        const int gk = game.wornGene(members[size_t(k)]);
+                        float gx, gy;
+                        if (gk >= 0 && cr3UiCall(party, "call_GeneCard", gx, gy)) {
+                            dev->clearDepth();
+                            drawCr3Card(game.cr3Genes[size_t(gk)].master, gx, gy, 1.0f, 2.5f, view);
+                        }
+                        if (gk >= 0 && game.cr3Db) {
+                            const cr3::Cr3Gene& g = game.cr3Genes[size_t(gk)];
+                            const std::array<int, 6> st = game.cr3Db->geneStats(g);
+                            for (const auto& [joint, fig, value, places] :
+                                 {std::tuple<const char*, const char*, int, int>{"call_camTopLv_num00", "camtoplv_num00", game.cr3Db->geneLevel(g), 3},
+                                  {"call_camTopHp_num00", "camtophp_num00", st[0], 5}, {"call_camTopMp_num00", "camtopmp_num00", st[1], 4}}) {
+                                if (!cr3UiCall(party, joint, gx, gy)) continue;
+                                UiFig& num = cr3UiPut(fig, "", 0, gx, gy, view);
+                                const bool lv = std::strcmp(fig, "camtoplv_num00") == 0;
+                                cr3UiNumber(num, lv ? "call_camTopNumLv_fr00" : "call_camTopNum_fr00", lv ? "camtopnumlv_fr00" : "camtopnum_fr00", value, places, 0, view);
+                            }
+                        }
+                    }
+                    ++k;
+                }
+            }
+            if (cr3UiCall(pos, "call_VsMainRsideB", x, y, w, h)) {
+                UiFig& r = cr3UiPut("vsmainrsideb", "", 0, x, y, view);
+                for (const auto& [joint, fig, id] : {std::tuple<const char*, const char*, int>{"call_VsMainBtn03_fr00", "vsmainbtn03_fr00", 3},
+                                                     {"call_VsMainBtn04_fr00", "vsmainbtn04_fr00", 4}}) {
+                    if (!cr3UiCall(r, joint, cx, cy)) continue;
+                    cr3UiPut(fig, "", 0, cx, cy, view);
+                    vsTaps.push_back({cx - 1.4f, cy - 0.45f, cx + 1.4f, cy + 0.45f, id});
+                }
+                if (cr3UiCall(r, "call_VsMainChr", cx, cy)) cr3UiPut("vsmainchr", "", 0, cx, cy, view);
+            }
+        } else if (vs.screen == 3 || vs.screen == 4) {
+            if (cr3UiCall(pos, "call_VsMainRsideC", x, y, w, h)) {
+                UiFig& r = cr3UiPut("vsmainrsidec", "", 0, x, y, view);
+                if (cr3UiCall(r, "call_VsListTitel", cx, cy)) cr3UiPut("vslisttitel", "", 0, cx, cy, view);
+                float lx, ly;
+                if (cr3UiCall(r, "call_VsListList", lx, ly)) {
+                    const int top = std::clamp(vs.row - 1, 0, std::max(int(vs.rows.size()) - 3, 0));
+                    for (int k = top; k < int(vs.rows.size()) && k < top + 3; ++k) {
+                        const cr3::Cr3OfflineDb::VsTournament& tt = ts[size_t(vs.rows[size_t(k)])];
+                        const float ry = ly - 1.4f * float(k - top);
+                        UiFig& row = cr3UiPut("vslistlist", "", 0, lx + (k == vs.row ? 0.05f : 0.0f), ry, view, k == vs.row ? 1.0f : 0.8f);
+                        float bx, by;
+                        if (cr3UiCall(row, "call_VsListBoss_fr00", bx, by)) cr3UiPut("vslistboss_fr00", "", float(tt.icon) / 30, bx, by, view);
+                        if (tt.cleared && cr3UiCall(row, "call_VsListClear", bx, by)) cr3UiPut("vslistclear", "", 0, bx, by, view);
+                        cr3UiLabel(row, "typeM_L00", vsText("VSmode_name", tt.id), w, h, 1.0f);
+                        float rx, ry2; // (an R joint: the text's right edge - measured off the screen first)
+                        if (cr3UiCall(row, "typeM_R00", rx, ry2)) {
+                            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                            const std::string lv = "Lv " + std::to_string(tt.level);
+                            const float tw = drawUiText(lv, 26, 100.0f, 100.0f, w, h, true, 1.0f);
+                            drawUiText(lv, 26, (rx - 0.075f) / 10 - tw, (ry2 - 0.15f) / 10, w, h, true, 1.0f);
+                        }
+                        float ax, ay, ex, ey;
+                        if (cr3UiCall(row, "tapAreaS01", ax, ay) && cr3UiCall(row, "tapAreaE01", ex, ey)) vsTaps.push_back({ax, ay, ex, ey, 100 + k});
+                    }
+                }
+            }
+            if (vs.screen == 4 && vs.chosen >= 0 && cr3UiCall(pos, "call_VsContMenu", x, y, w, h)) {
+                dev->clearDepth();
+                const cr3::Cr3OfflineDb::VsTournament& tt = ts[size_t(vs.chosen)];
+                UiFig& cm = cr3UiPut("vscontmenu", "", 0, x, y, view);
+                if (cr3UiCall(cm, "call_VsContBase", cx, cy)) {
+                    UiFig& base = cr3UiPut("vscontbase", "", 0, cx, cy, view);
+                    cr3UiLabel(base, "typeM_C01", vsText("VSmode_name", tt.id), w, h, 1.0f);
+                    float bx, by;
+                    if (cr3UiCall(base, "call_VsContTxt", bx, by)) {
+                        UiFig& txt = cr3UiPut("vsconttxt", "", 0, bx, by, view);
+                        const std::string help = vsText("VSmode_help", tt.id);
+                        size_t from = 0;
+                        for (int line = 1; line <= 10 && from <= help.size(); ++line) {
+                            const size_t at = help.find("\\n", from);
+                            char j[24];
+                            std::snprintf(j, sizeof j, "typeM_L01_%03d", line);
+                            cr3UiLabel(txt, j, help.substr(from, at == std::string::npos ? std::string::npos : at - from), w, h, 1.0f);
+                            if (at == std::string::npos) break;
+                            from = at + 2;
+                        }
+                    }
+                    if (cr3UiCall(base, "call_VsContItem_fr00", bx, by)) cr3UiPut("vscontitem_fr00", "", float(tt.prizeIcon) / 30, bx, by, view);
+                    if (cr3UiCall(base, "call_VsContOk", bx, by)) {
+                        cr3UiPut("vscontok", "", 0, bx, by, view);
+                        float ax, ay, ex, ey;
+                        if (cr3UiCall(base, "tapAreaS02", ax, ay) && cr3UiCall(base, "tapEreaS02", ex, ey)) vsTaps.push_back({ax, ay, ex, ey, 200});
+                        else vsTaps.push_back({bx - 1.0f, by - 0.4f, bx + 1.0f, by + 0.4f, 200});
+                    }
+                }
+            }
+        } else if (vs.screen == 7) { // (the tournament's end: its prizes on the system window)
+            const cr3::Cr3OfflineDb::VsRewards& rw = game.cr3Db->vsRewards();
+            std::string line = vs.lost ? "Lost." : rw.won ? "Tournament cleared!" : "Over.";
+            if (rw.won) line += "\\nGP +" + std::to_string(rw.gp) + (rw.item ? "\\nItem: " + cr3NameOf("item_name.mbe", "ItemName", rw.item % 100000) : std::string());
+            geneMenu.message = line;
+            const int screen = geneMenu.screen;
+            const float since = geneMenu.since;
+            geneMenu.screen = 4, geneMenu.since = vs.since;
+            drawGeneAsk(w, h, view);
+            geneMenu.screen = screen, geneMenu.since = since, geneMenu.message.clear();
+            for (const Cr3GeneLabTap& tp : geneLabTaps)
+                if (tp.id == kTapYes || tp.id == kTapNo) vsTaps.push_back({tp.x0, tp.y0, tp.x1, tp.y1, 300});
+            geneLabTaps.clear();
+        }
+        (void)t;
+        // the back (comBackMenu at comFtrPosition's fit6)
+        UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+        if (vs.screen != 7 && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) vsTaps.push_back({ax, ay, ex, ey, -1});
+        }
+    }
+    // a battle's score (VsColosseumResultMenu), over the won battle
+    void drawVsScore(int w, int h) {
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        UiFig& p = cr3UiPut("clvspositon", "", std::min(uiClock - vs.scoreAt, 0.4f), 0, 0, view); // (its own animation: in from the right over 5 frames, held - its out from frame 15)
+        float x, y;
+        // (SetScoreVsColosseumResultMenu: the battle's score, then the bonuses - MP used, lifeline items, wildcards)
+        if (cr3UiCall(p, "call_clVsNumLPanel", x, y)) cr3UiNumber(cr3UiPut("clvsnumlpanel", "", 0, x, y, view), "call_clVsNumL_fr00", "clvsnuml_fr00", vs.score, 7, 0, view);
+        const long parts[3] = {vs.mpBonus, 0, 0};
+        for (int k = 0; k < 3; ++k) {
+            char j[40];
+            std::snprintf(j, sizeof j, "call_clVsLine0%d", k + 1);
+            if (cr3UiCall(p, j, x, y)) cr3UiPut("clvsline01", "", 0, x, y, view);
+            std::snprintf(j, sizeof j, "call_clText_fr00_%03d", k + 1);
+            if (cr3UiCall(p, j, x, y)) cr3UiPut("cltext_fr00", "", float(k) / 30, x, y, view);
+            std::snprintf(j, sizeof j, "call_clVsNumSPanel_%03d", k + 1);
+            if (cr3UiCall(p, j, x, y)) cr3UiNumber(cr3UiPut("clvsnumspanel", "", 0, x, y, view), "call_clVsNumS_fr00", "clvsnums_fr00", parts[k], 6, 0, view);
+        }
+    }
+    // the tournament's battles: the next coupling (FldUtilReserveVsBattleIN - its field, level, music)
+    void vsNextBattle() {
+        const cr3::Cr3OfflineDb::VsTournament& tt = game.cr3Db->vsTournaments()[size_t(vs.chosen)];
+        while (vs.battle < 3 && tt.coupling[vs.battle] <= 0) ++vs.battle;
+        if (vs.battle >= 3 || vs.battle >= std::max(tt.count, 1)) return vsEnd();
+        if (!cr3BattleMode && areaWalker) { // (the field kept to come back to, as BranchAfterEvent's)
+            savedArea = area.name;
+            const cr3::Vec3 p = areaWalker->position();
+            savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
+        }
+        game.next.battleLevel = tt.level, game.next.battleMusic = tt.bgm, game.next.battleNext = 1;
+        vs.screen = 5, vs.since = 0;
+        SDL_Log("vs: battle %d - coupling %d on field %d at level %d", vs.battle + 1, tt.coupling[vs.battle], tt.mapId, tt.level);
+        requestCr3Battle(tt.coupling[vs.battle], tt.mapId);
+    }
+    // a battle over (from the battle's end): its score, EndVSBattle; on, or the tournament's end
+    bool vsMoreBattles() const {
+        const cr3::Cr3OfflineDb::VsTournament& tt = game.cr3Db->vsTournaments()[size_t(vs.chosen)];
+        for (int b = vs.battle; b < 3 && b < std::max(tt.count, 1); ++b)
+            if (tt.coupling[b] > 0) return true;
+        return false;
+    }
+    bool vsBattleOver(bool won) {
+        if (vs.screen == 5) {
+            vs.score = cr3Rules.partyDamage;
+            vs.mpBonus = vs.score * cr3Rules.partyMp / 100;
+            vs.total = std::min(vs.score + vs.mpBonus, 9999999L);
+            const int tally = game.cr3Vs.missionType == 2 ? int(vs.total) : cr3Rules.killed; // (SM_EndVSBattle: by the mission's type)
+            game.cr3Db->endVSBattle(game, int(vs.total), tally, !won);
+            SDL_Log("vs: battle %d %s - score %ld (+%ld for %d MP), tournament %d", vs.battle + 1, won ? "won" : "lost", vs.score, vs.mpBonus,
+                    cr3Rules.partyMp, game.cr3Vs.score);
+            vs.lost = !won;
+            if (won) {
+                vs.screen = 6, vs.since = 0, vs.scoreAt = uiClock; // (the score shown over the battle)
+                return true;
+            }
+            endCr3Battle();
+            vsEnd();
+            return true;
+        }
+        if (vs.screen != 6) return false;
+        ++vs.battle;
+        if (vsMoreBattles()) {
+            cr3BattleMode = false, cr3BattleEvents.reset(); // (on to the next: no field between)
+            vsNextBattle();
+        } else {
+            endCr3Battle();
+            vsEnd();
+        }
+        return true;
+    }
+    void vsEnd() {
+        game.cr3Db->endVSTournament(game, std::time(nullptr));
+        const auto& rw = game.cr3Db->vsRewards();
+        SDL_Log("vs: tournament over - won %d, GP +%d, item %d, week %d", int(rw.won), rw.gp, rw.item, game.cr3Vs.weekScore);
+        game.cr3Db->getVSTournaments(game, std::time(nullptr));
+        vs.screen = 7, vs.since = 0;
+    }
+    void chooseVs(int id) {
+        if (id == -1) {
+            audio.playSe("com_004", false);
+            vs.screen = vs.screen == 4 ? 3 : vs.screen == 3 ? 2 : vs.screen == 2 ? 1 : 0, vs.since = 0;
+            if (vs.screen == 0) SDL_Log("vs: closed");
+            return;
+        }
+        audio.playSe("com_003", false);
+        if (vs.screen == 1 && id == 1) vs.screen = 2, vs.since = 0;
+        else if (vs.screen == 1 && id == 2) SDL_Log("vs: button 2 (not in yet)");
+        else if (vs.screen == 2 && (id == 3 || id == 4)) vsList(id - 3);
+        else if (vs.screen == 3 && id >= 100) {
+            const int k = id - 100;
+            if (k != vs.row) {
+                vs.row = k;
+                return;
+            }
+            vs.chosen = vs.rows[size_t(k)], vs.screen = 4, vs.since = 0;
+        } else if (vs.screen == 4 && id == 200) {
+            const int r = game.cr3Db->beginVSTournament(game, vs.chosen, {}, std::time(nullptr));
+            SDL_Log("vs: tournament %d begun -> %d", game.cr3Db->vsTournaments()[size_t(vs.chosen)].id, r);
+            if (r != cr3::kDbOk) return;
+            game.cr3Db->pickWildcard();
+            vs.battle = 0, vs.lost = false;
+            vsNextBattle();
+        } else if (vs.screen == 7 && id == 300) {
+            vs.screen = 2, vs.since = 0;
+        }
+    }
+    bool vsClick(float fx, float fy) {
+        if (vs.screen == 0 || vs.screen == 5) return false;
+        if (vs.screen == 6) return vsBattleOver(true), true;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = vsTaps.rbegin(); it != vsTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                chooseVs(it->id);
+                return true;
+            }
+        return true;
+    }
+    bool vsKey(SDL_Keycode key) {
+        if (vs.screen == 0 || vs.screen == 5) return false;
+        const bool enter = key == SDLK_RETURN || key == SDLK_SPACE;
+        if (vs.screen == 6) return enter ? (vsBattleOver(true), true) : true;
+        if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(-1);
+        else if (vs.screen == 1 && enter) chooseVs(1);
+        else if (vs.screen == 2 && (key == SDLK_1 || key == SDLK_2)) chooseVs(key == SDLK_1 ? 3 : 4);
+        else if (vs.screen == 3 && (key == SDLK_UP || key == SDLK_DOWN) && !vs.rows.empty())
+            vs.row = std::clamp(vs.row + (key == SDLK_DOWN ? 1 : -1), 0, int(vs.rows.size()) - 1);
+        else if (vs.screen == 3 && enter && !vs.rows.empty()) chooseVs(100 + vs.row);
+        else if (vs.screen == 4 && enter) chooseVs(200);
+        else if (vs.screen == 7 && enter) chooseVs(300);
+        return true;
+    }
+
     void drawCr3Result(int w, int h) {
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
@@ -13598,6 +14000,7 @@ struct Viewer {
         if (!cr3BattleMode) return;
         const bool hud = cr3BattleStage >= Cr3BattleStage::Menu && cr3BattleStage <= Cr3BattleStage::Action;
         if (cr3BattleStage == Cr3BattleStage::Result) return drawCr3Result(w, h);
+        if (vs.screen == 6) return drawVsScore(w, h);
         if (!hud && cr3Popups.empty()) return;
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
@@ -13917,6 +14320,7 @@ struct Viewer {
         else drawCutIns(screenW, screenH);
         drawCr3GeneLab(*ev, screenW, screenH, true);
         if (ev == areaEvents.get()) drawCr3Field(screenW, screenH); // (the field's buttons, the camp)
+        if (ev == areaEvents.get()) drawVs(screenW, screenH);      // (the VS mode's menus)
         if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn)) {
             const bool onConversation = message && ev->messageWindow() == cr3::EventRuntime::CutIn;
             drawWindow(conversationWindow, onConversation, screenW, screenH);
@@ -14669,6 +15073,7 @@ int main(int argc, char** argv) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
                     if (v.geneLabKey(k)) continue; // (the gene lab's keys: its back is Escape too)
+                    if (v.vsKey(k)) continue;       // (the VS mode's)
                     if (v.cr3CampKey(k)) continue;  // (CR3's camp: C opens it)
                     if (k == SDLK_ESCAPE) running = false;
                     if (k == SDLK_SPACE) v.paused = !v.paused;
@@ -14798,6 +15203,7 @@ int main(int argc, char** argv) {
                     else if (v.titleMenu.stage) v.titleClick(fx, fy);
                     else if (v.yesNoClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
+                    else if (v.vsClick(fx, fy)) {}
                     else if (v.cr3CampClick(fx, fy)) {}
                     else if (v.battleMode && v.choosing) v.battleClick(fx, fy);
                     else if (v.cr3BattleMode && v.cr3BattleClick(fx, fy)) {}

@@ -36,6 +36,7 @@ float Cr3BattleRules::random() {
 }
 
 bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int monsterLevel, uint32_t seed, std::string* error) {
+    partyDamage = 0, partyMp = 0, killed = 0;
     tables_ = &t;
     rng_ = seed ? seed : 1;
     fighters.clear();
@@ -480,6 +481,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         c.hits *= c.repeat;
         a.mpCost = std::min(mpCost(s, c), s.mp);
         s.mp -= a.mpCost, s.hp = std::max(s.hp - c.hpCost, 1);
+        if (s.player) partyMp += a.mpCost;
         const bool ally = c.ally();
         bool anyCrit = false, anyDown = false;
         std::vector<int> targets;
@@ -523,7 +525,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     // kind 53 a number, 121 a percentage of the max: an endure; a skill's added
                     // command past it - the spider's finisher)
                     const int least = fromSkill ? 0 : std::max(effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)));
+                    const int before = t.hp;
                     t.hp = std::max(t.hp - d, t.hp > 0 ? std::min(least, t.hp) : 0);
+                    if (s.player && !t.player) partyDamage = std::min(partyDamage + d, 9999999L), killed += before > 0 && t.hp <= 0;
                     if (down) t.comboChance = true, ++t.combo; // (BtlBasicStatus::TakeDamage, addComboNum)
                     anyCrit |= crit, anyDown |= down;
                     if (down && std::find(downed.begin(), downed.end(), ti) == downed.end()) downed.push_back(ti);

@@ -441,6 +441,38 @@ offers a worn gene as a partner, food, sale or store (SetEquipLockSynthesisListM
 `cr3view --input camp:open,camp:genes,camp:row<n>,camp:card<n>,camp:back` (or `camp:field<n>`, a
 field button; C opens the camp with flag 27).
 
+### The VS mode (CR3)
+
+VSMain::OnUpdate: `vs`'s `evt000`, GetVSTournaments (request 0x66) and the day's mission, the banner
+and voice `c121_701`, then VsModeMenu (VsModeMain::Update): its figures all hang off `VsPosition`
+(`call_VsMainBlack`, `call_VsHeMenu` - VsHeInfoAMenu's coin / ML / clock panels in `VsHeNum_fr00`,
+suffixes `_001` -, `call_VsFtrMenu` - VsFtrTop's week score, `VsFtrNumL_fr00` x 10, and the
+tournament's, `VsFtrNumS_fr00` x 7, suffixes `_01` -), by its screen:
+
+- A: `VsMainLsideA` (the banner, the team level) and `VsMainRsideA` - `VsMainBtn01_fr00` BATTLE! (to
+  B), `VsMainBtn02_fr00` Sp Shop -; B: `VsMainLsideB` (three `VsMainParty`: a worn gene's card and
+  its level / HP / MP in the camp's `camTop*` digits) and `VsMainRsideB` - `VsMainBtn03_fr00` Normal
+  Battle, `VsMainBtn04_fr00` Special Battle (the tournaments of mode 0 / 1).
+- The list (VsModeListMenu: `VsMainRsideC` - `VsListTitel`, `VsListList` rows 1.4 apart: the name -
+  `message\VSmode_name.dat`, by the tournament's _id - at `typeM_L00`, its level at the right-aligned
+  `typeM_R00`, `VsListBoss_fr00` at its icon, `VsListClear` once cleared).
+- The detail (TournamentDitailMenu: `VsContMenu`'s `VsContBase` - the name at `typeM_C01`,
+  `VSmode_help`'s lines in `VsContTxt`'s `typeM_L01_001` .., `VsContItem_fr00` at its prize icon,
+  `VsContOk`). OK: BeginVSTournament, PickWildcard, then `VS_BattleIn` (s910_t01_99999's event:
+  Cr3System.VsBattleIn - FldUtilReserveVsBattleIN: the tournament's mapId, level and music, its
+  couplings in turn).
+
+A VS battle's score is the party's damage to the monsters (BtlStatus::TakeDamageToDirection,
+9999999 at most); won, VsColosseumResultMenu shows it and the bonuses (`clVsPositon`, in over 5
+frames and out from 15: `clVsNumLPanel` the score, three `clVsNumSPanel` with `clText_fr00` 0 .. 2 -
+the MP the party used as a percentage of the score, the lifeline items', the wildcards'), and
+EndVSBattle(score with them, the mission's tally - by its type: the score, or a battle count -
+CR3-U the monsters killed -, lost). The last won, or one lost (no game over): EndVSTournament, its
+prizes, back to B. `cr3view --input vs:open,vs:battle,vs:normal,vs:row<n>,vs:ok,...,vs:next` (the
+field's Battle button opens it; `camp:field3`). Not in yet: the boost items' choice, the wildcards'
+screen, Sp Shop, MP recovery, the VS mode's own gene lab and camp, the missions' and achievements'
+screens (VsAchieveProductionMenu - CR3-U sums up the prizes on the system window).
+
 ## Battles (CR3)
 
 The battle reservation: `Cr3System.BattleIn(coupling, field, level, music)` /
@@ -851,7 +883,7 @@ The rest of DBEmu (libcrx 0x71b350 .. ; the Vita's Sync2 at 0x8107a1b0 reads cle
   `vsmissions_cli` (_id, count - missions done it needs -, type, level, 150 (low, high) goal pairs by
   rank) not the last, its goal drawn from its rank's pair. PickWildcard: the chosen tournament's
   wildcards shuffled, PICK_WILDCARD_NUM of them. `vsscore` is one object, not an array. `cr3tool db`
-  runs a tournament on a fixed day; the VS mode itself (VSMain, its menus) is still to come.
+  runs a tournament on a fixed day; the VS mode itself: "The VS mode (CR3)".
 
 ## Scripts (`script\*.nut`, `script64\*.nut`)
 

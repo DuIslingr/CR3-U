@@ -133,6 +133,11 @@ public:
         int adds[4] = {};                      // (attack, defence, speed, luck added by items)
     };
     std::map<int, PartyGene> partyGenes;
+    // the VS mode's tallies (BtlStatus::TakeDamageToDirection: the party's damage to the monsters -
+    // the battle's score, DAT_014a7d88, 9999999 at most; ConsumeMpToDirection: the party's MP used -
+    // the clear bonus's percentage; GetNumberOfKilledNonPlayer)
+    long partyDamage = 0;
+    int partyMp = 0, killed = 0;
     bool setup(const Cr3BattleTables& tables, const Cr3Battle& battle, int monsterLevel, uint32_t seed, std::string* error = nullptr);
     bool command(int id, Cr3Command& out) const;
     // a turn: the party's choices (a fighter's index -> command (-1 a guard), target), then the
