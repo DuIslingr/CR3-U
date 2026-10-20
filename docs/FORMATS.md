@@ -391,10 +391,18 @@ must leave five.
   Genes to Sell, Additional ML (0x17a, 0x17b), the count / 20, the gold (+ 30). Asked (0x182) with
   the cards, then DBEmu SellGenes and the lab's buttons.
 
+- Gene Repository (29; title 35): its own row (SetGeneSynthesisArsenalSecond) - Store (33: room in
+  the stock), Retrieve (34: genes stocked, fewer than 50 held), Expansion (35: the stock under 250,
+  GENE_STOCK_PRICE coins). Store / Retrieve list the held / stocked genes (help 0x17c / 0x17d), the
+  row in focus's card at `call_GeneCard` (SetSynthesisParameterCardView), the footer's counts and OK;
+  OK moves the checked ones (DBEmu MoveGene each; Store keeps five held). Expansion asks 0x17e
+  ({price}, {storehouse_max} - GENE_STOCK_CAPACITY_ADD -, {stocksize}) and buys (BuyGeneStock).
+
 `cr3view --area t0108 --flag 2001 --input call:c115_00,lab:talk|combine|sell|repository|back`
 (call:<function> runs an area function as if tapped); after Combine `lab:enhance`, and `lab:normal`, `lab:card<n>`,
 `lab:row<n>`, `lab:tab<n>`, `lab:mix`, `lab:ok`, `lab:yes` / `lab:no`, `lab:up` / `lab:down`. `--gene
-<id>[:<level>]` and `--gold <n>` give genes and gold to begin with.
+<id>[:<level>]`, `--gold <n>` and `--coins <n>` give genes, gold and Oz coins to begin with;
+`lab:store`, `lab:takeout`, `lab:expand` the repository's buttons.
 
 ## Battles (CR3)
 

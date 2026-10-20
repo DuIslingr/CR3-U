@@ -5637,7 +5637,7 @@ struct Viewer {
                 uiClock >= inputNext && !areaEvents->geneLab().talking) {
                 static const std::map<std::string, int> kLab = {{"talk", 17},  {"combine", 28},  {"sell", 21},    {"repository", 29}, {"back", -1},
                                                                 {"normal", 30}, {"enhance", 31}, {"mix", kTapMix}, {"yes", kTapYes},   {"no", kTapNo},
-                                                                {"ok", kTapOk}};
+                                                                {"ok", kTapOk},   {"store", 33},     {"takeout", 34},   {"expand", 35}};
                 const std::string want = inputScript.front().substr(4);
                 inputScript.pop_front();
                 inputNext = uiClock + 0.5f;
@@ -11882,9 +11882,10 @@ struct Viewer {
     struct Cr3GeneMenu {
         // 0 the lab's buttons, 1 Combine's, 2 the base gene (GeneChangeMenu), 3 the material
         // (GeneSynthesisListMenu, NormalSynthesisMenu), 4 asked, 5 the merge's flash, 6 its card;
-        // 7 the genes picked (Enhance's materials, Sell's), 8 asked about them
+        // 7 the genes picked (Enhance's materials, Sell's, the repository's), 8 asked about them;
+        // 9 the Gene Repository's buttons
         int screen = 0;
-        int mode = 0;            // (0 Combine, 1 Enhance, 2 Sell)
+        int mode = 0;            // (0 Combine, 1 Enhance, 2 Sell, 3 store, 4 take out, 5 expand the repository)
         std::vector<int> pickRows; // (7: the genes listed - cr3Genes indices, by the tab)
         std::vector<int> picked; // (7: those checked - cr3Genes indices, 20 at most)
         std::string alert;       // (AlertwindowMenu's text over it - SetAutoEndAlertWindowMenu: gone by itself)
@@ -11903,6 +11904,7 @@ struct Viewer {
     void geneMenuScreen(int screen) { geneMenu.screen = screen, geneMenu.since = 0, geneLabFocus = 0; }
     std::vector<int> geneLabButtons() const {
         if (geneMenu.screen == 1) return {30, 31};
+        if (geneMenu.screen == 9) return {33, 34, 35}; // (SetGeneSynthesisArsenalSecond: Store, Take Out, Expand)
         return {17, 28, 21, 29};
     }
     int geneLabHeld() const {
@@ -11912,6 +11914,12 @@ struct Viewer {
         if (id == 28) return !game.flag(3613);
         if (id == 21) return !game.flag(3614);
         if (id == 29) return !game.flag(3615);
+        // (the repository's: Store with room in the stock; Take Out with genes stocked and fewer
+        // than 50 held; Expand under 250 with GENE_STOCK_PRICE coins)
+        const int stocked = int(game.cr3Genes.size()) - geneLabHeld();
+        if (id == 33) return stocked < game.cr3GeneStock;
+        if (id == 34) return stocked > 0 && geneLabHeld() < 50;
+        if (id == 35) return game.cr3GeneStock < 250 && game.cr3Db && game.cr3Coins >= game.cr3Db->constant("GENE_STOCK_PRICE");
         return true;
     }
     // AnnounceData (message\AnnounceMenuName.dat - Cr3UtilGetMnlCmpAnnounceData's): u32 the
@@ -12053,11 +12061,12 @@ struct Viewer {
             UiFig& menu = cr3UiPut("comhemenu", "", 0, x, y, view);
             float tx, ty;
             // (SetHeaderTitle: 30 the lab, 31 combining, 32 enhancing, 34 selling)
-            const int title = screen < 2 ? 30 : geneMenu.mode == 1 ? 32 : geneMenu.mode == 2 ? 34 : 31;
+            const int title = screen == 9 || geneMenu.mode >= 3 ? 35 : screen < 2 ? 30 : geneMenu.mode == 1 ? 32 : geneMenu.mode == 2 ? 34 : 31;
             if (cr3UiCall(menu, "call_comHeTitle_fr00", tx, ty)) cr3UiPut("comhetitle_fr00", "", float(title) / 30, tx, ty, view);
             if (screen == 2) drawGeneLabSentence(menu, menuAnnounce(geneMenu.mode == 1 ? 0x176 : 0x18e), w, h);
             if (screen == 3 || (screen == 7 && geneMenu.mode == 1)) drawGeneLabSentence(menu, menuAnnounce(0x177), w, h); // (asked: " ")
             if (screen == 7 && geneMenu.mode == 2) drawGeneLabSentence(menu, menuAnnounce(0x273), w, h);
+            if (screen == 7 && geneMenu.mode >= 3) drawGeneLabSentence(menu, menuAnnounce(geneMenu.mode == 3 ? 0x17c : 0x17d), w, h);
         }
         if (cr3UiCall(head, "call_comHeIconMenu", x, y, w, h)) {
             UiFig& icon = cr3UiPut("comheiconmenu", "", 0, x, y, view);
@@ -12097,7 +12106,7 @@ struct Viewer {
             }
         }
         // the buttons
-        if (screen <= 1) {
+        if (screen <= 1 || screen == 9) {
             const std::vector<int> ids = geneLabButtons();
             UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
             if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
@@ -12158,7 +12167,7 @@ struct Viewer {
                 }
             };
             float px, py;
-            const bool tabs = screen == 3 || screen == 7;
+            const bool tabs = screen == 3 || (screen == 7 && geneMenu.mode < 3);
             if (!tabs && cr3UiCall(mix, "call_comFtrMixGenesPanel", px, py)) {
                 UiFig& genes = cr3UiPut("comftrmixgenespanel", "", 0, px, py, view);
                 number(genes, "call_comListNum_fr00_001", held, 2);
@@ -12477,7 +12486,8 @@ struct Viewer {
         geneMenu.pickRows.clear();
         for (size_t k = 0; k < game.cr3Genes.size(); ++k) {
             const cr3::Cr3Gene& g = game.cr3Genes[k];
-            if (g.stocked || g.locked || int(k) == geneMenu.base) continue;
+            if (g.stocked != (geneMenu.mode == 4) || int(k) == geneMenu.base) continue;
+            if (g.locked && geneMenu.mode < 3) continue;
             const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(g.master) : nullptr;
             if (!gi || (geneMenu.tab > 0 && gi->grade != geneMenu.tab - 1)) continue;
             geneMenu.pickRows.push_back(int(k));
@@ -12521,7 +12531,12 @@ struct Viewer {
         const bool sell = geneMenu.mode == 2;
         float x, y, cx, cy;
         UiFig& mp = cr3UiPut("mixmtrpositon", "", 0, 0, 0, view, std::min(t / 0.2f, 1.0f));
-        if (sell) {
+        if (geneMenu.mode >= 3) { // (SetSynthesisParameterCardView: the row in focus's card)
+            if (geneMenu.row < int(geneMenu.pickRows.size()) && cr3UiCall(mp, "call_GeneCard", x, y)) {
+                dev->clearDepth();
+                drawCr3Card(game.cr3Genes[size_t(geneMenu.pickRows[size_t(geneMenu.row)])].master, x - 0.25f, y - 0.02f, 1.0f, 9.0f, view);
+            }
+        } else if (sell) {
             if (cr3UiCall(mp, "call_mixSelMenu", x, y)) {
                 UiFig& m = cr3UiPut("mixsellmenu", "", 0, x, y, view);
                 cr3UiLabel(m, "typeM_L01", menuAnnounce(0x17a), w, h, 0.26f);
@@ -12726,7 +12741,8 @@ struct Viewer {
         geneMenu.tab = 0, geneMenu.row = 0, geneMenu.result = false;
         geneMenuPickRows();
         geneMenuScreen(7);
-        SDL_Log("gene lab: %s - %zu genes", mode == 2 ? "sell" : "enhance", geneMenu.pickRows.size());
+        static const char* kNames[5] = {"combine", "enhance", "sell", "store", "take out"};
+        SDL_Log("gene lab: %s - %zu genes", kNames[std::clamp(mode, 0, 4)], geneMenu.pickRows.size());
     }
     void chooseGeneLab(cr3::EventRuntime& ev, int id) {
         const int screen = geneMenu.screen;
@@ -12749,11 +12765,13 @@ struct Viewer {
                 geneMenuScreen(2);
             } else if (screen == 7) {
                 ev.geneLabClerk(true);
-                geneMenuScreen(0);
+                geneMenuScreen(geneMenu.mode >= 3 ? 9 : 0);
             } else if (screen == 4) {
                 geneMenuScreen(3);
             } else if (screen == 8) {
-                geneMenuScreen(7);
+                geneMenuScreen(geneMenu.mode == 5 ? 9 : 7);
+            } else if (screen == 9) {
+                geneMenuScreen(0);
             }
             return;
         }
@@ -12771,6 +12789,9 @@ struct Viewer {
                 ev.geneLabClerk(false);
                 geneMenu.base = -1;
                 geneMenuOpenPicks(2);
+            } else if (id == 29) {
+                geneMenuScreen(9);
+                SDL_Log("gene lab: repository");
             } else
                 SDL_Log("gene lab: button %d (its menu not in yet)", id);
             return;
@@ -12778,6 +12799,25 @@ struct Viewer {
         if (screen == 1) {
             audio.playSe("com_003", false);
             if (id == 30 || id == 31) geneMenuOpenBase(ev, id == 31 ? 1 : 0);
+            return;
+        }
+        if (screen == 9) { // (the repository: Store - five genes kept -, Take Out, Expand)
+            if (id == 33 && held <= 5) return geneLabAlert(0x31e);
+            audio.playSe("com_003", false);
+            geneMenu.base = -1;
+            if (id == 33 || id == 34) {
+                ev.geneLabClerk(false);
+                geneMenuOpenPicks(id == 33 ? 3 : 4);
+            } else if (id == 35 && game.cr3Db) { // (AnnounceMenuName 0x17e: {price}, {storehouse_max}, {stocksize})
+                geneMenu.mode = 5;
+                std::string t = menuAnnounce(0x17e);
+                for (const auto& [key, value] : {std::pair<const char*, int>{"{price}", game.cr3Db->constant("GENE_STOCK_PRICE")},
+                                                 {"{storehouse_max}", game.cr3Db->constant("GENE_STOCK_CAPACITY_ADD")},
+                                                 {"{stocksize}", game.cr3GeneStock}})
+                    if (const size_t at = t.find(key); at != std::string::npos) t.replace(at, std::strlen(key), std::to_string(value));
+                geneMenuScreen(8);
+                geneMenu.message = t;
+            }
             return;
         }
         if (screen == 2 && id >= kTapCard && id < kTapRow) {
@@ -12835,6 +12875,11 @@ struct Viewer {
             if (it != geneMenu.picked.end()) {
                 geneMenu.picked.erase(it);
                 audio.playSe("com_003", false);
+            } else if (geneMenu.mode == 4 || (geneMenu.mode == 3 && int(geneMenu.picked.size()) + 5 < held)) {
+                // (the repository's: room where they go - the stock's, the 50)
+                const int stocked = int(game.cr3Genes.size()) - held, n = int(geneMenu.picked.size());
+                if (geneMenu.mode == 3 ? stocked + n >= game.cr3GeneStock : held + n >= 50) audio.playSe("com_005", false);
+                else geneMenu.picked.push_back(g), audio.playSe("com_003", false);
             } else if (geneMenu.picked.size() >= 20 || int(geneMenu.picked.size()) + 5 >= held) {
                 if (int(geneMenu.picked.size()) + 5 >= held) geneLabAlert(0x31e);
                 else audio.playSe("com_005", false);
@@ -12842,6 +12887,16 @@ struct Viewer {
                 geneMenu.picked.push_back(g);
                 audio.playSe("com_003", false);
             }
+            return;
+        }
+        if (screen == 7 && id == kTapOk && !geneMenu.picked.empty() && geneMenu.mode >= 3) { // (DBEmu MoveGene, each)
+            audio.playSe("com_003", false);
+            int moved = 0;
+            for (const int g : geneMenu.picked) moved += game.cr3Db && game.cr3Db->moveGene(game, g, geneMenu.mode == 3) == cr3::kDbOk;
+            SDL_Log("gene lab: %s %d genes", geneMenu.mode == 3 ? "stored" : "took out", moved);
+            geneMenu.picked.clear();
+            ev.geneLabClerk(true);
+            geneMenuScreen(9);
             return;
         }
         if (screen == 7 && id == kTapOk && !geneMenu.picked.empty()) {
@@ -12853,10 +12908,18 @@ struct Viewer {
         if ((screen == 4 || screen == 8) && (id == kTapYes || id == kTapNo)) {
             if (id == kTapNo) {
                 audio.playSe("com_004", false);
-                geneMenuScreen(screen - 1);
+                geneMenu.message.clear();
+                geneMenuScreen(geneMenu.mode == 5 ? 9 : screen - 1);
                 return;
             }
             audio.playSe("com_003", false);
+            if (screen == 8 && geneMenu.mode == 5) { // (DBEmu BuyGeneStock - request 0x5d)
+                const int r = game.cr3Db ? game.cr3Db->buyGeneStock(game) : 500;
+                SDL_Log("gene lab: repository expanded %d -> %d (coins %d)", r, game.cr3GeneStock, game.cr3Coins);
+                geneMenu.message.clear();
+                geneMenuScreen(9);
+                return;
+            }
             if (screen == 8 && geneMenu.mode == 2) { // (StartGeneSellSynthesis: DBEmu SellGenes, then the lab again)
                 const int r = game.cr3Db ? game.cr3Db->sellGenes(game, geneMenu.picked) : 500;
                 SDL_Log("gene lab: sold %zu -> %d (gold %d)", geneMenu.picked.size(), r, game.cr3Money);
@@ -12924,7 +12987,7 @@ struct Viewer {
             chooseGeneLab(*ev, -1);
             return true;
         }
-        if (screen <= 1) {
+        if (screen <= 1 || screen == 9) {
             const std::vector<int> ids = geneLabButtons();
             const int n = int(ids.size());
             if (up || down) {
@@ -13487,7 +13550,7 @@ int main(int argc, char** argv) {
     std::string inputArg; // (--input: the commands chosen, as tokens)
     std::vector<int> flagsArg;
     std::vector<std::pair<int, int>> genesArg; // (--gene id[:level]: a gene held to begin with - tests)
-    int goldArg = -1;
+    int goldArg = -1, coinsArg = -1;
     bool continueSave = false;
     std::string gameSavePath;
     bool titleScreen = false; // (--title: the game's title screen first)
@@ -13547,6 +13610,8 @@ int main(int argc, char** argv) {
             genesArg.push_back({std::atoi(next), colon ? std::atoi(colon + 1) : 1}), ++i;
         } else if (a == "--gold" && next)
             goldArg = std::atoi(next), ++i;
+        else if (a == "--coins" && next)
+            coinsArg = std::atoi(next), ++i;
         else if (a == "--sopia" && next) { // (a sopia's level: id:level, tests)
             int id = 0, level = 0;
             if (std::sscanf(next, "%d:%d", &id, &level) == 2) sopiaArg.push_back({id, level});
@@ -13866,6 +13931,7 @@ int main(int argc, char** argv) {
             v.game.cr3GeneBook.insert(id);
         }
         if (goldArg >= 0) v.game.cr3Money = goldArg;
+        if (coinsArg >= 0) v.game.cr3Coins = coinsArg;
     }
     for (const auto& [id, level] : sopiaArg)
         if (id >= 0 && id < 32) v.game.sopiaLevel[id] = static_cast<signed char>(level);
