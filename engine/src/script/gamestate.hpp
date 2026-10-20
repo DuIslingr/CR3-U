@@ -34,6 +34,25 @@ struct GameState {
     // a character's armour where a script put one on (Cr3System.ItemSet / ItemGetAndSet); else
     // the new game's (Cr3BattleTables::defaultArmour)
     std::map<int, int> cr3Armour;
+    // and the rest a character wears (CrxCharacter: the weapon's and accessory's table ids, the
+    // gene's uid - Cr3Gene::uid): utils::SetItem, Cr3System.GeneSet, the camp's
+    std::map<int, int> cr3Weapon, cr3Accessory, cr3GeneOf;
+    int cr3GeneUid = 0; // (the last gene uid given)
+    int geneUid(Cr3Gene& g) { return g.uid > 0 ? g.uid : (g.uid = ++cr3GeneUid); }
+    // a character's gene (its index in cr3Genes; -1 none) and a gene's wearer (0 none)
+    int wornGene(int ch) {
+        const auto it = cr3GeneOf.find(ch);
+        if (it == cr3GeneOf.end() || it->second <= 0) return -1;
+        for (size_t k = 0; k < cr3Genes.size(); ++k)
+            if (cr3Genes[k].uid == it->second) return int(k);
+        return -1;
+    }
+    int geneWearer(int gene) const {
+        if (gene < 0 || size_t(gene) >= cr3Genes.size() || cr3Genes[size_t(gene)].uid <= 0) return 0;
+        for (const auto& [ch, uid] : cr3GeneOf)
+            if (uid == cr3Genes[size_t(gene)].uid) return ch;
+        return 0;
+    }
     // the offline game database (db/cr3db.hpp: the server's tables and rules, as the Vita plays
     // them - the release's, set by whoever opened it; null: none) and what it keeps in the save:
     // the item sheets' progress by sheet, the genes held, the presents box, the quests

@@ -5649,6 +5649,20 @@ struct Viewer {
             }
         }
         geneLabWasOpen = areaEvents && areaEvents->geneLab().open;
+        // (CR3's camp: its clock; --input camp:open / genes / row<n> / card<n> / back / field<n> - a
+        // field button, 0 Open .. 6 Shop)
+        cr3Camp.since += dt;
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "camp:") == 0 && uiClock >= inputNext && (cr3Camp.stage > 0 || cr3FieldIdle())) {
+            const std::string want = inputScript.front().substr(5);
+            inputScript.pop_front();
+            inputNext = uiClock + 0.5f;
+            if (want == "open") openCr3Camp();
+            else if (want == "genes") chooseCr3Camp(202);
+            else if (want == "back") chooseCr3Camp(-1);
+            else if (want.compare(0, 3, "row") == 0) chooseCr3Camp(300 + std::atoi(want.c_str() + 3));
+            else if (want.compare(0, 4, "card") == 0) chooseCr3Camp(kTapCard + std::atoi(want.c_str() + 4));
+            else if (want.compare(0, 5, "field") == 0) chooseCr3Camp(100 + std::atoi(want.c_str() + 5));
+        }
         // (--input call:<function>: tests - an area function run as if its gimmick were tapped)
         if (!scripted && !inputScript.empty() && inputScript.front().compare(0, 5, "call:") == 0) {
             const std::string want = inputScript.front().substr(5);
@@ -5982,6 +5996,19 @@ struct Viewer {
         // (the rules' random numbers: the clock's, or CR3_BATTLE_SEED's for a battle to replay)
         const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
         const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) : uint32_t(SDL_GetTicks()) | 1u;
+        cr3Rules.partyGenes.clear(); // (the party's genes: what each wears)
+        if (game.cr3Db)
+            for (const auto& [ch, uid] : game.cr3GeneOf) {
+                const int k = game.wornGene(ch);
+                if (k < 0) continue;
+                const cr3::Cr3Gene& g = game.cr3Genes[size_t(k)];
+                cr3::Cr3BattleRules::PartyGene pg;
+                pg.master = g.master, pg.level = game.cr3Db->geneLevel(g);
+                for (const auto& sl : g.slots)
+                    if (sl[1] >= 0) pg.slots.push_back({sl[0], sl[1]});
+                for (int a = 0; a < 4; ++a) pg.adds[a] = g.adds[a];
+                cr3Rules.partyGenes[ch] = pg;
+            }
         if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
         cr3HpShown.clear();
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp);
@@ -12376,7 +12403,7 @@ struct Viewer {
         const auto& previews = game.cr3Db->mergePreviews();
         for (size_t k = 0; k < previews.size(); ++k) {
             const cr3::Cr3Gene& partner = game.cr3Genes[size_t(previews[k].partner)];
-            if (partner.stocked || partner.locked) continue; // (the 50 alone; a locked one never given up)
+            if (partner.stocked || partner.locked || game.geneWearer(previews[k].partner)) continue; // (the 50 alone; a locked or worn one never given up - SetEquipLockSynthesisListMenu)
             const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(previews[k].result.master);
             if (geneMenu.tab > 0 && (!gi || gi->grade != geneMenu.tab - 1)) continue;
             geneMenu.rows.push_back(int(k));
@@ -12489,7 +12516,7 @@ struct Viewer {
         for (size_t k = 0; k < game.cr3Genes.size(); ++k) {
             const cr3::Cr3Gene& g = game.cr3Genes[k];
             if (g.stocked != (geneMenu.mode == 4) || int(k) == geneMenu.base) continue;
-            if (g.locked && geneMenu.mode < 3) continue;
+            if ((g.locked || game.geneWearer(int(k))) && geneMenu.mode != 4) continue; // (locked or worn: kept)
             const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(g.master) : nullptr;
             if (!gi || (geneMenu.tab > 0 && gi->grade != geneMenu.tab - 1)) continue;
             geneMenu.pickRows.push_back(int(k));
@@ -13126,6 +13153,384 @@ struct Viewer {
         return true;
     }
 
+    // ---- CR3's field buttons and camp ----
+    // The field's buttons (CampFieldMenu: feBtnMenu at feBtnPosition's fit9, its feBtnPanel at
+    // call_feBtnPanel - feBtnPanel_in's 0 .. 0.133 s opening, .. 0.3 closing - and on it feBtnOpen,
+    // feBtnSave, feBtnEncount, feBtnBattle, and with flag 27 feBtnCamp and feBtnMypage, with 26
+    // feBtnShop, each at its call_ joint; feBtnTown at fit7 unless flag 1001). Camp (Fld2Main::SM_Camp
+    // - SetCampWindowParameter): CampTopMenu (0x33: comBgMenu, camTopCharaMenu's five
+    // camTopCharaPanel - a party member's gene: its picture cutin_<series> on camTopGene_id00's
+    // mat_cutin_001, camTopStatusPanel's level, HP and MP; empty slots camTopNoEntory_fr00 -, the
+    // frame camTopFramMenu), CampcomBtnMenu (0x5d: comBtnSMenu at comBtnSPosition's fit6, buttons 0,
+    // 1, 2, 5, 4, 3, 6 from slot 004 - comBtnSPanel, comBtnIconS_fr00 at the id's frame; 2, Genes,
+    // off in VS and with flag 21), CampFutterMenu (comFtrTeamMenu, the back). Genes (InterfaceMain::
+    // Update 0x1d, 2: CreateGeneCharaListMenu): the party's characters (GeneCharaListMenu - comListMenu
+    // rows of comListLGene: the character's icon and name, its gene's picture, name and level), then
+    // a character's gene from the cards (GeneChangeMenu, camp: those worn by others marked with their
+    // camEquChr_fr00), the card in focus tapped again worn
+    struct Cr3Camp {
+        int stage = 0;          // 0 the field, 1 the camp's top, 2 Genes: the characters, 3 a character's gene
+        float since = 0;
+        bool panelOpen = true;  // (the field's buttons: feBtnOpen's panel)
+        float panelAt = -10;
+        int chara = 0;          // (3: its char_para id)
+        int row = 0;            // (2: the row in focus)
+        std::vector<int> genes; // (3: the cards - cr3Genes indices)
+        int focus = 0;
+        int button = 0;         // (1: the button in focus)
+    } cr3Camp;
+    static constexpr int kCampButtons[7] = {0, 1, 2, 5, 4, 3, 6};
+    std::vector<Cr3GeneLabTap> cr3CampTaps;
+    bool cr3FieldIdle() {
+        return areaMode && !eventMode && !battleMode && !cr3BattleMode && areaEvents && !areaEvents->running() && !areaEvents->geneLab().open &&
+               !titleMenu.stage && shop.stage == 0 && world.stage == 0 && party.stage == 0 && !mapOpen && !saveStage;
+    }
+    std::vector<int> cr3PartyMembers() const {
+        std::vector<int> out;
+        for (int c : game.cr3Party)
+            if (c > 0) out.push_back(c);
+        return out;
+    }
+    bool cr3CampButtonOn(int id) const { return id != 2 || !game.flag(21); }
+    std::vector<float> cardUVs;
+    float cardUV(int series, int k) {
+        if (cardUVs.empty()) {
+            std::vector<uint8_t> d;
+            if (archive.read("UI_cardUV.dat", d)) {
+                cardUVs.resize(d.size() / 4);
+                std::memcpy(cardUVs.data(), d.data(), cardUVs.size() * 4);
+            }
+            if (cardUVs.empty()) cardUVs.push_back(0);
+        }
+        const size_t i = size_t(std::max(series, 0)) * 6 + size_t(k);
+        return i < cardUVs.size() ? cardUVs[i] : 0.0f;
+    }
+    void drawCr3Field(int w, int h) {
+        cr3CampTaps.clear();
+        if (cr3Camp.stage == 0 && !cr3FieldIdle()) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        if (cr3Camp.stage == 0) return drawCr3FieldButtons(w, h, view);
+        drawCr3Camp(w, h, view);
+    }
+    void drawCr3FieldButtons(int w, int h, const Mat4& view) {
+        float x, y;
+        UiFig& pos = cr3UiPut("febtnposition", "", 0, 0, 0, view);
+        if (!game.flag(1001) && cr3UiCall(pos, "call_feBtnTown", x, y, w, h)) cr3UiPut("febtntown", "", 0, x, y, view);
+        if (!cr3UiCall(pos, "call_feBtnMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("febtnmenu", "", 0, x, y, view);
+        if (!cr3UiCall(menu, "call_feBtnPanel", x, y)) return;
+        const float age = std::max(uiClock - cr3Camp.panelAt, 0.0f);
+        const float pt = cr3Camp.panelOpen ? std::min(age, 0.1333f) : std::min(0.1333f + age, 0.3f);
+        UiFig& panel = cr3UiPut("febtnpanel", "febtnpanel_in", pt, x, y, view);
+        struct Btn {
+            const char* joint;
+            const char* fig;
+            int id;
+            bool shown;
+        };
+        const bool open = cr3Camp.panelOpen;
+        const Btn btns[] = {{"call_feBtnOpen", "febtnopen", 0, true},
+                            {"call_feBtnSave", "febtnsave", 1, open},
+                            {"call_feBtnEncount", "febtnencount", 2, open},
+                            {"call_feBtnBattle", "febtnbattle", 3, open},
+                            {"call_feBtnCamp", "febtncamp", 4, open && game.flag(27)},
+                            {"call_feBtnMypage", "febtnmypage", 5, open && game.flag(27)},
+                            {"call_feBtnShop", "febtnshop", 6, open && game.flag(26)}};
+        for (const Btn& b : btns) {
+            float bx, by;
+            if (!b.shown || !cr3UiCall(panel, b.joint, bx, by)) continue;
+            UiFig& u = cr3UiPut(b.fig, "", 0, bx, by, view);
+            float ix, iy;
+            if (b.id == 0 && cr3UiCall(u, "call_feIconOpen_fr00", ix, iy)) cr3UiPut("febtniconopen_fr00", "", open ? 1.0f / 30 : 0.0f, ix, iy, view);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 100 + b.id});
+        }
+    }
+    void openCr3Camp() {
+        cr3Camp.stage = 1, cr3Camp.since = 0, cr3Camp.button = 0;
+        audio.playSe("com_003", false);
+        SDL_Log("camp: open (CR3)");
+    }
+    void drawCr3Camp(int w, int h, const Mat4& view) {
+        const float t = cr3Camp.since;
+        float x, y, cx, cy;
+        // (CampTopMenu: the background and the party's panels)
+        UiFig& top = cr3UiPut("camtopposition", "", 0, 0, 0, view);
+        if (cr3UiCall(top, "call_comBgMenu", x, y, w, h)) cr3UiPut("combgmenu", "", 0, x, y, view);
+        dev->clearDepth();
+        if (cr3Camp.stage == 3) return drawCr3CampGenes(w, h, view);
+        if (cr3Camp.stage == 1 && cr3UiCall(top, "call_camTopCharaMenu", x, y, w, h)) {
+            UiFig& chara = cr3UiPut("camtopcharamenu", "", 0, x, y, view);
+            const std::vector<int> members = cr3PartyMembers();
+            for (int k = 0; k < 5; ++k) {
+                if (k >= int(members.size())) {
+                    if (k > 0 && cr3UiCall(chara, "call_camTopNoEntory_fr00_00" + std::to_string(k), cx, cy)) cr3UiPut("camtopnoentory_fr00", "", 0, cx, cy, view);
+                    continue;
+                }
+                if (!cr3UiCall(chara, "call_camTopCharaPanel_00" + std::to_string(k + 1), cx, cy)) continue;
+                UiFig& panel = cr3UiPut("camtopcharapanel", "", 0, cx, cy, view);
+                const int gk = game.wornGene(members[size_t(k)]);
+                const cr3::Cr3Gene* g = gk >= 0 ? &game.cr3Genes[size_t(gk)] : nullptr;
+                const cr3::Cr3OfflineDb::GeneInfo* gi = g && game.cr3Db ? game.cr3Db->geneInfo(g->master) : nullptr;
+                float px, py;
+                if (cr3UiCall(panel, "call_camTopGene_id00", px, py)) {
+                    UiFig& pic = uiFig("camtopgene_id00");
+                    char name[16];
+                    std::snprintf(name, sizeof name, "cutin_%03d", gi ? gi->series : 0);
+                    cr3UiMaterial(pic, "mat_cutin_001", name);
+                    // (SetMaterialOffsetSet1: InterfaceMain::GetCardOffsetParameter(series, 0 / 1) -
+                    // UI_cardUV.dat, six floats a series)
+                    const float u = cardUV(gi ? gi->series : 0, 0), v = cardUV(gi ? gi->series : 0, 1);
+                    for (ViewMesh& vm : pic.fig.meshes) {
+                        const uint32_t mi = vm.source.material;
+                        if (mi < pic.materials.size() && pic.materials[mi] == "mat_cutin_001") vm.material.params[0x5e] = {u, v};
+                    }
+                    cr3UiPut("camtopgene_id00", "", 0, px, py, view);
+                }
+                if (cr3UiCall(panel, "call_camTopStatusPanel", px, py)) {
+                    UiFig& st = cr3UiPut("camtopstatuspanel", "", 0, px, py, view);
+                    float sx, sy;
+                    if (cr3UiCall(st, "call_camTopIcon_fr00", sx, sy)) cr3UiPut("camtopicon_fr00", "", float(members[size_t(k)] - 1) / 30, sx, sy, view);
+                    if (gi) {
+                        const int level = game.cr3Db->geneLevel(*g);
+                        const std::array<int, 6> stats = game.cr3Db->geneStats(*g);
+                        if (cr3UiCall(st, "call_camTopRerity_fr00", sx, sy)) cr3UiPut("camtoprerity_fr00", "", float(gi->grade) / 30, sx, sy, view);
+                        if (cr3UiCall(st, "call_camTopLvBar_per", sx, sy)) cr3UiPut("camtoplvbar_per", "", float(level) * 100.0f / float(std::max(gi->maxLevel, 1)) / 30, sx, sy, view);
+                        if (cr3UiCall(st, "call_camTopHpBar_per", sx, sy)) cr3UiPut("camtophpbar_per", "", 100.0f / 30, sx, sy, view);
+                        if (cr3UiCall(st, "call_camTopMpBar_per", sx, sy)) cr3UiPut("camtopmpbar_per", "", 100.0f / 30, sx, sy, view);
+                        for (const auto& [joint, fig, value, places] :
+                             {std::tuple<const char*, const char*, int, int>{"call_camTopLv_num00", "camtoplv_num00", level, 3},
+                              {"call_camTopHp_num00", "camtophp_num00", stats[0], 5}, {"call_camTopMp_num00", "camtopmp_num00", stats[1], 4}}) {
+                            if (!cr3UiCall(st, joint, sx, sy)) continue;
+                            UiFig& num = cr3UiPut(fig, "", 0, sx, sy, view);
+                            cr3UiNumber(num, std::strcmp(fig, "camtoplv_num00") == 0 ? "call_camTopNumLv_fr00" : "call_camTopNum_fr00",
+                                        std::strcmp(fig, "camtoplv_num00") == 0 ? "camtopnumlv_fr00" : "camtopnum_fr00", value, places, 0, view);
+                        }
+                    }
+                }
+            }
+        }
+        if (cr3Camp.stage == 1 && cr3UiCall(top, "call_camTopFramMenu", x, y, w, h)) cr3UiPut("camtopframmenu", "", 0, x, y, view);
+        // (CampcomBtnMenu: its buttons)
+        if (cr3Camp.stage == 1) {
+            UiFig& bp = cr3UiPut("combtnsposition", "", 0, 0, 0, view);
+            if (cr3UiCall(bp, "call_comBtnSMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("combtnsmenu", "combtnsmenu_io", t, x, y, view);
+                for (int b = 0; b < 7; ++b) {
+                    char joint[32];
+                    std::snprintf(joint, sizeof joint, "call_comBtnSPanel_%03d", 4 + b);
+                    float px, py;
+                    if (!cr3UiCall(menu, joint, px, py)) continue;
+                    const int id = kCampButtons[b];
+                    const bool off = !cr3CampButtonOn(id);
+                    UiFig& panel = cr3UiPut("combtnspanel", "", 0, px, py, view, off ? 0.5f : 1.0f);
+                    if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b == cr3Camp.button ? 1 : 0) / 30, cx, cy, view, off ? 0.5f : 1.0f);
+                    if (cr3UiCall(panel, "call_comBtnIconS_fr00", cx, cy)) cr3UiPut("combtnicons_fr00", "", float(id) / 30, cx, cy, view, off ? 0.5f : 1.0f);
+                    if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
+                    float ax, ay, ex, ey;
+                    if (!off && cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 200 + id});
+                }
+            }
+        }
+        if (cr3Camp.stage == 2) drawCr3CampCharas(w, h, view);
+        // (CampFutterMenu: the team, the back)
+        UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+        if (cr3UiCall(foot, "call_comFtrTeamMenu", x, y, w, h)) cr3UiPut("comftrteammenu", "", 0, x, y, view);
+        if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
+        }
+    }
+    // Genes' characters (GeneCharaListMenu: comListMenu, rows of comListLGene 1.24 apart)
+    void drawCr3CampCharas(int w, int h, const Mat4& view) {
+        float x, y, lx, ly, cx, cy;
+        UiFig& pos = cr3UiPut("comlistposition", "comlistposition_io", cr3Camp.since, 0, 0, view);
+        if (!cr3UiCall(pos, "call_comListMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+        if (!cr3UiCall(menu, "call_comListPanel", lx, ly)) return;
+        const std::vector<int> members = cr3PartyMembers();
+        const int top = std::clamp(cr3Camp.row - 1, 0, std::max(int(members.size()) - 3, 0));
+        for (int k = top; k < int(members.size()) && k < top + 3; ++k) {
+            const int ch = members[size_t(k)];
+            UiFig& row = cr3UiPut("comlistlpanel", "", 0, lx, ly - 1.24f * float(k - top), view);
+            if (k == cr3Camp.row && cr3UiCall(row, "call_comListLCursor", cx, cy)) cr3UiPut("comlistlcursor", "", 0, cx, cy, view);
+            if (cr3UiCall(row, "call_comListLGene", cx, cy)) {
+                UiFig& gene = cr3UiPut("comlistlgene", "", 0, cx, cy, view);
+                float gx, gy;
+                if (cr3UiCall(gene, "call_comListCharaIcon_fr00", gx, gy)) cr3UiPut("comlistcharaicon_fr00", "", float(ch - 1) / 30, gx, gy, view);
+                cr3UiLabel(gene, "typeM_L01", cr3NameOf("char_name.mbe", "CharName", ch), w, h, 0.26f);
+                const int gk = game.wornGene(ch);
+                if (gk >= 0 && game.cr3Db) {
+                    const cr3::Cr3Gene& g = game.cr3Genes[size_t(gk)];
+                    if (const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(g.master)) {
+                        if (cr3UiCall(gene, "call_comListGeneIcon_id00", gx, gy)) {
+                            UiFig& icon = uiFig("comlistgeneicon_id00");
+                            char pic[16];
+                            std::snprintf(pic, sizeof pic, "card_%03d", gi->series);
+                            cr3UiMaterial(icon, "mat_card_001", pic);
+                            cr3UiPut("comlistgeneicon_id00", "", 0, gx, gy, view);
+                        }
+                        const int level = game.cr3Db->geneLevel(g);
+                        if (cr3UiCall(gene, "call_comListLv_per", gx, gy)) cr3UiPut("comlistlv_per", "", float(level) * 100.0f / float(std::max(gi->maxLevel, 1)) / 30, gx, gy, view);
+                        if (cr3UiCall(gene, "call_comListNumL_num00", gx, gy)) {
+                            UiFig& num = cr3UiPut("comlistnuml_num00", "", 0, gx, gy, view);
+                            cr3UiNumber(num, "call_comListNum_fr00", "comlistnum_fr00", level, 3, 10, view, 1, level >= gi->maxLevel ? 40 : -1);
+                        }
+                        cr3UiLabel(gene, "typeM_L02", cr3NameOf("gene_name.mbe", "GeneName", g.master), w, h, 0.26f);
+                    }
+                }
+            }
+            float ax, ay, ex, ey;
+            if (cr3UiCall(row, "tapAreaS01", ax, ay) && cr3UiCall(row, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 300 + k});
+        }
+    }
+    // a character's gene: the lab's cards (camp: all held; the focused card's status), each card
+    // worn by another marked with its camEquChr_fr00 (the character - 1)
+    void drawCr3CampGenes(int w, int h, const Mat4& view) {
+        // (the base select's drawing, its genes and focus the camp's)
+        std::swap(geneMenu.genes, cr3Camp.genes), std::swap(geneMenu.focus, cr3Camp.focus);
+        const int mode = geneMenu.mode;
+        const float since = geneMenu.since;
+        geneMenu.mode = 0, geneMenu.since = cr3Camp.since;
+        geneLabTaps.clear();
+        drawGeneBase(w, h, view);
+        geneMenu.mode = mode, geneMenu.since = since;
+        std::swap(geneMenu.genes, cr3Camp.genes), std::swap(geneMenu.focus, cr3Camp.focus);
+        for (const Cr3GeneLabTap& t : geneLabTaps) cr3CampTaps.push_back(t);
+        // (the wearers' marks over the cards in view)
+        UiFig& lp = uiFig("genecnglistmenu");
+        float px[9], py[9];
+        int slots = 0;
+        for (const std::string& j : lp.joints)
+            if (j.compare(0, 21, "call_geneCngListPanel") == 0 && slots < 9 && uiJoint(lp, j, px[slots], py[slots])) ++slots;
+        if (slots == 9)
+            for (int s = 1; s <= 8; ++s) {
+                const int g = cr3Camp.focus + s - 5;
+                if (g < 0 || g >= int(cr3Camp.genes.size())) continue;
+                const int wearer = game.geneWearer(cr3Camp.genes[size_t(g)]);
+                if (wearer <= 0) continue;
+                const float scale = s == 5 ? 4.0f : 3.0f;
+                cr3UiPut("camequchr_fr00", "", float(wearer - 1) / 30, px[s] - 0.1f * scale, py[s] + 0.25f + 0.18f * scale, view);
+            }
+        float x, y, cx, cy;
+        UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+        if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
+        }
+    }
+    void chooseCr3Camp(int id) {
+        if (cr3Camp.stage == 0) {
+            if (id == 100) { // (feBtnOpen: the panel opened or closed)
+                cr3Camp.panelOpen = !cr3Camp.panelOpen, cr3Camp.panelAt = uiClock;
+                audio.playSe("com_002", false);
+            } else if (id == 104)
+                openCr3Camp();
+            else if (id == 102) {
+                encountersOff = !encountersOff;
+                audio.playSe("com_003", false);
+                SDL_Log("field: encounters %s", encountersOff ? "off" : "on");
+            } else
+                SDL_Log("field: button %d (not in yet)", id - 100);
+            return;
+        }
+        if (id == -1) {
+            audio.playSe("com_004", false);
+            cr3Camp.stage = cr3Camp.stage == 3 ? 2 : cr3Camp.stage == 2 ? 1 : 0, cr3Camp.since = 0;
+            if (cr3Camp.stage == 0) SDL_Log("camp: closed (CR3)");
+            return;
+        }
+        if (cr3Camp.stage == 1 && id >= 200) {
+            const int b = id - 200;
+            audio.playSe("com_003", false);
+            if (b == 2) {
+                cr3Camp.stage = 2, cr3Camp.since = 0, cr3Camp.row = 0;
+                SDL_Log("camp: genes");
+            } else
+                SDL_Log("camp: button %d (not in yet)", b);
+            return;
+        }
+        if (cr3Camp.stage == 2 && id >= 300) {
+            const std::vector<int> members = cr3PartyMembers();
+            const int k = id - 300;
+            if (k < 0 || k >= int(members.size())) return;
+            if (k != cr3Camp.row) {
+                cr3Camp.row = k;
+                audio.playSe("com_002", false);
+                return;
+            }
+            audio.playSe("com_003", false);
+            cr3Camp.chara = members[size_t(k)];
+            cr3Camp.genes.clear();
+            for (size_t g = 0; g < game.cr3Genes.size(); ++g)
+                if (!game.cr3Genes[g].stocked) cr3Camp.genes.push_back(int(g));
+            const int worn = game.wornGene(cr3Camp.chara);
+            const auto it = std::find(cr3Camp.genes.begin(), cr3Camp.genes.end(), worn);
+            cr3Camp.focus = it != cr3Camp.genes.end() ? int(it - cr3Camp.genes.begin()) : 0;
+            cr3Camp.stage = 3, cr3Camp.since = 0;
+            SDL_Log("camp: %d's gene (%zu cards)", cr3Camp.chara, cr3Camp.genes.size());
+            return;
+        }
+        if (cr3Camp.stage == 3 && id >= kTapCard && id < kTapRow) {
+            const int g = id - kTapCard;
+            if (g != cr3Camp.focus) {
+                cr3Camp.focus = g;
+                audio.playSe("com_002", false);
+                return;
+            }
+            // (SetEquipGeneCardGeneChangeMenuCamp: worn - taken from whoever wore it)
+            cr3::Cr3Gene& gene = game.cr3Genes[size_t(cr3Camp.genes[size_t(g)])];
+            const int uid = game.geneUid(gene);
+            for (auto it = game.cr3GeneOf.begin(); it != game.cr3GeneOf.end();)
+                it = it->second == uid ? game.cr3GeneOf.erase(it) : std::next(it);
+            game.cr3GeneOf[cr3Camp.chara] = uid;
+            audio.playSe("com_003", false);
+            SDL_Log("camp: %d wears gene %d", cr3Camp.chara, gene.master);
+            cr3Camp.stage = 2, cr3Camp.since = 0;
+        }
+    }
+    bool cr3CampClick(float fx, float fy) {
+        if (cr3Camp.stage == 0 && (!cr3FieldIdle() || cr3CampTaps.empty())) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = cr3CampTaps.rbegin(); it != cr3CampTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                chooseCr3Camp(it->id);
+                return true;
+            }
+        return cr3Camp.stage != 0; // (the camp holds the screen; the field's taps go on)
+    }
+    bool cr3CampKey(SDL_Keycode key) {
+        if (cr3Camp.stage == 0) {
+            if (key == SDLK_C && cr3FieldIdle() && game.flag(27)) return openCr3Camp(), true;
+            return false;
+        }
+        const bool up = key == SDLK_UP, down = key == SDLK_DOWN, enter = key == SDLK_RETURN || key == SDLK_SPACE;
+        if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCr3Camp(-1);
+        else if (cr3Camp.stage == 1) {
+            if (up || down) cr3Camp.button = (cr3Camp.button + (down ? 1 : 6)) % 7, audio.playSe("com_002", false);
+            else if (enter && cr3CampButtonOn(kCampButtons[cr3Camp.button])) chooseCr3Camp(200 + kCampButtons[cr3Camp.button]);
+        } else if (cr3Camp.stage == 2) {
+            const int n = int(cr3PartyMembers().size());
+            if ((up || down) && n > 0) cr3Camp.row = std::clamp(cr3Camp.row + (down ? 1 : -1), 0, n - 1), audio.playSe("com_002", false);
+            else if (enter && n > 0) chooseCr3Camp(300 + cr3Camp.row);
+        } else if (cr3Camp.stage == 3) {
+            const int n = int(cr3Camp.genes.size());
+            if ((up || down) && n > 0) chooseCr3Camp(kTapCard + std::clamp(cr3Camp.focus + (down ? 1 : -1), 0, n - 1));
+            else if (enter && n > 0) chooseCr3Camp(kTapCard + cr3Camp.focus);
+        }
+        return true;
+    }
+
     void drawCr3Result(int w, int h) {
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
@@ -13511,6 +13916,7 @@ struct Viewer {
         if (cr3CutInsLoaded) drawCr3CutIns(screenW, screenH);
         else drawCutIns(screenW, screenH);
         drawCr3GeneLab(*ev, screenW, screenH, true);
+        if (ev == areaEvents.get()) drawCr3Field(screenW, screenH); // (the field's buttons, the camp)
         if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn)) {
             const bool onConversation = message && ev->messageWindow() == cr3::EventRuntime::CutIn;
             drawWindow(conversationWindow, onConversation, screenW, screenH);
@@ -14263,6 +14669,7 @@ int main(int argc, char** argv) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
                     if (v.geneLabKey(k)) continue; // (the gene lab's keys: its back is Escape too)
+                    if (v.cr3CampKey(k)) continue;  // (CR3's camp: C opens it)
                     if (k == SDLK_ESCAPE) running = false;
                     if (k == SDLK_SPACE) v.paused = !v.paused;
                     // F1: the next resolution; F2: the upscaler's next mode (off, FSR 3.1 native
@@ -14391,6 +14798,7 @@ int main(int argc, char** argv) {
                     else if (v.titleMenu.stage) v.titleClick(fx, fy);
                     else if (v.yesNoClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
+                    else if (v.cr3CampClick(fx, fy)) {}
                     else if (v.battleMode && v.choosing) v.battleClick(fx, fy);
                     else if (v.cr3BattleMode && v.cr3BattleClick(fx, fy)) {}
                     else if (v.vslash.stage == 1) v.vslashPointer(fx, fy, 0);

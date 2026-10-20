@@ -92,6 +92,19 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
                     f.speed += grown(low16(gi.i(16)), low16(gi.i(20)), lv), f.luck += grown(high16(gi.i(16)), high16(gi.i(20)), lv);
                 }
             }
+            // (anyone else's: the gene it wears - its level, slots and numbers, the items' additions)
+            if (const auto pg = partyGenes.find(u.character); pg != partyGenes.end() && !(r.i(7) > 0 && t.gene.find("GuestGene", r.i(7), kGuestGene, g))) {
+                f.geneLevel = pg->second.level;
+                for (const auto& sl : pg->second.slots) (sl[0] == 1 ? f.skills : f.geneCommands).push_back(sl[1]);
+                if (t.gene.find("Gene", pg->second.master, kGene, gi)) {
+                    const int lv = f.geneLevel;
+                    f.maxHp += grown(gi.i(13), gi.i(17), lv), f.maxMp += grown(gi.i(14), gi.i(18), lv);
+                    f.attack += grown(low16(gi.i(15)), low16(gi.i(19)), lv) + pg->second.adds[0];
+                    f.defence += grown(high16(gi.i(15)), high16(gi.i(19)), lv) + pg->second.adds[1];
+                    f.speed += grown(low16(gi.i(16)), low16(gi.i(20)), lv) + pg->second.adds[2];
+                    f.luck += grown(high16(gi.i(16)), high16(gi.i(20)), lv) + pg->second.adds[3];
+                }
+            }
             f.attack = std::max(f.attack, 1), f.defence = std::max(f.defence, 1);
         } else {
             if (!t.monster.find("Monster", u.monster, kMonsterStats, r)) continue;

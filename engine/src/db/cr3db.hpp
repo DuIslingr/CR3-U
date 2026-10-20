@@ -58,6 +58,7 @@ struct Cr3Gene {
     bool locked = false;
     bool stocked = false;      // (in the gene stock - CrxGameData +0x16..., GENE_STOCK_CAPACITY_* - not the 50)
     bool fresh = true;         // (CrxGameData::InitNewGenes: new since it was last looked at)
+    int uid = 0;               // (+0x5c: its database id - what a character wears; 0 not given yet - GameState::geneUid)
     Cr3Gene() = default;
     Cr3Gene(int m, int e = 0) : master(m), exp(e) {}
 };

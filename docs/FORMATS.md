@@ -410,6 +410,37 @@ must leave five.
 <id>[:<level>]`, `--gold <n>` and `--coins <n>` give genes, gold and Oz coins to begin with;
 `lab:store`, `lab:takeout`, `lab:expand` the repository's buttons.
 
+### The field's buttons and the camp (CR3)
+
+CampFieldMenu - the field's buttons: `feBtnMenu` at `feBtnPosition`'s fit9, `feBtnPanel` at its
+`call_feBtnPanel` (`feBtnPanel_in`: 0 .. 0.133 s opening, .. 0.3 closing), on it `feBtnOpen` (its
+`feBtnIconOpen_fr00`), `feBtnSave`, `feBtnEncount`, `feBtnBattle`, with flag 27 `feBtnCamp` and
+`feBtnMypage`, with 26 `feBtnShop`; `feBtnTown` at fit7 but with flag 1001. Camp (Fld2Main::SM_Camp:
+SetCampWindowParameter, EndCheckCampWindow):
+
+- CampTopMenu (0x33): `comBgMenu` and `camTopFramMenu` at `camTopPosition`'s joints;
+  `camTopCharaMenu`'s five `camTopCharaPanel` - a party member's worn gene: `cutin_<series>` on
+  `camTopGene_id00`'s `mat_cutin_001`, offset (SetMaterialOffsetSet1, param 0x5e) by
+  InterfaceMain::GetCardOffsetParameter(series, 0 / 1) - `UI_cardUV.dat`, six floats a series -, and
+  `camTopStatusPanel` (the character's `camTopIcon_fr00`, the grade, the level / HP / MP bars and
+  numbers); empty slots `camTopNoEntory_fr00`.
+- CampcomBtnMenu (0x5d): `comBtnSMenu` at `comBtnSPosition`'s fit6, buttons 0, 1, 2, 5, 4, 3, 6 from
+  slot 004 (`comBtnSPanel`, `comBtnIconS_fr00` at the id's frame: Items, Equipment, Gene Swap, Fuse
+  Gifts ...); 2 off in VS or with flag 21. CampFutterMenu: `comFtrTeamMenu`, the back.
+- Gene Swap (InterfaceMain::Update 0x1d, 2): GeneCharaListMenu (0x50 - `comListMenu` rows of
+  `comListLGene`: the character's icon and name, its gene's picture, name and level), then
+  GeneChangeMenu in the camp's mode - the held genes' cards, those worn marked by the wearer's
+  `camEquChr_fr00`; the focused card tapped again is worn (taken from any other).
+
+A character wears a weapon, armour, accessory and gene (CrxCharacter; CR3-U's `cr3weapon`, `cr3armour`,
+`cr3accessory` and `cr3geneof` lines, a gene by its uid - CrxGeneData +0x5c); Cr3System.GeneSet(gene,
+character) - the starting kits' - puts on a held gene of that kind no one wears, GetEquipGene /
+UnequipGene and GetEquip* / Unequip* read and clear them. In battle a party member who is no guest
+fights with its gene's level, commands, skills and numbers (and the items' additions). The lab never
+offers a worn gene as a partner, food, sale or store (SetEquipLockSynthesisListMenu).
+`cr3view --input camp:open,camp:genes,camp:row<n>,camp:card<n>,camp:back` (or `camp:field<n>`, a
+field button; C opens the camp with flag 27).
+
 ## Battles (CR3)
 
 The battle reservation: `Cr3System.BattleIn(coupling, field, level, music)` /

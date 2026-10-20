@@ -4,6 +4,7 @@
 
 #include <ctime>
 #include <sstream>
+#include <tuple>
 
 #include "script/vm.hpp"
 
@@ -213,15 +214,44 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     // utils::SetItem(item, character): the character wears it, its slot by the id (1xxxxx weapon,
     // 2xxxxx armour, 3xxxxx accessory: test_equip.i's SetEquip - PartyEquip, a character's
     // starting kit); utils::GetAndSetItem: one more of it, then the same
-    vm.setNative("Cr3System", "ItemSet", [&state](NativeCall& c) {
-        const int id = c.integer(0), ch = c.integer(1);
-        if (id >= 200000 && id < 300000 && ch > 0) state.cr3Armour[ch] = id - 200000;
-    });
-    vm.setNative("Cr3System", "ItemGetAndSet", [&state](NativeCall& c) {
-        const int id = c.integer(0), ch = c.integer(1);
+    auto wear = [&state](int id, int ch) {
+        if (ch <= 0) return;
+        if (id >= 100000 && id < 200000) state.cr3Weapon[ch] = id - 100000;
+        else if (id >= 200000 && id < 300000) state.cr3Armour[ch] = id - 200000;
+        else if (id >= 300000 && id < 400000) state.cr3Accessory[ch] = id - 300000;
+    };
+    vm.setNative("Cr3System", "ItemSet", [wear](NativeCall& c) { wear(c.integer(0), c.integer(1)); });
+    vm.setNative("Cr3System", "ItemGetAndSet", [&state, wear](NativeCall& c) {
+        const int id = c.integer(0);
         if (id >= 100000) state.cr3Items[id] = std::min(state.cr3Items[id] + 1, 99);
-        if (id >= 200000 && id < 300000 && ch > 0) state.cr3Armour[ch] = id - 200000;
+        wear(id, c.integer(1));
     });
+    // utils::SetGene(gene, character): a held gene of that kind no one wears - the last had - on
+    // the character; GetEquipGene: its kind (-1 none); Unequip*: the slot emptied; GetEquip*: the
+    // item's full id (-1 none)
+    vm.setNative("Cr3System", "GeneSet", [&state](NativeCall& c) {
+        const int master = c.integer(0), ch = c.integer(1);
+        for (int k = int(state.cr3Genes.size()) - 1; k >= 0 && ch > 0; --k)
+            if (state.cr3Genes[size_t(k)].master == master && !state.cr3Genes[size_t(k)].stocked && state.geneWearer(k) == 0) {
+                state.cr3GeneOf[ch] = state.geneUid(state.cr3Genes[size_t(k)]);
+                break;
+            }
+    });
+    vm.setNative("Cr3System", "GetEquipGene", [&state](NativeCall& c) {
+        const int k = state.wornGene(c.integer(0));
+        c.result(k >= 0 ? state.cr3Genes[size_t(k)].master : -1);
+    });
+    vm.setNative("Cr3System", "UnequipGene", [&state](NativeCall& c) { state.cr3GeneOf.erase(c.integer(0)); });
+    for (const auto& [name, slots, base] : {std::tuple<const char*, std::map<int, int>*, int>{"Weapon", &state.cr3Weapon, 100000},
+                                            {"Armor", &state.cr3Armour, 200000}, {"Accessory", &state.cr3Accessory, 300000}}) {
+        std::map<int, int>* m = slots;
+        const int b = base;
+        vm.setNative("Cr3System", std::string("GetEquip") + name, [m, b](NativeCall& c) {
+            const auto it = m->find(c.integer(0));
+            c.result(it != m->end() && it->second > 0 ? b + it->second : -1);
+        });
+        vm.setNative("Cr3System", std::string("Unequip") + name, [m](NativeCall& c) { m->erase(c.integer(0)); });
+    }
     vm.setNative("Cr3System", "ItemCheck", [&state](NativeCall& c) {
         const int id = c.integer(0);
         c.result(id > 0 && state.cr3Items.count(id) ? state.cr3Items.at(id) : 0);
@@ -308,6 +338,10 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << '\n';
     for (const auto& [id, n] : cr3Items) o << "cr3item " << id << ' ' << n << '\n';
     for (const auto& [c, a] : cr3Armour) o << "cr3armour " << c << ' ' << a << '\n';
+    for (const auto& [c, a] : cr3Weapon) o << "cr3weapon " << c << ' ' << a << '\n';
+    for (const auto& [c, a] : cr3Accessory) o << "cr3accessory " << c << ' ' << a << '\n';
+    for (const auto& [c, a] : cr3GeneOf) o << "cr3geneof " << c << ' ' << a << '\n';
+    o << "cr3geneuid " << cr3GeneUid << '\n';
     for (const auto& [id, a] : cr3Attachments) o << "cr3attach " << id << ' ' << a.first << ' ' << a.second << '\n';
     o << "cr3money " << cr3Money << ' ' << cr3Coins << ' ' << cr3CoinsSpent << ' ' << cr3GP << ' ' << cr3GPSpent << ' ' << cr3GeneStock << '\n';
     o << "cr3days " << cr3Daily << ' ' << cr3VipDays << ' ' << int(cr3VipTrial) << ' ' << cr3LastLogin << ' ' << cr3Cheer << '\n';
@@ -315,6 +349,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
         o << g.master << ' ' << g.exp << ' ' << int(g.locked) << ' ' << int(g.stocked) << ' ' << int(g.fresh);
         for (const auto& sl : g.slots) o << ' ' << sl[0] << ' ' << sl[1];
         for (int a : g.adds) o << ' ' << a;
+        o << ' ' << g.uid;
     };
     for (const Cr3Gene& g : cr3Genes) {
         o << "cr3gene ";
@@ -368,6 +403,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
     }
     flags.clear();
     cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear();
+    cr3Weapon.clear(), cr3Accessory.clear(), cr3GeneOf.clear(), cr3GeneUid = 0;
     cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests(), cr3Vs = Cr3Vs();
     auto readGene = [](std::istringstream& l, Cr3Gene& g) {
         int locked = 0, stocked = 0, fresh = 0;
@@ -375,6 +411,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
         g.locked = locked != 0, g.stocked = stocked != 0, g.fresh = fresh != 0;
         for (auto& sl : g.slots) l >> sl[0] >> sl[1];
         for (int& a : g.adds) l >> a;
+        if (!(l >> g.uid)) g.uid = 0, l.clear(); // (an older save's: none)
         return true;
     };
     std::vector<std::pair<int, int>> oldWork;
@@ -432,9 +469,12 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
         } else if (key == "cr3item") {
             int id = 0, n = 0;
             if (l >> id >> n) cr3Items[id] = n;
-        } else if (key == "cr3armour") {
+        } else if (key == "cr3armour" || key == "cr3weapon" || key == "cr3accessory" || key == "cr3geneof") {
             int c = 0, a = 0;
-            if (l >> c >> a) cr3Armour[c] = a;
+            std::map<int, int>& m = key == "cr3armour" ? cr3Armour : key == "cr3weapon" ? cr3Weapon : key == "cr3accessory" ? cr3Accessory : cr3GeneOf;
+            if (l >> c >> a) m[c] = a;
+        } else if (key == "cr3geneuid") {
+            l >> cr3GeneUid;
         } else if (key == "cr3attach") {
             int id = 0, m = 0, lv = 0;
             if (l >> id >> m >> lv) cr3Attachments[id] = {m, lv};

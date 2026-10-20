@@ -44,6 +44,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -124,6 +125,14 @@ struct Cr3Action {
 
 class Cr3BattleRules {
 public:
+    // a party member's gene (the save's: what it wears - GameState::cr3GeneOf), by char_para id;
+    // set before setup - a guest's GuestGene row comes first
+    struct PartyGene {
+        int master = 0, level = 1;
+        std::vector<std::array<int, 2>> slots; // (type 0 a command, 1 a skill; id)
+        int adds[4] = {};                      // (attack, defence, speed, luck added by items)
+    };
+    std::map<int, PartyGene> partyGenes;
     bool setup(const Cr3BattleTables& tables, const Cr3Battle& battle, int monsterLevel, uint32_t seed, std::string* error = nullptr);
     bool command(int id, Cr3Command& out) const;
     // a turn: the party's choices (a fighter's index -> command (-1 a guard), target), then the
