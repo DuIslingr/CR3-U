@@ -194,12 +194,29 @@ public:
         int texture = -1;
         float bright = 1;
         float age = 0; // (since Create, uncapped: CR3's centre one - CutInCenterMenu - fades and flashes by it)
+        bool shop = false; // (CutInMenu +0x40 - ChangeCutInPosition(true), a shop's clerk: 0.87 lower)
     };
     // CR3's centre cut-in closes in 4 updates (CutInCenterMenu::InterfaceCloseAnimeSet: 4, a quarter
     // of its alpha off each Pose)
     static constexpr int kCentreCutIn = 1;
     static constexpr float kCentreCloseSeconds = 4 * (1.0f / 30.0f);
     const Portrait& cutIn(int kind) const { return cutIns_[size_t(kind)]; }
+    // The gene lab (InterfaceMain::CreateGeneSynthesisMain - GeneSynthesisMain 0x9f, its
+    // HeaderMenu 0x42, GeneSynthesisFutter 0xa0, comBtnMenu 0x2c -: InterfaceWindow.
+    // CreateGeneSynthesisMenu(clerk) from a clerk's script, c115_GeneSynthesis). The clerk's
+    // portrait the left cut-in at the shop's place (SetClerkCutIn: ReadCutInWindowTexture(clerk, 1),
+    // SetCutInMenu(2), ChangeCutInPosition(true)); the script loops while CheckEndGeneSynthesisMenu,
+    // running its talk when CheckSelectTalkGeneSynthesisMenu says Talk was chosen (back with
+    // EndTalkNextGeneSynthesisMenu); the menu's Back - or ScriptSpecialEndGeneSynthesisMenu - ends it
+    struct GeneLab {
+        bool open = false;
+        bool talk = false;    // (Talk chosen, not yet asked for)
+        bool talking = false; // (the clerk's talk running: the menu set aside)
+        std::string clerk;    // (the portrait's image: cutIn115_L06)
+    };
+    const GeneLab& geneLab() const { return geneLab_; }
+    void geneLabTalk() { if (geneLab_.open && !geneLab_.talking) geneLab_.talk = true; }
+    void geneLabEnd();
     std::string cutInImage(int id) const; // a loaded face's image ("" none)
 
     // The tutorials' pictures (Cr3FieldTutorial in the field and the battles; InterfaceWindow's
@@ -244,6 +261,8 @@ private:
     float touchWait_ = 0;
     std::map<int, float> opened_, closing_; // (window -> seconds since)
     std::array<Portrait, kCutIns> cutIns_;
+    GeneLab geneLab_;
+    static constexpr int kClerkFace = 1000; // (the clerk's image's id among the cut-ins' - ReadCutInWindowTexture's 1)
     // the field camera as an event on the field moves it (Cr3FieldMapCamera: SetPos / CalcParameter's
     // end; GetPos_X / _Y) - where no field runtime (field/fieldscript) is attached to answer
     float fieldCameraX_ = 0, fieldCameraY_ = 0;

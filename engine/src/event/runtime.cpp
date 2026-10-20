@@ -292,6 +292,32 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     // the cut-ins' portraits
     vm.setNative("EvtFace", "SetTexture", [this](NativeCall& c) { cutInImages_.push_back({c.integer(1), c.string(0)}); });
     vm.setNative("EvtFace", "DeleteTexture", [this](NativeCall&) { cutInImages_.clear(); });
+    // the gene lab (GeneLab in runtime.hpp)
+    auto clerk = [this](const std::string& image) {
+        geneLab_.clerk = image;
+        cutInImages_.insert(cutInImages_.begin(), {kClerkFace, image});
+        Portrait p{true, false, 0, kClerkFace, 1};
+        p.shop = true;
+        cutIns_[2] = p;
+    };
+    vm.setNative("InterfaceWindow", "CreateGeneSynthesisMenu", [this, clerk](NativeCall& c) {
+        geneLab_ = GeneLab();
+        geneLab_.open = true;
+        clerk(c.string(0));
+    });
+    vm.setNative("InterfaceWindow", "SetGeneSynthesisClerkName", [clerk](NativeCall& c) { clerk(c.string(0)); });
+    vm.setNative("InterfaceWindow", "CheckEndGeneSynthesisMenu", [this](NativeCall& c) { c.result(geneLab_.open); });
+    vm.setNative("InterfaceWindow", "CheckSelectTalkGeneSynthesisMenu", [this](NativeCall& c) {
+        const bool talk = geneLab_.talk;
+        if (talk) geneLab_.talk = false, geneLab_.talking = true;
+        c.result(talk);
+    });
+    vm.setNative("InterfaceWindow", "EndTalkNextGeneSynthesisMenu", [this, clerk](NativeCall&) {
+        geneLab_.talking = false;
+        if (geneLab_.open) clerk(geneLab_.clerk); // (the clerk's portrait back - the talk's own cut-ins closed)
+    });
+    vm.setNative("InterfaceWindow", "ScriptSpecialEndGeneSynthesisMenu", [this](NativeCall&) { geneLabEnd(); });
+    vm.setNative("InterfaceWindow", "RefreshGeneSynthesisMenuButton", [](NativeCall&) {});
     vm.setNative("EvtFace", "Create", [this](NativeCall& c) {
         const int k = c.integer(0, -1);
         if (k >= 0 && k < kCutIns) cutIns_[size_t(k)] = Portrait{true, false, 0, -1, 1};
@@ -476,6 +502,7 @@ void EventRuntime::reset() {
     openWindows_.clear(), opened_.clear(), closing_.clear();
     yesNoShown_ = false, yesNo_ = 0;
     cutIns_ = {}, cutInImages_.clear();
+    geneLab_ = GeneLab();
     messageWindow_ = Vista, message_ = page_ = revealed_ = 0, pageTime_ = 0;
     execution_ = false;
     terminated_ = drawSkip_ = false;
@@ -541,6 +568,12 @@ float EventRuntime::windowAge(int w) const {
     if (auto it = opened_.find(w); it != opened_.end()) return it->second;
     if (auto it = closing_.find(w); it != closing_.end()) return it->second;
     return -1;
+}
+
+void EventRuntime::geneLabEnd() {
+    if (!geneLab_.open) return;
+    geneLab_.open = geneLab_.talk = geneLab_.talking = false;
+    if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
 }
 
 std::string EventRuntime::cutInImage(int id) const {

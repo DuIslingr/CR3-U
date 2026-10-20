@@ -297,6 +297,37 @@ the menu animation's first 1/6 s, then faded in over the next 1/6; `comMsgeff_01
 size, bursts over it from 0.367 s until its animation ends. Closing takes four Poses, a quarter of
 its alpha each.
 
+### The gene lab (CR3)
+
+Talking to the clerk (t0108's `c115_00` - a person is a `ragdoll_c<id>_<nn>` joint of `<map>p`,
+its function so named) runs `c115_GeneSynthesis`: InterfaceWindow.CreateGeneSynthesisMenu(the
+clerk's cut-in image: `cutIn115_L06`, `_L99` before flag 2401), then a loop while
+CheckEndGeneSynthesisMenu, running `c115_talk` when CheckSelectTalkGeneSynthesisMenu says Talk was
+chosen (back with EndTalkNextGeneSynthesisMenu). InterfaceMain::CreateGeneSynthesisMain makes
+GeneSynthesisMain (0x9f: `shBgMenu` at `shBgPositon`'s fit0 - a faint light wash over the field),
+the clerk as the left cut-in (SetClerkCutIn: CutInMenu +0x40 set - ChangeCutInPosition(true) -
+puts the portrait 0.87 lower), HeaderMenu (0x42), GeneSynthesisFutter (0xa0) and comBtnMenu (0x2c).
+
+- HeaderMenu: `comHePosition` opening on its own animation (the `_io` animator closes it),
+  `comHeMenu` at its fit7 with `comHeTitle_fr00` at frame 30 (37 in VS: the area's name),
+  `comHeIconMenu` (battery), and - its content 0 - `comHeInfoAMenu` (fit9): money in
+  `comHeMlPanel`'s seven `comHeNum_fr00` digits (frames 0..9), the clock in `comHeTimePanel`'s four
+  (HHMM, frames 30.., the hours' tens hidden under 10 - SetHourTime), Oz coins in
+  `comHeCoinPanel`'s five (frames 20..); content 1 has `comHeInfoBMenu` with GP instead of the clock.
+  InterfaceMain::SetViewNumbers: the value capped at its places, the leading zeros hidden.
+- comBtnMenu: the arc's panels 004 .. 007 (the slots 4 .. 7 of its scrolling list) - Talk (17),
+  Combine Genes (28), Sell (21), Gene Repository (29), the last three dimmed while flags 3613 / 3614
+  / 3615 are set (SetGeneSynthesisTopButton); `comBtnText_fr00` / `comBtnIcon_fr00` at the id's
+  frame, `comBtnBg_fr00` at the slot's.
+- GeneSynthesisFutter: `comFtrMixMenu` at `comFtrPosition`'s fit4; content 0 the genes held of 50
+  (`comFtrMixGenesPanel`) and the stock of its room (`comFtrMixBoxPanel`) - `comListNum_fr00`
+  digits 0.19 apart from `call_comListNum_fr00_001` / `_002`; content 1 (a list) the tabs
+  `comFtrMixTabTap_fr00` frames 0 .. 3 (All, N, R, SR) instead. Its back button (ComBackButton:
+  `comBackMenu` at `call_comBackMenu_001_fit6`) closes the lab.
+
+`cr3view --area t0108 --flag 2001 --input call:c115_00,lab:talk|combine|sell|repository|back`
+(call:<function> runs an area function as if tapped).
+
 ## Battles (CR3)
 
 The battle reservation: `Cr3System.BattleIn(coupling, field, level, music)` /
