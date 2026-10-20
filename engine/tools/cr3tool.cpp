@@ -362,6 +362,50 @@ int db(const char* path, const char* sheet) {
         const int gained = s.cr3Money - gold, again2 = d.earnQuestRewards(s, q), ended = d.endQuest(s, q);
         std::printf("; quest %d begun %d, prize %d (gold +%d), again %d, ended %d", q, begun, prize, gained, again2, ended);
     }
+    // genes: one at level 10 (its curve's EXP, its skills), EXP added, merged, enhanced, a seed,
+    // sold
+    std::printf("\n");
+    auto show = [&](const char* what, const cr3::Cr3Gene& g) {
+        std::printf("  %s: gene %d lv %d (EXP %d), slots", what, g.master, d.geneLevel(g), g.exp);
+        for (const auto& sl : g.slots)
+            if (sl[1] != -1) std::printf(" %d:%d", sl[0], sl[1]);
+        std::printf("; adds %d %d %d %d\n", g.adds[0], g.adds[1], g.adds[2], g.adds[3]);
+    };
+    s.cr3Genes.clear();
+    for (const int id : {2, 70, 92}) {
+        cr3::Cr3Gene g(id);
+        g.exp = d.geneExp(id, 10);
+        d.initGene(g);
+        s.cr3Genes.push_back(g);
+    }
+    show("gene 2 at 10", s.cr3Genes[0]);
+    d.addGeneLevels(s.cr3Genes[0], 25);
+    show("+25 levels", s.cr3Genes[0]);
+    d.addGeneExp(s.cr3Genes[0], 99999999);
+    show("EXP past its top", s.cr3Genes[0]);
+    r = d.previewMergeGene(s, 0);
+    std::printf("  merge previews %d: %zu", r, d.mergePreviews().size());
+    for (const auto& p : d.mergePreviews()) std::printf(" (with %d -> gene %d, %d gold)", s.cr3Genes[size_t(p.partner)].master, p.result.master, p.gold);
+    std::printf("\n");
+    if (!d.mergePreviews().empty()) show("merge 0 makes", d.mergePreviews()[0].result);
+    s.cr3Money = 100000;
+    r = d.mergeGene(s, 0, false);
+    std::printf("  merged %d: genes %zu, gold %d\n", r, s.cr3Genes.size(), s.cr3Money);
+    for (const int id : {1, 1, 4}) s.cr3Genes.push_back(cr3::Cr3Gene(id, d.geneExp(id, 5)));
+    const int target = int(s.cr3Genes.size()) - 3;
+    show("enhance target", s.cr3Genes[size_t(target)]);
+    r = d.enhanceGene(s, target, {target + 1, target + 2});
+    std::printf("  enhanced %d: gold %d, genes %zu\n", r, s.cr3Money, s.cr3Genes.size());
+    show("after", s.cr3Genes[size_t(target)]);
+    s.cr3Items[d.constant("POWER_SEED2_MASTER_ID")] = 3;
+    r = d.enforceGene(s, target, 1, d.constant("POWER_SEED2_MASTER_ID"), 3);
+    std::printf("  power seed 2 x 3: %d; ", r);
+    r = d.enforceGene(s, target, 1, d.constant("POWER_SEED2_MASTER_ID"), 9);
+    std::printf("x 9 more %d (capped at GENE_ADD_MAX %d)\n", r, d.constant("GENE_ADD_MAX"));
+    show("seeded", s.cr3Genes[size_t(target)]);
+    const int gold0 = s.cr3Money;
+    r = d.sellGenes(s, {target});
+    std::printf("  sold %d: +%d gold, genes %zu", r, s.cr3Money - gold0, s.cr3Genes.size());
     std::printf("\nfinally: %d items (%zu kinds), %zu genes, %zu presents, gold %d, coins %d (spent %d), GP %d (spent %d)\n", items(),
                 s.cr3Items.size(), s.cr3Genes.size(), s.cr3Presents.size(), s.cr3Money, s.cr3Coins, s.cr3CoinsSpent, s.cr3GP, s.cr3GPSpent);
     return 0;

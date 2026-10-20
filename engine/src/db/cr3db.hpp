@@ -10,6 +10,7 @@
 // rankings, payments, the colosseum online - are dropped unqueued. The port is that, on every
 // release: it never talks to a server.
 
+#include <array>
 #include <cstdint>
 #include <ctime>
 #include <map>
@@ -47,15 +48,18 @@ enum : int {
     kDbQuestBusy = 0x3f9,    // (EarnQuestRewards: a quest's prize taken already)
 };
 
-// a gene held (CrxGeneData, 0x74 bytes: +0 its gene_para id, +4 its EXP, +8 sixteen command
-// slots, +0x5c its database id, +0x6c the time, +0x70 locked)
+// a gene held (CrxGeneData, 0x74 bytes: +0 its gene_para id, +4 its EXP, +8 eight (type, id)
+// slots - 0 a command, 1 a skill; 0 .. 5 its own, learnt by level, 6 and 7 inherited -, +0x48
+// what items have added to its attack, guard, speed, luck, +0x5c its database id, +0x70 locked)
 struct Cr3Gene {
     int master = 0, exp = 0;
-    std::vector<int> commands; // (the ones it has learnt beyond its own: a gene box's `commands`)
-    int level = 0;             // (utils::GetGene(id, level): made at that level - CrxGene::Initialize;
-                               // its EXP the gene's curve's, not the port's yet; 0 by its EXP)
+    int slots[8][2] = {{-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}};
+    int adds[4] = {};
     bool locked = false;
+    bool stocked = false;      // (in the gene stock - CrxGameData +0x16..., GENE_STOCK_CAPACITY_* - not the 50)
     bool fresh = true;         // (CrxGameData::InitNewGenes: new since it was last looked at)
+    Cr3Gene() = default;
+    Cr3Gene(int m, int e = 0) : master(m), exp(e) {}
 };
 
 // the presents box (dbutils::SendPresent: 100 at most, the oldest dropped; from PRESENT_FROM_*)
@@ -132,6 +136,53 @@ public:
     const Month& month() const { return month_; }
     // CheckDateChanged: a new day's - the day's marks cleared, then GetThisMonthMaster
     int dateChanged(GameState& s, std::time_t now);
+
+    // genes (gene_para.mbe Gene / ExpTable, gene_command_skill.mbe, data\mergeGene2, the collection
+    // book): a gene's numbers (MbGeneInfo: +4 its series, +8 grade, +0xc top level, +0x10 EXP curve,
+    // +0x14 rank, +0x18 type, +0x20 / +0x24 its EXP worth at level 1 / a level more, +0x28 / +0x2c
+    // its price likewise, +0x30 kind)
+    struct GeneInfo {
+        int id = 0, series = 0, grade = 0, maxLevel = 1, curve = 0, rank = 0, type = 0;
+        int worth = 0, worthPerLevel = 0, price = 0, pricePerLevel = 0, kind = 0;
+        std::vector<std::array<int, 3>> learns; // (gene_command_skill: level, type, id - in order)
+    };
+    const GeneInfo* geneInfo(int id) const;
+    int geneExp(int id, int level) const;   // (MbGeneInfo::GetExp: the EXP a level needs; the top one's past it)
+    int geneLevel(const Cr3Gene& g) const;  // (MbGeneInfo::GetLevel: the highest its EXP reaches; 1 at least)
+    int geneRarity(int id) const;           // (CrxGameTable::GetGeneRarity: its place in its collection line, 0 ..)
+    // CrxGameData::InitGene: a gene with no slots yet learns its own (its level's, by Initialize);
+    // what it had in slots 6 and 7 (a merge's: 1 and 2) kept as inherited - the Vita's InheritSkill:
+    // into 6, else 7, where it has it not already
+    void initGene(Cr3Gene& g, bool merged = false) const;
+    // CrxGene::AddTemporaryExp: n EXP more, no further than its top level's; the commands and
+    // skills of the levels gained learnt (into a free own slot, else over 0 .. 5 in turn)
+    void addGeneExp(Cr3Gene& g, int n) const;
+    void addGeneLevels(Cr3Gene& g, int levels) const; // (AddTemporaryExpByLevelUp)
+
+    // DBEmu: the genes. PreviewMergeGene(gene): what merging it with each other gene held makes
+    // (the pair in mergeGene2, else one series' lower grade, else the kind table's kind of the
+    // grade below both, the rank nearest above half theirs; the next in its line with both at
+    // their top level; a quarter of both's worth in EXP; two of their commands and skills it has
+    // not of its own) and costs (100 gold a level of the two); MergeGene(k, coins): the k-th
+    // preview made, the two gone
+    struct MergePreview {
+        int partner = -1; // (the other gene: its index in cr3Genes)
+        Cr3Gene result;
+        int gold = 0, coins = 0;
+    };
+    int previewMergeGene(GameState& s, int gene);
+    const std::vector<MergePreview>& mergePreviews() const { return previews_; }
+    int mergeGene(GameState& s, int preview, bool coins);
+    // EnhanceGene (InterfaceMain::StartIntensificationSynthesis): the genes fed give their worth at
+    // their level, 1% more for each of the target's kind; 100 gold a fed gene x the target's level
+    int enhanceGene(GameState& s, int gene, const std::vector<int>& fed);
+    // EnforceGene(gene, mode, item, n): mode 1 a seed's amounts x n added (*_SEED_MASTER_ID /
+    // _AMOUNTS; GENE_ADD_MAX in all), 2 its EXP set (exp), 4 its slots (slots); 2 / 4 / 8 use n of
+    // the item
+    int enforceGene(GameState& s, int gene, int mode, int item, int n, int exp = 0, const int (*slots)[2] = nullptr);
+    int moveGene(GameState& s, int gene, bool toStock);  // (the 50 <-> the stock)
+    int removeGene(GameState& s, int gene);
+    int sellGenes(GameState& s, std::vector<int> genes); // (their price at their level in gold)
 
     // DBEmu: the item sheets
     // PickTreasureBox(sheet, n, all): n of its entries drawn (all: any, else those not marked;
@@ -245,6 +296,12 @@ private:
     std::vector<int> opened_;
     std::vector<int> foundQuests_, standingQuests_;
     std::vector<Cr3Gene> lastGenes_;
+    std::map<int, GeneInfo> genes_;
+    std::map<int, std::vector<int>> expTable_; // (level: the EXP of each curve)
+    std::vector<std::array<int, 3>> mergePairs_; // (a, b, result)
+    std::map<int, int> rarity_;
+    std::vector<MergePreview> previews_;
+    int previewGene_ = -1;
     Month month_;
     PrizeBox prizeBox_;
     bool ticket_ = false;

@@ -125,7 +125,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "GeneGet", [&state, &db](NativeCall& c) {
         if (int(state.cr3Genes.size()) >= (db ? db->constant("GENE_CAPACITY", 50) : 50)) return c.result(-1);
         Cr3Gene g{c.integer(0)};
-        g.level = c.integer(1);
+        if (db) { // (CrxGene::Initialize(level): that level's EXP, its commands and skills)
+            if (c.integer(1) > 0) g.exp = db->geneExp(g.master, c.integer(1));
+            db->initGene(g);
+        }
         state.cr3Genes.push_back(g);
         state.cr3GeneBook.insert(g.master);
         c.result(int(state.cr3Genes.size()) - 1);

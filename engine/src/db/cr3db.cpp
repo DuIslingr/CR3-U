@@ -193,6 +193,46 @@ bool Cr3OfflineDb::load(const Database& release, std::string* error) {
             t.level = row.integer("lv"), t.rank = row.integer("rank"), t.item = row.integer("item_id"), t.itemCount = row.integer("item_count");
             quests_.push_back(t);
         }
+    // the genes: gene_para's Gene rows and ExpTable (a level, then each curve's EXP; -1 past the
+    // curve's end), gene_command_skill's (gene, level, type, id), mergeGene2's ids (a, b, result),
+    // the collection book's lines (ids: their place the rarity)
+    genes_.clear(), expTable_.clear(), mergePairs_.clear(), rarity_.clear();
+    {
+        std::vector<uint8_t> g;
+        MbeFile gp, cs;
+        if (release.read("data\\gene_para.mbe", g) && gp.parse(g)) {
+            if (const MbeFile::Table* t = gp.table("Gene"))
+                for (size_t k = 0; k < t->rows.size(); ++k) {
+                    MbeFile::Row r;
+                    if (!gp.row(*t, k, "iiiiiiiiiiiii", r)) continue;
+                    GeneInfo i;
+                    i.id = r.i(0), i.series = r.i(1), i.grade = r.i(2), i.maxLevel = r.i(3), i.curve = r.i(4), i.rank = r.i(5);
+                    i.type = r.i(6), i.worth = r.i(8), i.worthPerLevel = r.i(9), i.price = r.i(10), i.pricePerLevel = r.i(11), i.kind = r.i(12);
+                    genes_[i.id] = i;
+                }
+            if (const MbeFile::Table* t = gp.table("ExpTable"))
+                for (size_t k = 0; k < t->rows.size(); ++k) {
+                    MbeFile::Row r;
+                    if (gp.row(*t, k, "iiiiii", r)) expTable_[r.i(0)] = {r.i(1), r.i(2), r.i(3), r.i(4), r.i(5)};
+                }
+        }
+        if (release.read("data\\gene_command_skill.mbe", g) && cs.parse(g))
+            if (const MbeFile::Table* t = cs.table("GeneCommandSkill"))
+                for (size_t k = 0; k < t->rows.size(); ++k) {
+                    MbeFile::Row r;
+                    if (!cs.row(*t, k, "iiii", r)) continue;
+                    if (auto it = genes_.find(r.i(0)); it != genes_.end()) it->second.learns.push_back({r.i(1), r.i(2), r.i(3)});
+                }
+    }
+    if (const BsonValue* t = table("mergegene2"))
+        for (const BsonValue& r : t->items)
+            if (const BsonValue* ids = r.get("ids"); ids && ids->isArray() && ids->items.size() >= 3)
+                mergePairs_.push_back({ids->items[0].asInt(), ids->items[1].asInt(), ids->items[2].asInt()});
+    if (const BsonValue* t = table("collection_book"))
+        for (const BsonValue& r : t->items)
+            if (const BsonValue* ids = r.get("ids"); ids && ids->isArray())
+                for (size_t k = 0; k < ids->items.size(); ++k)
+                    if (ids->items[k].asInt() > 0) rarity_.emplace(ids->items[k].asInt(), int(k));
     // GetItemPrice: item_para's tables (MbItemInfo: +4 the full id, +0x18 the price a shop pays)
     std::vector<uint8_t> d;
     MbeFile items;
@@ -306,6 +346,7 @@ int Cr3OfflineDb::earnGenePrize(GameState& s, const Cr3Gene& gene) {
     if (int(s.cr3Genes.size()) < constant("GENE_CAPACITY", 50) + s.cr3GeneStock) {
         s.cr3Genes.push_back(gene);
         s.cr3Genes.back().fresh = true;
+        initGene(s.cr3Genes.back()); // (CrxGameData::AddGene: its slots, where it has none)
         s.cr3GeneBook.insert(gene.master);
         return kDbOk;
     }
@@ -540,8 +581,9 @@ int Cr3OfflineDb::openGeneBox(GameState& s, int box, int n, int coins) {
             if (items && items->isArray() && !items->items.empty()) {
                 const BsonValue& g = items->items[random() % items->items.size()];
                 Cr3Gene gene{g.integer("masterId"), g.integer("exp")};
-                if (const BsonValue* c = g.get("commands"); c && c->isArray())
-                    for (const BsonValue& v : c->items) gene.commands.push_back(v.asInt());
+                if (const BsonValue* c = g.get("commands"); c && c->isArray()) // (its eight (type, id))
+                    for (size_t k = 0; k + 1 < c->items.size() && k / 2 < 8; k += 2)
+                        gene.slots[k / 2][0] = c->items[k].asInt(), gene.slots[k / 2][1] = c->items[k + 1].asInt();
                 earnGenePrize(s, gene);
                 lastGenes_.push_back(gene);
             }
@@ -664,6 +706,274 @@ int Cr3OfflineDb::itemizeGift(GameState& s, int gift) {
             return finish(kDbOk);
         }
     return finish(kDbBad);
+}
+
+// --- genes ---
+
+namespace {
+
+// DBEmu's merge kind table (libcrx 0xf31060: [kind][kind] -> the result's kind)
+const int kMergeKind[7][7] = {{0, 1, 2, 3, 4, 5, 6}, {1, 1, 3, 5, 2, 6, 2}, {2, 3, 2, 4, 6, 4, 3}, {3, 5, 4, 3, 1, 1, 2},
+                              {4, 2, 6, 1, 4, 1, 5}, {5, 6, 4, 1, 1, 5, 0}, {6, 2, 3, 2, 5, 0, 6}};
+
+bool hasSlot(const Cr3Gene& g, int type, int id) {
+    for (const auto& sl : g.slots)
+        if (sl[0] == type && sl[1] == id) return true;
+    return false;
+}
+
+} // namespace
+
+const Cr3OfflineDb::GeneInfo* Cr3OfflineDb::geneInfo(int id) const {
+    const auto it = genes_.find(id);
+    return it != genes_.end() ? &it->second : nullptr;
+}
+
+int Cr3OfflineDb::geneExp(int id, int level) const {
+    const GeneInfo* i = geneInfo(id);
+    if (!i) return 0;
+    const auto row = expTable_.find(std::min(level, i->maxLevel));
+    return row != expTable_.end() && i->curve >= 0 && i->curve < int(row->second.size()) ? row->second[size_t(i->curve)] : 0;
+}
+
+int Cr3OfflineDb::geneLevel(const Cr3Gene& g) const {
+    const GeneInfo* i = geneInfo(g.master);
+    if (!i) return 1;
+    for (int l = i->maxLevel; l >= 0; --l) {
+        const auto row = expTable_.find(l);
+        if (row == expTable_.end() || i->curve < 0 || i->curve >= int(row->second.size())) continue;
+        const int need = row->second[size_t(i->curve)];
+        if (need != -1 && need <= g.exp) return l;
+    }
+    return 1;
+}
+
+int Cr3OfflineDb::geneRarity(int id) const {
+    const auto it = rarity_.find(id);
+    return it != rarity_.end() ? it->second : 0;
+}
+
+namespace {
+
+// CrxGene's learning: the gene's (level, type, id) rows of the levels past `from` up to `to`, in
+// order - each into its first free own slot, else over 0 .. 5 in turn
+void learn(Cr3Gene& g, const Cr3OfflineDb::GeneInfo& i, int from, int to) {
+    int turn = 0;
+    for (const auto& l : i.learns) {
+        if (l[0] <= from || l[0] > to) continue;
+        int slot = -1;
+        for (int k = 0; k < 6 && slot < 0; ++k)
+            if (g.slots[k][1] == -1) slot = k;
+        if (slot < 0) slot = turn++ % 6;
+        g.slots[slot][0] = l[1], g.slots[slot][1] = l[2];
+    }
+}
+
+// CrxGameData::InheritSkill (the Vita's): `from`'s slot k into 6, else 7, unless it has it
+void inheritSkill(Cr3Gene& g, const Cr3Gene& from, int k) {
+    const int type = from.slots[k][0], id = from.slots[k][1];
+    if (hasSlot(g, type, id)) return;
+    if (g.slots[6][0] == -1) g.slots[6][0] = type, g.slots[6][1] = id;
+    else if (g.slots[7][0] == -1) g.slots[7][0] = type, g.slots[7][1] = id;
+}
+
+} // namespace
+
+void Cr3OfflineDb::initGene(Cr3Gene& g, bool merged) const {
+    const GeneInfo* i = geneInfo(g.master);
+    if (!i || g.slots[0][1] != -1) return;
+    const Cr3Gene old = g;
+    for (auto& sl : g.slots) sl[0] = sl[1] = -1;
+    learn(g, *i, 0, geneLevel(old)); // (CrxGene::Initialize(level): from nothing to its level)
+    inheritSkill(g, old, merged ? 1 : 6);
+    inheritSkill(g, old, merged ? 2 : 7);
+}
+
+void Cr3OfflineDb::addGeneExp(Cr3Gene& g, int n) const {
+    const GeneInfo* i = geneInfo(g.master);
+    if (!i) return;
+    const int before = geneLevel(g);
+    g.exp += n;
+    int after = geneLevel(g);
+    if (after >= i->maxLevel) after = i->maxLevel, g.exp = geneExp(g.master, after);
+    if (after > before) learn(g, *i, before, after);
+}
+
+void Cr3OfflineDb::addGeneLevels(Cr3Gene& g, int levels) const {
+    const GeneInfo* i = geneInfo(g.master);
+    if (i) addGeneExp(g, geneExp(g.master, std::min(geneLevel(g) + levels, i->maxLevel)) - g.exp);
+}
+
+// _PreviewMergeGene / InheritSkill(CrxGene, CrxGene, MbGeneInfo, CrxGeneData)
+int Cr3OfflineDb::previewMergeGene(GameState& s, int gene) {
+    previews_.clear(), previewGene_ = gene;
+    if (gene < 0 || size_t(gene) >= s.cr3Genes.size()) return finish(kDbBad);
+    const Cr3Gene& a = s.cr3Genes[size_t(gene)];
+    const GeneInfo* ia = geneInfo(a.master);
+    if (!ia) return finish(kDbBad);
+    for (size_t k = 0; k < s.cr3Genes.size(); ++k) {
+        if (int(k) == gene) continue;
+        const Cr3Gene& b = s.cr3Genes[k];
+        const GeneInfo* ib = geneInfo(b.master);
+        if (!ib) continue;
+        const int la = geneLevel(a), lb = geneLevel(b);
+        const bool bothTop = la == ia->maxLevel && lb == ib->maxLevel;
+        // the result: the pair's, else one series' lower grade, else by kind, grade and rank
+        int result = -1;
+        for (const auto& m : mergePairs_)
+            if (((m[0] == a.master && m[1] == b.master) || (m[0] == b.master && m[1] == a.master)) && m[2] != -1) {
+                result = m[2];
+                break;
+            }
+        if (result == -1) {
+            if (ia->series == ib->series) result = ia->grade < ib->grade ? ia->id : ib->id;
+            else {
+                const int half = (ia->rank + ib->rank) / 2;
+                const int kind = ia->kind >= 0 && ia->kind < 7 && ib->kind >= 0 && ib->kind < 7 ? kMergeKind[ia->kind][ib->kind] : -1;
+                const int grade = std::min(ia->grade, ib->grade);
+                int belowRank = 0, below = 0, aboveRank = 9999, above = 0;
+                for (const auto& [id, c] : genes_) {
+                    if (c.type == 1 || c.kind != kind || c.grade != grade) continue;
+                    if (c.rank <= half + 1 && belowRank < c.rank) belowRank = c.rank, below = id;
+                    if (half < c.rank && c.rank < aboveRank) aboveRank = c.rank, above = id;
+                }
+                result = aboveRank > 9998 ? below : above;
+            }
+        }
+        if (bothTop && geneRarity(result) < 2) ++result;
+        const GeneInfo* ir = geneInfo(result);
+        if (!ir) continue;
+        MergePreview p;
+        p.partner = int(k), p.gold = (la + lb) * 100;
+        p.result.master = result;
+        p.result.exp = (ia->worthPerLevel * (la - 1) + ia->worth + ib->worth + ib->worthPerLevel * (lb - 1)) / 4;
+        p.result.exp = std::min(p.result.exp, geneExp(result, ir->maxLevel));
+        // the two inherited: both's commands, then skills, slot by slot, once each and not the
+        // result's own (its first 16 learnt), shuffled - into slots 1 and 2 for InitGene
+        std::vector<std::array<int, 2>> pool;
+        auto offer = [&](int type, int id) {
+            if (id < 0) return;
+            for (const auto& v : pool)
+                if (v[0] == type && v[1] == id) return;
+            for (size_t n = 0; n < ir->learns.size() && n < 16; ++n)
+                if (ir->learns[n][1] == type && ir->learns[n][2] == id) return;
+            pool.push_back({type, id});
+        };
+        for (int sl = 0; sl < 8; ++sl) {
+            if (a.slots[sl][0] == 0) offer(0, a.slots[sl][1]);
+            if (b.slots[sl][0] == 0) offer(0, b.slots[sl][1]);
+            if (a.slots[sl][0] == 1) offer(1, a.slots[sl][1]);
+            if (b.slots[sl][0] == 1) offer(1, b.slots[sl][1]);
+        }
+        std::shuffle(pool.begin(), pool.end(), rng_);
+        for (size_t n = 0; n < pool.size() && n < 2; ++n) p.result.slots[1 + n][0] = pool[n][0], p.result.slots[1 + n][1] = pool[n][1];
+        initGene(p.result, true);
+        previews_.push_back(p);
+    }
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::mergeGene(GameState& s, int preview, bool coins) {
+    if (preview < 0 || size_t(preview) >= previews_.size() || previewGene_ < 0 || size_t(previewGene_) >= s.cr3Genes.size())
+        return finish(kDbBad);
+    const MergePreview p = previews_[size_t(preview)];
+    if (coins ? s.cr3Coins < p.coins : s.cr3Money < p.gold) return finish(coins ? kDbNoCoins : kDbNoGold);
+    const int a = previewGene_, b = p.partner;
+    s.cr3Genes.erase(s.cr3Genes.begin() + std::max(a, b));
+    s.cr3Genes.erase(s.cr3Genes.begin() + std::min(a, b));
+    s.cr3Genes.push_back(p.result);
+    s.cr3Genes.back().fresh = true;
+    s.cr3GeneBook.insert(p.result.master);
+    if (coins) s.cr3Coins -= p.coins, s.cr3CoinsSpent += p.coins;
+    else s.cr3Money -= p.gold;
+    previews_.clear(), previewGene_ = -1;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::enhanceGene(GameState& s, int gene, const std::vector<int>& fed) {
+    if (gene < 0 || size_t(gene) >= s.cr3Genes.size()) return finish(kDbBad);
+    const GeneInfo* it = geneInfo(s.cr3Genes[size_t(gene)].master);
+    if (!it) return finish(kDbBad);
+    const int level = geneLevel(s.cr3Genes[size_t(gene)]);
+    int worth = 0, same = 0, gold = 0;
+    for (const int f : fed) {
+        if (f < 0 || size_t(f) >= s.cr3Genes.size() || f == gene) return finish(kDbBad);
+        const Cr3Gene& g = s.cr3Genes[size_t(f)];
+        const GeneInfo* i = geneInfo(g.master);
+        if (!i) continue;
+        worth += i->worth + (geneLevel(g) - 1) * i->worthPerLevel;
+        same += i->kind == it->kind;
+        gold += level * 100;
+    }
+    if (s.cr3Money < gold) return finish(kDbNoGold);
+    addGeneExp(s.cr3Genes[size_t(gene)], same * worth / 100 + worth);
+    std::vector<int> gone = fed;
+    std::sort(gone.rbegin(), gone.rend());
+    gone.erase(std::unique(gone.begin(), gone.end()), gone.end());
+    for (const int f : gone) s.cr3Genes.erase(s.cr3Genes.begin() + f);
+    s.cr3Money -= gold;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::enforceGene(GameState& s, int gene, int mode, int item, int n, int exp, const int (*slots)[2]) {
+    if (gene < 0 || size_t(gene) >= s.cr3Genes.size()) return finish(kDbBad);
+    Cr3Gene& g = s.cr3Genes[size_t(gene)];
+    if (mode & 1) { // (a seed: which by its master id - the 27 in the constants' order)
+        static const char* const kSeeds[] = {"POWER", "DEFENCE", "SPEED", "LUCK", "ENDLESS", "POWER_SEED2", "DEFENCE_SEED2",
+                                             "SPEED_SEED2", "LUCK_SEED2", "ENDLESS_SEED2", "POWER_SEED3", "DEFENCE_SEED3",
+                                             "SPEED_SEED3", "LUCK_SEED3", "ENDLESS_SEED3", "JAN", "FEB", "MAR", "APR", "MAY",
+                                             "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+        if (s.cr3Items[item] <= 0) return finish(kDbBad);
+        const BsonValue* amounts = nullptr;
+        for (const char* seed : kSeeds) {
+            const std::string base = std::strchr(seed, '_') ? std::string(seed) : std::string(seed) + "_SEED";
+            if (constant(base + "_MASTER_ID", -2) == item && constants()) amounts = constants()->get(base + "_AMOUNTS");
+        }
+        if (amounts && amounts->isArray()) {
+            const int params = std::min(constant("GENE_PARAM_NUM", 4), 4), most = constant("GENE_ADD_MAX", 40);
+            int total = 0;
+            for (int k = 0; k < params; ++k) total += g.adds[k];
+            for (int k = 0; k < params && size_t(k) < amounts->items.size(); ++k) {
+                const int more = amounts->items[size_t(k)].asInt() * n;
+                g.adds[k] += std::min(more, most - total);
+                total = std::min(total + more, most);
+            }
+        }
+    }
+    if (mode & 2) g.exp = exp;
+    if ((mode & 4) && slots)
+        for (int k = 0; k < 8; ++k) g.slots[k][0] = slots[k][0], g.slots[k][1] = slots[k][1];
+    if (mode & 0xe) removeItem(s, item, n);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::moveGene(GameState& s, int gene, bool toStock) {
+    if (gene < 0 || size_t(gene) >= s.cr3Genes.size() || s.cr3Genes[size_t(gene)].stocked == toStock) return finish(kDbBad);
+    const int held = int(std::count_if(s.cr3Genes.begin(), s.cr3Genes.end(), [&](const Cr3Gene& g) { return g.stocked == toStock; }));
+    if (held >= (toStock ? s.cr3GeneStock : constant("GENE_CAPACITY", 50))) return finish(kDbFull);
+    s.cr3Genes[size_t(gene)].stocked = toStock;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::removeGene(GameState& s, int gene) {
+    if (gene < 0 || size_t(gene) >= s.cr3Genes.size()) return finish(kDbBad);
+    s.cr3Genes.erase(s.cr3Genes.begin() + gene);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::sellGenes(GameState& s, std::vector<int> genes) {
+    int gold = 0;
+    for (const int k : genes) {
+        if (k < 0 || size_t(k) >= s.cr3Genes.size()) return finish(kDbBad);
+        const GeneInfo* i = geneInfo(s.cr3Genes[size_t(k)].master);
+        if (!i) return finish(kDbNone);
+        gold += i->price + (geneLevel(s.cr3Genes[size_t(k)]) - 1) * i->pricePerLevel;
+    }
+    s.cr3Money += gold;
+    std::sort(genes.rbegin(), genes.rend());
+    genes.erase(std::unique(genes.begin(), genes.end()), genes.end());
+    for (const int k : genes) s.cr3Genes.erase(s.cr3Genes.begin() + k);
+    return finish(kDbOk);
 }
 
 // --- quests ---

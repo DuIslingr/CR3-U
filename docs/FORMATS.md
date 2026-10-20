@@ -656,9 +656,28 @@ The rest of DBEmu (libcrx 0x71b350 .. ; the Vita's Sync2 at 0x8107a1b0 reads cle
 - Tickets: GotTicket (today's had), ReceiveTicket (item 118, once a day; 0x3ef).
 - Sync2(event): an event's gifts - the tutorials' genes, quest56's, s100_t01_00702's two gold keys,
   s272_t01_00401's pairs of gifts, c140's, t02_kbox_03's item 59.
-- Not yet: the gene merges (gene_para's rarity and EXP curve, a 7 x 7 kind table, `mergegene2`,
-  skill inheritance - with the port's genes), EnforceItem / EnforceGene / EnhanceGene, PickWildcard
-  and the VS tournaments.
+- Genes (gene_para.mbe Gene, 13 ints a row the same on all three: id, series, grade, top level,
+  EXP curve, rank, type, -, worth at level 1, worth a level more, price likewise, kind; ExpTable:
+  a level, then each of 5 curves' EXP, -1 past its end - level 1 has none, 0; gene_command_skill:
+  gene, level, type 0 a command / 1 a skill, id). A gene's level is the highest its EXP reaches
+  (MbGeneInfo::GetLevel); its slots 0 .. 5 its own, learnt in the rows' order as it levels (a free
+  slot, else over 0 .. 5 in turn), 6 and 7 inherited (CrxGameData::InheritSkill - the Vita's: 6,
+  else 7; Android's decompiles as both). InitGene relearns a gene with no slots from its level.
+  Rarity: a gene's place in its collection_book line.
+- MergeGene: the pair in mergeGene2 (ids a, b, result), else - one series - the lower grade's,
+  else the gene of kind kMergeKind[a][b] (libcrx 0xf31060, 7 x 7), the lower grade of the two, not
+  type 1, whose rank is the least above half the two's (else the most no higher than half + 1);
+  both at their top level and its rarity under 2: the next gene. EXP: (a's worth + its per-level x
+  (level - 1) + b's likewise) / 4, to its top. Two of the parents' commands and skills (slot by
+  slot, a's command, b's, a's skill, b's; once each; none the child's own) at random, kept as
+  inherited. 100 gold a level of the two.
+- EnhanceGene (InterfaceMain::StartIntensificationSynthesis): the fed genes' worth at their level,
+  1% more for each of the target's kind; 100 gold a fed gene x the target's level before.
+  EnforceGene: mode 1 a seed (*_SEED_MASTER_ID, 27, and its *_AMOUNTS x n to attack / guard /
+  speed / luck; GENE_ADD_MAX in all; the seed not used up here), 2 the EXP, 4 the slots the menu
+  worked out (items: MbItemInfo's field effects 1 .. 4 stats, 5 levels, 7 / 8 skills), 2 .. 8 use
+  n. SellGene: price + per-level x (level - 1). MoveGene: the 50 and the stock.
+- Not yet: EnforceItem, PickWildcard and the VS tournaments; the menus themselves.
 
 ## Scripts (`script\*.nut`, `script64\*.nut`)
 
