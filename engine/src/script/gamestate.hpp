@@ -50,6 +50,11 @@ struct GameState {
     // the day's marks (DAT_014d094c: bit 0 the day's ticket received, 2 the day's quests drawn,
     // 3 the VS daily mission - cleared when the date changes)
     int cr3Daily = 0;
+    int cr3VipDays = 0;          // (DAT_01422918: VIP days left - one a day used, its login bonus)
+    bool cr3VipTrial = false;    // (DAT_01422920: the trial had)
+    // equipment's attachments (CrxItemData +8 / +0xc: EnforceItem - the material's id, its
+    // level), by the equipment's full id (the port keeps counts, not each piece)
+    std::map<int, std::pair<int, int>> cr3Attachments;
     int64_t cr3LastLogin = 0; // (CrxGameData +0x28698: the last day's login, epoch seconds; 0 none yet)
     int cr3Cheer = 0;         // (the cheer points: DATE_CHANGED_CHEERPOINT_BONUS a day, CHEER_POINT_MAX)
     // the field's leader of the two (cr3_field_data +8: FldUtilGetActiveCharacter, 0 / 1), the

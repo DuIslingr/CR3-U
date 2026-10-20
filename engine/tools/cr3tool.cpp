@@ -406,6 +406,25 @@ int db(const char* path, const char* sheet) {
     const int gold0 = s.cr3Money;
     r = d.sellGenes(s, {target});
     std::printf("  sold %d: +%d gold, genes %zu", r, s.cr3Money - gold0, s.cr3Genes.size());
+    // VIP, VS MP, an equipment attachment, the news
+    s.cr3Coins = 100;
+    r = d.buyVIP(s);
+    std::printf("\nVIP bought %d: %d days, coins %d; ", r, s.cr3VipDays, s.cr3Coins);
+    r = d.buyVIPTrial(s);
+    const int trial2 = d.buyVIPTrial(s);
+    std::printf("trial %d (again %d): %d days; ", r, trial2, s.cr3VipDays);
+    const size_t pres = s.cr3Presents.size();
+    d.dateChanged(s, now + 2 * 86400);
+    std::printf("next day: %d days, presents +%zu\n", s.cr3VipDays, s.cr3Presents.size() - pres);
+    r = d.buyMP(s);
+    std::printf("VS MP bought %d: coins %d; ", r, s.cr3Coins);
+    s.cr3Items[100002] = 1, s.cr3Items[600001] = 1;
+    r = d.enforceItem(s, 100002, 600001, 3, 100);
+    std::printf("weapon 100002 + gift 600001 at 3: %d (attached %d/%d, gift x%d)\n", r, s.cr3Attachments[100002].first,
+                s.cr3Attachments[100002].second, s.cr3Items[600001]);
+    r = d.pollMessage(s, now, true, true);
+    std::printf("news %d: %zu today", r, d.messages().size());
+    for (const int m : d.messages()) std::printf(" %d", m);
     std::printf("\nfinally: %d items (%zu kinds), %zu genes, %zu presents, gold %d, coins %d (spent %d), GP %d (spent %d)\n", items(),
                 s.cr3Items.size(), s.cr3Genes.size(), s.cr3Presents.size(), s.cr3Money, s.cr3Coins, s.cr3CoinsSpent, s.cr3GP, s.cr3GPSpent);
     return 0;

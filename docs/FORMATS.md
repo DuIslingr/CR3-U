@@ -677,7 +677,20 @@ The rest of DBEmu (libcrx 0x71b350 .. ; the Vita's Sync2 at 0x8107a1b0 reads cle
   speed / luck; GENE_ADD_MAX in all; the seed not used up here), 2 the EXP, 4 the slots the menu
   worked out (items: MbItemInfo's field effects 1 .. 4 stats, 5 levels, 7 / 8 skills), 2 .. 8 use
   n. SellGene: price + per-level x (level - 1). MoveGene: the 50 and the stock.
-- Not yet: EnforceItem, PickWildcard and the VS tournaments; the menus themselves.
+- EnforceItem(item, material, level, gold): the material attached to the equipment at that level
+  (CrxItemData +8 / +0xc), used up. BuyMP: VS_MP_PRICE coins. BuyVIP: VIP_PRICE coins for VIP_DAYS
+  (to VIP_DAYS_MAX); BuyVIPTrial: VIP_TRIAL_DAYS, once. A new day uses a VIP day, then (still VIP,
+  daily bit 4) dbutils::SendVIPLoginBonus: a gold key and item 106 as presents. PollMessage: the
+  `news` rows whose dates hold today (their text ids); the emergencies are the server's (the table
+  is empty in every release).
+- Not yet: the VS mode's rules (GetVSTournaments - `vsTournaments_cli`, 36 ints: _id, mode, ghost,
+  icon, level, bgm, flags x 3, clear_flag, exp, mapId, coupling x 3, count, rule, prize_gold /
+  _icon / _category / _id / _count, season_item_id, season_prob, sdate x 5, edate x 5 (MMDD
+  windows), perfect_flag, banner -; Begin / EndVSTournament, EndVSBattle(score, mission), the
+  weekly score from Monday, the daily mission, seasons, boost items, PickWildcard): their state is
+  a block of the save (CrxGameData +0x28550 ..: the tournament's and the week's score, the mission,
+  the two rating ranks at +0x28580, the season's points and level, the boosts), to be ported with
+  the VS mode itself; and the menus.
 
 ## Scripts (`script\*.nut`, `script64\*.nut`)
 

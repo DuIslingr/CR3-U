@@ -229,6 +229,17 @@ public:
     int buyGeneStock(GameState& s);
     int getDailyItem(GameState& s, int id);
 
+    // DBEmu: EnforceItem(item, material, level, gold) - the material attached at that level, used
+    // up, the gold paid; BuyMP (VS_MP_PRICE coins); BuyVIP (VIP_PRICE coins: VIP_DAYS more, to
+    // VIP_DAYS_MAX), BuyVIPTrial (VIP_TRIAL_DAYS, once); PollMessage(news, emergency): the news
+    // whose dates hold today (their text ids - messages())
+    int enforceItem(GameState& s, int item, int material, int level, int gold);
+    int buyMP(GameState& s);
+    int buyVIP(GameState& s);
+    int buyVIPTrial(GameState& s);
+    int pollMessage(GameState& s, std::time_t now, bool news, bool emergency);
+    const std::vector<int>& messages() const { return messages_; }
+
     // DBEmu: gifts - MergeGift(id): mergeGifts' gene for the gifts given up (`gifts`: their item
     // ids); ItemizeGift(gift): the gift for itemizeGifts' item
     int mergeGift(GameState& s, int id, const std::vector<int>& gifts);
@@ -301,6 +312,7 @@ private:
     std::vector<std::array<int, 3>> mergePairs_; // (a, b, result)
     std::map<int, int> rarity_;
     std::vector<MergePreview> previews_;
+    std::vector<int> messages_;
     int previewGene_ = -1;
     Month month_;
     PrizeBox prizeBox_;

@@ -293,6 +293,19 @@ int Cr3OfflineDb::dateChanged(GameState& s, std::time_t now) {
     if (const BsonValue* c = constants(); c)
         if (const BsonValue* f = c->get("DATE_CHANGED_CLEAR_FLAGS"); f && f->isArray())
             for (const BsonValue& n : f->items) s.setFlag(n.asInt(), false);
+    // a VIP day used, then (dbutils::SendVIPLoginBonus: still VIP, not today yet - daily bit 4) a
+    // gold key and item 106 as presents
+    if (s.cr3VipDays > 0) {
+        --s.cr3VipDays;
+        if (s.cr3VipDays > 0 && !(s.cr3Daily & 0x10)) {
+            for (const int item : {400005, 106}) {
+                Cr3Present p;
+                p.item = item, p.count = 1, p.from = constant("PRESENT_FROM_SERVICE");
+                sendPresent(s, p);
+            }
+            s.cr3Daily |= 0x10;
+        }
+    }
     return getThisMonthMaster(s, now);
 }
 
@@ -680,6 +693,51 @@ int Cr3OfflineDb::getDailyItem(GameState& s, int id) {
             return finish(res);
         }
     return finish(kDbBad);
+}
+
+int Cr3OfflineDb::enforceItem(GameState& s, int item, int material, int level, int gold) {
+    if (s.cr3Money < gold) return finish(kDbNoGold);
+    const auto a = s.cr3Items.find(item), b = s.cr3Items.find(material);
+    if (a == s.cr3Items.end() || a->second <= 0 || b == s.cr3Items.end() || b->second <= 0) return finish(kDbBad);
+    s.cr3Attachments[item] = {material, level};
+    removeItem(s, material, 1);
+    s.cr3Money -= gold;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::buyMP(GameState& s) {
+    const int price = constant("VS_MP_PRICE");
+    if (s.cr3Coins < price) return finish(kDbNoCoins);
+    s.cr3Coins -= price, s.cr3CoinsSpent += price;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::buyVIP(GameState& s) {
+    const int price = constant("VIP_PRICE"), most = constant("VIP_DAYS_MAX");
+    if (s.cr3Coins < price) return finish(kDbNoCoins);
+    if (s.cr3VipDays >= most) return finish(kDbFull);
+    s.cr3Coins -= price, s.cr3CoinsSpent += price;
+    s.cr3VipDays = std::min(s.cr3VipDays + constant("VIP_DAYS"), most);
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::buyVIPTrial(GameState& s) {
+    const int most = constant("VIP_DAYS_MAX");
+    if (s.cr3VipTrial) return finish(kDbBad);
+    if (s.cr3VipDays >= most) return finish(kDbFull);
+    s.cr3VipDays = std::min(s.cr3VipDays + constant("VIP_TRIAL_DAYS"), most);
+    s.cr3VipTrial = true;
+    return finish(kDbOk);
+}
+
+int Cr3OfflineDb::pollMessage(GameState&, std::time_t now, bool news, bool emergency) {
+    messages_.clear();
+    if (news)
+        if (const BsonValue* t = table("news"))
+            for (const BsonValue& r : t->items)
+                if (checkDate(r.integer("sdate"), r.integer("edate"), now)) messages_.push_back(r.integer("text"));
+    (void)emergency; // (DBSystem::CheckEmergency - the server's; data\emergencies is empty in every release)
+    return finish(kDbOk);
 }
 
 // --- gifts ---
