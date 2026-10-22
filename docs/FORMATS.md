@@ -575,9 +575,12 @@ results, the prizes, back to B.
 - The score's bonuses (phaseColosseumResult): MP - the MP used x score / 100; lifeline - (BoostItemBonus
   by how many chosen: 0, 2, 4, 8, 10, + the party's most kind-130 effect) x score / 100; wildcards -
   the chosen ones' bonuses summed x score / 100.
-- B's four small buttons (`VsMainBtn05_fr00` x 4, frame its place): the gene lab, the camp (its Gene
-  Swap off), MP recovery (0x2a9 - BuyMP, VS_MP_PRICE coins: the party's MP full), My Page. The
-  party's MP carries over from battle to battle (and the camp's).
+- B's four small buttons (`VsMainBtn05_fr00` x 4 at frames 0, 2, 4, 6): the gene lab (VsModeMain 10:
+  CreateGeneSynthesisMainToVS, the clerk `cutIn115_L01` - GeneSynthesisMain +0x2c8 false: Talk off,
+  the header title 37 - CreateGeneSynthesisMenu's 0x25 while GameMain's VS flag, +0x24b, is on; its
+  `vs` VS_Recombine_* functions only print), the camp (its Gene Swap off), MP recovery (0x2a9 - BuyMP,
+  VS_MP_PRICE coins: the party's MP full), My Page. The party's MP carries over from battle to battle
+  (and the camp's).
 - Sp Shop (A's Btn02 - PiuComMenu, header title 9): `data\shops`' "com_1" goods (GP or coins), a
   `comListPanel` each - the goods' icon, its first item and count, its price on
   `comListNumUn_num00` (`comListUnIcon_fr00` 0 coins, 1 GP, 2 ML); tapped again 0x123, BuyGoods -
@@ -591,7 +594,30 @@ results, the prizes, back to B.
 `cr3view --input vs:open,vs:battle,vs:normal,vs:boost<n>,vs:row<n>,vs:ok,vs:yes,vs:wild<n>,attack,t0,
 ...,vs:next,...,vs:results,vs:prizes` (also `vs:shop`, `vs:goods<n>`, `vs:side<n>` - B's small
 buttons -, `vs:unboost<n>`, `vs:no`, `vs:told`; the field's Battle button opens it - `camp:field3`).
-Not in the port: the VS mode's own gene lab and My Page (Square Enix's servers').
+
+### My Page (CR3)
+
+CreateMyPageTop (the field's `feBtnMypage`, VS's fourth small button): MyPageNewTopMain 0xdd and
+MyPageNewTopMenu 0xde, the header (title 8) and ItemFutterMenu 0x62 (the team, the back).
+`comBgPosition`'s `comBgMenu` / `comBgMark_id00` behind; `mpTopPosition` (`mpTopPosition_in`: its two
+joints in from -8 / +8 over 3 frames) holds `mpTopLog` and `mpTopMenu`.
+- The log (SetListLogData): 12 `mpTopLogTxt` 0.48 apart on `mpTopLogList`, eight showing, scrolled 0 ..
+  1.92 (`mpTopBarCursor` down `mpTopBarMenu`'s barLimitUp .. barLimitLow + 0.15): labels
+  AnnounceMenuName 0x2c7 + n at `typeM_L01`, values at `typeM_R01` - play time (0x2c0), enemy kills
+  (CrxGameActivities::KillMonster, 0x2c6), battle mode matches (CrxGameData +0x280c0), max damage
+  (CrxGameActivities::Damage, 0x2c3), quests completed (CrxGameData +0x1e87c), genes obtained
+  (+0x280c4), gene combinations (+0x280c8), gift fusions (+0x280cc; these 0x2c2), N / R / SR genes
+  held, stock too (gene_para +8; 0x2c4), their mean level (0x2c5); Japanese in full-width digits.
+  CR3-U counts them itself (GameState::Cr3Records, the save's `cr3records`).
+- The menu: `tapAreaS0n` / `E0n`, n = 1 story mode (only in the VS mode), 2 the VS mode (only outside
+  it) - `mpTopStoryOff` / `mpTopVSOff` over the one you're in, asked 0x2ee / 0x2ef, then GameMain::
+  SetVS: VSMain (mode 0x19) or the field -, 3 the presents (`mpTopPresentOff` with none; `mpTopCome`
+  with their count, two `mpTopNum` - the ones at `_001` -, leading zeros kept), 4 the picture book;
+  `mpTopIcon` (frame n - 1) at `call_mpTopIcon0n`, the mode you're in's not drawn; the menu at frame n
+  while pressed, SE com_005 where off. Over 80 presents: 0x2f5 on the way in.
+
+`cr3view --input camp:mypage,camp:button<n>,camp:yes,camp:scroll<rows x 0.48>` (or the field's
+`camp:field5`). Not in yet: the presents (PresentGetMain) and the picture book (PictureBookMain).
 
 ## Battles (CR3)
 

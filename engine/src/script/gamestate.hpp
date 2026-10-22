@@ -40,6 +40,14 @@ struct GameState {
     // a character's MP left from its last battle (cr3_player_data +0 - SaveCharacterMp); none full
     // (Cr3System.MPFullRecovery, a new game)
     std::map<int, int> cr3Mp;
+    // My Page's records (MyPageNewTopMenu::SetListLogData): the play time, CrxGameActivities'
+    // kills (KillMonster: 999999 at most) and most damage dealt (Damage), and the counts the
+    // server kept in the player's data (CrxGameData +0x280c0 battle mode matches, +0x280c4 genes
+    // obtained, +0x280c8 gene combinations, +0x280cc gift fusions) - counted here where they happen
+    struct Cr3Records {
+        double playSeconds = 0;
+        int kills = 0, maxDamage = 0, vsMatches = 0, genesObtained = 0, merges = 0, fusions = 0;
+    } cr3Records;
     int cr3GeneUid = 0; // (the last gene uid given)
     int geneUid(Cr3Gene& g) { return g.uid > 0 ? g.uid : (g.uid = ++cr3GeneUid); }
     // a character's gene (its index in cr3Genes; -1 none) and a gene's wearer (0 none)

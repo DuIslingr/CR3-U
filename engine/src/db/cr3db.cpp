@@ -366,6 +366,7 @@ int Cr3OfflineDb::earnGenePrize(GameState& s, const Cr3Gene& gene) {
         s.cr3Genes.back().fresh = true;
         initGene(s.cr3Genes.back()); // (CrxGameData::AddGene: its slots, where it has none)
         s.cr3GeneBook.insert(gene.master);
+        ++s.cr3Records.genesObtained;
         return kDbOk;
     }
     Cr3Present p;
@@ -753,6 +754,7 @@ int Cr3OfflineDb::mergeGift(GameState& s, int id, const std::vector<int>& gifts)
             if (r.integer("_id") != id) continue;
             earnGenePrize(s, r.integer("gene_id"));
             for (const int g : gifts) removeItem(s, g, 1);
+            ++s.cr3Records.fusions;
             return finish(kDbOk);
         }
     return finish(kDbBad);
@@ -956,6 +958,7 @@ int Cr3OfflineDb::mergeGene(GameState& s, int preview, bool coins) {
     s.cr3Genes.push_back(p.result);
     s.cr3Genes.back().fresh = true;
     s.cr3GeneBook.insert(p.result.master);
+    ++s.cr3Records.merges, ++s.cr3Records.genesObtained;
     if (coins) s.cr3Coins -= p.coins, s.cr3CoinsSpent += p.coins;
     else s.cr3Money -= p.gold;
     previews_.clear(), previewGene_ = -1;

@@ -2375,6 +2375,7 @@ struct Viewer {
     }
     void advance(float dt, float sx, float sy, bool run) {
         uiClock += dt;
+        if (areaMode || cr3BattleMode) game.cr3Records.playSeconds += dt; // (My Page's play time)
         if (cr3::EventRuntime* ev = activeEvents()) {
             if (!inputScript.empty() && inputScript.front() == "fast" && uiClock >= fastUntil && (ev->fastForwardShown() || ev->skipButtonShown()))
                 inputScript.pop_front(), fastUntil = uiClock + 2.0f; // (each two seconds of it, one after the other)
@@ -5683,6 +5684,7 @@ struct Viewer {
         // field button, 0 Open .. 6 Shop)
         cr3Camp.since += dt;
         campEquip.modelSince += dt;
+        myPage.toldSince += dt;
         campItems.toldSince += dt;
         campGifts.toldSince += dt;
         vs.since += dt;
@@ -5726,6 +5728,8 @@ struct Viewer {
             else if (want.compare(0, 5, "chara") == 0) chooseCr3Camp(700 + std::atoi(want.c_str() + 5));
             else if (want == "yes" || want == "no" || want == "ok") chooseCr3Camp(want == "yes" ? 500 : want == "no" ? 501 : 502);
             else if (want == "model") chooseCr3Camp(800);
+            else if (want == "mypage") openMyPage();
+            else if (want.compare(0, 6, "scroll") == 0) myPageScroll(float(std::atof(want.c_str() + 6)));
             else if (want.compare(0, 4, "turn") == 0) cr3CampDrag(float(std::atof(want.c_str() + 4)), 0);
             else if (want.compare(0, 4, "zoom") == 0) cr3CampDrag(0, float(std::atof(want.c_str() + 4)));
         }
@@ -6264,6 +6268,20 @@ struct Viewer {
     // Guard - comBtn's name, icon frames; Gene and Item not in yet)
     static constexpr int kCr3Buttons[4] = {6, 7, 8, 9};
 
+    // My Page's records of a turn (CrxGameActivities::KillMonster - 999999 at most - and Damage:
+    // the party's most in one hit)
+    void cr3CountRecords() {
+        cr3::GameState::Cr3Records& r = game.cr3Records;
+        for (const cr3::Cr3Action& a : cr3Actions) {
+            if (a.source < 0 || size_t(a.source) >= cr3Rules.fighters.size() || !cr3Rules.fighters[size_t(a.source)].player) continue;
+            for (const cr3::Cr3Hit& h : a.targets) {
+                if (h.target < 0 || size_t(h.target) >= cr3Rules.fighters.size() || cr3Rules.fighters[size_t(h.target)].player) continue;
+                for (size_t k = 0; k < h.hits.size(); ++k)
+                    if (!(k < h.flags.size() && (h.flags[k] & 4))) r.maxDamage = std::max(r.maxDamage, h.hits[k]);
+                if (h.killed && r.kills < 999999) ++r.kills;
+            }
+        }
+    }
     void setCr3Motion(size_t k, const std::string& suffix, bool loop, bool hold = false) {
         if (k >= cr3BattleUnits.size()) return;
         Cr3BattleUnitView& u = cr3BattleUnits[k];
@@ -6341,6 +6359,7 @@ struct Viewer {
                 SDL_Log("battle %d: the escape failed", cr3Battle.coupling);
                 cr3Choices.clear();
                 cr3Actions = cr3Rules.turn(cr3Choices);
+                cr3CountRecords();
                 cr3ActionAt = 0;
                 cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
                 startCr3Action();
@@ -6424,6 +6443,7 @@ struct Viewer {
             }
         // (all chosen: BtlSysStateSelect::phaseCalculate - the turn worked out, then played)
         cr3Actions = cr3Rules.turn(cr3Choices);
+        cr3CountRecords();
         cr3ActionAt = 0;
         cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
         startCr3Action();
@@ -12073,6 +12093,7 @@ struct Viewer {
         return int(std::count_if(game.cr3Genes.begin(), game.cr3Genes.end(), [](const cr3::Cr3Gene& g) { return !g.stocked; }));
     }
     bool geneLabButtonOn(int id) const {
+        if (id == 17) return !geneLabVs; // (SetGeneSynthesisTopButton(GeneSynthesisMain +0x2c8): Talk only from the field)
         if (id == 28) return !game.flag(3613);
         if (id == 21) return !game.flag(3614);
         if (id == 29) return !game.flag(3615);
@@ -12266,9 +12287,11 @@ struct Viewer {
             }
         }
     }
+    bool geneLabVs = false; // (the lab opened from the VS mode: its title 37, Talk off)
     void drawCr3GeneLab(cr3::EventRuntime& ev, int w, int h, bool front) {
         const cr3::EventRuntime::GeneLab& lab = ev.geneLab();
         if (!lab.open || lab.talking) return;
+        geneLabVs = lab.vs;
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
         const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
@@ -12292,7 +12315,8 @@ struct Viewer {
         if (screen == 3 || (screen == 7 && geneMenu.mode == 1)) sentence = menuAnnounce(0x177); // (asked: " ")
         if (screen == 7 && geneMenu.mode == 2) sentence = menuAnnounce(0x273);
         if (screen == 7 && geneMenu.mode >= 3) sentence = menuAnnounce(geneMenu.mode == 3 ? 0x17c : 0x17d);
-        drawCr3Header(t, screen == 9 || geneMenu.mode >= 3 ? 35 : screen < 2 ? 30 : geneMenu.mode == 1 ? 32 : geneMenu.mode == 2 ? 34 : 31, sentence, w, h, view);
+        drawCr3Header(t, screen == 9 || geneMenu.mode >= 3 ? 35 : screen < 2 ? (geneLabVs ? 37 : 30) : geneMenu.mode == 1 ? 32 : geneMenu.mode == 2 ? 34 : 31, sentence, w, h,
+                      view); // (CreateGeneSynthesisMenu: 0x25 while GameMain's VS flag is on)
         // the buttons
         if (screen <= 1 || screen == 9) {
             const std::vector<int> ids = geneLabButtons();
@@ -13416,6 +13440,7 @@ struct Viewer {
         SDL_Log("camp: open (CR3)");
     }
     void drawCr3Camp(int w, int h, const Mat4& view) {
+        if (cr3Camp.stage == 10) return drawMyPage(w, h, view);
         const float t = cr3Camp.since;
         float x, y, cx, cy;
         // (CampTopMenu: the background and the party's panels)
@@ -13623,6 +13648,8 @@ struct Viewer {
                 openCr3Camp();
             else if (id == 103) // (feBtnBattle: the VS mode)
                 openVs();
+            else if (id == 105) // (feBtnMypage: My Page)
+                openMyPage();
             else if (id == 102) {
                 encountersOff = !encountersOff;
                 audio.playSe("com_003", false);
@@ -13631,6 +13658,7 @@ struct Viewer {
                 SDL_Log("field: button %d (not in yet)", id - 100);
             return;
         }
+        if (cr3Camp.stage == 10) return chooseMyPage(id);
         if (id == -1) {
             audio.playSe("com_004", false);
             cr3Camp.stage = cr3Camp.stage == 3 ? 2 : cr3Camp.stage == 2 ? 1 : 0, cr3Camp.since = 0;
@@ -13723,6 +13751,7 @@ struct Viewer {
         if (cr3Camp.stage == 7) return campQuestsKey(key), true;
         if (cr3Camp.stage == 8) return campStatusKey(key), true;
         if (cr3Camp.stage == 9) return campOptionsKey(key), true;
+        if (cr3Camp.stage == 10) return myPageKey(key), true;
         const bool up = key == SDLK_UP, down = key == SDLK_DOWN, enter = key == SDLK_RETURN || key == SDLK_SPACE;
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCr3Camp(-1);
         else if (cr3Camp.stage == 1) {
@@ -14434,6 +14463,10 @@ struct Viewer {
     // a drag on the model (TouchSimpleMove: across turns it a radian each 100 of the screen's 960,
     // up and down sizes it a hundredth each, 2 .. 3)
     bool cr3CampDrag(float dx, float dy) {
+        if (cr3Camp.stage == 10) { // (My Page's log: dragged up, on down the rows - TouchSimpleMove)
+            myPage.scroll = std::clamp(myPage.scroll - dy / 100, 0.0f, 1.92f);
+            return true;
+        }
         if (cr3Camp.stage != 5 || !campEquip.model) return false;
         campEquip.yaw += dx / 100;
         campEquip.scale = std::clamp(campEquip.scale + dy / 100, 2.0f, 3.0f);
@@ -15199,6 +15232,217 @@ struct Viewer {
         if ((up || down) && n > 0) chooseCampStatus(300 + std::clamp(cs.row + (down ? 1 : -1), 0, n - 1));
     }
 
+    // ---- My Page (MyPageNewTopMain 0xdd, MyPageNewTopMenu 0xde; CreateMyPageMenu: the header 0x42
+    // titled 8, ItemFutterMenu 0x62 - the team's name, the back) ----
+    // Behind: comBgPosition's comBgMenu and its comBgMark_id00. mpTopPosition (mpTopPosition_in: its
+    // two joints slid in from -8 / +8 over 0.1 s) holds mpTopLog and mpTopMenu. The log (SetListLogData): 12 mpTopLogTxt on
+    // mpTopLogList's call_mpTopLogTxt_001 .., 0.48 apart, eight showing - its label (AnnounceMenuName
+    // 0x2c7 + n) at typeM_L01, its value at typeM_R01 (right): the play time (0x2c0: {hour} at
+    // least two digits, {minute}, {second}), enemy kills (0x2c6), battle mode matches (0x2c2), the
+    // most damage (0x2c3), quests completed, genes obtained, gene combinations, gift fusions (0x2c2),
+    // the N, R and SR genes held - stock too - (0x2c4: GetGeneRaretyNumber, gene_para +8) and their
+    // mean level (0x2c5: GetGeneMeanLevel); Japanese in full-width digits (Cr3UtilNumberToUTFDouble
+    // String). Dragged it scrolls 0 .. 1.92, settling on a row (AutoScroll), mpTopBarMenu's
+    // mpTopBarCursor moved down its bar (barLimitUp .. barLimitLow + 0.15) as far. The menu's four
+    // buttons (tapAreaS0n / E0n; the menu at frame n pressed - SE com_003, com_005 where off): 1 story
+    // mode - only in the VS mode -, 2 the VS mode - only outside it (mpTopStoryOff / mpTopVSOff over
+    // the one you're in, its mpTopIcon not drawn) -, asked (0x2ee / 0x2ef); 3 the presents (off -
+    // mpTopPresentOff - with none; mpTopCome with their count in two mpTopNum digits); 4 the picture
+    // book. mpTopIcon at call_mpTopIcon01 .. 04, its frame the button - 1. Over 80 presents: told
+    // 0x2f5 on the way in
+    struct Cr3MyPage {
+        float since = 0;
+        float scroll = 0;     // (+0x1bc: the log's, 0 .. 1.92)
+        float dragY = 0;
+        bool dragging = false;
+        int pressed = 0;      // (the menu's frame: the button)
+        int ask = 0;          // (1 / 2: the button asked about)
+        bool vs = false;      // (opened in the VS mode: GameMain +0x24b)
+        std::string told;
+        float toldSince = 0;
+    } myPage;
+    void openMyPage() {
+        myPage = Cr3MyPage();
+        myPage.vs = vs.screen != 0;
+        cr3Camp.stage = 10, cr3Camp.since = 0;
+        audio.playSe("com_003", false);
+        if (game.cr3Presents.size() > 79) myPage.told = menuAnnounce(0x2f5); // (MyPageNewTopMain 1: DAT_0143a080 over 0x4f)
+        SDL_Log("my page: open (%s, %zu presents)", myPage.vs ? "VS" : "story", game.cr3Presents.size());
+    }
+    // a number as the game writes it (Cr3UtilNumberToUTFDoubleString: full-width digits in Japanese)
+    std::string cr3Number(long v, int digits = 1) {
+        std::string n = std::to_string(v);
+        while (int(n.size()) < digits) n = "0" + n;
+        if (optionLanguage != 0) return n;
+        std::string w;
+        for (const char c : n) w += c >= '0' && c <= '9' ? std::string{char(0xef), char(0xbc), char(0x90 + (c - '0'))} : std::string(1, c);
+        return w;
+    }
+    std::string myPageValue(int row) {
+        const cr3::GameState::Cr3Records& r = game.cr3Records;
+        const auto with = [&](int text, long v) {
+            std::string s = menuAnnounce(text);
+            const size_t at = s.find("{number}");
+            if (at != std::string::npos) s.replace(at, 8, cr3Number(v));
+            return s;
+        };
+        if (row == 0) {
+            const long t = long(r.playSeconds);
+            std::string s = menuAnnounce(0x2c0);
+            const std::pair<const char*, std::string> parts[3] = {{"{hour}", cr3Number(t / 3600, 2)}, {"{minute}", cr3Number(t / 60 % 60, 2)}, {"{second}", cr3Number(t % 60, 2)}};
+            for (const auto& [key, v] : parts)
+                if (const size_t at = s.find(key); at != std::string::npos) s.replace(at, std::strlen(key), v);
+            return s;
+        }
+        if (row == 1) return with(0x2c6, r.kills);
+        if (row == 3) return with(0x2c3, r.maxDamage);
+        if (row == 2 || (row >= 4 && row <= 7)) {
+            const int v = row == 2 ? r.vsMatches : row == 4 ? game.cr3Quests.endedCount : row == 5 ? r.genesObtained : row == 6 ? r.merges : r.fusions;
+            return with(0x2c2, v);
+        }
+        if (!game.cr3Db) return {};
+        if (row >= 8 && row <= 10) {
+            int n = 0;
+            for (const cr3::Cr3Gene& g : game.cr3Genes)
+                if (const auto* gi = game.cr3Db->geneInfo(g.master); gi && gi->grade == row - 8) ++n;
+            return with(0x2c4, n);
+        }
+        int sum = 0, n = 0;
+        for (const cr3::Cr3Gene& g : game.cr3Genes)
+            if (game.cr3Db->geneInfo(g.master)) sum += game.cr3Db->geneLevel(g), ++n;
+        return with(0x2c5, n ? sum / n : 0);
+    }
+    bool myPageButtonOn(int b) const {
+        if (b == 1) return myPage.vs;
+        if (b == 2) return !myPage.vs;
+        if (b == 3) return !game.cr3Presents.empty();
+        return b == 4;
+    }
+    void drawMyPage(int w, int h, const Mat4& view) {
+        Cr3MyPage& mp = myPage;
+        const float t = cr3Camp.since;
+        float x, y, cx, cy;
+        UiFig& bg = cr3UiPut("combgposition", "", 0, 0, 0, view);
+        if (cr3UiCall(bg, "call_comBgMenu", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("combgmenu", "", 0, x, y, view);
+            if (cr3UiCall(menu, "call_comBgMark_id", cx, cy)) cr3UiPut("combgmark_id00", "", 0, cx, cy, view);
+        }
+        dev->clearDepth();
+        UiFig& pos = cr3UiPut("mptopposition", "mptopposition_in", std::min(t, 0.1f), 0, 0, view); // (_in: the two slid in from +-8 over 3 frames, then held)
+        // (the log)
+        if (cr3UiCall(pos, "call_mpTopLog", x, y, w, h)) {
+            UiFig& log = cr3UiPut("mptoplog", "", 0, x, y, view);
+            float bx, by;
+            if (cr3UiCall(log, "call_mpTopBarMenu", bx, by)) {
+                UiFig& bar = cr3UiPut("mptopbarmenu", "", 0, bx, by, view);
+                float ux, uy, lx, ly;
+                if (cr3UiCall(bar, "call_mpTopBarCursor", cx, cy) && cr3UiCall(bar, "barLimitUp", ux, uy) && cr3UiCall(bar, "barLimitLow", lx, ly))
+                    cr3UiPut("mptopbarcursor", "", 0, cx, cy + std::clamp(mp.scroll / 1.92f, 0.0f, 1.0f) * (ly + 0.15f - uy) + 0.15f, view);
+            }
+            float ax, ay, ex, ey;
+            if (cr3UiCall(log, "tapAreaS01", ax, ay) && cr3UiCall(log, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 900}); // (the log: dragged)
+            float lx0, ly0;
+            if (cr3UiCall(log, "call_mpTopLogList", lx0, ly0)) {
+                UiFig& list = cr3UiPut("mptoploglist", "", 0, lx0, ly0, view);
+                for (int k = 0; k < 12; ++k) {
+                    char joint[32];
+                    std::snprintf(joint, sizeof joint, "call_mpTopLogTxt_%03d", k + 1);
+                    const float top = float(k) * 0.48f - mp.scroll; // (its place below the first's: eight show)
+                    if (top < -0.01f || top > 7 * 0.48f + 0.01f || !cr3UiCall(list, joint, cx, cy)) continue;
+                    UiFig& row = cr3UiPut("mptoplogtxt", "", 0, cx, cy + mp.scroll, view);
+                    float tx, ty;
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    if (cr3UiCall(row, "typeM_L01", tx, ty)) drawUiText(menuAnnounce(0x2c7 + k), 22, (tx + 0.06f) / 10, (ty - 0.12f) / 10, w, h, true, 0.25f);
+                    if (cr3UiCall(row, "typeM_R01", tx, ty)) {
+                        const std::string v = myPageValue(k);
+                        drawUiText(v, 22, (tx - 0.06f) / 10 - uiTextWidth(v, 22, w, h), (ty - 0.12f) / 10, w, h, true, 0.25f);
+                    }
+                }
+            }
+        }
+        // (the menu)
+        if (cr3UiCall(pos, "call_mpTopMenu", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("mptopmenu", "", float(mp.pressed) / 30, x, y, view);
+            const auto put = [&](const char* joint, const char* fig, float frame = 0) {
+                float px, py;
+                if (cr3UiCall(menu, joint, px, py)) cr3UiPut(fig, "", frame, px, py, view);
+            };
+            put(mp.vs ? "call_mpTopVSOff" : "call_mpTopStoryOff", mp.vs ? "mptopvsoff" : "mptopstoryoff");
+            if (game.cr3Presents.empty()) put("call_mpTopPresentOff", "mptoppresentoff");
+            for (int b = 1; b <= 4; ++b) {
+                if ((b == 1 && !mp.vs) || (b == 2 && mp.vs)) continue;
+                char joint[32];
+                std::snprintf(joint, sizeof joint, "call_mpTopIcon%02d", b);
+                put(joint, "mptopicon", float(b - 1) / 30);
+                std::snprintf(joint, sizeof joint, "tapAreaS%02d", b);
+                float ax, ay, ex, ey;
+                char end[32];
+                std::snprintf(end, sizeof end, "tapAreaE%02d", b);
+                if (cr3UiCall(menu, joint, ax, ay) && cr3UiCall(menu, end, ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 200 + b});
+            }
+            float px, py;
+            if (!game.cr3Presents.empty() && cr3UiCall(menu, "call_mpTopCome", px, py)) { // (InterfaceMain::SetViewNumbersZero: two digits)
+                UiFig& come = cr3UiPut("mptopcome", "", 0, px, py, view);
+                const int n = std::min(int(game.cr3Presents.size()), 99);
+                if (cr3UiCall(come, "call_mpTopNum_001", cx, cy)) cr3UiPut("mptopnum", "", float(n % 10) / 30, cx, cy, view); // (the ones, on the right)
+                if (cr3UiCall(come, "call_mpTopNum_002", cx, cy)) cr3UiPut("mptopnum", "", float(n / 10) / 30, cx, cy, view);
+            }
+        }
+        drawCr3CampFooter(w, h, view);
+        if (mp.ask) drawCr3Asked(menuAnnounce(mp.ask == 1 ? 0x2ee : 0x2ef), t, 0, true, 500, 501, w, h, view);
+        if (!mp.told.empty()) drawCr3Told(mp.told, mp.toldSince, 502, w, h, view);
+        drawCr3Header(t, 8, std::string(), w, h, view);
+    }
+    void chooseMyPage(int id) {
+        Cr3MyPage& mp = myPage;
+        if (!mp.told.empty()) {
+            if (id == 502 || id == -1) mp.told.clear();
+            return;
+        }
+        if (mp.ask) {
+            if (id == 501 || id == -1) {
+                audio.playSe("com_004", false);
+                mp.ask = 0, mp.pressed = 0;
+            } else if (id == 500) { // (MyPageNewTopMain 0x16 / 0x17: GameMain::SetVS - the VS mode's VSMain, or the story's field)
+                audio.playSe("com_003", false);
+                const int b = mp.ask;
+                mp.ask = 0, mp.pressed = 0;
+                cr3Camp.stage = 0;
+                SDL_Log("my page: to %s mode", b == 1 ? "story" : "battle");
+                if (b == 1) vs = Cr3VsMode();
+                else openVs();
+            }
+            return;
+        }
+        if (id == -1) { // (MyPageNewTopMain 8 / 9: the screen's way out)
+            audio.playSe("com_004", false);
+            cr3Camp.stage = 0;
+            SDL_Log("my page: closed");
+            return;
+        }
+        if (id < 201 || id > 204) return;
+        const int b = id - 200;
+        if (!myPageButtonOn(b)) return (void)audio.playSe("com_005", false);
+        audio.playSe("com_003", false);
+        mp.pressed = b;
+        if (b <= 2) mp.ask = b;
+        else {
+            SDL_Log("my page: %s (not in yet)", b == 3 ? "the presents" : "the picture book");
+            mp.pressed = 0;
+        }
+    }
+    void myPageKey(SDL_Keycode key) {
+        if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseMyPage(myPage.ask ? 501 : -1);
+        if (myPage.ask && (key == SDLK_RETURN || key == SDLK_SPACE)) return chooseMyPage(500);
+        if (key == SDLK_UP || key == SDLK_DOWN) myPageScroll(key == SDLK_DOWN ? 0.48f : -0.48f);
+        if (key >= SDLK_1 && key <= SDLK_4) chooseMyPage(200 + int(key - SDLK_1) + 1);
+    }
+    // the log scrolled (TouchSimpleMove: by the drag, / 200 of the screen's 640; then settled on a
+    // row - AutoScroll)
+    void myPageScroll(float by) {
+        myPage.scroll = std::clamp(std::round((myPage.scroll + by) / 0.48f) * 0.48f, 0.0f, 1.92f);
+    }
+
     // ---- the camp's Options (OptionMain 0xac, OptionMenu 0xad) ----
     // optTopPositon (its io animator): the tabs optTab_fr00 (the frame the tab; Sound, Controls,
     // Other at typeM_C01 .. C03 - AnnounceMenuName 0x190 .. 0x192), then the tab's: Sound -
@@ -15772,7 +16016,8 @@ struct Viewer {
     }
     void drawVs(int w, int h) {
         vsTaps.clear();
-        if (cr3Camp.stage != 0) return; // (the camp opened from Battle's screen over it)
+        if (cr3Camp.stage != 0) return; // (the camp opened from Battle's screen over it - My Page too)
+        if (areaEvents && areaEvents->geneLab().open) return; // (SetAnotherScreenVsModeMenu: the lab over it)
         if (vs.screen == 0 || vs.screen == 5 || vs.screen == 6) return;
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
@@ -15868,11 +16113,11 @@ struct Viewer {
                     cr3UiPut(fig, "", 0, cx, cy, view);
                     vsTaps.push_back({cx - 1.4f, cy - 0.45f, cx + 1.4f, cy + 0.45f, id});
                 }
-                // (VsMainBtn05_fr00 x 4 - the frame its place: the gene lab, the camp, MP recovery,
+                // (VsMainBtn05_fr00 x 4 - at frame 0, 2, 4, 6: the gene lab, the camp, MP recovery,
                 // My Page - VsModeMenu's taps 9 .. 0xc)
                 for (int k = 0; k < 4; ++k) {
                     if (!uiJoint(r, "VsMainBtn05_fr00_00" + std::to_string(k + 1), cx, cy)) continue;
-                    cr3UiPut("vsmainbtn05_fr00", "", float(k) / 30, cx, cy, view);
+                    cr3UiPut("vsmainbtn05_fr00", "", float(2 * k) / 30, cx, cy, view);
                     vsTaps.push_back({cx - 0.1f, cy + 0.1f, cx + 1.9f, cy - 0.9f, 10 + k});
                 }
                 if (cr3UiCall(r, "call_VsMainChr", cx, cy)) cr3UiPut("vsmainchr", "", 0, cx, cy, view);
@@ -16029,6 +16274,7 @@ struct Viewer {
             vs.total = std::min(vs.score + vs.mpBonus + vs.itemBonus + vs.wildBonus, 9999999L);
             const int tally = game.cr3Vs.missionType == 2 ? int(vs.total) : cr3Rules.killed; // (SM_EndVSBattle: by the mission's type)
             game.cr3Db->endVSBattle(game, int(vs.total), tally, !won);
+            ++game.cr3Records.vsMatches;
             SDL_Log("vs: battle %d %s - score %ld (+%ld for %d MP), tournament %d", vs.battle + 1, won ? "won" : "lost", vs.score, vs.mpBonus,
                     cr3Rules.partyMp, game.cr3Vs.score);
             vs.lost = !won;
@@ -16083,7 +16329,11 @@ struct Viewer {
         else if (vs.screen == 2 && id >= 10 && id < 14) {
             if (id == 11) openCr3Camp(); // (VsModeMain 0xe: the camp, its Gene Swap off)
             else if (id == 12) vs.ask = 2, vs.since = 0;
-            else SDL_Log("vs: button %d (the %s - not in the port)", id, id == 10 ? "gene lab" : "My Page");
+            else if (id == 10 && areaEvents) { // (VsModeMain 10: CreateGeneSynthesisMainToVS - the lab, the clerk's cutIn115_L01)
+                areaEvents->openGeneLab("cutIn115_L01", true);
+                SDL_Log("vs: the gene lab");
+            } else if (id == 13)
+                openMyPage(); // (VsModeMain 0x15: CreateMyPageTop)
         } else if (vs.screen == 3 && id >= 500 && id < 508) { // (a lifeline item chosen: four at most)
             const std::vector<VsBoost> table = vsBoostTable();
             if (id - 500 >= int(table.size())) return;

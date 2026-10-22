@@ -300,11 +300,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         p.shop = true;
         cutIns_[2] = p;
     };
-    vm.setNative("InterfaceWindow", "CreateGeneSynthesisMenu", [this, clerk](NativeCall& c) {
-        geneLab_ = GeneLab();
-        geneLab_.open = true;
-        clerk(c.string(0));
-    });
+    vm.setNative("InterfaceWindow", "CreateGeneSynthesisMenu", [this](NativeCall& c) { openGeneLab(c.string(0), false); });
     vm.setNative("InterfaceWindow", "SetGeneSynthesisClerkName", [clerk](NativeCall& c) { clerk(c.string(0)); });
     vm.setNative("InterfaceWindow", "CheckEndGeneSynthesisMenu", [this](NativeCall& c) { c.result(geneLab_.open); });
     vm.setNative("InterfaceWindow", "CheckSelectTalkGeneSynthesisMenu", [this](NativeCall& c) {
@@ -568,6 +564,16 @@ float EventRuntime::windowAge(int w) const {
     if (auto it = opened_.find(w); it != opened_.end()) return it->second;
     if (auto it = closing_.find(w); it != closing_.end()) return it->second;
     return -1;
+}
+
+void EventRuntime::openGeneLab(const std::string& image, bool vs) {
+    geneLab_ = GeneLab();
+    geneLab_.open = true, geneLab_.vs = vs;
+    geneLab_.clerk = image;
+    cutInImages_.insert(cutInImages_.begin(), {kClerkFace, image});
+    Portrait p{true, false, 0, kClerkFace, 1};
+    p.shop = true;
+    cutIns_[2] = p;
 }
 
 void EventRuntime::geneLabEnd() {

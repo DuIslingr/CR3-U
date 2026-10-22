@@ -132,6 +132,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         }
         state.cr3Genes.push_back(g);
         state.cr3GeneBook.insert(g.master);
+        ++state.cr3Records.genesObtained;
         c.result(int(state.cr3Genes.size()) - 1);
     });
     vm.setNative("Cr3System", "GeneCheck", [&state](NativeCall& c) {
@@ -394,6 +395,9 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "cr3mp";
     for (const auto& [ch, mp] : cr3Mp) o << ' ' << ch << ' ' << mp;
     o << '\n';
+    const Cr3Records& r = cr3Records;
+    o << "cr3records " << static_cast<long long>(r.playSeconds) << ' ' << r.kills << ' ' << r.maxDamage << ' ' << r.vsMatches << ' ' << r.genesObtained << ' '
+      << r.merges << ' ' << r.fusions << '\n';
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
     return o.str();
 }
@@ -408,6 +412,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
     flags.clear();
     cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear();
     cr3Weapon.clear(), cr3Accessory.clear(), cr3GeneOf.clear(), cr3Mp.clear(), cr3GeneUid = 0;
+    cr3Records = Cr3Records();
     cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests(), cr3Vs = Cr3Vs();
     auto readGene = [](std::istringstream& l, Cr3Gene& g) {
         int locked = 0, stocked = 0, fresh = 0;
@@ -531,6 +536,11 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             for (int id; l >> id;) cr3Vs.cleared.insert(id);
         } else if (key == "cr3mp") {
             for (int ch, mp; l >> ch >> mp;) cr3Mp[ch] = mp;
+        } else if (key == "cr3records") {
+            Cr3Records& r = cr3Records;
+            long long seconds = 0;
+            l >> seconds >> r.kills >> r.maxDamage >> r.vsMatches >> r.genesObtained >> r.merges >> r.fusions;
+            r.playSeconds = double(seconds);
         } else if (key == "cr3offered") {
             for (int id; l >> id;) cr3Quests.offered.push_back(id);
         } else if (extra) {

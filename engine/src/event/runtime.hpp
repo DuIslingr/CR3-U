@@ -213,7 +213,10 @@ public:
         bool talk = false;    // (Talk chosen, not yet asked for)
         bool talking = false; // (the clerk's talk running: the menu set aside)
         std::string clerk;    // (the portrait's image: cutIn115_L06)
+        bool vs = false;      // (opened from the VS mode - CreateGeneSynthesisMainToVS: GeneSynthesisMain +0x2c8 false, Talk off)
     };
+    // the lab opened from outside a script (VsModeMain 10: CreateGeneSynthesisMainToVS)
+    void openGeneLab(const std::string& clerk, bool vs);
     const GeneLab& geneLab() const { return geneLab_; }
     void geneLabTalk() { if (geneLab_.open && !geneLab_.talking) geneLab_.talk = true; }
     void geneLabEnd();
