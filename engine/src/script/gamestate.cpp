@@ -103,9 +103,53 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3System", "GetSelectedQuest", [&state](NativeCall& c) { c.result(state.cr3Quests.selected); });
     vm.setNative("Cr3System", "StartQuest", [&state](NativeCall& c) { state.cr3Quests.begun.insert(c.integer(0)); });
-    vm.setNative("Cr3System", "CompleteQuest", [&state](NativeCall& c) {
+    vm.setNative("Cr3System", "CompleteQuest", [&state](NativeCall& c) { // (CrxGameActivities' record alone: EndQuest - Invoke2(9) - counts it)
         state.cr3Quests.ended.insert(c.integer(0));
-        ++state.cr3Quests.endedCount;
+    });
+    // utils::Invoke(n): 0 the team level, 1 the collection count (UpdateProfileCollectionCount:
+    // collection_book's lines with a gene ever had), 4 the profile value, 13 the friends (none
+    // offline), 11 / 12 a counter (read, cleared); the rest a request (3 PutProfile, 7 SyncWait, 10
+    // SetTeamName, 15 ShowGeneResult, 16 GetVSMission + GetVSTournaments, 17 BeginVSTournament, 19
+    // ExchangeGem, 21 SyncMP) - the offline game's answer OK
+    vm.setNative("Cr3System", "Invoke", [&state, &db](NativeCall& c) {
+        switch (c.integer(0)) {
+        case 0: return c.result(state.cr3TeamLevel);
+        case 1: {
+            int n = 0;
+            if (db)
+                for (const auto& line : db->book())
+                    for (const int g : line.genes)
+                        if (g > 0 && state.cr3GeneBook.count(g)) {
+                            ++n;
+                            break;
+                        }
+            return c.result(n);
+        }
+        case 4: return c.result(state.cr3ProfileValue);
+        case 11: case 13: return c.result(0);
+        case 16:
+            if (db) db->getVSMission(state), db->getVSTournaments(state, std::time(nullptr));
+            break;
+        default:
+            if (db) db->finish(kDbOk);
+        }
+        c.result(0);
+    });
+    // utils::Invoke2(n, value): 2 the team level, 5 the profile value, 8 BeginQuest, 9 EndQuest, 14
+    // EarnQuestRewards, 17 BeginVSTournament (a request), 18 GetDailyItem
+    vm.setNative("Cr3System", "Invoke2", [&state, &db](NativeCall& c) {
+        const int v = c.integer(1);
+        switch (c.integer(0)) {
+        case 2: state.cr3TeamLevel = std::max(v, 1); break;
+        case 5: state.cr3ProfileValue = v; break;
+        case 8: if (db) db->beginQuest(state, v); break;
+        case 9: if (db) db->endQuest(state, v); break;
+        case 14: if (db) db->earnQuestRewards(state, v); break;
+        case 17: if (db) db->finish(kDbOk); break;
+        case 18: if (db) db->getDailyItem(state, v); break;
+        default: break;
+        }
+        c.result(0);
     });
     vm.setNative("Cr3System", "GetQuestState", [&state](NativeCall& c) { c.result(state.cr3Quests.state); });
     // money: utils::SetGold (GoldSet) / GetGold (GoldGet: n more) / CheckGold (GoldCheck); the
@@ -401,6 +445,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     const Cr3Records& r = cr3Records;
     o << "cr3records " << static_cast<long long>(r.playSeconds) << ' ' << r.kills << ' ' << r.maxDamage << ' ' << r.vsMatches << ' ' << r.genesObtained << ' '
       << r.merges << ' ' << r.fusions << '\n';
+    o << "cr3team " << cr3TeamLevel << ' ' << cr3ProfileValue << '\n';
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
     return o.str();
 }
@@ -416,6 +461,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
     cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear(), cr3GeneSeen.clear();
     cr3Weapon.clear(), cr3Accessory.clear(), cr3GeneOf.clear(), cr3Mp.clear(), cr3GeneUid = 0;
     cr3Records = Cr3Records();
+    cr3TeamLevel = 1, cr3ProfileValue = 0;
     cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests(), cr3Vs = Cr3Vs();
     auto readGene = [](std::istringstream& l, Cr3Gene& g) {
         int locked = 0, stocked = 0, fresh = 0;
@@ -541,6 +587,9 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             for (int id; l >> id;) cr3Vs.cleared.insert(id);
         } else if (key == "cr3mp") {
             for (int ch, mp; l >> ch >> mp;) cr3Mp[ch] = mp;
+        } else if (key == "cr3team") {
+            l >> cr3TeamLevel >> cr3ProfileValue;
+            cr3TeamLevel = std::max(cr3TeamLevel, 1);
         } else if (key == "cr3records") {
             Cr3Records& r = cr3Records;
             long long seconds = 0;

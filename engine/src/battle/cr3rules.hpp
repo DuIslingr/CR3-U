@@ -140,6 +140,7 @@ public:
     // what each wears (the save's: weapon, armour, accessory table ids - -1 the char_para row's, 0
     // none), by char_para id; a guest its row's always
     std::map<int, std::array<int, 3>> partyEquip;
+    int teamLevel = 1; // (every character's level: CrxCharacter::initialize's DAT_014c6ab0)
     bool playerStats(const Cr3BattleTables& tables, int character, Cr3Fighter& out) const;
     // the VS mode's tallies (BtlStatus::TakeDamageToDirection: the party's damage to the monsters -
     // the battle's score, DAT_014a7d88, 9999999 at most; ConsumeMpToDirection: the party's MP used -

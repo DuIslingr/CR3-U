@@ -2373,9 +2373,11 @@ struct Viewer {
         return x >= std::min(fastRect.x0, fastRect.x1) && x <= std::max(fastRect.x0, fastRect.x1) && y >= std::min(fastRect.y0, fastRect.y1) &&
                y <= std::max(fastRect.y0, fastRect.y1);
     }
+    int loggedTeamLevel = 1; // (the team level as last logged)
     void advance(float dt, float sx, float sy, bool run) {
         uiClock += dt;
         if (areaMode || cr3BattleMode) game.cr3Records.playSeconds += dt; // (My Page's play time)
+        if (game.cr3TeamLevel != loggedTeamLevel) SDL_Log("team level %d -> %d", loggedTeamLevel, game.cr3TeamLevel), loggedTeamLevel = game.cr3TeamLevel;
         if (cr3::EventRuntime* ev = activeEvents()) {
             if (!inputScript.empty() && inputScript.front() == "fast" && uiClock >= fastUntil && (ev->fastForwardShown() || ev->skipButtonShown()))
                 inputScript.pop_front(), fastUntil = uiClock + 2.0f; // (each two seconds of it, one after the other)
@@ -5867,6 +5869,7 @@ struct Viewer {
                 for (int a = 0; a < 4; ++a) pg.adds[a] = g.adds[a];
                 cr3Rules.partyGenes[ch] = pg;
             }
+        cr3Rules.teamLevel = game.cr3TeamLevel;
         cr3Rules.partyEquip.clear();
         for (int slot = 0; slot < 3; ++slot) {
             const std::map<int, int>& worn = slot == 0 ? game.cr3Weapon : slot == 1 ? game.cr3Armour : game.cr3Accessory;
@@ -12235,10 +12238,12 @@ struct Viewer {
         if (text.empty() || !cr3UiCall(menu, "typeM_L01", tx, ty)) return;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
         const size_t nl = text.find("\\n");
-        if (nl == std::string::npos) return (void)drawUiText(text, 24, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+        // (dark grey on the bar, as the reference video's - about 60, 60, 65 -, at 23: its line
+        // "Weight: 6/Power: 34/..." as wide as the reference's, from where it starts)
+        if (nl == std::string::npos) return (void)drawUiText(text, 23, (tx - 0.03f) / 10, (ty - 0.1f) / 10, w, h, true, 0.24f);
         // (two lines: the bar's height between them)
-        drawUiText(text.substr(0, nl), 20, (tx + 0.075f) / 10, (ty - 0.04f) / 10, w, h, true, 1.0f);
-        drawUiText(text.substr(nl + 2), 20, (tx + 0.075f) / 10, (ty - 0.27f) / 10, w, h, true, 1.0f);
+        drawUiText(text.substr(0, nl), 18, (tx + 0.075f) / 10, (ty - 0.04f) / 10, w, h, true, 0.24f);
+        drawUiText(text.substr(nl + 2), 18, (tx + 0.075f) / 10, (ty - 0.27f) / 10, w, h, true, 0.24f);
     }
     // the header (HeaderMenu, interface 0x42: comHeMenu - its title comHeTitle_fr00 at the
     // screen's frame (SetHeaderTitle: 1 Items, 2 Equipment, 3 Gene Swap, 4 Fuse Gifts, 5 Quests ..,
@@ -13549,11 +13554,21 @@ struct Viewer {
         UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
         if (cr3UiCall(foot, "call_comFtrTeamMenu", x, y, w, h)) {
             UiFig& team = cr3UiPut("comftrteammenu", "", 0, x, y, view);
+            // (ItemFutterMenu::SetNumberOfLevel: the team level's three digits, zeros kept)
+            float nx, ny;
+            if (cr3UiCall(team, "call_comFtrNumPanel_num00", nx, ny)) {
+                UiFig& num = cr3UiPut("comftrnumpanel_num00", "", 0, nx, ny, view);
+                const int lv = std::clamp(game.cr3TeamLevel, 0, 999), digit[3] = {lv / 100, lv / 10 % 10, lv % 10};
+                for (int k = 0; k < 3; ++k) {
+                    float dx, dy;
+                    if (cr3UiCall(num, "call_comFtrNum_fr00_00" + std::to_string(k + 1), dx, dy)) cr3UiPut("comftrnum_fr00", "", float(digit[k]) / 30, dx, dy, view);
+                }
+            }
             const std::string name = areaEvents ? areaEvents->filterMessage("{team}") : std::string();
             float tx, ty;
             if (cr3UiCall(team, "typeM_L01", tx, ty)) {
                 dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                drawUiText(name, 24, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+                drawUiText(name, 24, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 0.25f); // (dark, as the reference)
             }
         }
         if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
@@ -13810,11 +13825,68 @@ struct Viewer {
         const int group = id / 100000;
         return group >= 0 && group < 7 && cr3TablesReady() && cr3BattleTables.item.find(kTables[group], id % 100000, "iiii", r);
     }
+    // an equipment's help (InterfaceMain::SetEquipHelp, without an attachment - every list's line
+    // for a weapon, armour or accessory): a weapon "Weight: n/Power: n/Hits: n" (0x268 .. 0x26a), its
+    // magic and elements' ATK up / down (0x278 / 0x27f, 0x279 + e / 0x280 + e - Weapon +0x4c, +0x54
+    // ..) and "/Phy skill MP cost: xa.bb" (0x2a3: +0x44 / 100); armour "Weight: n" (0x288 - +0x40),
+    // its physical, magic and elements' resist up / down (0x289 / 0x291, 0x28a / 0x292, 0x28b + e /
+    // 0x293 + e - Armor +0x44 ..), "/No burning" / "/No freezing" (0x299 / 0x29a: kinds 45 / 46 in
+    // its +0x70 list); an accessory its HP, attack, defence, speed, luck that aren't 0 (0x29b ..
+    // 0x29f, "+ n" / "− n" 0x2a1 / 0x2a2, "/" 0x2a0 between); a number below 0 as "− n"
+    std::string cr3EquipHelp(int full) {
+        const int group = full / 100000, id = full % 100000;
+        if (group < 1 || group > 3 || !cr3TablesReady()) return {};
+        const auto sub = [&](int text, const char* key, const std::string& v) {
+            std::string t = menuAnnounce(text);
+            if (const size_t at = t.find(key); at != std::string::npos) t.replace(at, std::strlen(key), v);
+            return t;
+        };
+        const auto signedNumber = [&](int v) { return v < 0 ? sub(0x2a2, "{paramerter}", cr3Number(-v)) : cr3Number(v); };
+        cr3::MbeFile::Row r;
+        std::string out;
+        if (group == 1) {
+            if (!cr3BattleTables.item.find("Weapon", id, "iiiiiiiiiiiiiiiiiiiiiiiiiii", r)) return {};
+            out = sub(0x268, "{weightpara}", signedNumber(r.i(13))) + sub(0x269, "{powerpara}", signedNumber(r.i(14))) + sub(0x26a, "{hitpara}", signedNumber(r.i(15)));
+            for (int e = -1; e < 6; ++e) { // (-1 magic, +0x4c; 0 .. 5 the elements 1 .. 6, +0x54 ..)
+                const int v = e < 0 ? r.i(19) : r.i(21 + size_t(e));
+                if (v != 0) out += sub(e < 0 ? (v > 0 ? 0x278 : 0x27f) : (v > 0 ? 0x279 : 0x280) + e, "{elementpercent}", cr3Number(std::abs(v)));
+            }
+            const int c = r.i(17);
+            std::string mp = sub(0x2a3, "{parama}", cr3Number(c / 100));
+            if (const size_t at = mp.find("{paramb}"); at != std::string::npos) mp.replace(at, 8, cr3Number(c % 100, 2));
+            return out + mp;
+        }
+        if (group == 2) {
+            if (!cr3BattleTables.item.find("Armor", id, "iiiiiiiiiiiii_piiiiiiiiiii_p", r)) return {};
+            out = sub(0x288, "{weightpara}", signedNumber(r.i(14)));
+            for (int e = -2; e < 6; ++e) { // (-2 physical +0x44, -1 magic +0x48, 0 .. 5 the elements 1 .. 6 +0x50 ..)
+                const int v = e == -2 ? r.i(15) : e == -1 ? r.i(16) : r.i(18 + size_t(e));
+                if (v == 0) continue;
+                const int up = e == -2 ? 0x289 : e == -1 ? 0x28a : 0x28b + e, down = e == -2 ? 0x291 : e == -1 ? 0x292 : 0x293 + e;
+                out += sub(v > 0 ? up : down, "{elementpercent}", cr3Number(std::abs(v)));
+            }
+            bool burn = false, freeze = false; // (MbArmorInfo::IsValidStatusEffect: in its list, kept off)
+            for (int k = 0; k < r.i(24); ++k) burn |= r.element(25, size_t(k)) == 45, freeze |= r.element(25, size_t(k)) == 46;
+            if (burn) out += menuAnnounce(0x299);
+            if (freeze) out += menuAnnounce(0x29a);
+            return out;
+        }
+        if (!cr3BattleTables.item.find("Accessory", id, "iiiiiiiiiiiiiiiiii", r)) return {};
+        const int fields[5] = {12, 14, 15, 16, 17}; // (HP, attack, defence, speed, luck - MP, +0x34, not shown)
+        for (int k = 0; k < 5; ++k) {
+            const int v = r.i(size_t(fields[k]));
+            if (v == 0) continue;
+            if (!out.empty()) out += menuAnnounce(0x2a0);
+            out += menuAnnounce(0x29b + k) + sub(v > 0 ? 0x2a1 : 0x2a2, "{paramerter}", cr3Number(std::abs(v)));
+        }
+        return out;
+    }
     std::string cr3ItemText(int id, bool help) {
         static const char* const kNames[7] = {"ItemName", "WeaponName", "ArmorName", "AccessoryName", "CheetName", "EventName", "GiftName"};
         static const char* const kHelps[7] = {"ItemHelp", "WeaponHelp", "ArmorHelp", "AccessoryHelp", "CheetHelp", "EventHelp", "GiftHelp"};
         const int group = id / 100000;
         if (group < 0 || group >= 7) return {};
+        if (help && group >= 1 && group <= 3) return cr3EquipHelp(id); // (GetItemHelp: SetEquipHelp's)
         static std::map<std::string, cr3::MbeFile> files;
         const char* file = help ? "item_help.mbe" : "item_name.mbe";
         cr3::MbeFile& f = files[file];
@@ -17482,6 +17554,7 @@ int main(int argc, char** argv) {
     std::vector<int> flagsArg;
     std::vector<std::pair<int, int>> genesArg; // (--gene id[:level]: a gene held to begin with - tests)
     int goldArg = -1, coinsArg = -1;
+    int teamLevelArg = 0;
     std::vector<std::string> presentsArg; // (--present item:count | g<gene>:level: in the presents box - tests)
     bool continueSave = false;
     std::string gameSavePath;
@@ -17541,7 +17614,9 @@ int main(int argc, char** argv) {
         else if (a == "--gene" && next) { // (a gene held to begin with, at its level: tests)
             const char* colon = std::strchr(next, ':');
             genesArg.push_back({std::atoi(next), colon ? std::atoi(colon + 1) : 1}), ++i;
-        } else if (a == "--present" && next)
+        } else if (a == "--team-level" && next)
+            teamLevelArg = std::atoi(next), ++i;
+        else if (a == "--present" && next)
             presentsArg.push_back(next), ++i;
         else if (a == "--gold" && next)
             goldArg = std::atoi(next), ++i;
@@ -17872,6 +17947,7 @@ int main(int argc, char** argv) {
             v.game.cr3GeneBook.insert(id);
         }
         if (goldArg >= 0) v.game.cr3Money = goldArg;
+        if (teamLevelArg > 0) v.game.cr3TeamLevel = teamLevelArg;
         if (coinsArg >= 0) v.game.cr3Coins = coinsArg;
         for (const std::string& a : presentsArg) {
             cr3::Cr3Present p;

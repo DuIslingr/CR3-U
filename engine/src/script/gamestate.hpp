@@ -44,6 +44,10 @@ struct GameState {
     // kills (KillMonster: 999999 at most) and most damage dealt (Damage), and the counts the
     // server kept in the player's data (CrxGameData +0x280c0 battle mode matches, +0x280c4 genes
     // obtained, +0x280c8 gene combinations, +0x280cc gift fusions) - counted here where they happen
+    // the team level (utils::Invoke(0) / Invoke2(2, n) - DAT_014c6ab0: every character's level,
+    // CrxCharacter::initialize; raised by the lab clerk's c115_TeamLvCheck to the collection count
+    // + 1) and the profile value Invoke(4) / Invoke2(5, n) keep
+    int cr3TeamLevel = 1, cr3ProfileValue = 0;
     struct Cr3Records {
         double playSeconds = 0;
         int kills = 0, maxDamage = 0, vsMatches = 0, genesObtained = 0, merges = 0, fusions = 0;

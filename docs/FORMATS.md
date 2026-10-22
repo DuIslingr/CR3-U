@@ -595,6 +595,29 @@ results, the prizes, back to B.
 ...,vs:next,...,vs:results,vs:prizes` (also `vs:shop`, `vs:goods<n>`, `vs:side<n>` - B's small
 buttons -, `vs:unboost<n>`, `vs:no`, `vs:told`; the field's Battle button opens it - `camp:field3`).
 
+### Invoke, Invoke2, the team level (CR3)
+
+`Cr3System.Invoke(n)` (utils::Invoke): 0 the team level, 1 the collection count
+(UpdateProfileCollectionCount: collection_book's lines with a gene ever had), 4 the profile value,
+13 the friends (0 offline), 11 / 12 a counter; the rest server requests (3 PutProfile, 7 SyncWait,
+10 SetTeamName, 15 ShowGeneResult, 16 GetVSMission + GetVSTournaments, 17 BeginVSTournament, 19
+ExchangeGem, 21 SyncMP). `Invoke2(n, v)`: 2 the team level, 5 the profile value, 8 BeginQuest, 9
+EndQuest (the quest count My Page shows), 14 EarnQuestRewards, 17 BeginVSTournament, 18
+GetDailyItem. The scripts' use: Invoke2 9 / 14 101 times each, 8 23, 18 25, 2 4 (t01's
+c115_TeamLvCheck - the lab clerk's: the team level raised to the collection count + 1, the
+level-up menu, RecoverBonusMP); Invoke 15 156 times. The team level is every character's level
+(CrxCharacter::initialize sets +0x34 from it - MbCharInfo's numbers grow by it) and the footers'
+`comFtrNumPanel_num00` (ItemFutterMenu::SetNumberOfLevel: three `comFtrNum_fr00`, zeros kept); 1
+in a new game (the save's `cr3team`).
+
+An equipment's help line is built (InterfaceMain::SetEquipHelp - every list's, GetItemHelp's), not
+item_help's (a placeholder for weapons): a weapon "Weight: n/Power: n/Hits: n" (0x268 .. 0x26a), its
+magic and elements' ATK up / down (0x278 / 0x27f, 0x279 + e / 0x280 + e), "/Phy skill MP cost:
+xa.bb" (0x2a3, Weapon +0x44); armour "Weight: n" (0x288), physical / magic / elements' resist up /
+down (0x289 .. 0x298), "/No burning" / "/No freezing" (kinds 45 / 46 in Armor +0x70's list); an
+accessory HP, Attack, Defense, Speed, Luck (0x29b .. 0x29f) with "+ n" / "− n" (0x2a1 / 0x2a2), "/"
+between. Checked against the reference video (part 7, 821 s: Dragon Tail's line, word for word).
+
 ### My Page (CR3)
 
 CreateMyPageTop (the field's `feBtnMypage`, VS's fourth small button): MyPageNewTopMain 0xdd and

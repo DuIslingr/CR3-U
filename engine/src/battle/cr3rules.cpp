@@ -35,12 +35,12 @@ float Cr3BattleRules::random() {
     return float((rng_ >> 8) & 0xffffff) / float(0x1000000);
 }
 
-// a party member's numbers (MbCharInfo at level 1, its equipment, its gene's at its level)
+// a party member's numbers (MbCharInfo at the team level, its equipment, its gene's at its level)
 bool Cr3BattleRules::playerStats(const Cr3BattleTables& t, int character, Cr3Fighter& f) const {
     MbeFile::Row r;
-        // (MbCharInfo: the level the save's - a character at 1 until those are kept)
+        // (MbCharInfo at CrxCharacter +0x34: the team level, a guest's too)
         if (!t.character.find("Char", character, kCharStats, r)) return false;
-        f.id = character, f.level = 1;
+        f.id = character, f.level = std::max(teamLevel, 1);
         f.maxHp = grown(r.i(13), r.i(17), f.level), f.maxMp = grown(r.i(14), r.i(18), f.level);
         f.attack = grown(low16(r.i(15)), low16(r.i(19)), f.level), f.defence = grown(high16(r.i(15)), high16(r.i(19)), f.level);
         f.speed = grown(low16(r.i(16)), low16(r.i(20)), f.level), f.luck = grown(high16(r.i(16)), high16(r.i(20)), f.level);
