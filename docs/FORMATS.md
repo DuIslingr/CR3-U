@@ -678,7 +678,18 @@ joints in from -8 / +8 over 3 frames) holds `mpTopLog` and `mpTopMenu`.
 `cr3view --input camp:mypage,camp:button<n>,camp:yes,camp:scroll<rows x 0.48>` (or the field's
 `camp:field5`), `camp:row<n>` the presents' rows (`camp:row700 + k` a Gene Index card, `row500 + n`
 a rarity), `camp:cat200 + k` a tab; `--present item:count` / `--present g<gene>:<level>` fill the
-presents box. Not in: the profile card's own status (CreateGeneCardMenu).
+presents box.
+
+The profile's card tapped (com_003): its page - GeneCardMenu (InterfaceMain::CreateGeneCardMenu,
+interface 0xca; SetGeneCardStatus with the profile's gene). Not a server's: DBSystem::ShowCard
+extracts from the database archive, into the temp folder, the gene's series' `NNN.jpg` (gene_para
++4; 938 x 640, the art turned on its side), its grade's `r_NN.png` (+8: the N / R / SR frame, 0 .. 2)
+and its kind's `e_NN.png` (+0x30: the element badge, 0 .. 6) - both 938 x 640 with alpha, over the
+picture - with `index.html`, `style.css` and `jquery.js`, and shows
+`file://<temp>/index.html?c=NNN&r=NN&e=NN` (`&rot=1` turned the other way) in the web view: the
+three fitted to the screen's height (or width, on a screen taller than 938 x 640), centred, from the
+top, on black; a tap (`api://close`) closes it, and GeneCardMenu with it. A file missing, no page.
+`camp:row603` taps the card, `camp:row604` the page.
 
 ## Battles (CR3)
 

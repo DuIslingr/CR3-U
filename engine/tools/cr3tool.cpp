@@ -19,6 +19,8 @@
 //   cr3tool pose <archive> <figure> <anim> <frame>   the animation's pose at a frame (joint: R, T, S)
 //   cr3tool images <archive> [pattern [out dir]]     every texture decodes (formats counted);
 //                                                    with a folder, those matching as .tga
+//   cr3tool extract <archive> <pattern> [out dir]    the files whose names hold the pattern, as
+//                                                    stored (listed without a folder)
 //   cr3tool walk <archive> <executable> [map]       the field player (field/character.hpp, in the
 //                                                    game's updates) on every map's floors: dropped
 //                                                    at each pop point (else defaultPos), run 4 s in
@@ -475,6 +477,7 @@ int usage() {
                  "cr3tool scripts <archive> [name]\n"
                  "cr3tool run <archive> <script> [function]\n"
                  "cr3tool images <archive> [pattern [out dir]]\n"
+                 "cr3tool extract <archive> <pattern> [out dir]\n"
                  "cr3tool models <archive>\n"
                  "cr3tool compare-models <archive> <archive>\n"
                  "cr3tool animations <archive>\n"
@@ -832,6 +835,34 @@ bool writeTga(const std::string& path, const cr3::Image& img) {
     }
     std::fclose(f);
     return true;
+}
+
+int extract(const char* path, const char* pattern, const char* outDir) {
+    cr3::MvglArchive a;
+    if (!openArchive(a, path)) return 1;
+    size_t n = 0;
+    std::vector<uint8_t> data;
+    for (const auto& base : a.entries()) {
+        const auto& e = *a.find(base.name);
+        if (e.name.find(pattern) == std::string::npos) continue;
+        std::string err;
+        if (!a.read(e, data, &err)) {
+            std::printf("bad %s: %s\n", e.name.c_str(), err.c_str());
+            continue;
+        }
+        std::printf("%s %zu\n", e.name.c_str(), data.size());
+        ++n;
+        if (!outDir) continue;
+        std::string name = e.name;
+        for (char& c : name)
+            if (c == '\\' || c == '/') c = '_';
+        if (FILE* f = std::fopen((std::string(outDir) + "/" + name).c_str(), "wb")) {
+            std::fwrite(data.data(), 1, data.size(), f);
+            std::fclose(f);
+        }
+    }
+    std::printf("%zu files\n", n);
+    return n ? 0 : 1;
 }
 
 int images(const char* path, const char* pattern, const char* outDir) {
@@ -1728,6 +1759,7 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "exits") && argc > 3) return exits(argv[2], argv[3]);
     if (!std::strcmp(argv[1], "fieldscript") && argc > 3) return fieldScripts(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "walk") && argc > 3) return walk(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
+    if (!std::strcmp(argv[1], "extract") && argc > 3) return extract(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "images")) return images(argv[2], argc > 3 ? argv[3] : nullptr, argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "battle") && argc > 3) return battles(argv[2], argv[3]);
     if (!std::strcmp(argv[1], "cr3battle") && argc > 4) return cr3Battle(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), argc > 5 ? argv[5] : "6",

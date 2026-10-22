@@ -13478,7 +13478,11 @@ struct Viewer {
         SDL_Log("camp: open (CR3)");
     }
     void drawCr3Camp(int w, int h, const Mat4& view) {
-        if (cr3Camp.stage == 10) return drawMyPage(w, h, view);
+        if (cr3Camp.stage == 10) {
+            drawMyPage(w, h, view);
+            if (myPage.screen == 3) drawCr3CardView(); // (the web view over all)
+            return;
+        }
         const float t = cr3Camp.since;
         float x, y, cx, cy;
         // (CampTopMenu: the background and the party's panels)
@@ -15710,7 +15714,7 @@ struct Viewer {
             if (cr3UiCall(dp, "call_mpCatDataMenu", x, y, w, h)) {
                 UiFig& menu = cr3UiPut("mpcatdatamenu", "", 0, x, y, view);
                 float ax, ay, ex, ey;
-                if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 903}); // (the card's status - not in)
+                if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 903}); // (the card: its page)
                 float tx, ty;
                 dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
                 // (SetStringData: "Profile" right-aligned, the name centred, the lines from the left - white)
@@ -15752,8 +15756,70 @@ struct Viewer {
             if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
         }
     }
+    // A gene card's page (GeneCardMenu - InterfaceMain::SetGeneCardStatus with the profile's gene:
+    // DBSystem::ShowCard puts its series' NNN.jpg, its grade's r_NN.png and its kind's e_NN.png -
+    // gene_para +4, +8, +0x30 - beside index.html in the temp folder and shows that in the web
+    // view): the picture fitted to the screen's height (or width), centred, from the top, on
+    // black (index.html's resizeImage, style.css's .wrap); a tap - api://close - closes it. Its
+    // files missing, nothing: the menu ends at once.
+    struct Cr3CardView {
+        int gene = 0;
+        cr3::Texture layers[3];
+    } cardView;
+    void openCr3CardView(int gene) {
+        const auto* gi = game.cr3Db ? game.cr3Db->geneInfo(gene) : nullptr;
+        if (!gi) return;
+        char names[3][16];
+        std::snprintf(names[0], sizeof names[0], "%03d.jpg", gi->series);
+        std::snprintf(names[1], sizeof names[1], "r_%02d.png", gi->grade);
+        std::snprintf(names[2], sizeof names[2], "e_%02d.png", gi->kind);
+        cr3::Image img[3];
+        for (int k = 0; k < 3; ++k) {
+            std::vector<uint8_t> data;
+            std::string err;
+            if (!archive.read(names[k], data, &err) || !cr3::decodePicture(data, img[k], &err)) {
+                SDL_Log("gene card %d: %s: %s", gene, names[k], err.c_str());
+                return;
+            }
+        }
+        closeCr3CardView();
+        for (int k = 0; k < 3; ++k) img[k].mipmaps = false, cardView.layers[k] = dev->upload(img[k]);
+        cardView.gene = gene;
+        SDL_Log("gene card %d: %s, %s, %s", gene, names[0], names[1], names[2]);
+    }
+    void closeCr3CardView() {
+        for (cr3::Texture& t : cardView.layers)
+            if (t.id) dev->destroy(t), t = cr3::Texture();
+        cardView.gene = 0;
+    }
+    void drawCr3CardView() {
+        if (!cardView.gene || !white.id) return;
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        dev->clearDepth();
+        const Mat4 id = cr3::mat4Identity();
+        static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+        static const float kBlack[4] = {0, 0, 0, 1}, kWhite[4] = {1, 1, 1, 1};
+        dev->drawQuad(white, kScreen, id.data(), kBlack);
+        const float pw = 938, ph = 640; // (the pictures': originalAspect 640 / 938)
+        const float sw = float(screenW), sh = float(screenH);
+        const float cw = ph / pw > sh / sw ? sh * pw / ph : sw, ch = ph / pw > sh / sw ? sh : sw * ph / pw;
+        const float x0 = -cw / sw, x1 = cw / sw, y0 = 1, y1 = 1 - 2 * ch / sh; // (v 0 the top row)
+        const float v[24] = {x0, y1, 0, 1, x1, y1, 1, 1, x1, y0, 1, 0, x0, y1, 0, 1, x1, y0, 1, 0, x0, y0, 0, 0};
+        for (const cr3::Texture& t : cardView.layers)
+            if (t.id) dev->drawQuad(t, v, id.data(), kWhite);
+        cr3CampTaps.clear();
+        cr3CampTaps.push_back({-100, -100, 100, 100, 904}); // (the page: a tap anywhere closes it)
+    }
     void chooseGeneIndex(int id) {
         Cr3MyPage& mp = myPage;
+        if (cardView.gene) { // (the card's page: any tap closes it)
+            if (id == 904 || id == -1) closeCr3CardView();
+            return;
+        }
+        if (id == 903 && mp.profile > 0) {
+            audio.playSe("com_003", false); // (PictureBookMenu: the card's status)
+            return openCr3CardView(mp.profile);
+        }
         int had = 0;
         const std::vector<std::pair<int, int>> cards = geneIndexCards(had);
         const int pages = cards.empty() ? 1 : (int(cards.size()) - 1) / 6 + 1;
@@ -16027,6 +16093,7 @@ struct Viewer {
         Cr3MyPage& mp = myPage;
         const bool enter = key == SDLK_RETURN || key == SDLK_SPACE, back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
         if (mp.screen == 3) {
+            if (cardView.gene) return (enter || back) ? chooseMyPage(904) : void();
             if (back) return chooseMyPage(-1);
             if (key == SDLK_LEFT || key == SDLK_RIGHT) return chooseMyPage(key == SDLK_LEFT ? 700 : 701);
             if (key == SDLK_TAB) return chooseMyPage(mp.profile ? 800 + (mp.rarity + 1) % 5 : 600 + (mp.bookTab + 1) % 8);

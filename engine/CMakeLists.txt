@@ -67,6 +67,7 @@ add_library(cr3core STATIC
     src/audio/streams.cpp
     src/audio/cr3sound.cpp
     third_party/stb/stb_vorbis.c
+    third_party/stb/stb_image.c
 )
 # The iPad's music (AAC in CAF): FAAD2 - the system's when pkg-config finds it, else the copy in
 # third_party/faad2 (FAAD2 2.11.1's libfaad, CR1:U's). CR3_BUNDLED_FAAD2=ON forces the bundled one.
@@ -140,6 +141,9 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libatrac9/src/libatrac9.c)
 endif()
 # stb_vorbis (public domain, vendored - CR1:U's copy): the Android release's music (Ogg Vorbis)
 set_source_files_properties(third_party/stb/stb_vorbis.c PROPERTIES COMPILE_OPTIONS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
+# stb_image (public domain, vendored - 2.30, JPEG and PNG only): a gene card's page's pictures
+set_source_files_properties(third_party/stb/stb_image.c PROPERTIES COMPILE_OPTIONS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
+target_include_directories(cr3core PRIVATE third_party/stb)
 target_include_directories(cr3core PUBLIC src)
 target_include_directories(cr3core PRIVATE third_party/hevag) # (the HE-VAG filter table: vgmstream's, ISC)
 target_link_libraries(cr3core PUBLIC squirrel2)

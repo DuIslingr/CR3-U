@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "stb_image.h"
+
 namespace cr3 {
 
 namespace {
@@ -372,6 +374,17 @@ bool decodeImg(const std::vector<uint8_t>& f, Image& out, std::string* error) {
         return true;
     }
     return fail(error, "not a PVR / GXT texture");
+}
+
+bool decodePicture(const std::vector<uint8_t>& file, Image& out, std::string* error) {
+    int w = 0, h = 0, n = 0;
+    stbi_uc* px = file.size() < 0x7fffffff ? stbi_load_from_memory(file.data(), int(file.size()), &w, &h, &n, 4) : nullptr;
+    if (!px) return fail(error, stbi_failure_reason() ? stbi_failure_reason() : "not a picture");
+    out = Image();
+    out.width = w, out.height = h, out.format = n == 4 ? "RGBA picture" : "RGB picture";
+    out.rgba.assign(px, px + size_t(w) * size_t(h) * 4);
+    stbi_image_free(px);
+    return true;
 }
 
 } // namespace cr3

@@ -25,6 +25,9 @@ struct Image {
 };
 
 bool decodeImg(const std::vector<uint8_t>& file, Image& out, std::string* error = nullptr);
+// A JPEG or PNG (stb_image), its first row the picture's top: the pages the game shows in its web
+// view (a gene card's, DBSystem::ShowCard)
+bool decodePicture(const std::vector<uint8_t>& file, Image& out, std::string* error = nullptr);
 
 // single-format decoders (for tests): `src` holds the whole top level
 void decodeEtc1(const uint8_t* src, int w, int h, uint8_t* rgba);
