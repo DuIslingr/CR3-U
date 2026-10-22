@@ -11978,13 +11978,19 @@ struct Viewer {
     // a list's focused row (comListItem::SetSelectFlag): it and all on it 1.1 x, its name white -
     // set for the row's drawing by a Cr3FocusRow
     float cr3UiScale = 1;
+    float cr3UiTint[3] = {1, 1, 1}; // (SetMaterialDiffuseColor over the part: a category button not in focus)
     bool cr3UiFocus = false;
-    // (an item not enabled - AddListItem's bool: a battle row not usable - only the row, without
-    // its cursor or the white)
+    // (an item not enabled - AddListItem's bool: a battle row not usable, a quest whose item isn't
+    // held - only the row, without its cursor or the white; comListItem::Initialize colours its
+    // parts (0.549, 0.549, 0.655) and its name half as bright - 0.107 against 0.215)
+    bool cr3UiDim = false;
     struct Cr3FocusRow {
         Viewer& v;
-        Cr3FocusRow(Viewer& viewer, bool focused, bool enabled = true) : v(viewer) { v.cr3UiScale = focused ? 1.1f : 1.0f, v.cr3UiFocus = focused && enabled; }
-        ~Cr3FocusRow() { v.cr3UiScale = 1, v.cr3UiFocus = false; }
+        Cr3FocusRow(Viewer& viewer, bool focused, bool enabled = true) : v(viewer) {
+            v.cr3UiScale = focused ? 1.1f : 1.0f, v.cr3UiFocus = focused && enabled, v.cr3UiDim = !enabled;
+            if (!enabled) v.cr3UiTint[0] = v.cr3UiTint[1] = 0.549f, v.cr3UiTint[2] = 0.655f;
+        }
+        ~Cr3FocusRow() { v.cr3UiScale = 1, v.cr3UiFocus = v.cr3UiDim = false, v.cr3UiTint[0] = v.cr3UiTint[1] = v.cr3UiTint[2] = 1; }
     };
     // a list row's place (comListMenu::Pose, PresentGetMenu::Pose): the selected one 0.25 to the
     // left, those after it 0.076 lower
@@ -11996,6 +12002,7 @@ struct Viewer {
         u.fig.place.m[0] = u.fig.place.m[5] = u.fig.place.m[10] = cr3UiScale;
         u.fig.place.m[3] = x, u.fig.place.m[7] = y;
         poseUi(u, anim.empty() ? name : anim, t, loop);
+        u.fig.tint[0] = cr3UiTint[0], u.fig.tint[1] = cr3UiTint[1], u.fig.tint[2] = cr3UiTint[2];
         u.fig.tint[3] = alpha;
         drawFigure(u.fig, view.data());
         return u;
@@ -12749,6 +12756,18 @@ struct Viewer {
             if (shown) cr3UiPut("comlistnum_fr00", "", float(top ? 40 + k : d + offset) / 30, nx, ny, view); // ("MAX": SetMaxNumbers)
         }
     }
+    // a list row's number (comListNum*_num00: comListNum_fr00 digits right-aligned in its slots
+    // call_comListNum_fr00_001 ..)
+    void drawCr3ListDigits(const UiFig& num, int value, float alpha, const Mat4& view) {
+        const std::string digits = std::to_string(std::max(value, 0));
+        int slots = 0;
+        for (const std::string& j : num.joints) slots += j.rfind("call_comListNum_fr00_", 0) == 0;
+        for (int d = 0; d < int(digits.size()) && d < slots; ++d) {
+            float dx, dy;
+            if (cr3UiCall(num, "call_comListNum_fr00_00" + std::to_string(slots - int(digits.size()) + d + 1), dx, dy))
+                cr3UiPut("comlistnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view, alpha);
+        }
+    }
     // A list's scroll bar (comListBarPanel / the short list's comListBarSPanel at the menu's call): its
     // comListBarCursor at rest at its call while the list fits, else (AutoScroll) 0.2 up and down
     // the bar - barLimitUp to barLimitLow - as far as the list is scrolled
@@ -12766,7 +12785,7 @@ struct Viewer {
         if (text.empty() || !cr3UiCall(panel, joint, tx, ty)) return;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
         const float k = cr3UiFocus ? 1.1f : 1.0f;
-        drawUiText(text, 26 * k, (tx + 0.075f * k) / 10, (ty - 0.15f * k) / 10, w, h, true, cr3UiFocus ? 1.0f : shade);
+        drawUiText(text, 26 * k, (tx + 0.075f * k) / 10, (ty - 0.15f * k) / 10, w, h, true, cr3UiFocus ? 1.0f : cr3UiDim ? shade * 0.5f : shade);
     }
     // the picks: Enhance's (IntensificationSynthesisMenu 0xaa - mixUpMenu at mixMtrPositon's
     // call_mixUpMenu: Components, Additional EXP, Total Cost at typeM_L01 .. L03 (AnnounceMenuName
@@ -14753,20 +14772,25 @@ struct Viewer {
 
     // the list's category buttons (CategoryBtnPanel: comListCategoryBtn 0.57 apart from
     // call_comListCategoryBtn, six shown, the focused raised (-0.072, +0.057); comListCBtnIcon_fr00
-    // at the value's frame; the focused's name - AnnounceMenuName value + 0x29 - at its typeM_C01,
-    // drawn last): taps tapBase + k
+    // at the value's frame; ChangeCategoryPanel: the others at 0.8 x, coloured (0.549, 0.549,
+    // 0.655); the focused's name - AnnounceMenuName value + 0x29 - at its typeM_C01, drawn last)
+    // and between their arrows (comListMenu's comListCArrowPanel on its _loop, at the panel's
+    // call_comListCArrowPanel): taps tapBase + k
     void drawCr3Categories(const UiFig& menu, const int* values, int count, int focus, int tapBase, float& labelX, float& labelY, const Mat4& view) {
         float lx, ly, bx, by, cx, cy;
         labelY = -100;
         if (!cr3UiCall(menu, "call_comListCategoryBtnPanel", lx, ly)) return;
         UiFig& bp = cr3UiPut("comlistcategorybtnpanel", "", 0, lx, ly, view);
+        if (cr3UiCall(bp, "call_comListCArrowPanel", cx, cy)) cr3UiPut("comlistcarrowpanel", "comlistcarrowpanel_loop", uiClock, cx, cy, view, 1, true);
         if (!cr3UiCall(bp, "call_comListCategoryBtn", bx, by)) return;
         const int first = std::clamp(focus - 5, 0, std::max(count - 6, 0));
         for (int k = first; k < first + 6 && k < count; ++k) {
             const bool focused = k == focus;
             const float px = bx + 0.057f + 0.57f * float(k - first) - (focused ? 0.072f : 0.0f), py = by - 0.057f + (focused ? 0.057f : 0.0f);
-            UiFig& btn = cr3UiPut("comlistcategorybtn", "", 0, px, py, view, focused ? 1.0f : 0.8f);
-            if (cr3UiCall(btn, "call_comListCBtnIcon_fr00", cx, cy)) cr3UiPut("comlistcbtnicon_fr00", "", float(values[k]) / 30, cx, cy, view, focused ? 1.0f : 0.8f);
+            if (!focused) cr3UiScale = 0.8f, cr3UiTint[0] = cr3UiTint[1] = 0.549f, cr3UiTint[2] = 0.655f;
+            UiFig& btn = cr3UiPut("comlistcategorybtn", "", 0, px, py, view);
+            if (cr3UiCall(btn, "call_comListCBtnIcon_fr00", cx, cy)) cr3UiPut("comlistcbtnicon_fr00", "", float(values[k]) / 30, cx, cy, view);
+            cr3UiScale = 1, cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             if (focused && cr3UiCall(btn, "typeM_C01", cx, cy)) labelX = cx, labelY = cy;
             float ax, ay, ex, ey;
             if (cr3UiCall(btn, "tapAreaCP00", ax, ay) && cr3UiCall(btn, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax - 0.3f, ay, ex + 0.3f, ey + 0.1f, tapBase + k});
@@ -15055,13 +15079,21 @@ struct Viewer {
                     const cr3::Cr3OfflineDb::Quest& q = (*quests)[size_t(cq.rows[size_t(k)])];
                     const auto held = game.cr3Items.find(q.item);
                     const bool ready = q.item < 0 || (held != game.cr3Items.end() && held->second >= q.itemCount);
-                    const float alpha = ready ? 1.0f : 0.6f;
-                    Cr3FocusRow focusRow(*this, k == cq.row);
+                    const float alpha = 1;
+                    Cr3FocusRow focusRow(*this, k == cq.row, ready);
                     UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, cq.row), cr3ListRowY(ly, k, top, cq.row), view, alpha);
-                    if (k == cq.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                    if (k == cq.row && ready && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                     if (cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
                         cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), q.rank + 0xae), cx, cy, view, alpha);
-                    if (game.cr3Quests.ended.count(q.id) && cr3UiCall(panel, "call_comListClear", cx, cy)) cr3UiPut("comlistclear", "", 0, cx, cy, view);
+                    // (CreateQuestListItem: one ended "Clear" - comListClear -, else its level -
+                    // comListmapLv, "Recommended LVL", with comListNumL_num00 at its call)
+                    if (game.cr3Quests.ended.count(q.id)) {
+                        if (cr3UiCall(panel, "call_comListClear", cx, cy)) cr3UiPut("comlistclear", "", 0, cx, cy, view);
+                    } else if (cr3UiCall(panel, "call_comListmapLv", cx, cy)) {
+                        UiFig& lv = cr3UiPut("comlistmaplv", "", 0, cx, cy, view);
+                        float nx, ny;
+                        if (cr3UiCall(lv, "call_comListNumL_num00", nx, ny)) drawCr3ListDigits(cr3UiPut("comlistnuml_num00", "", 0, nx, ny, view), q.level, 1, view);
+                    }
                     cr3UiLabel(panel, "typeM_L01", vsText("Quest_Title", q.id), w, h, 0.3f);
                     float ax, ay, bx, by;
                     if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 300 + k});
@@ -17394,7 +17426,7 @@ struct Viewer {
                 if (cr3UiCall(menu, "call_comListPanel", lx, ly))
                     for (size_t k = 0; k < cr3List.size() && k < 6; ++k) {
                         const Cr3ListRow& row = cr3List[k];
-                        const float ry = ly - 0.76f * float(k), alpha = row.usable ? 1.0f : 0.5f;
+                        const float ry = ly - 0.76f * float(k), alpha = 1;
                         Cr3FocusRow focusRow(*this, int(k) == cr3Focus, row.usable);
                         UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ry, view, alpha);
                         float cx, cy;
@@ -17415,7 +17447,7 @@ struct Viewer {
                             dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
                             // (ProvisionalMenuText: the line's box hangs from the joint - its middle ~0.17 below)
                             const float ks = cr3UiFocus ? 1.1f : 1.0f; // (focused: white, 1.1 x)
-                            drawUiText(row.name, 26 * ks, (cx + 0.075f * ks) / 10, (cy - 0.15f * ks) / 10, w, h, true, cr3UiFocus ? 1.0f : row.usable ? 0.3f : 0.6f); // (dark on the light row)
+                            drawUiText(row.name, 26 * ks, (cx + 0.075f * ks) / 10, (cy - 0.15f * ks) / 10, w, h, true, cr3UiFocus ? 1.0f : row.usable ? 0.3f : 0.15f); // (dark on the light row; not usable half as bright)
                         }
                         float ax, ay, bx, by;
                         if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(k)});

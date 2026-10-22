@@ -14,15 +14,15 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3Flag", "Set", [&state](NativeCall& c) { state.setFlag(c.integer(0), true); });
     vm.setNative("Cr3Flag", "Clear", [&state](NativeCall& c) { state.setFlag(c.integer(0), false); });
     vm.setNative("Cr3Flag", "Check", [&state](NativeCall& c) { c.result(state.flag(c.integer(0))); });
-    // (Cr3Work is the global work: Cr3BindWork's Set / Get are Cr3UtilGlobalWorkSet / Get - 32
+    // (Cr3Work is the global work: Cr3BindWork's Set / Get are Cr3UtilGlobalWorkSet / Get - 100
     // values, others ignored, read as 0)
     vm.setNative("Cr3Work", "Set", [&state](NativeCall& c) {
         const int k = c.integer(0);
-        if (k >= 0 && k < 32) state.globalWork[k] = c.integer(1);
+        if (k >= 0 && k < GameState::kGlobalWork) state.globalWork[k] = c.integer(1);
     });
     vm.setNative("Cr3Work", "Get", [&state](NativeCall& c) {
         const int k = c.integer(0);
-        c.result(k >= 0 && k < 32 ? state.globalWork[k] : 0);
+        c.result(k >= 0 && k < GameState::kGlobalWork ? state.globalWork[k] : 0);
     });
     GameState::Next& next = state.next;
     // FldUtilSetVistaFuncName: the event, and that a vista is to come; its map ("null": none)
@@ -482,7 +482,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             for (int n; l >> n;) setFlag(n, true);
         } else if (key == "work") {
             int k = 0, v = 0;
-            if (l >> k >> v && k >= 0 && k < 32) oldWork.push_back({k, v}); // (an older save's: the same values, set after)
+            if (l >> k >> v && k >= 0 && k < kGlobalWork) oldWork.push_back({k, v}); // (an older save's: the same values, set after)
         } else if (key == "party") {
             l >> party[0] >> party[1];
         } else if (key == "active") {
@@ -520,8 +520,9 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
                     l >> v;
                     boxes.set[k][n] = v & 1, boxes.open[k][n] = (v & 2) != 0;
                 }
-        } else if (key == "global") {
-            for (int& v : globalWork) l >> v;
+        } else if (key == "global") { // (an older save's 32: the rest 0)
+            for (int& v : globalWork)
+                if (!(l >> v)) v = 0;
         } else if (key == "cr3party") {
             for (int& c : cr3Party) l >> c;
         } else if (key == "cr3item") {

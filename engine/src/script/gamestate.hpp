@@ -127,8 +127,10 @@ struct GameState {
     // what items have added to their parameters for good (cr3_player_data +0x1e..: the seeds,
     // Cr3UtilParameterUpByItem)
     short seed[9][5] = {};
-    // cr3_global_work (Cr3UtilGlobalWorkGet / Set: 32 values - 7 the pub's request taken)
-    int globalWork[32] = {};
+    // cr3_global_work (Cr3UtilGlobalWorkGet / Set: 100 values - the scripts' GetVar / SetVar, 24 the
+    // quest set off on, ..)
+    static constexpr int kGlobalWork = 100;
+    int globalWork[kGlobalWork] = {};
     // the difficulty (cr3_common_data[0]: Cr3UtilSetDifficulty, the world select's level - 1) and the
     // dungeon's treasure boxes (cr3_treasureBox)
     int difficulty = 0;
