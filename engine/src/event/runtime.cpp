@@ -331,6 +331,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         spacePort_.talk = false;
         if (spacePort_.open) clerk(kSpacePortClerk); // (SpacePortMain 4: the header, Sally and the buttons again)
     });
+    vm.setNative("InterfaceWindow", "CreateWorldSelectMenu", [this](NativeCall&) { openWorldSelect(false); });
     vm.setNative("InterfaceWindow", "SelectFreeSpacePort", [this](NativeCall& c) {
         c.result(spacePort_.explore);
         spacePort_.explore = false;
@@ -610,6 +611,29 @@ void EventRuntime::spacePortClerk(bool shown) {
         return;
     }
     if (cutIns_[2].open && cutIns_[2].shop && !cutIns_[2].closing) return;
+    Portrait p{true, false, 0, kClerkFace, 1};
+    p.shop = true;
+    cutIns_[2] = p;
+}
+
+void EventRuntime::openWorldSelect(bool fromPort) {
+    worldSelect_ = WorldSelect();
+    worldSelect_.open = true, worldSelect_.fromPort = fromPort;
+    spacePort_.questReturn = 0; // (InterfaceMain +0x9c: 0 - Update 0x22)
+}
+
+void EventRuntime::worldSelectEnd(bool chosen) {
+    if (!worldSelect_.open) return;
+    const bool fromPort = worldSelect_.fromPort;
+    worldSelect_.open = false;
+    if (chosen || !fromPort) {
+        spacePort_.questReturn = 3;
+        return;
+    }
+    spacePort_ = SpacePort(); // (0x23: CreateSpacePortMenuMain - the script still loops on it)
+    spacePort_.open = true;
+    menuFade(false, 5);
+    cutInImages_.insert(cutInImages_.begin(), {kClerkFace, kSpacePortClerk});
     Portrait p{true, false, 0, kClerkFace, 1};
     p.shop = true;
     cutIns_[2] = p;

@@ -244,6 +244,18 @@ public:
     void spacePortClerk(bool shown);
     // the menu done (SpacePortMain 0x17 / 0x18: back 1, a quest 2): faded out, the clerk away
     void spacePortEnd(int questReturn);
+    // The world select (WorldSelectMenu, interface 0x2b): InterfaceWindow.CreateWorldSelectMenu - a
+    // town's ReserveWorldSelectMenu, the end of quest_check - or the Space Port's Explore
+    // (SpacePortMain's 0x22: `fromPort`, its back the Space Port again - 0x23). Chosen: CheckQuest
+    // Return 3, GetSelectDungeonNum the point + 1 (-1 none), GetSelectDungeonLevel the level's index
+    struct WorldSelect {
+        bool open = false;
+        bool fromPort = false;
+    };
+    const WorldSelect& worldSelect() const { return worldSelect_; }
+    void openWorldSelect(bool fromPort);
+    // done: chosen (CheckQuestReturn 3), or back from the Space Port's (its menu again)
+    void worldSelectEnd(bool chosen);
     // a fade the menus start (Cr3FadeOut(0, n) / Cr3FadeIn: black over n frames)
     void menuFade(bool out, int frames) { fade_.start(0, frames, out ? 0 : 1, out ? 1 : 0); }
     std::string cutInImage(int id) const; // a loaded face's image ("" none)
@@ -274,6 +286,7 @@ private:
     EventScene scene_;
     EventFade fade_;
     SpacePort spacePort_;
+    WorldSelect worldSelect_;
     std::map<int, std::string> faces_;
     TextData text_, names_;
     std::map<int, TextData> windowText_; // (LoadMessageData(window, name): that window's own)

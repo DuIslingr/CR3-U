@@ -340,6 +340,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "ReserveCredit", [&next](NativeCall& c) { next.credit = c.integer(0); }); // (FldUtilReserveCredit)
     vm.setNative("InterfaceWindow", "SetArchiveID", [&state](NativeCall& c) { state.libraryArchive = c.integer(0); });
     vm.setNative("InterfaceWindow", "GetLibraryID", [&state](NativeCall& c) { c.result(state.libraryId); });
+    // (CR3's world select - WorldSelectMenu: InterfaceMain +0xa0 / +0xa4, EndCheckMapSelect /
+    // CheckMapLevelSelect - the point + 1, -1 none, and the level)
+    vm.setNative("InterfaceWindow", "GetSelectDungeonNum", [&state](NativeCall& c) { c.result(state.selectDungeon); });
+    vm.setNative("InterfaceWindow", "GetSelectDungeonLevel", [&state](NativeCall& c) { c.result(state.selectLevel); });
     vm.setNative("Cr3System", "SetComeFromVistaToField", [&next](NativeCall&) { next.fieldMode = 2; });
 }
 

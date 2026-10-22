@@ -136,6 +136,7 @@ struct GameState {
     int difficulty = 0;
     // the dungeon the world select chose last (FldWorldSelect::m_nSelectDungeonNum: GetSelectDungeonNum)
     int selectDungeon = 0;
+    int selectLevel = 0; // (CR3's world select: InterfaceMain +0xa4 - the level's index; GetSelectDungeonLevel)
     int selectChapter = -1; // (the chapter select's pick: InterfaceWindow.GetChapterID - not saved)
     // the library's shelf (InterfaceWindow.SetArchiveID: InterfaceMain +0xd8, its category) and the
     // entry being read (GetLibraryID: ArchiveWindowMenu +0x2c) - not saved

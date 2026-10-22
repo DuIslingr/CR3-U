@@ -658,13 +658,41 @@ Quests first the first time when there's no main one; a quest's detail with Sall
 title; yes: Cr3FadeOut(0, 5), a second, the global work's 24 the quest, CheckQuestReturn 2 - the
 town's `quest_check` (Invoke2 8, StartQuest, WorldSelect_NextTo and DungeonRoot by the quest, then -
 without flag 1399 - ReserveWorldSelectMenu); no: the list again at its row. Explore asks 0x125; yes:
-SelectFreeSpacePort true once (`quest_cancel`), then the world select (Update 0x22: header 0x15, 0x128,
-WorldSelectMenu 0x2b - CheckQuestReturn 3 when chosen, the town's WarpTask). Back: faded out, a
-second, CheckQuestReturn 1. `cr3view --input call:ReserveSpacePortMenu,port:quests,port:row<n>,
+SelectFreeSpacePort true once (`quest_cancel`), then - faded out, a second - the world select
+(Update 0x22; its back the Space Port again, 0x23). Back: faded out, a second, CheckQuestReturn 1. `cr3view --input call:ReserveSpacePortMenu,port:quests,port:row<n>,
 port:ok,port:yes` (also `port:talk / explore / back / no / left / right / told / cat<n>`).
 
 The global work (Cr3UtilGlobalWorkGet / Set - the scripts' GetVar / SetVar) holds 100 values; 24 is
 the quest set off on.
+
+### The world select (CR3)
+
+WorldSelectMenu (interface 0x2b): InterfaceWindow.CreateWorldSelectMenu - a town's
+ReserveWorldSelectMenu, the end of `quest_check` - or the Space Port's Explore. From black over 30
+frames; the header "Select Dungeon" (0x15; 0x128, 0x129 with the levels, 0x12a asked). The planet:
+`t0100star01` - its `t0100star01`, `t0100star01_cloud` and `earth_eff` joints' worlds set outright
+(SetJointWorldTransform: 2.3 x the zoom, the pitch about X after the yaw about Y - the game's Y turn
+the other way about; the cloud on its own yaw, drifting 0.0007 a frame) - `t0100star00` (1.5 x across
+and up on a screen wider than 3:2: Cr3UtilGetScreenType 2) and `t0100star02` (0.28 nearer, 1.5 x the
+zoom, turning 0.001 a frame), seen through star01's camera (GetContaindCamera) in its lights, moved
+across by the shift (0.15 and zoom 1.1 while a dungeon's levels are up, 0.03 / 0.1 a frame). The
+points (libcrx's tables: World_Flag_Tbl 1050 .. 1064 open, Hit_Flag_Tbl 1080 .. "NEXT",
+StarNameTable 2 .. 11, 13, 14, 15, 1, 99 - star01's `star01_D<n>`, through the planet's turn,
+facing the camera, nearest last; the last at `spBtnPositon`'s `call_spIconMenu`): `spPointMenu`, its
+ring (`spPointOff`, `spPointOn` the chosen's: their own animations looped), `spIconMenu` there with
+`spIcon_fr00` (the point + 1), `spCheckBtn` (the gift: the dungeon's collection, to come) and
+`comListHit` ("NEXT"). At first the yaw turned until the first hit point faces the camera mid-screen
+(GetDRotation). A point tapped: turned to its pitch and yaw (DAT_00f6af14 / aed8) a third a frame, its
+name at `spMapName`, the levels listed (CreateListMenu: World_Level_Icon_Tbl's icon, 0x15 + n - the
+first, then those whose flag 1100 + n is set); a level: asked (0xa4: the dungeon's name 0xe9 + the
+point - 0xfa for the fourth with flag 6004 -, the level's); yes: Cr3FadeOut 30 frames, two seconds,
+GetSelectDungeonNum the point + 1, GetSelectDungeonLevel the level, CheckQuestReturn 3 - the town's
+WarpTask (EnterDungeon, SpacePortJump / ppJump). Back from the planet: the same with -1 (the town's
+`quest_cancel` without flag 1398), or - from the Space Port - its menu again. Dragged: the yaw a 460th
+of the screen's 960 each, the pitch too (a quarter past -0.785 / 0.523), spun on by an 800th, 0.95 a
+frame. `cr3view --input call:ReserveWorldSelectMenu,world:point<n>,world:level<n>,world:yes` (also
+`world:no / back`). Not in: the dungeons' list (`spListBtn`, WorldSelectListMenu) and the gift's
+collection (CollectListMain).
 
 ### My Page (CR3)
 

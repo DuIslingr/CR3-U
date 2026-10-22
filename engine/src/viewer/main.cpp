@@ -211,6 +211,9 @@ struct ViewFigure {
     // its colour and opacity over its materials' (BtlModel::StartDiffuseAnimation /
     // StartAlphaAnimation: the special scenes'); short of 1 opaque meshes drawn blended
     float tint[4] = {1, 1, 1, 1};
+    // joints whose world is set outright (Figure::SetJointWorldTransform: the matrix as it is, the
+    // figure's place not over it) - by the joint's index
+    std::vector<std::pair<size_t, cr3::Mat34>> jointWorld;
 };
 
 void packVertex(uint8_t* o, const float* p, const float* n, const float* uv, const float* c, const float* t, const float* b,
@@ -1630,7 +1633,9 @@ struct Viewer {
                 }
             }
         }
-        const std::vector<cr3::Mat34> world = f.skeleton.world(p, f.place);
+        std::vector<cr3::Mat34> world = f.skeleton.world(p, f.place);
+        for (const auto& [j, m] : f.jointWorld)
+            if (j < world.size()) world[j] = m;
         f.posed = p;
         std::vector<cr3::Mat34> skin(world.size());
         for (size_t j = 0; j < world.size(); ++j) skin[j] = world[j] * f.inverseBind[j];
@@ -5685,6 +5690,19 @@ struct Viewer {
         // (the Space Port: its clocks; --input port:talk / quests / explore / back / yes / no / ok /
         // left / right / told, port:row<n> / cat<n>, for tests)
         stepSpacePort(dt);
+        stepWorldSelect(dt);
+        // (--input world:point<n> / level<n> / yes / no / back, for tests)
+        if (areaEvents && areaEvents->worldSelect().open && !inputScript.empty() && inputScript.front().compare(0, 6, "world:") == 0 &&
+            worldSel.clock > 1.0f && worldSel.since > 0.5f && uiClock >= inputNext) {
+            const std::string want = inputScript.front().substr(6);
+            inputScript.pop_front();
+            inputNext = uiClock + 0.5f;
+            if (want == "yes") chooseWorldSelect(*areaEvents, kTapWorldYes);
+            else if (want == "no") chooseWorldSelect(*areaEvents, kTapWorldNo);
+            else if (want == "back") chooseWorldSelect(*areaEvents, -1);
+            else if (want.compare(0, 5, "point") == 0) chooseWorldSelect(*areaEvents, kTapWorldPoint + std::atoi(want.c_str() + 5));
+            else if (want.compare(0, 5, "level") == 0) chooseWorldSelect(*areaEvents, kTapWorldLevel + std::atoi(want.c_str() + 5));
+        }
         if (areaEvents && areaEvents->spacePort().open && !areaEvents->spacePort().talk && !inputScript.empty() &&
             inputScript.front().compare(0, 5, "port:") == 0 && spacePortMenu.clock > 0.8f && spacePortMenu.since > 0.5f && uiClock >= inputNext) {
             static const std::map<std::string, int> kPort = {{"talk", 0x11}, {"quests", 0x12}, {"explore", 0x13}, {"back", -1}, {"yes", kTapPortYes},
@@ -15229,6 +15247,426 @@ struct Viewer {
             if (okOn && cr3UiCall(btn, "tapAreaS01", ax, ay) && cr3UiCall(btn, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 500});
         }
     }
+    // ---- the world select (EventRuntime::WorldSelect: WorldSelectMenu 0x2b) ----
+    // The planet - t0100star01 (the earth, its cloud and earth_eff: SetJointWorldTransform'd scale
+    // 2.3 x the zoom, turned by the pitch about X after the yaw about Y; the cloud by its own yaw
+    // drifting 0.0007 a frame), t0100star00 and t0100star02 (scale 1.5 x the zoom, turning 0.001 a
+    // frame) - seen through star01's own camera (GetContaindCamera) lit by its own lights, moved
+    // across by the shift (0.15 while a dungeon's levels are up, the zoom then 1.1). Over it each
+    // dungeon open (World_Flag_Tbl: flags 1050 .. 1064) facing the camera: spPointMenu at its point
+    // (star01_D<StarNameTable> through the planet's turn, Cr3UtilSetBalloonPos), its ring -
+    // spPointOff, spPointOn the chosen's: their own animations, looped - and spIconMenu there: the dungeon's picture
+    // (spIcon_fr00, frame the point + 1), the gift (spCheckBtn), "NEXT" (comListHit) where its
+    // Hit_Flag_Tbl flag (1080 ..) is set; the last (1064) at spBtnPositon's call_spIconMenu instead;
+    // nearest drawn last. The header "Select Dungeon" (0x15). A point tapped (TouchGestureTap):
+    // the planet turned to its pitch and yaw (DAT_00f6af14 / aed8) a third at a time, the levels
+    // listed (CreateListMenu: World_Level_Icon_Tbl's icon, "Lvl .." 0x15 + n - the first, then those
+    // whose flag 1100 + n is set; 0x129), its name at spMapName; a level: asked (0xa4 - the
+    // dungeon's name 0xe9 + point, 0xfa for the fourth once flag 6004 is set -, the level's; 0x12a);
+    // yes: Cr3FadeOut 30 frames, two seconds, GetSelectDungeonNum the point + 1, GetSelectDungeon
+    // Level the level, CheckQuestReturn 3 - the town's WarpTask; no or back: the planet again. Back
+    // from the planet: the same with no dungeon (-1) - or, from the Space Port's Explore, the Space
+    // Port again. Dragged: turned a 460th of the screen's 960 each, spun on after a release
+    struct Cr3WorldSelect {
+        int stage = 0;        // 0 the planet, 1 the levels, 2 asked, 3 leaving
+        float since = 0, clock = 0, tick = 0;
+        float yaw = 0, cloudYaw = 0, spin = 0, zoom = 1, shift = 0, starsYaw = 0, pitch = 0;
+        int point = -1;       // (the point chosen)
+        std::vector<int> levels;
+        int row = 0;          // (the levels' focus)
+        int level = -1;       // (the level chosen)
+        bool chosen = false;  // (3: a dungeon chosen, else back)
+        bool wasOpen = false, dragging = false;
+    } worldSel;
+    std::vector<Cr3GeneLabTap> worldTaps;
+    static constexpr int kWorldPoints = 15;
+    static constexpr int kWorldStar[kWorldPoints] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 1, 99};
+    static constexpr float kWorldPitch[kWorldPoints] = {-0.3f, -0.3f, -0.6f, 0.4f, 0.5f, 0.3f, -0.2f, -0.1f, 0.2f, -0.1f, 0.5f, 1.1f, 1.2f, 0.9f, 0.0f};
+    static constexpr float kWorldYaw[kWorldPoints] = {-2.165f, 2.222f, 0.607f, -2.252f, -1.852f, -2.841f, -0.414f, -1.637f, 0.458f, 1.193f, -0.177f, -0.177f, -1.99f, 2.648f, 0.0f};
+    static constexpr int kWorldLevelIcon[kWorldPoints] = {200, 200, 200, 201, 201, 201, 202, 202, 202, 202, 203, 203, 203, 203, 203};
+    static constexpr int kTapWorldYes = 701, kTapWorldNo = 702, kTapWorldPoint = 710, kTapWorldLevel = 730, kTapWorldGift = 760;
+    bool worldOpen(int k) const { return game.flag(1050 + k); }
+    std::string worldName(int k) { return menuAnnounce(k == 3 && game.flag(6004) ? 0xfa : 0xe9 + k); } // (DAT_014cfbde bit 4)
+    struct Cr3WorldView {
+        Mat4 vp{};
+        cr3::Mat34 planet;
+        bool ok = false;
+    };
+    cr3::Geom worldStarGeom;
+    bool worldStarTried = false;
+    // the planet's turn (S 2.3 x zoom, then the pitch about X, after the yaw about Y - the game's
+    // matrices: its Y turn the other way about)
+    static cr3::Mat34 worldTurn(float scale, float pitch, float yaw) {
+        cr3::Mat34 m;
+        const float cp = std::cos(pitch), sp = std::sin(pitch), cy = std::cos(yaw), sy = std::sin(yaw);
+        // Rx(pitch) * Ry(-yaw): rows (cy, 0, -sy), (-sp sy, cp, -sp cy), (cp sy, sp, cp cy)
+        const float a[9] = {cy, 0, -sy, -sp * sy, cp, -sp * cy, cp * sy, sp, cp * cy};
+        for (int row = 0; row < 3; ++row)
+            for (int c = 0; c < 3; ++c) m.m[row * 4 + c] = a[row * 3 + c] * scale;
+        m.m[3] = m.m[7] = m.m[11] = 0;
+        return m;
+    }
+    // star01's points (StarNameTable) as posed, the figure's place not over them
+    bool worldPointLocal(const UiFig& star, int k, float* out) {
+        char name[16];
+        std::snprintf(name, sizeof name, "star01_D%02d", kWorldStar[k]);
+        const auto it = std::find(star.joints.begin(), star.joints.end(), name);
+        if (it == star.joints.end() || !star.fig.skinned) return false;
+        std::vector<cr3::JointTransform> p = star.fig.posed.empty() ? star.fig.skeleton.basePose : star.fig.posed;
+        const std::vector<cr3::Mat34> w = star.fig.skeleton.world(p);
+        const size_t j = size_t(it - star.joints.begin());
+        if (j >= w.size()) return false;
+        out[0] = w[j].m[3], out[1] = w[j].m[7], out[2] = w[j].m[11];
+        return true;
+    }
+    static void worldApply(const cr3::Mat34& m, const float* p, float* q) {
+        for (int r = 0; r < 3; ++r) q[r] = m.m[r * 4] * p[0] + m.m[r * 4 + 1] * p[1] + m.m[r * 4 + 2] * p[2] + m.m[r * 4 + 3];
+    }
+    // the planet drawn (its three figures, star01's camera and lights) - the view the points are
+    // seen through
+    Cr3WorldView drawWorldPlanet(int w, int h) {
+        Cr3WorldView out;
+        Cr3WorldSelect& ws = worldSel;
+        if (!worldStarTried) {
+            worldStarTried = true;
+            std::vector<uint8_t> d;
+            if (!archive.read("t0100star01.geom", d) || !cr3::parseGeom(d, worldStarGeom)) SDL_Log("world select: no t0100star01");
+        }
+        UiFig& s0 = uiFig("t0100star00");
+        UiFig& s1 = uiFig("t0100star01");
+        UiFig& s2 = uiFig("t0100star02");
+        if (!s1.fig.skinned || worldStarGeom.cameras.empty()) return out;
+        // star01: placed (0, 0.03) and moved by the shift; the earth, its cloud, earth_eff set outright
+        poseUi(s1, "t0100star01", 0);
+        s1.fig.place = cr3::Mat34();
+        s1.fig.place.m[3] = ws.shift, s1.fig.place.m[7] = 0.03f;
+        out.planet = worldTurn(2.3f * ws.zoom, ws.pitch, ws.yaw);
+        s1.fig.jointWorld.clear();
+        cr3::Mat34 eff;
+        eff.m[0] = eff.m[5] = eff.m[10] = 2.3f * ws.zoom;
+        for (const auto& [name, m] : {std::pair<const char*, cr3::Mat34>{"t0100star01", out.planet}, {"t0100star01_cloud", worldTurn(2.3f * ws.zoom, ws.pitch, ws.cloudYaw)}, {"earth_eff", eff}}) {
+            const auto it = std::find(s1.joints.begin(), s1.joints.end(), name);
+            if (it != s1.joints.end()) s1.fig.jointWorld.push_back({size_t(it - s1.joints.begin()), m});
+        }
+        pose(s1.fig, 0, false);
+        // its camera: the joint it names, where star01 is
+        const cr3::GeomCamera& gc = worldStarGeom.cameras[0];
+        const int cj = s1.fig.skeleton.joint(gc.hash);
+        if (cj < 0) return out;
+        const std::vector<cr3::Mat34> wj = s1.fig.skeleton.world(s1.fig.posed.empty() ? s1.fig.skeleton.basePose : s1.fig.posed, s1.fig.place);
+        if (size_t(cj) >= wj.size()) return out;
+        const float fov = gc.fovY * 3.14159265f / 180, zn = std::max(gc.near, 0.001f), zf = std::max(gc.far, zn * 2);
+        dev->setCamera(zn, zf, fov);
+        out.vp = cr3::mat4Multiply(perspective(fov, float(w) / float(std::max(h, 1)), zn, zf), cr3::mat4RigidInverse(cr3::mat4FromMat34(wj[size_t(cj)])));
+        out.ok = true;
+        cr3::SceneLighting l;
+        if (!figureLights("t0100star01", l)) l = cr3::SceneLighting();
+        l.camera[0] = wj[size_t(cj)].m[3], l.camera[1] = wj[size_t(cj)].m[7], l.camera[2] = wj[size_t(cj)].m[11];
+        l.time = uiClock;
+        dev->setLighting(l);
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        dev->clearDepth();
+        // star00 at the shift (-0.15 placed, moved 0.15 + the shift); star02 0.28 nearer, 1.5 x the zoom, turning
+        if (s0.fig.skinned) {
+            poseUi(s0, "t0100star00", 0);
+            s0.fig.place = cr3::Mat34();
+            if (float(w) > float(h) * 1.55f) s0.fig.place.m[0] = s0.fig.place.m[5] = 1.5f; // (Cr3UtilGetScreenType 2 - not an iPad's 4:3 / 3:2: 1.5 x across and up)
+            s0.fig.place.m[3] = ws.shift;
+            pose(s0.fig, 0, false);
+            drawFigure(s0.fig, out.vp.data());
+        }
+        if (s2.fig.skinned) {
+            poseUi(s2, "t0100star02", 0);
+            const float k = 1.5f * ws.zoom, c = std::cos(ws.starsYaw), sn = std::sin(ws.starsYaw);
+            s2.fig.place = cr3::Mat34();
+            s2.fig.place.m[0] = c * k, s2.fig.place.m[2] = sn * k, s2.fig.place.m[5] = k, s2.fig.place.m[8] = -sn * k, s2.fig.place.m[10] = c * k;
+            s2.fig.place.m[3] = ws.shift, s2.fig.place.m[11] = 0.28f;
+            pose(s2.fig, 0, false);
+            drawFigure(s2.fig, out.vp.data());
+        }
+        drawFigure(s1.fig, out.vp.data());
+        dev->setLighting(cr3::SceneLighting());
+        return out;
+    }
+    // GetDRotation: the yaw turned until the point faces the camera, in its middle
+    void worldAim(int k) {
+        Cr3WorldSelect& ws = worldSel;
+        UiFig& s1 = uiFig("t0100star01");
+        float p[3], q[3];
+        if (!worldPointLocal(s1, k, p)) return;
+        for (int n = 0; n < 2000; ++n) {
+            worldApply(worldTurn(2.3f, ws.pitch, ws.yaw), p, q);
+            if (q[2] < 0) ws.yaw += 1.0f;
+            else if (q[0] < 0.01f && q[0] > -0.01f) break;
+            else ws.yaw += q[0] / 10;
+        }
+    }
+    void drawCr3WorldSelect(cr3::EventRuntime& ev, int w, int h) {
+        worldTaps.clear();
+        if (!ev.worldSelect().open) return;
+        Cr3WorldSelect& ws = worldSel;
+        const Cr3WorldView wv = drawWorldPlanet(w, h);
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        std::vector<Cr3GeneLabTap> keep;
+        keep.swap(cr3CampTaps);
+        const bool planet = ws.stage == 0;
+        float x, y, cx, cy, ax, ay, bx, by;
+        // the points (Pose: the facing ones, the nearest last; the last at its button's place)
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float hw = float(screenW) / 2 / k, hh = float(screenH) / 2 / k;
+        struct Mark {
+            int point;
+            float x, y, depth;
+        };
+        std::vector<Mark> marks;
+        UiFig& s1 = uiFig("t0100star01");
+        for (int pt = 0; pt < kWorldPoints - 1 && wv.ok; ++pt) {
+            float p[3], q[3];
+            if (!worldOpen(pt) || !worldPointLocal(s1, pt, p)) continue;
+            worldApply(wv.planet, p, q);
+            if (q[2] < 0) continue;
+            const float* m = wv.vp.data(); // (column-major)
+            const float cw = m[3] * q[0] + m[7] * q[1] + m[11] * q[2] + m[15];
+            if (cw <= 0) continue;
+            const float nx = (m[0] * q[0] + m[4] * q[1] + m[8] * q[2] + m[12]) / cw, ny = (m[1] * q[0] + m[5] * q[1] + m[9] * q[2] + m[13]) / cw;
+            marks.push_back({pt, nx * hw, ny * hh, q[2]});
+        }
+        UiFig& btnPos = cr3UiPut("spbtnpositon", "", 0, 0, 0, view);
+        if (planet && worldOpen(kWorldPoints - 1) && cr3UiCall(btnPos, "call_spIconMenu", x, y)) marks.push_back({kWorldPoints - 1, x, y, 1e9f});
+        std::stable_sort(marks.begin(), marks.end(), [](const Mark& a, const Mark& b) { return a.depth < b.depth; });
+        for (const Mark& mk : marks) {
+            UiFig& menu = cr3UiPut("sppointmenu", "", 0, mk.x, mk.y, view);
+            const bool on = mk.point == ws.point;
+            float rx = mk.x, ry = mk.y;
+            if (cr3UiCall(menu, on ? "call_spPointOn" : "call_spPointOff", cx, cy)) {
+                cr3UiPut(on ? "sppointon" : "sppointoff", "", uiClock, cx, cy, view, 1, true); // (ChangeAnime(0), SetAnimeLoop(true, 0): its own animation, round)
+                rx = cx, ry = cy;
+            }
+            UiFig& icon = cr3UiPut("spiconmenu", "", 0, rx, ry, view);
+            if (cr3UiCall(icon, "call_spIcon_fr", cx, cy)) cr3UiPut("spicon_fr00", "", float(mk.point + 1) / 30, cx, cy, view);
+            if (cr3UiCall(icon, "call_spCheckBtn", cx, cy)) {
+                UiFig& gift = cr3UiPut("spcheckbtn", "", 0, cx, cy, view);
+                if (planet && cr3UiCall(gift, "tapAreaS01", ax, ay) && cr3UiCall(gift, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldGift + mk.point});
+            }
+            if (game.flag(1080 + mk.point) && cr3UiCall(icon, "call_comListHit", cx, cy)) cr3UiPut("comlisthit", "", 0, cx, cy, view);
+            if (planet) { // (the point's or its icon's tap areas)
+                for (const UiFig* u : {&menu, &icon})
+                    if (cr3UiCall(*u, "tapAreaS01", ax, ay) && cr3UiCall(*u, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldPoint + mk.point});
+            }
+        }
+        // the list button (spBtnMenu's spListBtn - its list to come), the dungeon's name
+        if (planet && cr3UiCall(btnPos, "call_spBtnMenu", x, y)) {
+            UiFig& bm = cr3UiPut("spbtnmenu", "", 0, x, y, view);
+            if (cr3UiCall(bm, "call_spListBtn", cx, cy)) cr3UiPut("splistbtn", "", 0, cx, cy, view);
+        }
+        if (!planet && ws.point >= 0 && cr3UiCall(btnPos, "call_spMapName", x, y)) {
+            UiFig& nm = cr3UiPut("spmapname", "", 0, x, y, view);
+            float tx, ty;
+            if (cr3UiCall(nm, "typeM_L01", tx, ty) || cr3UiCall(nm, "typeS_L01", tx, ty)) {
+                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                drawUiText(worldName(ws.point), 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+            }
+        }
+        // the levels (CreateListMenu: a comListMenu's rows - the icon, the name)
+        if (ws.stage == 1) {
+            UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", ws.since, 0, 0, view);
+            float lx, ly;
+            if (cr3UiCall(lp, "call_comListMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+                if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
+                    const int n = int(ws.levels.size());
+                    const int top = ws.row - 2;
+                    drawCr3ListEnds(lx, ly, n, ws.row, view); // (no bar - as the reference)
+                    for (int r = std::max(top, 0); r < n && r <= ws.row + 2; ++r) {
+                        const int lv = ws.levels[size_t(r)];
+                        Cr3FocusRow focusRow(*this, r == ws.row);
+                        UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, r, ws.row), cr3ListRowY(ly, r, top, ws.row), view);
+                        if (r == ws.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                        if (cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
+                            cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), kWorldLevelIcon[lv]), cx, cy, view);
+                        cr3UiLabel(panel, "typeM_L01", menuAnnounce(0x15 + lv), w, h, 0.3f);
+                        if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldLevel + r});
+                    }
+                }
+            }
+        }
+        // the back button
+        UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+        if (ws.stage <= 1 && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
+            if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, -1});
+        }
+        drawCr3Header(ws.clock, 0x15, menuAnnounce(ws.stage == 0 ? 0x128 : ws.stage == 1 ? 0x129 : 0x12a), w, h, view);
+        if (ws.stage == 2) {
+            std::string ask = menuAnnounce(0xa4); // (SetSystemMessage: the dungeon's, the level's - Cr3UtilSPrint twice)
+            for (const std::string& part : {worldName(ws.point), menuAnnounce(0x15 + ws.level)})
+                if (const size_t at = ask.find("%s"); at != std::string::npos) ask.replace(at, 2, part);
+            cr3CampTaps.clear();
+            drawCr3Asked(ask, ws.since, 0, true, kTapWorldYes, kTapWorldNo, w, h, view);
+        }
+        worldTaps.swap(cr3CampTaps);
+        cr3CampTaps.swap(keep);
+    }
+    // the levels a dungeon lists (the first, then those whose flag 1100 + n is set)
+    std::vector<int> worldLevels() const {
+        std::vector<int> out = {0};
+        for (int n = 1; n < kWorldPoints; ++n)
+            if (game.flag(1100 + n)) out.push_back(n);
+        return out;
+    }
+    void worldLeave(bool chosen) {
+        Cr3WorldSelect& ws = worldSel;
+        if (areaEvents) areaEvents->menuFade(true, 30); // (Cr3FadeOut 30 frames)
+        ws.chosen = chosen;
+        ws.stage = 3, ws.since = 0;
+    }
+    void chooseWorldSelect(cr3::EventRuntime& ev, int id) {
+        Cr3WorldSelect& ws = worldSel;
+        (void)ev;
+        if (ws.stage == 3) return;
+        if (ws.stage == 0) {
+            if (id == -1) return audio.playSe("com_004", false), worldLeave(false); // (0x11 / 0x13)
+            if (id >= kTapWorldPoint && id < kTapWorldPoint + kWorldPoints) {
+                audio.playSe("com_003", false);
+                ws.point = id - kTapWorldPoint;
+                ws.levels = worldLevels(), ws.row = 0;
+                ws.stage = 1, ws.since = 0;
+                SDL_Log("world select: %s", worldName(ws.point).c_str());
+            }
+            return; // (the gift - its dungeon's collection - and the list to come)
+        }
+        if (ws.stage == 1) {
+            if (id == -1) { // (SetReturnWorldMap: the planet again)
+                audio.playSe("com_004", false);
+                ws.point = -1, ws.stage = 0, ws.since = 0;
+                return;
+            }
+            if (id >= kTapWorldLevel && id < kTapWorldLevel + kWorldPoints) {
+                const int r = id - kTapWorldLevel;
+                if (r >= int(ws.levels.size())) return;
+                if (r != ws.row) return audio.playSe("com_002", false), (void)(ws.row = r);
+                audio.playSe("com_003", false);
+                ws.level = ws.levels[size_t(r)];
+                ws.stage = 2, ws.since = 0;
+            }
+            return;
+        }
+        if (ws.stage == 2) {
+            if (id == kTapWorldYes) return audio.playSe("com_003", false), worldLeave(true);
+            if (id == kTapWorldNo || id == -1) { // (0xc: the list closed, the planet)
+                audio.playSe("com_004", false);
+                ws.point = -1, ws.stage = 0, ws.since = 0;
+            }
+        }
+    }
+    bool worldSelectClick(float fx, float fy) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || !ev->worldSelect().open) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = worldTaps.rbegin(); it != worldTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                chooseWorldSelect(*ev, it->id);
+                return true;
+            }
+        worldSel.dragging = worldSel.stage == 0; // (elsewhere: the planet held to turn)
+        return true;
+    }
+    // a drag (TouchSimpleMove, in the screen's 960 x 640): the yaw a 460th, the pitch too (a quarter
+    // past its limits), spun on by a 800th
+    bool worldSelectDrag(float dx, float dy) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || !ev->worldSelect().open || !worldSel.dragging) return false;
+        Cr3WorldSelect& ws = worldSel;
+        ws.yaw -= dx / 460, ws.cloudYaw -= dx / 460;
+        const float d = -dy / 460;
+        ws.pitch -= ws.pitch > 0.5233334f || ws.pitch < -0.785f ? d * 0.25f : d;
+        ws.spin = dx / 800;
+        return true;
+    }
+    bool worldSelectKey(SDL_Keycode key) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || !ev->worldSelect().open) return false;
+        Cr3WorldSelect& ws = worldSel;
+        const bool enter = key == SDLK_RETURN || key == SDLK_SPACE, back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
+        if (ws.stage == 0) {
+            // (keys: left / right the open dungeons in turn, Enter chooses the one facing)
+            std::vector<int> open;
+            for (int pt = 0; pt < kWorldPoints; ++pt)
+                if (worldOpen(pt)) open.push_back(pt);
+            if ((key == SDLK_LEFT || key == SDLK_RIGHT) && !open.empty()) {
+                const auto it = std::find(open.begin(), open.end(), ws.row);
+                const int at = it == open.end() ? 0 : int(it - open.begin());
+                ws.row = open[size_t((at + (key == SDLK_RIGHT ? 1 : int(open.size()) - 1)) % int(open.size()))];
+                worldAim(ws.row);
+                audio.playSe("com_002", false);
+            } else if (enter && !open.empty()) chooseWorldSelect(*ev, kTapWorldPoint + (worldOpen(ws.row) ? ws.row : open[0]));
+            else if (back) chooseWorldSelect(*ev, -1);
+            return true;
+        }
+        if (ws.stage == 1) {
+            const int n = int(ws.levels.size());
+            if ((key == SDLK_UP || key == SDLK_DOWN) && n > 0) chooseWorldSelect(*ev, kTapWorldLevel + std::clamp(ws.row + (key == SDLK_DOWN ? 1 : -1), 0, n - 1));
+            else if (enter && n > 0) chooseWorldSelect(*ev, kTapWorldLevel + ws.row);
+            else if (back) chooseWorldSelect(*ev, -1);
+            return true;
+        }
+        if (ws.stage == 2) {
+            if (enter || key == SDLK_Y) chooseWorldSelect(*ev, kTapWorldYes);
+            else if (back || key == SDLK_N) chooseWorldSelect(*ev, kTapWorldNo);
+        }
+        return true;
+    }
+    // (each frame: its 30 updates a second - Update - the turns, the zoom and the shift; leaving, two
+    // seconds after the fade: the dungeon and the level, then the menu done)
+    void stepWorldSelect(float dt) {
+        cr3::EventRuntime* ev = areaEvents.get();
+        Cr3WorldSelect& ws = worldSel;
+        const bool open = ev && ev->worldSelect().open;
+        if (open && !ws.wasOpen) {
+            ws = Cr3WorldSelect();
+            ws.wasOpen = true;
+            ev->menuFade(false, 30); // (Update 0x22: Cr3FadeIn 30 frames)
+            for (int pt = 0; pt < kWorldPoints - 1; ++pt) // (Initialize: GetDRotation for the first hit's point)
+                if (game.flag(1080 + pt)) {
+                    worldAim(pt);
+                    ws.row = pt;
+                    break;
+                }
+            SDL_Log("world select: open%s", ev->worldSelect().fromPort ? " (from the Space Port)" : "");
+        }
+        ws.wasOpen = open;
+        if (!open) return;
+        ws.clock += dt, ws.since += dt, ws.tick += dt;
+        for (; ws.tick >= 1.0f / 30; ws.tick -= 1.0f / 30) {
+            ws.starsYaw -= 0.001f;
+            ws.cloudYaw += 0.0007f;
+            if (!ws.dragging) ws.spin *= 0.95f, ws.cloudYaw -= ws.spin, ws.yaw -= ws.spin;
+            if (!ws.dragging && ws.stage == 0) { // (the pitch back within its limits)
+                if (ws.pitch < -0.785f) ws.pitch = (ws.pitch + 0.785f) * 0.5f - 0.785f;
+                if (ws.pitch > 0.5233334f) ws.pitch = (ws.pitch - 0.5233334f) * 0.5f + 0.5233334f;
+            }
+            if (ws.stage == 1 && ws.point >= 0) { // (turned to the point, a third at a time)
+                while (ws.yaw > 3.14f || ws.yaw < -3.14f) ws.yaw += ws.yaw >= 0 ? -6.28f : 6.28f;
+                const float dp = kWorldPitch[ws.point] - ws.pitch, dy = kWorldYaw[ws.point] - ws.yaw;
+                if (dp < -0.001f || dp > 0.001f) ws.pitch += dp / 3;
+                if (dy <= -0.001f || dy >= 0.001f) ws.yaw += dy / 3, ws.cloudYaw += dy / 3;
+            }
+            if (ws.stage == 0) ws.zoom = std::max(ws.zoom - 0.1f, 1.0f), ws.shift = std::max(ws.shift - 0.03f, 0.0f);
+            else ws.zoom = std::min(ws.zoom + 0.1f, 1.1f), ws.shift = std::min(ws.shift + 0.03f, 0.15f);
+        }
+        if (ws.stage == 3 && ws.since >= 2.0f) {
+            game.selectDungeon = ws.chosen ? ws.point + 1 : -1, game.selectLevel = ws.chosen ? ws.level : -1;
+            SDL_Log("world select: %s", ws.chosen ? ("dungeon " + std::to_string(game.selectDungeon) + ", level " + std::to_string(game.selectLevel)).c_str() : "back");
+            ev->worldSelectEnd(ws.chosen);
+        }
+    }
     // ---- the Space Port (EventRuntime::SpacePort: SpacePortMain 0x7b) ----
     // Over the field and Sally's portrait: the header (0x13 "Spaceport", "Select command." 0x26e; 0x14
     // "Get Quest" with the quests), its buttons (comBtnMenu 0x2c, SetSpacePortTopButton: Talk 0x11,
@@ -15373,7 +15811,7 @@ struct Viewer {
             if (id == kTapPortYes) {
                 audio.playSe("com_003", false);
                 ev.spacePortExplore();
-                return spacePortLeave(1); // (WorldSelectMenu to come)
+                return spacePortLeave(-1); // (0x19: faded out, a second - Update 0x22: the world select)
             }
             if (id == kTapPortNo || id == -1) return audio.playSe("com_004", false), spacePortScreen(0);
             return;
@@ -15481,7 +15919,8 @@ struct Viewer {
                 if (qs && cq.row < int(cq.rows.size())) game.globalWork[24] = (*qs)[size_t(cq.rows[size_t(cq.row)])].id;
                 SDL_Log("space port: set off on quest %d", game.globalWork[24]);
             } else SDL_Log("space port: closed (%d)", m.leave);
-            ev->spacePortEnd(m.leave);
+            ev->spacePortEnd(std::max(m.leave, 0));
+            if (m.leave < 0) ev->openWorldSelect(true); // (Explore: SpacePortMain's 0x22)
         }
     }
     void chooseCampQuests(int id) {
@@ -17902,6 +18341,7 @@ struct Viewer {
         else drawCutIns(screenW, screenH);
         drawCr3GeneLab(*ev, screenW, screenH, true);
         drawCr3SpacePort(*ev, screenW, screenH);
+        drawCr3WorldSelect(*ev, screenW, screenH);
         if (ev == areaEvents.get()) drawCr3Field(screenW, screenH); // (the field's buttons, the camp)
         if (ev == areaEvents.get()) drawVs(screenW, screenH);      // (the VS mode's menus)
         if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn)) {
@@ -18683,6 +19123,7 @@ int main(int argc, char** argv) {
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
                     if (v.geneLabKey(k)) continue; // (the gene lab's keys: its back is Escape too)
                     if (v.spacePortKey(k)) continue; // (the Space Port's)
+                    if (v.worldSelectKey(k)) continue; // (the world select's)
                     if (v.vsKey(k)) continue;       // (the VS mode's)
                     if (v.cr3CampKey(k)) continue;  // (CR3's camp: C opens it)
                     if (k == SDLK_ESCAPE) running = false;
@@ -18814,6 +19255,7 @@ int main(int argc, char** argv) {
                     else if (v.yesNoClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
                     else if (v.spacePortClick(fx, fy)) {}
+                    else if (v.worldSelectClick(fx, fy)) {}
                     else if (v.vsClick(fx, fy)) {}
                     else if (v.cr3CampClick(fx, fy)) {}
                     else if (v.battleMode && v.choosing) v.battleClick(fx, fy);
@@ -18829,6 +19271,7 @@ int main(int argc, char** argv) {
                     } else if (v.eventMode || v.fieldMode || v.battleMode || v.cr3BattleMode || v.areaMode) v.tap();
                 }
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                    v.worldSel.dragging = false; // (the planet let go: spun on)
                     dragging = false;
                     v.fastHeld = false;
                     if (v.fieldMode && v.keyLock.stage == 1) v.unlockPointer(0, 0, 2);
@@ -18849,7 +19292,12 @@ int main(int argc, char** argv) {
                     else if (v.aim.stage == 2) v.aimPointer(fx, fy, 1);
                     else v.unlockPointer(fx, fy, 1);
                 }
-                else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && [&] { // (the camp's model turned and sized: in the screen's 960 x 640)
+                else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && [&] { // (the world select's planet turned: in the screen's 960 x 640)
+                             int ww = 1, wh = 1;
+                             SDL_GetWindowSize(win, &ww, &wh);
+                             return v.worldSelectDrag(e.motion.xrel * 960.0f / float(std::max(ww, 1)), e.motion.yrel * 640.0f / float(std::max(wh, 1)));
+                         }()) {
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && [&] { // (the camp's model turned and sized: in the screen's 960 x 640)
                              int ww = 1, wh = 1;
                              SDL_GetWindowSize(win, &ww, &wh);
                              return v.cr3CampDrag(e.motion.xrel * 960.0f / float(std::max(ww, 1)), e.motion.yrel * 640.0f / float(std::max(wh, 1)));
