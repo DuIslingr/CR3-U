@@ -352,6 +352,16 @@ public:
         gl::Viewport(x, drawableH_ - y - h, w, h);
     }
 
+    void setClip(bool on, float fx, float fy, float fw, float fh) override {
+        if (!on) {
+            gl::Disable(GL_SCISSOR_TEST);
+            return;
+        }
+        const int x = int(fx), y = int(fy), w = std::max(int(fw), 0), h = std::max(int(fh), 0);
+        gl::Enable(GL_SCISSOR_TEST);
+        gl::Scissor(x, drawableH_ - y - h, w, h);
+    }
+
     void clearDepth() override {
         gl::DepthMask(GL_TRUE);
         gl::Clear(GL_DEPTH_BUFFER_BIT);

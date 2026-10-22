@@ -5682,9 +5682,24 @@ struct Viewer {
             }
         }
         geneLabWasOpen = areaEvents && areaEvents->geneLab().open;
+        // (the Space Port: its clocks; --input port:talk / quests / explore / back / yes / no / ok /
+        // left / right / told, port:row<n> / cat<n>, for tests)
+        stepSpacePort(dt);
+        if (areaEvents && areaEvents->spacePort().open && !areaEvents->spacePort().talk && !inputScript.empty() &&
+            inputScript.front().compare(0, 5, "port:") == 0 && spacePortMenu.clock > 0.8f && spacePortMenu.since > 0.5f && uiClock >= inputNext) {
+            static const std::map<std::string, int> kPort = {{"talk", 0x11}, {"quests", 0x12}, {"explore", 0x13}, {"back", -1}, {"yes", kTapPortYes},
+                                                             {"no", kTapPortNo}, {"ok", 500}, {"left", 501}, {"right", 502}, {"told", kTapPortTold}};
+            const std::string want = inputScript.front().substr(5);
+            inputScript.pop_front();
+            inputNext = uiClock + 0.5f;
+            if (const auto it = kPort.find(want); it != kPort.end()) chooseSpacePort(*areaEvents, it->second);
+            else if (want.compare(0, 3, "row") == 0) chooseSpacePort(*areaEvents, 300 + std::atoi(want.c_str() + 3));
+            else if (want.compare(0, 3, "cat") == 0) chooseSpacePort(*areaEvents, 400 + std::atoi(want.c_str() + 3));
+        }
         // (CR3's camp: its clock; --input camp:open / genes / row<n> / card<n> / back / field<n> - a
         // field button, 0 Open .. 6 Shop)
         cr3Camp.since += dt;
+        campQuests.detailSince += dt;
         campEquip.modelSince += dt;
         myPage.toldSince += dt;
         myPage.screenSince += dt;
@@ -12343,6 +12358,7 @@ struct Viewer {
         const float t = geneLabClock;
         // the header (SetHeaderTitle: 30 the lab, 31 combining, 32 enhancing, 34 selling, 35 the repository)
         std::string sentence;
+        if (screen <= 1) sentence = menuAnnounce(0x26e); // (SetGeneSynthesisTopButton / SecondButton: "Select command.")
         if (screen == 2) sentence = menuAnnounce(geneMenu.mode == 1 ? 0x176 : 0x18e);
         if (screen == 3 || (screen == 7 && geneMenu.mode == 1)) sentence = menuAnnounce(0x177); // (asked: " ")
         if (screen == 7 && geneMenu.mode == 2) sentence = menuAnnounce(0x273);
@@ -12768,16 +12784,32 @@ struct Viewer {
                 cr3UiPut("comlistnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view, alpha);
         }
     }
+    // A comListMenu list (comListMenu::Pose, AddListItem): its rows behind two at each end -
+    // DummyAddListItem's blank (type 1, never shown) and an arrow row (type 2 / 3: comListArrowPanel,
+    // comListArrow_fr00 frame 0 up / 1 down - shown only with four rows or more); the focused row
+    // held at the third place (top = focus - 2), the list moving past it, five places in its mask
+    // (those after the focused 0.076 lower). The arrows here; its bar (comListMenu::AutoScroll:
+    // from two rows - the barLimitLow 0.15 lower - as far as the focus) by drawCr3ListBar(menu,
+    // false, focus, n, 1, view, 0.15f)
+    void drawCr3ListEnds(float lx, float ly, int n, int focus, const Mat4& view) {
+        if (n < 4) return;
+        for (const int k : {-1, n}) {
+            if (k < focus - 2 || k > focus + 2) continue;
+            const float x = cr3ListRowX(lx, k, focus), y = cr3ListRowY(ly, k, focus - 2, focus);
+            cr3UiPut("comlistarrowpanel", "", 0, x, y, view);
+            cr3UiPut("comlistarrow_fr00", "", k < 0 ? 0.0f : 1.0f / 30, x + 1.475f, y - 0.135f, view); // (comListItem::Pose: its arrow 1.475 across, 0.135 down)
+        }
+    }
     // A list's scroll bar (comListBarPanel / the short list's comListBarSPanel at the menu's call): its
     // comListBarCursor at rest at its call while the list fits, else (AutoScroll) 0.2 up and down
     // the bar - barLimitUp to barLimitLow - as far as the list is scrolled
-    void drawCr3ListBar(const UiFig& menu, bool shortList, int top, int n, int visible, const Mat4& view) {
+    void drawCr3ListBar(const UiFig& menu, bool shortList, int top, int n, int visible, const Mat4& view, float lowExtra = 0) {
         float bx, by, cx, cy, ux, uy, lx, ly;
         if (!cr3UiCall(menu, shortList ? "call_comListBarSPanel" : "call_comListBarPanel", bx, by)) return;
         UiFig& bar = cr3UiPut(shortList ? "comlistbarspanel" : "comlistbarpanel", "", 0, bx, by, view);
         if (!cr3UiCall(bar, "call_comListBarCursor", cx, cy)) return;
         if (n > visible && cr3UiCall(bar, "barLimitUp", ux, uy) && cr3UiCall(bar, "barLimitLow", lx, ly))
-            cy += 0.2f + std::clamp(float(top) / float(n - visible), 0.0f, 1.0f) * (ly - uy);
+            cy += 0.2f + std::clamp(float(top) / float(n - visible), 0.0f, 1.0f) * (ly + lowExtra - uy);
         cr3UiPut("comlistbarcursor", "", 0, cx, cy, view);
     }
     void cr3UiLabel(const UiFig& panel, const char* joint, const std::string& text, int w, int h, float shade = 1.0f) {
@@ -14066,9 +14098,10 @@ struct Viewer {
                 // (the rows)
                 if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                     const int n = int(ci.rows.size());
-                    const int top = std::clamp(ci.row - 2, 0, std::max(n - 5, 0)); // (five in its mask)
-                    drawCr3ListBar(menu, false, top, n, 5, view);
-                    for (int k = top; k < n && k < top + 5; ++k) {
+                    const int top = ci.row - 2; // (comListMenu: the focused row the third, the list past it)
+                    drawCr3ListBar(menu, false, ci.row, n, 1, view, 0.15f);
+                    drawCr3ListEnds(lx, ly, n, ci.row, view);
+                    for (int k = std::max(top, 0); k < n && k <= ci.row + 2; ++k) {
                         const auto [id, count] = ci.rows[size_t(k)];
                         const bool usable = cr3ItemUsable(id) || id / 100000 != 0;
                         const float alpha = usable ? 1.0f : 0.5f;
@@ -14646,9 +14679,10 @@ struct Viewer {
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = ce.step == 0 ? 3 : int(ce.rows.size());
                 const int focus = ce.step == 0 ? ce.slot : ce.row;
-                const int top = std::clamp(focus - 2, 0, std::max(n - 5, 0));
-                drawCr3ListBar(menu, false, top, n, 5, view);
-                for (int k = top; k < n && k < top + 5; ++k) {
+                const int top = focus - 2; // (comListMenu: the focused row the third, the list past it)
+                drawCr3ListBar(menu, false, focus, n, 1, view, 0.15f);
+                drawCr3ListEnds(lx, ly, n, focus, view);
+                for (int k = std::max(top, 0); k < n && k <= focus + 2; ++k) {
                     const int id = ce.step == 0 ? cr3WornItem(ce.chara, k) : ce.rows[size_t(k)];
                     Cr3FocusRow focusRow(*this, k == focus);
                     UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, focus), cr3ListRowY(ly, k, top, focus), view);
@@ -15038,6 +15072,7 @@ struct Viewer {
         std::vector<int> rows; // (quests() indices)
         int row = 0;
         bool detail = false;
+        float detailSince = 0; // (the detail's clock: spQstPosition's animation)
     } campQuests;
     static constexpr int kQuestTabs[4] = {9, 10, 0x12, 0x10};
     void campQuestRows() {
@@ -15061,30 +15096,32 @@ struct Viewer {
         campQuestRows();
         SDL_Log("camp: quests (%zu)", campQuests.rows.size());
     }
-    void drawCampQuests(int w, int h, const Mat4& view) {
-        const float t = cr3Camp.since;
+    void drawCampQuests(int w, int h, const Mat4& view) { drawCr3Quests(false, cr3Camp.since, w, h, view); }
+    // The quests' list and detail (the camp's - QuestMenuMain -, or the Space Port's - SpacePortMain:
+    // the header "Get Quest" (0x14), its sentence 0x271): the list hidden while a quest's detail is
+    // up (OutDeleteListMenu); the footer under both
+    void drawCr3Quests(bool port, float t, int w, int h, const Mat4& view) {
         Cr3CampQuests& cq = campQuests;
         float x, y, cx, cy;
         const auto* quests = game.cr3Db ? &game.cr3Db->quests() : nullptr;
-        UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", cq.detail ? 1.0f : t, 0, 0, view);
-        if (quests && cr3UiCall(lp, "call_comListMenu", x, y, w, h)) {
+        UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", t, 0, 0, view);
+        if (!cq.detail && quests && cr3UiCall(lp, "call_comListMenu", x, y, w, h)) {
             UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
             float labelX = 0, labelY = -100, lx, ly;
             drawCr3Categories(menu, kQuestTabs, 4, cq.category, 400, labelX, labelY, view);
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = int(cq.rows.size());
-                const int top = std::clamp(cq.row - 2, 0, std::max(n - 5, 0));
-                drawCr3ListBar(menu, false, top, n, 5, view);
-                for (int k = top; k < n && k < top + 5; ++k) {
+                const int top = cq.row - 2; // (comListMenu: the focused row the third, the list past it)
+                drawCr3ListBar(menu, false, cq.row, n, 1, view, 0.15f);
+                drawCr3ListEnds(lx, ly, n, cq.row, view);
+                for (int k = std::max(top, 0); k < n && k <= cq.row + 2; ++k) {
                     const cr3::Cr3OfflineDb::Quest& q = (*quests)[size_t(cq.rows[size_t(k)])];
-                    const auto held = game.cr3Items.find(q.item);
-                    const bool ready = q.item < 0 || (held != game.cr3Items.end() && held->second >= q.itemCount);
-                    const float alpha = 1;
+                    const bool ready = questReady(q);
                     Cr3FocusRow focusRow(*this, k == cq.row, ready);
-                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, cq.row), cr3ListRowY(ly, k, top, cq.row), view, alpha);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, cq.row), cr3ListRowY(ly, k, top, cq.row), view);
                     if (k == cq.row && ready && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                     if (cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
-                        cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), q.rank + 0xae), cx, cy, view, alpha);
+                        cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), q.rank + 0xae), cx, cy, view);
                     // (CreateQuestListItem: one ended "Clear" - comListClear -, else its level -
                     // comListmapLv, "Recommended LVL", with comListNumL_num00 at its call)
                     if (game.cr3Quests.ended.count(q.id)) {
@@ -15107,68 +15144,355 @@ struct Viewer {
         drawCr3CampFooter(w, h, view);
         if (cq.detail && quests && cq.row < int(cq.rows.size())) {
             dev->clearDepth();
-            const cr3::Cr3OfflineDb::Quest& q = (*quests)[size_t(cq.rows[size_t(cq.row)])];
-            UiFig& bgp = cr3UiPut("combgposition", "", 0, 0, 0, view); // (QuestDitailMenu's own background over the list)
-            if (cr3UiCall(bgp, "call_comBgMenu", x, y, w, h)) cr3UiPut("combgmenu", "", 0, x, y, view);
-            dev->clearDepth();
-            UiFig& pos = cr3UiPut("spqstposition", "", t, 0, 0, view);
-            if (cr3UiCall(pos, "ragdoll_call_spQstMenu", x, y, w, h)) {
-                UiFig& menu = cr3UiPut("spqstmenu", "", 0, x, y, view);
-                float tx, ty;
-                if (cr3UiCall(menu, "typeM_C01", tx, ty)) {
-                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(vsText("Quest_Title", q.id), 26, tx / 10, (ty - 0.15f) / 10, w, h, false, 0.3f);
-                }
-                if (cr3UiCall(menu, "call_spQstText", cx, cy)) {
-                    // (the text's lines at spQstText's joints - its bands masked to the menu: the first five)
-                    UiFig& text = uiFig("spqsttext");
-                    text.fig.place = cr3::Mat34();
-                    text.fig.place.m[3] = cx, text.fig.place.m[7] = cy;
-                    poseUi(text, "spqsttext", 0);
-                    const std::string body = vsText("Quest_text", q.id);
-                    size_t from = 0;
-                    for (int line = 1; line <= 5 && from <= body.size(); ++line) {
-                        size_t at = body.find("\\n", from);
-                        const size_t nl = body.find('\n', from);
-                        size_t skip = 2;
-                        if (nl != std::string::npos && (at == std::string::npos || nl < at)) at = nl, skip = 1;
-                        char joint[16];
-                        std::snprintf(joint, sizeof joint, "typeM_L%02d", line);
-                        cr3UiLabel(text, joint, body.substr(from, at == std::string::npos ? std::string::npos : at - from), w, h, 0.26f);
-                        if (at == std::string::npos) break;
-                        from = at + skip;
-                    }
-                }
-                // (the reward: questprizes' items - an item's name and count, gold, a gene's name)
-                int line = 1;
-                if (const cr3::BsonValue* prizes = game.cr3Db->table("questprizes"))
-                    for (const cr3::BsonValue& r : prizes->items) {
-                        if (r.integer("_id") != q.id) continue;
-                        if (const cr3::BsonValue* items = r.get("items"); items && items->isArray())
-                            for (const cr3::BsonValue& pz : items->items) {
-                                if (line > 3) break;
-                                const std::string c = pz.string("category");
-                                std::string text;
-                                if (c == "item") text = cr3ItemText(pz.integer("item_id"), false) + " x" + std::to_string(pz.integer("count"));
-                                else if (c == "gold") text = std::to_string(pz.integer("count")) + " ML";
-                                else if (c == "gene") text = cr3NameOf("gene_name.mbe", "GeneName", pz.integer("item_id"));
-                                if (text.empty()) continue;
-                                cr3UiLabel(menu, ("typeM_L0" + std::to_string(line++)).c_str(), text, w, h, 0.26f);
-                            }
-                    }
-                if (cr3UiCall(menu, "call_spQstBtn", cx, cy)) {
-                    UiFig& btn = cr3UiPut("spqstbtn", "", 0, cx, cy, view);
-                    float ax, ay, bx, by;
-                    if (cr3UiCall(btn, "tapAreaS01", ax, ay) && cr3UiCall(btn, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 500});
-                }
+            drawCr3QuestDetail((*quests)[size_t(cq.rows[size_t(cq.row)])], int(cq.rows.size()), cq.detailSince, w, h, view);
+        }
+        drawCr3Header(t, port ? 0x14 : 5, port && !cq.detail ? menuAnnounce(0x271) : std::string(), w, h, view);
+    }
+    // a quest whose goods are held (CreateQuestListItem: its item none, or GetShopItemHaveStock at
+    // its count) - its row enabled
+    bool questReady(const cr3::Cr3OfflineDb::Quest& q) const {
+        const auto held = game.cr3Items.find(q.item);
+        return q.item < 0 || (held != game.cr3Items.end() && held->second >= q.itemCount);
+    }
+    // A quest's detail (QuestDitailMenu, interface 0x7d - CreateQuestDetailMenu, the camp's and the
+    // Space Port's; no background of its own): spQstMenu at spQstPosition's ragdoll_call_spQstMenu -
+    // the title (Quest_Title) at typeM_C01, dark; "No." and the quest's number (its record's +4:
+    // spQstNumPanel_num00's three spQstNum_fr00, zeros kept); Quest_text's lines - the reward - at
+    // typeM_L01 (white, on the red bar), L02, L03 (dark); Quest_message's ("{item_cnt}" the goods'
+    // count) on spQstText's bands - typeM_L01 .. L10, white, five shown: the window masked below
+    // (SetMaskSprite: a 10.15 x 2.5 quad from y -0.75 down); its bar (spQstBar, the spQstCursor at
+    // its call - moved with six lines or more, AutoScroll); the OK button (spQstBtn); the clear mark
+    // once ended (SetClearMark: spQstClear on its _loop at call_spQstClear); with two quests or more
+    // the flick arrows (spQstArrow on its _loop at the position's ragdoll_call_spQstArrow -
+    // SetQuestDetailMenuChangeButton). Taps: 500 OK (only enabled - CheckOkButtonPermit), 501 / 502
+    // the arrows
+    void drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, float t, int w, int h, const Mat4& view, bool okOn = true) {
+        float x, y, cx, cy, ax, ay, bx, by;
+        UiFig& pos = cr3UiPut("spqstposition", "", t, 0, 0, view);
+        if (count > 1 && cr3UiCall(pos, "ragdoll_call_spQstArrow", x, y, w, h)) {
+            UiFig& arrow = cr3UiPut("spqstarrow", "spqstarrow_loop", uiClock, x, y, view, 1, true);
+            if (cr3UiCall(arrow, "tapAreaS01", ax, ay) && cr3UiCall(arrow, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 501});
+            if (cr3UiCall(arrow, "tapAreaS02", ax, ay) && cr3UiCall(arrow, "tapAreaE02", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 502});
+        }
+        if (!cr3UiCall(pos, "ragdoll_call_spQstMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("spqstmenu", "", 0, x, y, view);
+        float tx, ty;
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        // (SetStringData: utils::FilterMessage - {name}, {team} - over each)
+        auto filtered = [&](const char* file) { return areaEvents ? areaEvents->filterMessage(vsText(file, q.id)) : vsText(file, q.id); };
+        if (cr3UiCall(menu, "typeM_C01", tx, ty)) drawUiText(filtered("Quest_Title"), 26, tx / 10, (ty - 0.15f) / 10, w, h, false, 0.3f);
+        if (cr3UiCall(menu, "call_spQstNumPanel_num00", cx, cy)) {
+            UiFig& num = cr3UiPut("spqstnumpanel_num00", "", 0, cx, cy, view);
+            const int digit[3] = {q.no % 1000 / 100, q.no % 100 / 10, q.no % 10};
+            for (int k = 0; k < 3; ++k) {
+                float dx, dy;
+                if (cr3UiCall(num, "call_spQstNum_fr00_00" + std::to_string(k + 1), dx, dy)) cr3UiPut("spqstnum_fr00", "", float(digit[k]) / 30, dx, dy, view);
             }
         }
-        drawCr3Header(t, 5, {}, w, h, view);
+        auto lines = [](const std::string& text) { // (Cr3UtilNPrint: a line each)
+            std::vector<std::string> out;
+            size_t from = 0;
+            while (from <= text.size()) {
+                size_t at = text.find("\\n", from), skip = 2;
+                const size_t nl = text.find('\n', from);
+                if (nl != std::string::npos && (at == std::string::npos || nl < at)) at = nl, skip = 1;
+                out.push_back(text.substr(from, at == std::string::npos ? std::string::npos : at - from));
+                if (at == std::string::npos) break;
+                from = at + skip;
+            }
+            return out;
+        };
+        const std::vector<std::string> reward = lines(filtered("Quest_text"));
+        for (size_t k = 0; k < reward.size() && k < 3; ++k)
+            cr3UiLabel(menu, ("typeM_L0" + std::to_string(k + 1)).c_str(), reward[k], w, h, k == 0 ? 1.0f : 0.26f);
+        if (cr3UiCall(menu, "call_spQstText", cx, cy)) {
+            std::string body = filtered("Quest_message");
+            for (size_t at; (at = body.find("{item_cnt}")) != std::string::npos;) body.replace(at, 10, cr3Number(std::max(q.itemCount, 0)));
+            const std::vector<std::string> text = lines(body);
+            // (the window: the mask below it from y -0.75 - the bands masked there)
+            const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+            dev->setClip(true, float(screenX), float(screenY), float(screenW), float(screenY) + float(screenH) / 2 + 0.75f * k - float(screenY));
+            UiFig& bands = cr3UiPut("spqsttext", "", 0, cx, cy, view);
+            for (size_t n = 0; n < text.size() && n < 10; ++n)
+                cr3UiLabel(bands, ("typeM_L" + std::string(n < 9 ? "0" : "") + std::to_string(n + 1)).c_str(), text[n], w, h, 1.0f);
+            dev->setClip(false);
+        }
+        if (cr3UiCall(menu, "call_spQstBar", cx, cy)) {
+            UiFig& bar = cr3UiPut("spqstbar", "", 0, cx, cy, view);
+            if (cr3UiCall(bar, "call_spQstCursor", cx, cy)) cr3UiPut("spqstcursor", "", 0, cx, cy, view);
+        }
+        if (game.cr3Quests.ended.count(q.id) && cr3UiCall(menu, "call_spQstClear", cx, cy)) cr3UiPut("spqstclear", "spqstclear_loop", uiClock, cx, cy, view, 1, true);
+        if (cr3UiCall(menu, "call_spQstBtn", cx, cy)) {
+            if (!okOn) cr3UiTint[0] = cr3UiTint[1] = 0.549f, cr3UiTint[2] = 0.655f; // (ControlQuestDetailMenuOkButton(false))
+            UiFig& btn = cr3UiPut("spqstbtn", "", 0, cx, cy, view);
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+            if (okOn && cr3UiCall(btn, "tapAreaS01", ax, ay) && cr3UiCall(btn, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 500});
+        }
+    }
+    // ---- the Space Port (EventRuntime::SpacePort: SpacePortMain 0x7b) ----
+    // Over the field and Sally's portrait: the header (0x13 "Spaceport", "Select command." 0x26e; 0x14
+    // "Get Quest" with the quests), its buttons (comBtnMenu 0x2c, SetSpacePortTopButton: Talk 0x11,
+    // Daily Quest 0x12, Explore 0x13 - off unless a flag of 1050 .. 1063 is set) and the footer
+    // (SpacePortFutter 0x7c: comFtrPosition's team and back). Talk: her talk (the town's c121a_talk)
+    // with the menu set aside. Daily Quest (SpacePortMain 9 / 10): FindQuests (request 0x45), then -
+    // none at all: told 0x1a8 - the quests (CreateQuestList: the camp's four tabs, Sub Quests first
+    // the first time when there's no main one) and a quest's detail, its arrows going round the list;
+    // its OK (CheckOkButtonPermit: not the quest set off on already, nor a current one, its goods held)
+    // asks 0x124 with its title, yes setting off (Cr3FadeOut 5 frames, a second: the global work's 24
+    // the quest, CheckQuestReturn 2). Explore asks 0x125; yes - SelectFreeSpacePort, the town's
+    // quest_cancel - leads to the world select (0x22: WorldSelectMenu - not yet in: back to the town,
+    // as Back). Back: Cr3FadeOut 5 frames, a second, CheckQuestReturn 1
+    struct Cr3SpacePortMenu {
+        int screen = 0;       // 0 the buttons, 1 the quests (a detail: campQuests.detail), 2 set off?, 3 explore?, 4 told, 5 leaving
+        float since = 0;      // (the screen's)
+        float clock = 0;      // (since it opened: the header's and buttons' io)
+        int focus = 0;        // (the buttons' - keys)
+        int leave = 0;        // (5: CheckQuestReturn's to be)
+        bool wasOpen = false;
+        bool first = true;    // (the quests not yet shown: Sub Quests first without a main one)
+        std::string told;
+    } spacePortMenu;
+    std::vector<Cr3GeneLabTap> spacePortTaps;
+    static constexpr int kSpacePortButtons[3] = {0x11, 0x12, 0x13};
+    static constexpr int kTapPortYes = 601, kTapPortNo = 602, kTapPortTold = 603;
+    bool spacePortButtonOn(int id) const {
+        if (id != 0x13) return true;
+        for (int f = 1050; f <= 1063; ++f) // (DAT_014cf970 >> 26, DAT_014cf974's byte)
+            if (game.flag(f)) return true;
+        return false;
+    }
+    void spacePortScreen(int screen) { spacePortMenu.screen = screen, spacePortMenu.since = 0; }
+    // (SpacePortMain 10: the quests listed - none: told; Sub Quests first the first time without main ones)
+    void openSpacePortQuests(bool again = false) {
+        Cr3SpacePortMenu& m = spacePortMenu;
+        if (game.cr3Db) game.cr3Db->findQuests(game, std::time(nullptr));
+        const size_t main = game.cr3Db ? game.cr3Db->standingQuests().size() : 0, found = game.cr3Db ? game.cr3Db->foundQuests().size() : 0;
+        if (main == 0 && found == 0) {
+            m.told = menuAnnounce(0x1a8);
+            return spacePortScreen(4);
+        }
+        Cr3CampQuests& cq = campQuests;
+        const int category = cq.category, row = again ? cq.row : 0; // (SetCategoryFocus: again - after "no" - at its row)
+        cq = Cr3CampQuests();
+        cq.category = m.first && main == 0 ? 1 : category;
+        cq.row = row;
+        m.first = false;
+        campQuestRows();
+        spacePortScreen(1);
+        SDL_Log("space port: quests (%zu)", cq.rows.size());
+    }
+    void spacePortLeave(int questReturn) {
+        Cr3SpacePortMenu& m = spacePortMenu;
+        if (areaEvents) areaEvents->menuFade(true, 5);
+        m.leave = questReturn;
+        spacePortScreen(5);
+    }
+    bool spacePortOkOn(const cr3::Cr3OfflineDb::Quest& q) const {
+        const Cr3CampQuests& cq = campQuests;
+        if (game.globalWork[24] == q.id || cq.category == 3) return false;
+        return cq.category == 2 || questReady(q);
+    }
+    void drawCr3SpacePort(cr3::EventRuntime& ev, int w, int h) {
+        const cr3::EventRuntime::SpacePort& sp = ev.spacePort();
+        spacePortTaps.clear();
+        if (!sp.open || sp.talk) return;
+        Cr3SpacePortMenu& m = spacePortMenu;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        std::vector<Cr3GeneLabTap> keep;
+        keep.swap(cr3CampTaps); // (the screen's taps gathered as the camp's, then its own)
+        if (m.screen == 1) {
+            drawCr3Quests(true, m.since, w, h, view);
+            const auto* qs = game.cr3Db ? &game.cr3Db->quests() : nullptr;
+            const Cr3CampQuests& cq = campQuests;
+            if (cq.detail && qs && cq.row < int(cq.rows.size()) && !spacePortOkOn((*qs)[size_t(cq.rows[size_t(cq.row)])])) // (its OK off)
+                cr3CampTaps.erase(std::remove_if(cr3CampTaps.begin(), cr3CampTaps.end(), [](const Cr3GeneLabTap& t) { return t.id == 500; }), cr3CampTaps.end());
+        } else if (m.screen == 2) { // (0xf: the detail gone, the header and footer under the question)
+            drawCr3Header(m.clock, 0x14, {}, w, h, view);
+            drawCr3CampFooter(w, h, view);
+        } else if (m.screen != 5) {
+            drawCr3Header(m.clock, 0x13, menuAnnounce(0x26e), w, h, view);
+            float x, y;
+            UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
+            if (m.screen == 0 && cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", m.since, x, y, view);
+                for (int b = 0; b < 3; ++b) {
+                    float px, py, cx, cy;
+                    if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(4 + b), px, py)) continue;
+                    const int id = kSpacePortButtons[b];
+                    const bool off = !spacePortButtonOn(id);
+                    if (off) cr3UiTint[0] = cr3UiTint[1] = 0.549f, cr3UiTint[2] = 0.655f;
+                    UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
+                    if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy)) cr3UiPut(b == m.focus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
+                    cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+                    float ax, ay, bx, by;
+                    if (!off && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, id});
+                }
+            }
+            drawCr3CampFooter(w, h, view);
+        }
+        if (m.screen == 2 || m.screen == 3) {
+            std::string ask = menuAnnounce(m.screen == 2 ? 0x124 : 0x125);
+            if (m.screen == 2) { // (Cr3UtilSPrint: the quest's title for its %s)
+                const auto* qs = game.cr3Db ? &game.cr3Db->quests() : nullptr;
+                const Cr3CampQuests& cq = campQuests;
+                const std::string title = qs && cq.row < int(cq.rows.size()) ? vsText("Quest_Title", (*qs)[size_t(cq.rows[size_t(cq.row)])].id) : std::string();
+                if (const size_t at = ask.find("%s"); at != std::string::npos) ask.replace(at, 2, title);
+            }
+            cr3CampTaps.erase(std::remove_if(cr3CampTaps.begin(), cr3CampTaps.end(), [](const Cr3GeneLabTap& t) { return t.id != -1; }), cr3CampTaps.end());
+            cr3CampTaps.clear(); // (the question holds the screen)
+            drawCr3Asked(ask, m.since, 0, true, kTapPortYes, kTapPortNo, w, h, view);
+        }
+        if (m.screen == 4) {
+            cr3CampTaps.clear();
+            drawCr3Told(m.told, m.since, kTapPortTold, w, h, view);
+        }
+        spacePortTaps.swap(cr3CampTaps);
+        cr3CampTaps.swap(keep);
+    }
+    void chooseSpacePort(cr3::EventRuntime& ev, int id) {
+        Cr3SpacePortMenu& m = spacePortMenu;
+        Cr3CampQuests& cq = campQuests;
+        if (m.screen == 5) return;
+        if (m.screen == 0) {
+            if (id == -1) return audio.playSe("com_004", false), ev.spacePortClerk(false), spacePortLeave(1); // (0x16: Sally away, faded out)
+            if (id == 0x11) return audio.playSe("com_003", false), ev.spacePortTalk();
+            if (id == 0x12) return audio.playSe("com_003", false), openSpacePortQuests();
+            if (id == 0x13 && spacePortButtonOn(id)) return audio.playSe("com_003", false), spacePortScreen(3);
+            return;
+        }
+        if (m.screen == 4) return spacePortScreen(0); // (0xe: the alert tapped - the buttons)
+        if (m.screen == 3) { // (0x14: Explore?)
+            if (id == kTapPortYes) {
+                audio.playSe("com_003", false);
+                ev.spacePortExplore();
+                return spacePortLeave(1); // (WorldSelectMenu to come)
+            }
+            if (id == kTapPortNo || id == -1) return audio.playSe("com_004", false), spacePortScreen(0);
+            return;
+        }
+        if (m.screen == 2) { // (0x10: set off?)
+            if (id == kTapPortYes) {
+                audio.playSe("com_003", false);
+                return spacePortLeave(2);
+            }
+            if (id == kTapPortNo || id == -1) audio.playSe("com_004", false), ev.spacePortClerk(true), openSpacePortQuests(true); // (0x10: SetSugerCutIn, the list again)
+            return;
+        }
+        // the quests (SpacePortMain 6 / 0xc)
+        if (cq.detail) {
+            if (id == -1) return audio.playSe("com_004", false), ev.spacePortClerk(true), (void)(cq.detail = false); // (0xc: SetSugerCutIn)
+            if (id == 500) {
+                audio.playSe("com_003", false);
+                cq.detail = false; // (EndQuestDetailMenu, then asked)
+                return spacePortScreen(2);
+            }
+            return chooseCampQuests(id); // (the arrows)
+        }
+        if (id == -1) { // (back: the buttons)
+            audio.playSe("com_004", false);
+            return spacePortScreen(0);
+        }
+        chooseCampQuests(id);
+        if (cq.detail) ev.spacePortClerk(false); // (6: EndCutInMenu(2), the detail when she's gone)
+    }
+    bool spacePortClick(float fx, float fy) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || !ev->spacePort().open || ev->spacePort().talk) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = spacePortTaps.rbegin(); it != spacePortTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                chooseSpacePort(*ev, it->id);
+                return true;
+            }
+        return true; // (the menu holds the screen)
+    }
+    // the keys: up / down the buttons or the rows, left / right the tabs (the detail's arrows), Enter
+    // chooses (Y / N asked), Escape / Backspace goes back
+    bool spacePortKey(SDL_Keycode key) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || !ev->spacePort().open || ev->spacePort().talk) return false;
+        Cr3SpacePortMenu& m = spacePortMenu;
+        const bool up = key == SDLK_UP, down = key == SDLK_DOWN, enter = key == SDLK_RETURN || key == SDLK_SPACE;
+        const bool back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
+        if (m.screen == 0) {
+            if (up || down) {
+                for (int step = 0; step < 3; ++step) {
+                    m.focus = (m.focus + (down ? 1 : 2)) % 3;
+                    if (spacePortButtonOn(kSpacePortButtons[m.focus])) break;
+                }
+                audio.playSe("com_002", false);
+            } else if (enter) chooseSpacePort(*ev, kSpacePortButtons[m.focus]);
+            else if (back) chooseSpacePort(*ev, -1);
+            return true;
+        }
+        if (m.screen == 2 || m.screen == 3) {
+            if (enter || key == SDLK_Y) chooseSpacePort(*ev, kTapPortYes);
+            else if (back || key == SDLK_N) chooseSpacePort(*ev, kTapPortNo);
+            return true;
+        }
+        if (m.screen == 4) {
+            if (enter || back) chooseSpacePort(*ev, kTapPortTold);
+            return true;
+        }
+        if (m.screen == 1) {
+            const Cr3CampQuests& cq = campQuests;
+            if (back) return chooseSpacePort(*ev, -1), true;
+            if (cq.detail) {
+                if (enter) chooseSpacePort(*ev, 500);
+                else if (key == SDLK_LEFT || key == SDLK_RIGHT) chooseSpacePort(*ev, key == SDLK_LEFT ? 501 : 502);
+                return true;
+            }
+            const int n = int(cq.rows.size());
+            if (key == SDLK_LEFT || key == SDLK_RIGHT) chooseSpacePort(*ev, 400 + (cq.category + (key == SDLK_RIGHT ? 1 : 3)) % 4);
+            else if ((up || down) && n > 0) chooseSpacePort(*ev, 300 + std::clamp(cq.row + (down ? 1 : -1), 0, n - 1));
+            else if (enter && n > 0) chooseSpacePort(*ev, 300 + cq.row);
+        }
+        return true;
+    }
+    // (each frame: the clocks; leaving - a second after the fade - the result: the quest set off on in
+    // the global work's 24)
+    void stepSpacePort(float dt) {
+        cr3::EventRuntime* ev = areaEvents.get();
+        Cr3SpacePortMenu& m = spacePortMenu;
+        const bool open = ev && ev->spacePort().open;
+        if (open && !m.wasOpen) {
+            const bool first = m.first;
+            m = Cr3SpacePortMenu();
+            m.first = first;
+            campQuests = Cr3CampQuests();
+            SDL_Log("space port: open");
+        }
+        m.wasOpen = open;
+        if (!open) return;
+        m.clock += dt, m.since += dt;
+        if (m.screen == 5 && m.since >= 1.0f) {
+            if (m.leave == 2) {
+                const auto* qs = game.cr3Db ? &game.cr3Db->quests() : nullptr;
+                const Cr3CampQuests& cq = campQuests;
+                if (qs && cq.row < int(cq.rows.size())) game.globalWork[24] = (*qs)[size_t(cq.rows[size_t(cq.row)])].id;
+                SDL_Log("space port: set off on quest %d", game.globalWork[24]);
+            } else SDL_Log("space port: closed (%d)", m.leave);
+            ev->spacePortEnd(m.leave);
+        }
     }
     void chooseCampQuests(int id) {
         Cr3CampQuests& cq = campQuests;
         if (cq.detail) {
             if (id == 500 || id == -1) cq.detail = false, cr3Camp.since = 1, audio.playSe("com_004", false);
+            if ((id == 501 || id == 502) && !cq.rows.empty()) { // (the arrows: the list's quest before or after, round)
+                const int n = int(cq.rows.size());
+                cq.row = (cq.row + (id == 501 ? n - 1 : 1)) % n, cq.detailSince = 0;
+                audio.playSe("com_002", false);
+            }
             return;
         }
         if (id == -1) {
@@ -15192,7 +15516,7 @@ struct Viewer {
                 return;
             }
             audio.playSe("com_003", false);
-            cq.detail = true, cr3Camp.since = 0;
+            cq.detail = true, cq.detailSince = 0;
         }
     }
     void campQuestsKey(SDL_Keycode key) {
@@ -15200,7 +15524,7 @@ struct Viewer {
         const bool up = key == SDLK_UP, down = key == SDLK_DOWN, left = key == SDLK_LEFT, right = key == SDLK_RIGHT;
         const bool enter = key == SDLK_RETURN || key == SDLK_SPACE;
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampQuests(-1);
-        if (cq.detail) return enter ? chooseCampQuests(500) : void();
+        if (cq.detail) return enter ? chooseCampQuests(500) : left || right ? chooseCampQuests(left ? 501 : 502) : void();
         const int n = int(cq.rows.size());
         if (left || right) chooseCampQuests(400 + (cq.category + (right ? 1 : 3)) % 4);
         else if ((up || down) && n > 0) chooseCampQuests(300 + std::clamp(cq.row + (down ? 1 : -1), 0, n - 1));
@@ -15303,9 +15627,10 @@ struct Viewer {
             drawCr3Categories(menu, kStatusTabs, 4, cs.category, 400, labelX, labelY, view);
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = int(rows.size());
-                const int top = std::clamp(cs.row - 2, 0, std::max(n - 5, 0));
-                drawCr3ListBar(menu, false, top, n, 5, view);
-                for (int r = top; r < n && r < top + 5; ++r) {
+                const int top = cs.row - 2; // (comListMenu: the focused row the third, the list past it)
+                drawCr3ListBar(menu, false, cs.row, n, 1, view, 0.15f);
+                drawCr3ListEnds(lx, ly, n, cs.row, view);
+                for (int r = std::max(top, 0); r < n && r <= cs.row + 2; ++r) {
                     Cr3FocusRow focusRow(*this, r == cs.row);
                     UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, r, cs.row), cr3ListRowY(ly, r, top, cs.row), view);
                     if (r == cs.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
@@ -17423,12 +17748,17 @@ struct Viewer {
                         }
                     }
                 }
+                const int listN = int(cr3List.size());
+                if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
+                    // (BtlItemListUI / BtlCommandListUI: a comListMenu - drawCr3ListEnds -, no bar - as the reference)
+                    drawCr3ListEnds(lx, ly, listN, cr3Focus, view);
+                }
                 if (cr3UiCall(menu, "call_comListPanel", lx, ly))
-                    for (size_t k = 0; k < cr3List.size() && k < 6; ++k) {
-                        const Cr3ListRow& row = cr3List[k];
-                        const float ry = ly - 0.76f * float(k), alpha = 1;
-                        Cr3FocusRow focusRow(*this, int(k) == cr3Focus, row.usable);
-                        UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ry, view, alpha);
+                    for (int k = std::max(cr3Focus - 2, 0); k < listN && k <= cr3Focus + 2; ++k) {
+                        const Cr3ListRow& row = cr3List[size_t(k)];
+                        const float ry = cr3ListRowY(ly, k, cr3Focus - 2, cr3Focus), alpha = 1;
+                        Cr3FocusRow focusRow(*this, k == cr3Focus, row.usable);
+                        UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, cr3Focus), ry, view, alpha);
                         float cx, cy;
                         if (int(k) == cr3Focus && row.usable && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                         const int number = row.item ? row.count : row.cost;
@@ -17571,6 +17901,7 @@ struct Viewer {
         if (cr3CutInsLoaded) drawCr3CutIns(screenW, screenH);
         else drawCutIns(screenW, screenH);
         drawCr3GeneLab(*ev, screenW, screenH, true);
+        drawCr3SpacePort(*ev, screenW, screenH);
         if (ev == areaEvents.get()) drawCr3Field(screenW, screenH); // (the field's buttons, the camp)
         if (ev == areaEvents.get()) drawVs(screenW, screenH);      // (the VS mode's menus)
         if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn)) {
@@ -18351,6 +18682,7 @@ int main(int argc, char** argv) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
                     if (v.geneLabKey(k)) continue; // (the gene lab's keys: its back is Escape too)
+                    if (v.spacePortKey(k)) continue; // (the Space Port's)
                     if (v.vsKey(k)) continue;       // (the VS mode's)
                     if (v.cr3CampKey(k)) continue;  // (CR3's camp: C opens it)
                     if (k == SDLK_ESCAPE) running = false;
@@ -18481,6 +18813,7 @@ int main(int argc, char** argv) {
                     else if (v.titleMenu.stage) v.titleClick(fx, fy);
                     else if (v.yesNoClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
+                    else if (v.spacePortClick(fx, fy)) {}
                     else if (v.vsClick(fx, fy)) {}
                     else if (v.cr3CampClick(fx, fy)) {}
                     else if (v.battleMode && v.choosing) v.battleClick(fx, fy);

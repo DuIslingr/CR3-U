@@ -223,6 +223,29 @@ public:
     // the clerk's cut-in away while a menu holds the screen (GeneSynthesisMain 9: EndCutInMenu(2))
     // and back after it (CreateGeneSynthesisClerk)
     void geneLabClerk(bool shown);
+    // The Space Port (SpacePortMain, interface 0x7b - InterfaceWindow.CreateSpacePortMenuMain from a
+    // town's ReserveSpacePortMenu: from black (Cr3FadeIn 5 frames), the header "Spaceport" (0x13),
+    // Sally's portrait - cutIn121_L01 - the left cut-in at the shop's place (SetSugerCutIn), its
+    // buttons and footer). The script loops while CheckQuestReturn is 0 (InterfaceMain +0x9c - 1
+    // back, 2 a quest set off on - its id the global work's 24 -, 3 the world select's), running the
+    // clerk's talk while CheckSpacePortSelectTalk (+0x1c, until EndSpacePortTalk) and quest_cancel
+    // when SelectFreeSpacePort (+0x31, Explore answered yes - once)
+    struct SpacePort {
+        bool open = false;
+        bool talk = false;    // (Talk chosen: the menu set aside until EndSpacePortTalk)
+        bool explore = false; // (Explore's question answered yes, not yet asked for)
+        int questReturn = 0;
+    };
+    const SpacePort& spacePort() const { return spacePort_; }
+    void spacePortTalk();
+    void spacePortExplore() { if (spacePort_.open) spacePort_.explore = true; }
+    // Sally away while a quest's detail is up (SpacePortMain 6: EndCutInMenu(2)) and back after it
+    // (SetSugerCutIn)
+    void spacePortClerk(bool shown);
+    // the menu done (SpacePortMain 0x17 / 0x18: back 1, a quest 2): faded out, the clerk away
+    void spacePortEnd(int questReturn);
+    // a fade the menus start (Cr3FadeOut(0, n) / Cr3FadeIn: black over n frames)
+    void menuFade(bool out, int frames) { fade_.start(0, frames, out ? 0 : 1, out ? 1 : 0); }
     std::string cutInImage(int id) const; // a loaded face's image ("" none)
 
     // The tutorials' pictures (Cr3FieldTutorial in the field and the battles; InterfaceWindow's
@@ -250,6 +273,7 @@ private:
     std::unique_ptr<ScriptVM> vm_;
     EventScene scene_;
     EventFade fade_;
+    SpacePort spacePort_;
     std::map<int, std::string> faces_;
     TextData text_, names_;
     std::map<int, TextData> windowText_; // (LoadMessageData(window, name): that window's own)

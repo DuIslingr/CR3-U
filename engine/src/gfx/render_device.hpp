@@ -163,6 +163,9 @@ public:
     virtual void setViewport(float x, float y, float w, float h) = 0;
     virtual void clearDepth() = 0;
     virtual void setColorWrite(bool on) = 0;
+    // What's drawn kept inside a rectangle (drawable pixels, top-left origin) until switched off -
+    // the menus' mask sprites (a list's or a text's window)
+    virtual void setClip(bool /*on*/, float /*x*/ = 0, float /*y*/ = 0, float /*w*/ = 0, float /*h*/ = 0) {}
     // 2D quads drawn additively (src alpha, one) until switched back - the scene effects' tex2d flag
     virtual void setQuadAdditive(bool /*on*/) {}
     // A textured quad: six vertices of (x, y, u, v); `proj` maps them to clip space (GL style)

@@ -15,6 +15,7 @@
 // X(return type, name, parameter list)
 #define CR_GL_FUNCTIONS(X) \
     X(void, Viewport, (GLint x, GLint y, GLsizei w, GLsizei h)) \
+    X(void, Scissor, (GLint x, GLint y, GLsizei w, GLsizei h)) \
     X(void, ClearColor, (GLfloat r, GLfloat g, GLfloat b, GLfloat a)) \
     X(void, Clear, (GLbitfield mask)) \
     X(void, Enable, (GLenum cap)) \

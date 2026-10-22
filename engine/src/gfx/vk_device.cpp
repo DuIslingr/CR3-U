@@ -774,6 +774,17 @@ public:
         haveFrame_ = true;
     }
 
+    void setClip(bool on, float x, float y, float w, float h) override {
+        if (!cmd_) return;
+        VkRect2D r{{0, 0}, {uint32_t(passW_), uint32_t(passH_)}};
+        if (on) {
+            const int x0 = std::clamp(int(x), 0, passW_), y0 = std::clamp(int(y), 0, passH_);
+            const int x1 = std::clamp(int(x + w), x0, passW_), y1 = std::clamp(int(y + h), y0, passH_);
+            r = VkRect2D{{x0, y0}, {uint32_t(x1 - x0), uint32_t(y1 - y0)}};
+        }
+        vkCmdSetScissor(cmd_, 0, 1, &r);
+    }
+
     void setViewport(float x, float y, float w, float h) override {
         if (!cmd_) return;
         if (!inScene_) { // whole pixels, as GL's

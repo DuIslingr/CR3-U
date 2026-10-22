@@ -507,10 +507,27 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
   With GENE_CAPACITY genes held - 0x232; else asked (0x118) and MergeGift.
 - Quests (QuestMenuMain 0x6a, mode 1): FindQuests, then the buttons 9, 10, 0x12, 0x10 - Main Quest
   (rank 0), Sub Quests (the drawn), Tutorial (rank 6), Current (begun, not ended); a row (CopyQuest:
-  id, rank, level, item, count) its icon rank + 0xae, its title `message\Quest_Title` by the id, ended
-  ones `comListClear`, those whose item isn't held dimmed. Its detail (QuestDitailMenu: `comBgMenu`,
-  `spQstPosition`, `spQstMenu` - the title at `typeM_C01`, `Quest_text`'s lines at `spQstText`'s, the
-  reward - questprizes - at `typeM_L01` .., `spQstBtn`).
+  id, rank, level, item, count; CreateQuestListItem) its icon rank + 0xae, its title
+  `message\Quest_Title` by the id, ended ones `comListClear`, else `comListmapLv` ("Recommended LVL")
+  with the level in `comListNumL_num00`; one whose goods aren't held not enabled. Its detail
+  (QuestDitailMenu, interface 0x7d - CreateQuestDetailMenu; no background, the list gone under it,
+  the footer kept): `spQstMenu` at `spQstPosition`'s `ragdoll_call_spQstMenu` - the title at
+  `typeM_C01` (dark), "No." with the record's +4 (`spQstNumPanel_num00`'s three `spQstNum_fr00`, zeros
+  kept), `Quest_text`'s lines - the reward - at `typeM_L01` (white, the red bar) .. L03, and
+  `Quest_message`'s ("{item_cnt}" the goods' count; FilterMessage's `{name}`) white on `spQstText`'s
+  ten bands (`typeM_L01` .. L10, 0.34 apart), the window masked from y -0.75 down (SetMaskSprite: a
+  10.15 x 2.5 quad) - five shown; `spQstBar` and its `spQstCursor`; `spQstClear` (its _loop) once
+  ended; `spQstBtn` (OK); with two quests or more `spQstArrow` (its _loop) at
+  `ragdoll_call_spQstArrow`, going round the list. Interface 0x7e is the clear's (CreateClearQuest
+  DetailMenu: `comBgMenu`, `spQstTitleT/BMenu`, `spQstClearPosition`).
+- Lists (comListMenu: Items, Equipment, Quests, Status, the battle's): DummyAddListItem's rows at each
+  end - a blank (type 1, never shown) and an arrow row (type 2 / 3: `comListArrowPanel`, its
+  `comListArrow_fr00` - frame 0 up, 1 down - 1.475 across and 0.135 down from it; shown with four rows
+  or more) -; the focused row held at the third place, the list moving past it (comListMenu::Pose),
+  five places in the mask; the bar (AutoScroll: from two rows, `barLimitLow` 0.15 lower). A row not
+  enabled (AddListItem's bool) coloured (0.549, 0.549, 0.655), its name half as bright, without the
+  cursor. The category buttons not in focus 0.8 x and coloured the same (ChangeCategoryPanel),
+  between `comListCArrowPanel`'s arrows (on its _loop).
 - Status (StatusMain 0xbc, StatusMenu 0xbd): `camStaCut` (the character's picture, frame its id - 1)
   at `camStaPosition`'s `call_camStaCut` + (1.92, -2.56); four categories (StatusMain::Update's
   SetCategoryBarWithText: icons 0xe, 3, 0x15, 4, texts 0x42 .. 0x45; SetStatusParameter) - the status
@@ -624,6 +641,30 @@ xa.bb" (0x2a3, Weapon +0x44); armour "Weight: n" (0x288), physical / magic / ele
 down (0x289 .. 0x298), "/No burning" / "/No freezing" (kinds 45 / 46 in Armor +0x70's list); an
 accessory HP, Attack, Defense, Speed, Luck (0x29b .. 0x29f) with "+ n" / "− n" (0x2a1 / 0x2a2), "/"
 between. Checked against the reference video (part 7, 821 s: Dragon Tail's line, word for word).
+
+### The Space Port (CR3)
+
+SpacePortMain (interface 0x7b) from a town's ReserveSpacePortMenu (InterfaceWindow.
+CreateSpacePortMenuMain: from black over 5 frames, Sally's portrait - `cutIn121_L01` - the left
+cut-in at the shop's place, SetSugerCutIn). The header "Spaceport" (title 0x13; "Select command." 0x26e),
+the buttons (comBtnMenu 0x2c, SetSpacePortTopButton): Talk 0x11, Daily Quest 0x12, Explore 0x13 - off
+unless a flag of 1050 .. 1063 is set (the dungeons WorldSelect_NextTo opens) -, the footer
+(SpacePortFutter 0x7c: the camp's team and back). The script loops while CheckQuestReturn
+(InterfaceMain +0x9c) is 0: Talk - CheckSpacePortSelectTalk true until EndSpacePortTalk - runs
+`c121a_talk` with the menu set aside; Daily Quest (SpacePortMain 9, 10): FindQuests (request 0x45),
+none at all told (0x1a8), else the quests - the camp's list, title 0x14 "Get Quest", 0x271 - with Sub
+Quests first the first time when there's no main one; a quest's detail with Sally away; its OK
+(CheckOkButtonPermit: not the quest set off on, nor a Current one, its goods held) asks 0x124 with the
+title; yes: Cr3FadeOut(0, 5), a second, the global work's 24 the quest, CheckQuestReturn 2 - the
+town's `quest_check` (Invoke2 8, StartQuest, WorldSelect_NextTo and DungeonRoot by the quest, then -
+without flag 1399 - ReserveWorldSelectMenu); no: the list again at its row. Explore asks 0x125; yes:
+SelectFreeSpacePort true once (`quest_cancel`), then the world select (Update 0x22: header 0x15, 0x128,
+WorldSelectMenu 0x2b - CheckQuestReturn 3 when chosen, the town's WarpTask). Back: faded out, a
+second, CheckQuestReturn 1. `cr3view --input call:ReserveSpacePortMenu,port:quests,port:row<n>,
+port:ok,port:yes` (also `port:talk / explore / back / no / left / right / told / cat<n>`).
+
+The global work (Cr3UtilGlobalWorkGet / Set - the scripts' GetVar / SetVar) holds 100 values; 24 is
+the quest set off on.
 
 ### My Page (CR3)
 

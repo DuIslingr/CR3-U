@@ -18,6 +18,9 @@ std::string lower(std::string s) {
 
 // the script's fade colours (Cr3FadeIn's table: 1..3 as they are, anything else black)
 int fadeColour(int type) { return type >= 1 && type <= 3 ? type : 0; }
+// the Space Port's clerk: Sally (SetSugerCutIn - ReadCutInWindowTexture("cutIn121_L01", 1), the
+// shop's place); away while her talk runs (SpacePortMain 0: EndCutInMenu(2))
+const char* const kSpacePortClerk = "cutIn121_L01";
 
 } // namespace
 
@@ -314,6 +317,24 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     });
     vm.setNative("InterfaceWindow", "ScriptSpecialEndGeneSynthesisMenu", [this](NativeCall&) { geneLabEnd(); });
     vm.setNative("InterfaceWindow", "RefreshGeneSynthesisMenuButton", [](NativeCall&) {});
+    // the Space Port (SpacePort in runtime.hpp)
+    vm.setNative("InterfaceWindow", "CreateSpacePortMenuMain", [this, clerk](NativeCall&) {
+        spacePort_ = SpacePort();
+        spacePort_.open = true;
+        menuFade(false, 5);
+        clerk(kSpacePortClerk);
+    });
+    vm.setNative("InterfaceWindow", "CheckQuestReturn", [this](NativeCall& c) { c.result(spacePort_.questReturn); });
+    vm.setNative("InterfaceWindow", "CheckSpacePortSelectTalk", [this](NativeCall& c) { c.result(spacePort_.talk); });
+    vm.setNative("InterfaceWindow", "EndSpacePortTalk", [this, clerk](NativeCall&) {
+        if (!spacePort_.talk) return;
+        spacePort_.talk = false;
+        if (spacePort_.open) clerk(kSpacePortClerk); // (SpacePortMain 4: the header, Sally and the buttons again)
+    });
+    vm.setNative("InterfaceWindow", "SelectFreeSpacePort", [this](NativeCall& c) {
+        c.result(spacePort_.explore);
+        spacePort_.explore = false;
+    });
     vm.setNative("EvtFace", "Create", [this](NativeCall& c) {
         const int k = c.integer(0, -1);
         if (k >= 0 && k < kCutIns) cutIns_[size_t(k)] = Portrait{true, false, 0, -1, 1};
@@ -574,6 +595,31 @@ void EventRuntime::openGeneLab(const std::string& image, bool vs) {
     Portrait p{true, false, 0, kClerkFace, 1};
     p.shop = true;
     cutIns_[2] = p;
+}
+
+void EventRuntime::spacePortTalk() {
+    if (!spacePort_.open || spacePort_.talk) return;
+    spacePort_.talk = true;
+    if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
+}
+
+void EventRuntime::spacePortClerk(bool shown) {
+    if (!spacePort_.open) return;
+    if (!shown) {
+        if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
+        return;
+    }
+    if (cutIns_[2].open && cutIns_[2].shop && !cutIns_[2].closing) return;
+    Portrait p{true, false, 0, kClerkFace, 1};
+    p.shop = true;
+    cutIns_[2] = p;
+}
+
+void EventRuntime::spacePortEnd(int questReturn) {
+    if (!spacePort_.open) return;
+    spacePort_.open = spacePort_.talk = false;
+    spacePort_.questReturn = questReturn;
+    if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
 }
 
 void EventRuntime::geneLabEnd() {
