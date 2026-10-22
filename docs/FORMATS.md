@@ -453,7 +453,14 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
   (`comListPanel`, 0.76 apart, five in the mask): the icon - comListIcon::SetIconPattern: icon n is
   frame n % 36 of `icon_panel_<n / 36 + 1>` (and its `..A` alpha) -, the name at `typeM_L01`, the count
   in `comListNumI_num00`; an Item without a field effect (MbItemInfo::HasFieldItemEffect) dimmed; a
-  worn weapon / armour its wearer's `camEquChr_fr00`; the help across the header. Chosen: a gift -
+  worn weapon / armour its wearer's `camEquChr_fr00`; the help across the header. The focused row
+  (comListItem::SetSelectFlag) and all on it 1.1 x; an enabled one (AddListItem's bool - a battle
+  row's usable) also its `comListCursor` and its name white, 1.1 x - not enabled, only the row.
+  comListMenu::Pose / PresentGetMenu::Pose: the focused row 0.25 to the left, those after it 0.076
+  lower. The scroll bar: `comListBarPanel` (the short list's `comListBarSPanel`) at the menu's call,
+  its `comListBarCursor` at rest at `call_comListBarCursor` while the list fits (AutoScroll returns
+  first, leaving it where it was), else 0.2 up and down `barLimitUp` .. `barLimitLow` as far as the
+  list is scrolled. Chosen: a gift -
   ItemizeGift asked (0x1d0), "Obtained: %s" (0xfb); an Item by its field effect (`field_item.mbe`'s
   FieldItem: the id, four (kind, value) - 1 .. 4 attack / defence / speed / luck, 5 levels, 6 MP, 7 a
   command, 8 a skill): how many first (CampItemMenu 0x60: `camItemPosition`'s two digit reels -

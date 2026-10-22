@@ -11975,9 +11975,25 @@ struct Viewer {
 
     // ---- the battle's interface (CR3: CRXParts figures at 100 pixels a unit) ----
     // a figure posed (its own animation - or `anim`, an animator beside it - at t) at (x, y)
+    // a list's focused row (comListItem::SetSelectFlag): it and all on it 1.1 x, its name white -
+    // set for the row's drawing by a Cr3FocusRow
+    float cr3UiScale = 1;
+    bool cr3UiFocus = false;
+    // (an item not enabled - AddListItem's bool: a battle row not usable - only the row, without
+    // its cursor or the white)
+    struct Cr3FocusRow {
+        Viewer& v;
+        Cr3FocusRow(Viewer& viewer, bool focused, bool enabled = true) : v(viewer) { v.cr3UiScale = focused ? 1.1f : 1.0f, v.cr3UiFocus = focused && enabled; }
+        ~Cr3FocusRow() { v.cr3UiScale = 1, v.cr3UiFocus = false; }
+    };
+    // a list row's place (comListMenu::Pose, PresentGetMenu::Pose): the selected one 0.25 to the
+    // left, those after it 0.076 lower
+    static float cr3ListRowX(float x, int k, int focus) { return x - (k == focus ? 0.25f : 0.0f); }
+    static float cr3ListRowY(float y, int k, int top, int focus) { return y - 0.76f * float(k - top) - (focus >= top && k > focus ? 0.076f : 0.0f); }
     UiFig& cr3UiPut(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, float alpha = 1, bool loop = false) {
         UiFig& u = uiFig(name);
         u.fig.place = cr3::Mat34();
+        u.fig.place.m[0] = u.fig.place.m[5] = u.fig.place.m[10] = cr3UiScale;
         u.fig.place.m[3] = x, u.fig.place.m[7] = y;
         poseUi(u, anim.empty() ? name : anim, t, loop);
         u.fig.tint[3] = alpha;
@@ -12733,11 +12749,24 @@ struct Viewer {
             if (shown) cr3UiPut("comlistnum_fr00", "", float(top ? 40 + k : d + offset) / 30, nx, ny, view); // ("MAX": SetMaxNumbers)
         }
     }
+    // A list's scroll bar (comListBarPanel / the short list's comListBarSPanel at the menu's call): its
+    // comListBarCursor at rest at its call while the list fits, else (AutoScroll) 0.2 up and down
+    // the bar - barLimitUp to barLimitLow - as far as the list is scrolled
+    void drawCr3ListBar(const UiFig& menu, bool shortList, int top, int n, int visible, const Mat4& view) {
+        float bx, by, cx, cy, ux, uy, lx, ly;
+        if (!cr3UiCall(menu, shortList ? "call_comListBarSPanel" : "call_comListBarPanel", bx, by)) return;
+        UiFig& bar = cr3UiPut(shortList ? "comlistbarspanel" : "comlistbarpanel", "", 0, bx, by, view);
+        if (!cr3UiCall(bar, "call_comListBarCursor", cx, cy)) return;
+        if (n > visible && cr3UiCall(bar, "barLimitUp", ux, uy) && cr3UiCall(bar, "barLimitLow", lx, ly))
+            cy += 0.2f + std::clamp(float(top) / float(n - visible), 0.0f, 1.0f) * (ly - uy);
+        cr3UiPut("comlistbarcursor", "", 0, cx, cy, view);
+    }
     void cr3UiLabel(const UiFig& panel, const char* joint, const std::string& text, int w, int h, float shade = 1.0f) {
         float tx, ty;
         if (text.empty() || !cr3UiCall(panel, joint, tx, ty)) return;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-        drawUiText(text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, shade);
+        const float k = cr3UiFocus ? 1.1f : 1.0f;
+        drawUiText(text, 26 * k, (tx + 0.075f * k) / 10, (ty - 0.15f * k) / 10, w, h, true, cr3UiFocus ? 1.0f : shade);
     }
     // the picks: Enhance's (IntensificationSynthesisMenu 0xaa - mixUpMenu at mixMtrPositon's
     // call_mixUpMenu: Components, Additional EXP, Total Cost at typeM_L01 .. L03 (AnnounceMenuName
@@ -14015,11 +14044,13 @@ struct Viewer {
                 if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                     const int n = int(ci.rows.size());
                     const int top = std::clamp(ci.row - 2, 0, std::max(n - 5, 0)); // (five in its mask)
+                    drawCr3ListBar(menu, false, top, n, 5, view);
                     for (int k = top; k < n && k < top + 5; ++k) {
                         const auto [id, count] = ci.rows[size_t(k)];
                         const bool usable = cr3ItemUsable(id) || id / 100000 != 0;
                         const float alpha = usable ? 1.0f : 0.5f;
-                        UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ly - 0.76f * float(k - top), view, alpha);
+                        Cr3FocusRow focusRow(*this, k == ci.row);
+                        UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, ci.row), cr3ListRowY(ly, k, top, ci.row), view, alpha);
                         if (k == ci.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                         cr3::MbeFile::Row r;
                         if (cr3ItemRow(id, r) && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
@@ -14593,9 +14624,11 @@ struct Viewer {
                 const int n = ce.step == 0 ? 3 : int(ce.rows.size());
                 const int focus = ce.step == 0 ? ce.slot : ce.row;
                 const int top = std::clamp(focus - 2, 0, std::max(n - 5, 0));
+                drawCr3ListBar(menu, false, top, n, 5, view);
                 for (int k = top; k < n && k < top + 5; ++k) {
                     const int id = ce.step == 0 ? cr3WornItem(ce.chara, k) : ce.rows[size_t(k)];
-                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ly - 0.76f * float(k - top), view);
+                    Cr3FocusRow focusRow(*this, k == focus);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, focus), cr3ListRowY(ly, k, top, focus), view);
                     if (k == focus && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                     cr3::MbeFile::Row r;
                     if (id > 0 && cr3ItemRow(id, r) && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
@@ -15013,12 +15046,14 @@ struct Viewer {
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = int(cq.rows.size());
                 const int top = std::clamp(cq.row - 2, 0, std::max(n - 5, 0));
+                drawCr3ListBar(menu, false, top, n, 5, view);
                 for (int k = top; k < n && k < top + 5; ++k) {
                     const cr3::Cr3OfflineDb::Quest& q = (*quests)[size_t(cq.rows[size_t(k)])];
                     const auto held = game.cr3Items.find(q.item);
                     const bool ready = q.item < 0 || (held != game.cr3Items.end() && held->second >= q.itemCount);
                     const float alpha = ready ? 1.0f : 0.6f;
-                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ly - 0.76f * float(k - top), view, alpha);
+                    Cr3FocusRow focusRow(*this, k == cq.row);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, cq.row), cr3ListRowY(ly, k, top, cq.row), view, alpha);
                     if (k == cq.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                     if (cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
                         cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), q.rank + 0xae), cx, cy, view, alpha);
@@ -15233,8 +15268,10 @@ struct Viewer {
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = int(rows.size());
                 const int top = std::clamp(cs.row - 2, 0, std::max(n - 5, 0));
+                drawCr3ListBar(menu, false, top, n, 5, view);
                 for (int r = top; r < n && r < top + 5; ++r) {
-                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ly - 0.76f * float(r - top), view);
+                    Cr3FocusRow focusRow(*this, r == cs.row);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, r, cs.row), cr3ListRowY(ly, r, top, cs.row), view);
                     if (r == cs.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                     if (rows[size_t(r)].icon >= 0 && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
                         cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), rows[size_t(r)].icon), cx, cy, view);
@@ -15822,9 +15859,11 @@ struct Viewer {
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = int(mp.rows.size());
                 const int top = std::clamp(mp.row - 1, 0, std::max(n - 3, 0)); // (three above the system window)
+                drawCr3ListBar(menu, true, top, n, 3, view);
                 for (int r = top; r < n && r < top + 3; ++r) {
                     const int k = mp.rows[size_t(r)];
-                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ly - 0.76f * float(r - top), view);
+                    Cr3FocusRow focusRow(*this, r == mp.row);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, r, mp.row), cr3ListRowY(ly, r, top, mp.row), view);
                     if (r == mp.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                     int icon = k < 0 ? 0xc0 : game.cr3Presents[size_t(k)].gene ? 0xad : -1;
                     cr3::MbeFile::Row ir;
@@ -16522,9 +16561,11 @@ struct Viewer {
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = int(goods.size());
                 const int top = std::clamp(vs.row - 2, 0, std::max(n - 5, 0));
+                drawCr3ListBar(menu, false, top, n, 5, view);
                 for (int k = top; k < n && k < top + 5; ++k) {
                     const VsGoods& g = goods[size_t(k)];
-                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ly - 0.76f * float(k - top), view);
+                    Cr3FocusRow focusRow(*this, k == vs.row);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, vs.row), cr3ListRowY(ly, k, top, vs.row), view);
                     if (k == vs.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                     if (cr3UiCall(panel, "call_comListIcon_fr00", cx, cy)) cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), g.icon), cx, cy, view);
                     cr3UiLabel(panel, "typeM_L01", cr3ItemText(g.item, false) + (g.count > 1 ? " x" + std::to_string(g.count) : std::string()), w, h, 0.3f);
@@ -17277,9 +17318,10 @@ struct Viewer {
                     for (size_t k = 0; k < cr3List.size() && k < 6; ++k) {
                         const Cr3ListRow& row = cr3List[k];
                         const float ry = ly - 0.76f * float(k), alpha = row.usable ? 1.0f : 0.5f;
+                        Cr3FocusRow focusRow(*this, int(k) == cr3Focus, row.usable);
                         UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ry, view, alpha);
                         float cx, cy;
-                        if (int(k) == cr3Focus && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                        if (int(k) == cr3Focus && row.usable && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
                         const int number = row.item ? row.count : row.cost;
                         if (cr3UiCall(panel, row.item ? "call_comListNumI_num00" : "call_comListNumM_num00", cx, cy)) {
                             UiFig& num = cr3UiPut(row.item ? "comlistnumi_num00" : "comlistnumm_num00", "", 0, cx, cy, view, alpha);
@@ -17295,7 +17337,8 @@ struct Viewer {
                         if (cr3UiCall(panel, "typeM_L01", cx, cy)) {
                             dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
                             // (ProvisionalMenuText: the line's box hangs from the joint - its middle ~0.17 below)
-                            drawUiText(row.name, 26, (cx + 0.075f) / 10, (cy - 0.15f) / 10, w, h, true, row.usable ? 0.3f : 0.6f); // (dark on the light row)
+                            const float ks = cr3UiFocus ? 1.1f : 1.0f; // (focused: white, 1.1 x)
+                            drawUiText(row.name, 26 * ks, (cx + 0.075f * ks) / 10, (cy - 0.15f * ks) / 10, w, h, true, cr3UiFocus ? 1.0f : row.usable ? 0.3f : 0.6f); // (dark on the light row)
                         }
                         float ax, ay, bx, by;
                         if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(k)});
