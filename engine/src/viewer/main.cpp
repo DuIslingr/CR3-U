@@ -15761,7 +15761,10 @@ struct Viewer {
     // gene_para +4, +8, +0x30 - beside index.html in the temp folder and shows that in the web
     // view): the picture fitted to the screen's height (or width), centred, from the top, on
     // black (index.html's resizeImage, style.css's .wrap); a tap - api://close - closes it. Its
-    // files missing, nothing: the menu ends at once.
+    // files missing, nothing: the menu ends at once. The pictures lie on their side, for a
+    // landscape-locked phone turned to see the card upright: as so on Android; on a desktop's
+    // screen, which isn't turned, the card stood upright (a quarter turn anticlockwise), fitted
+    // to the height.
     struct Cr3CardView {
         int gene = 0;
         cr3::Texture layers[3];
@@ -15802,9 +15805,16 @@ struct Viewer {
         dev->drawQuad(white, kScreen, id.data(), kBlack);
         const float pw = 938, ph = 640; // (the pictures': originalAspect 640 / 938)
         const float sw = float(screenW), sh = float(screenH);
+#ifdef SDL_PLATFORM_ANDROID
         const float cw = ph / pw > sh / sw ? sh * pw / ph : sw, ch = ph / pw > sh / sw ? sh : sw * ph / pw;
         const float x0 = -cw / sw, x1 = cw / sw, y0 = 1, y1 = 1 - 2 * ch / sh; // (v 0 the top row)
         const float v[24] = {x0, y1, 0, 1, x1, y1, 1, 1, x1, y0, 1, 0, x0, y1, 0, 1, x1, y0, 1, 0, x0, y0, 0, 0};
+#else
+        // (upright: its top-left the picture's top-right, its bottom-right the picture's bottom-left)
+        const float ch = pw / ph > sh / sw ? sh : sw * pw / ph, cw = pw / ph > sh / sw ? sh * ph / pw : sw;
+        const float x0 = -cw / sw, x1 = cw / sw, y0 = 1, y1 = 1 - 2 * ch / sh;
+        const float v[24] = {x0, y1, 0, 0, x1, y1, 0, 1, x1, y0, 1, 1, x0, y1, 0, 0, x1, y0, 1, 1, x0, y0, 1, 0};
+#endif
         for (const cr3::Texture& t : cardView.layers)
             if (t.id) dev->drawQuad(t, v, id.data(), kWhite);
         cr3CampTaps.clear();

@@ -689,6 +689,9 @@ picture - with `index.html`, `style.css` and `jquery.js`, and shows
 `file://<temp>/index.html?c=NNN&r=NN&e=NN` (`&rot=1` turned the other way) in the web view: the
 three fitted to the screen's height (or width, on a screen taller than 938 x 640), centred, from the
 top, on black; a tap (`api://close`) closes it, and GeneCardMenu with it. A file missing, no page.
+The pictures lie on their side for a landscape-locked phone turned upright to look: CR3-U draws them
+so on Android, and on a desktop (whose screen isn't turned) stands the card upright - a quarter turn
+anticlockwise, 640 x 938, fitted to the height.
 `camp:row603` taps the card, `camp:row604` the page.
 
 ## Battles (CR3)
