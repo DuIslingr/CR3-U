@@ -15614,7 +15614,9 @@ struct Viewer {
                 for (size_t k = 0; k < lines.size(); ++k) {
                     char joint[16];
                     std::snprintf(joint, sizeof joint, "typeM_L%02d", int(k) + 1);
-                    if (cr3UiCall(menu, joint, tx, ty)) drawUiText(lines[k], 22, (tx + 0.06f) / 10, (ty - 0.12f) / 10, w, h, true, 1.0f, 0.44f); // (narrowed to the box)
+                    // (18: the widest of the 690 texts' lines, 5.42 units at 22, fits the box's 4.3 - narrowed
+                    // past that only)
+                    if (cr3UiCall(menu, joint, tx, ty)) drawUiText(lines[k], 18, (tx + 0.06f) / 10, (ty - 0.1f) / 10, w, h, true, 1.0f, 0.43f);
                 }
                 if (cr3UiCall(menu, "call_GeneCard", cx, cy)) drawCr3Card(mp.profile, cx, cy, 1.0f, 5.6f, view);
                 const auto* gi = game.cr3Db ? game.cr3Db->geneInfo(mp.profile) : nullptr;
