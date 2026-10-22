@@ -31,6 +31,11 @@ struct Cr3BattleTables {
     // "%sb%02d", b01 without one)
     int defaultArmour(int character) const;
     std::string body(const std::string& model, int armour) const;
+    // a character's weapon (a guest's - and anyone's with none set - its row's +0x10) and the
+    // model it holds (CrxModel::LoadWeapon: the Weapon's +0x30 - model.mbe's AttachmentModel:
+    // the figure, its texture variation - on the body's DummyWP joint)
+    int weaponOf(int character, const std::map<int, int>* worn) const;
+    bool weaponModel(int weapon, std::string& figure, std::string& variant) const;
 };
 
 struct Cr3BattleUnit {
@@ -39,6 +44,7 @@ struct Cr3BattleUnit {
     std::string figure;     // the figure drawn: the name, a parts model's body <name>b<costume>
     std::string head;       // (a parts model's head, <name>h01; empty: none)
     std::string variant;    // the texture variation (the monster's: "a" the figure's own)
+    std::string weapon, weaponVariant; // (a character's weapon's attachment model; empty: none)
     bool player = false;    // (the party's side: BtlUnit +0xe4)
     int character = -1, monster = -1;
     float width = 0, depth = 0, scale = 1; // (model.mbe +0x18, +0x1c / 10; +0x24 x the unit's)
@@ -59,9 +65,9 @@ struct Cr3Battle {
     std::array<std::string, 10> cameras; // model.mbe Camera's names for that size: 0 the get-set, 1 command, ...
     float getSetEnd = 4.16667f;        // (its +0x04: PlayBattleIn's end time)
     // party: the characters in the party's slots (Cr3System.SetParty: char_para ids, 0 none);
-    // armours: theirs where the game has set one (else Cr3BattleTables::defaultArmour)
+    // armours, weapons: theirs where the game has set one (else Cr3BattleTables::defaultArmour, weaponOf)
     bool setup(const Cr3BattleTables& t, int coupling, int fieldId, const std::vector<int>& party, uint32_t seed,
-               std::string* error = nullptr, const std::map<int, int>* armours = nullptr);
+               std::string* error = nullptr, const std::map<int, int>* armours = nullptr, const std::map<int, int>* weapons = nullptr);
 };
 
 // BtlCameraMotion: a camera figure (Cam_bt: every battle camera a joint of it, all animated by

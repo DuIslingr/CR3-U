@@ -471,11 +471,27 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
 - Equipment (CampEquipMenuMain 0x68, CampEquip2Menu 0x6d, CampEquipFutterMenu 0x69): the three slots
   (header line 0x18b), then a slot's candidates - the held ones of its kind the character may wear
   (item_para +0x2c: a bit a character), the worn one in focus, an accessory's "none" last; one only
-  others wear is taken and each given the old one (SetEquipPartsDirect). `camEquPosition` (its own
-  animation slides it in over 5 frames) holds `camEquWepPanel` / `camEquJewPanel` (the character's
-  name, the item in focus); the footer's `comFtrEquipMenu` has the party's `comFtrCharaBtn_fr00` - the
-  frame 0 .. 4 the chosen character, 5 .. 9 the others, 10 / 11 past five (libcrx 0xe63198 / 0xe631d4).
-  New armour re-dresses the field's player (its body model).
+  others wear is taken and each given the old one (SetEquipPartsDirect); nothing put on yet is the
+  starting kit (char_para +0x10 .. +0x18, j001's armour 83). `camEquPosition` (its own animation
+  slides it in over 5 frames) holds `camEquWepPanel` (weapon, armour) / `camEquJewPanel` (accessory):
+  `geneCngCahaIcon_fr00` (frame the character - 1), the name and the gene's name at the first two
+  `typeM_L`, and the numbers (CampEquip2Menu::SetEquipParam / SetEquipParamID) - the worn's
+  (ChangeOriginalParameter) in `camEquNumSts_num00` (five `comNum00_fr00`, leading zeros hidden) and
+  the change the item in focus makes in `camEquNumUp_num00` (SetNumberOfUpDown: `comNum03_fr00` - 20 /
+  21 the up / down arrow, the digits + 10 down, 22 / 23 a percent sign; nothing at 0). The weapon
+  panel: weight (CrxCharacter::GetWeight: Weapon +0x34 + Armor +0x40, each above 0), power, hits, then
+  the resistances not 0 (four at most, `camEquZok_fr00` at frame 0 physical, 1 magic, 2 .. 7 the
+  elements 1 .. 6 - libcrx 0xe6310c -, their values as changes with the percent sign): a weapon's
+  lowered ones from `_010`, an armour's own from `_014`. The accessory panel: HP, MP, attack,
+  defence, speed, luck, the HP / MP bars at the new most's share of the old (100 at most).
+  `camEquBtnPanel`'s button (`camEquBtnText_fr00` frame 0 Model, 1 Parameters) shows the character's
+  model (+0x440; SetCharaModelID: its CrxModel in the item in focus - body by the armour, the weapon
+  on DummyWP -, bb01 looped, at (-2.8, (scale - 2) x -0.7 - 1.54, 9) in the interface's space, scale
+  2 .. 3, faded in over 0.3 s, lit by `camp_light`): the panel plays back out and the button stays; a
+  drag across turns it (a radian each 100 of 960), up and down sizes it (TouchSimpleMove). The
+  footer's `comFtrEquipMenu` has the party's `comFtrCharaBtn_fr00` - the frame 0 .. 4 the chosen
+  character, 5 .. 9 the others, 10 / 11 past five (libcrx 0xe63198 / 0xe631d4). New armour
+  re-dresses the field's player (its body model).
 - Fuse Gifts (GiftSynthesizeMain 0x71): `data\mergegifts` (category, gene_id, items - the gifts'
   codes, available - a flag or -1) by the buttons 6, 7, 8 (categories 0, 1, 3); a gift's code is its
   gift_color + gift_number (item_para's Gift +0x40 / +0x44). Rows `comListLPanel` + `comListLMixing`
@@ -489,17 +505,24 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
   `spQstPosition`, `spQstMenu` - the title at `typeM_C01`, `Quest_text`'s lines at `spQstText`'s, the
   reward - questprizes - at `typeM_L01` .., `spQstBtn`).
 - Status (StatusMain 0xbc, StatusMenu 0xbd): `camStaCut` (the character's picture, frame its id - 1)
-  at `camStaPosition`'s `call_camStaCut` + (1.92, -2.56); categories Equipment Stats
+  at `camStaPosition`'s `call_camStaCut` + (1.92, -2.56); four categories (StatusMain::Update's
+  SetCategoryBarWithText: icons 0xe, 3, 0x15, 4, texts 0x42 .. 0x45; SetStatusParameter) - the status
   (`camEqustaJPanel`: the gene's name, HP and MP - the MP left - bars and five-digit numbers
-  `camEquNumSts_num00` / `comNum00_fr00`, attack, defence, speed, luck), Skills (the gene's slots),
-  Equipment (the worn three); the characters' buttons below.
+  `camEquNumSts_num00` / `comNum00_fr00`, attack, defence, speed, luck), the equipment's numbers
+  (`camEqustaWPanel`: weight, power, hits, the weapon's lowered resistances and the armour's), Skills
+  (the gene's slots), Equipment (the worn three); the characters' buttons below. The panels hang off
+  statusEquipMenu's own `camStaPosition`, which plays only its first 4 frames ("motion" - their
+  joints' parent - slid in from x 6 to 0); StatusMenu's plays on (frames 4 .. 10: "motion" leaves to
+  -6, the picture's joint moves from -5.87 to -4.67). StatusMenu looks for `ragdoll_call_camEquMenu`
+  to offset them (+ (4.76, -2.24)), a joint `camStaPosition` doesn't have.
 - Options (OptionMain 0xac, OptionMenu 0xad): `optTopPositon`'s `optTab_fr00` (Sound, Controls, Other),
   Sound's three `optSltPanel` (BGM, Sound Effects, Voiceovers) with `optSltBar_fr00` at the volume's
   frame and `optSltBarCursor` along the bar (SetBarControlPoint), Controls' `optHnd_fr00` pair, Other's
   Resolution (`optSltLRPanel`); the volumes saved on the way out.
 
 `cr3view --input camp:open,camp:button<n>,camp:cat<n>,camp:row<n>,camp:card<n>,camp:reel<n>,camp:chara<n>,
-camp:yes,camp:no,camp:ok,camp:back` (or `camp:genes`, `camp:field<n>` - a field button; C opens the
+camp:yes,camp:no,camp:ok,camp:back,camp:model,camp:turn<px>,camp:zoom<px>` (or `camp:genes`,
+`camp:field<n>` - a field button; Tab the Equipment's model; C opens the
 camp with flag 27); `--cr3-party a,b,c` and `--item id:n` set a test's party and items.
 
 ### The VS mode (CR3)
@@ -646,7 +669,9 @@ VGetAttackCommandId), a monster's from mon_para (+0x14 its level where set - Gun
 luck, +0x2c.. growth; +0x3c / +0x40 EXP and money, +0x44 / +0x46 their growth).
 
 Equipment (CrxCharacter::initialize): a guest's is its char_para row's; anyone else's the save's
-(CR3-U, keeping no equipment yet, gives them the row's too). item_para Weapon: +0x38 the constant
+(where nothing has been put on, the row's). A character's weapon is drawn (CrxModel::LoadWeapon):
+Weapon +0x30 is model.mbe's AttachmentModel (`ipp`: id, the figure - w001_01 -, its texture
+variation), its figure and own animation on the body's `DummyWP` joint (j001's at the right hand). item_para Weapon: +0x38 the constant
 (VGetWeaponConstant), +0x3c the hits (VGetWeaponHitNum), +0x44 the MP consumption %, +0x48 / +0x4c
 lowered physical / magic resistance, +0x50 + 4e an element's. Armor (64-bit layout 13 ints, `_p`,
 11 ints, `_p`): +0x44 physical, +0x48 magic, +0x4c + 4e an element's resistance. Accessory: +0x30

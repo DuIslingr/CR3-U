@@ -91,6 +91,7 @@ struct Cr3Fighter {
     float consumption = 1;
     int lowerPhysical = 0, lowerMagic = 0, physical = 0, magic = 0;
     std::array<int, 7> lowerElement{}, elementResist{};
+    int weight = 0; // (CrxCharacter::GetWeight: the weapon's +0x34 and the armour's +0x40, each where above 0)
     std::vector<int> skills; // (skill_para Skill ids: a guest gene's, a monster's mode's)
     int attackCommand = -1;                     // (a character's +0x10; a monster's mode's +0x14)
     std::vector<int> geneCommands;              // (a character's gene's: a guest's GuestGene row)

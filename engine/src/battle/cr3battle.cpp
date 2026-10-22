@@ -54,8 +54,23 @@ std::string Cr3BattleTables::body(const std::string& model, int armour) const {
     return name;
 }
 
+int Cr3BattleTables::weaponOf(int ch, const std::map<int, int>* worn) const {
+    MbeFile::Row r;
+    if (!character.find("Char", ch, "iiiiii", r)) return 0;
+    const auto it = worn ? worn->find(ch) : std::map<int, int>::const_iterator();
+    return !(r.i(3) & 1) && worn && it != worn->end() ? it->second : r.i(4);
+}
+
+bool Cr3BattleTables::weaponModel(int weapon, std::string& figure, std::string& variant) const {
+    MbeFile::Row w, m;
+    if (weapon <= 0 || !item.find("Weapon", weapon, "iiiiiiiiiiiii", w) || w.i(12) <= 0 || !model.find("AttachmentModel", w.i(12), "ipp", m))
+        return false;
+    figure = m.s(1), variant = m.s(2);
+    return !figure.empty();
+}
+
 bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, const std::vector<int>& party, uint32_t seed, std::string* error,
-                      const std::map<int, int>* armours) {
+                      const std::map<int, int>* armours, const std::map<int, int>* weapons) {
     *this = Cr3Battle();
     coupling = couplingId, fieldId = fieldNo;
     MbeFile::Row r;
@@ -86,7 +101,10 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
         if (!t.character.find("Char", party[k], kChar, c)) continue;
         const auto set = armours ? armours->find(party[k]) : std::map<int, int>::const_iterator();
         armour = armours && set != armours->end() ? set->second : t.defaultArmour(party[k]);
-        if (Cr3BattleUnit* u = addUnit(c.i(1), true)) u->character = party[k];
+        if (Cr3BattleUnit* u = addUnit(c.i(1), true)) {
+            u->character = party[k];
+            if (!t.weaponModel(t.weaponOf(party[k], weapons), u->weapon, u->weaponVariant)) u->weapon.clear();
+        }
         armour = 0;
     }
     // CreateMonster: each slot with an id (MbCouplingInfo::GetMonsterId: one of its list at random)

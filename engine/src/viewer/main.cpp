@@ -1336,20 +1336,50 @@ struct Viewer {
 
     // The scene's lights from a light figure (a map's <name>c): false when it has none
     bool loadLights(const std::string& figure) {
+        cr3::SceneLighting l;
+        if (!figureLights(figure, l)) return false;
+        lighting = l;
+        return true;
+    }
+    bool figureLights(const std::string& figure, cr3::SceneLighting& l) {
         std::vector<uint8_t> data;
         cr3::Geom g;
         cr3::Skeleton sk;
         if (!archive.read(figure + ".geom", data) || !cr3::parseGeom(data, g) || !archive.read(figure + ".skel", data) ||
             !cr3::parseSkeleton(data, sk))
             return false;
-        cr3::SceneLighting l;
         if (SDL_getenv("CR3_MATERIALS"))
             for (const cr3::GeomLight& gl : g.lights)
                 SDL_Log("%s light: type %d index %d v %.3f %.3f %.3f %.3f %.3f %.3f", figure.c_str(), gl.type, gl.index, gl.v[0], gl.v[1], gl.v[2], gl.v[3],
                         gl.v[4], gl.v[5]);
-        if (!cr3::lightsFromFigure(g, sk, l)) return false;
-        lighting = l;
+        return cr3::lightsFromFigure(g, sk, l);
+    }
+
+    // a figure's joint as last posed, in the world (its .name file's order)
+    std::map<std::string, std::vector<std::string>> jointNames;
+    bool jointWorld(const ViewFigure& f, const std::string& joint, cr3::Mat34& out) {
+        if (!f.skinned || f.name.size() < 6) return false;
+        const std::string base = f.name.substr(0, f.name.size() - 5);
+        auto it = jointNames.find(base);
+        if (it == jointNames.end()) {
+            std::vector<uint8_t> d;
+            it = jointNames.emplace(base, archive.read(base + ".name", d) ? cr3::parseJointNames(d) : std::vector<std::string>()).first;
+        }
+        const auto at = std::find(it->second.begin(), it->second.end(), joint);
+        const std::vector<cr3::JointTransform>& p = f.posed.empty() ? f.skeleton.basePose : f.posed;
+        const std::vector<cr3::Mat34> w = f.skeleton.world(p, f.place);
+        const size_t j = size_t(at - it->second.begin());
+        if (at == it->second.end() || j >= w.size()) return false;
+        out = w[j];
         return true;
+    }
+    // an attachment (CrxModel::LoadAttachment: its own figure and animation, looped) on a posed
+    // figure's joint
+    void drawAttached(ViewFigure& a, const ViewFigure& on, const std::string& joint, float t, const float* mvp) {
+        if (a.meshes.empty() || on.meshes.empty() || !jointWorld(on, joint, a.place)) return;
+        for (int k = 0; k < 4; ++k) a.tint[k] = on.tint[k];
+        pose(a, t, true);
+        drawFigure(a, mvp);
     }
 
     void unload(ViewFigure& f) {
@@ -5652,6 +5682,7 @@ struct Viewer {
         // (CR3's camp: its clock; --input camp:open / genes / row<n> / card<n> / back / field<n> - a
         // field button, 0 Open .. 6 Shop)
         cr3Camp.since += dt;
+        campEquip.modelSince += dt;
         campItems.toldSince += dt;
         campGifts.toldSince += dt;
         vs.since += dt;
@@ -5694,6 +5725,9 @@ struct Viewer {
             else if (want.compare(0, 4, "reel") == 0) chooseCr3Camp(600 + std::atoi(want.c_str() + 4));
             else if (want.compare(0, 5, "chara") == 0) chooseCr3Camp(700 + std::atoi(want.c_str() + 5));
             else if (want == "yes" || want == "no" || want == "ok") chooseCr3Camp(want == "yes" ? 500 : want == "no" ? 501 : 502);
+            else if (want == "model") chooseCr3Camp(800);
+            else if (want.compare(0, 4, "turn") == 0) cr3CampDrag(float(std::atof(want.c_str() + 4)), 0);
+            else if (want.compare(0, 4, "zoom") == 0) cr3CampDrag(0, float(std::atof(want.c_str() + 4)));
         }
         // (--input call:<function>: tests - an area function run as if its gimmick were tapped)
         if (!scripted && !inputScript.empty() && inputScript.front().compare(0, 5, "call:") == 0) {
@@ -5870,7 +5904,7 @@ struct Viewer {
     cr3::Cr3Battle cr3Battle;
     ViewFigure cr3BattleField;
     struct Cr3BattleUnitView {
-        ViewFigure body, head;
+        ViewFigure body, head, weapon; // (weapon: a character's - CrxModel::LoadWeapon -, on the body's DummyWP)
         float phase = 0; // (BtlUnitList::Standby: the monsters' stances started apart)
         // its motion (BtlUnit::PlayAnimation: an AnimCommon suffix - bb01 its stance, looped),
         // from when; held at its end (a fall: bd03), hidden once down
@@ -6037,7 +6071,7 @@ struct Viewer {
             return false;
         }
         const std::vector<int> party(std::begin(game.cr3Party), std::end(game.cr3Party));
-        if (!cr3Battle.setup(cr3BattleTables, coupling, fieldId, party, uint32_t(SDL_GetTicks()) | 1u, &err, &game.cr3Armour)) {
+        if (!cr3Battle.setup(cr3BattleTables, coupling, fieldId, party, uint32_t(SDL_GetTicks()) | 1u, &err, &game.cr3Armour, &game.cr3Weapon)) {
             SDL_Log("battle %d: %s", coupling, err.c_str());
             return false;
         }
@@ -6046,7 +6080,7 @@ struct Viewer {
         if (!loadFigure(cr3Battle.field + ".geom", cr3BattleField, &err)) SDL_Log("battle field %s: %s", cr3Battle.field.c_str(), err.c_str());
         cr3BattleField.absolute = true; // (BtlField::Load: its animation looped)
         if (loadLights(cr3Battle.field)) SDL_Log("lights: %s", cr3Battle.field.c_str());
-        for (Cr3BattleUnitView& u : cr3BattleUnits) unload(u.body), unload(u.head);
+        for (Cr3BattleUnitView& u : cr3BattleUnits) unload(u.body), unload(u.head), unload(u.weapon);
         cr3BattleUnits.assign(cr3Battle.units.size(), Cr3BattleUnitView());
         int monsters = 0;
         for (size_t k = 0; k < cr3Battle.units.size(); ++k) {
@@ -6061,9 +6095,11 @@ struct Viewer {
                     SDL_Log("battle unit %s: %s", fig.c_str(), err.c_str());
                     continue;
                 }
-                const auto it = std::find(f.anims.begin(), f.anims.end(), fig + "_bb01.anim");
+                const auto it = std::find(f.anims.begin(), f.anims.end(), motionBase(fig) + "_bb01.anim"); // (a costume body: b01's motions)
                 if (it != f.anims.end()) loadAnim(f, size_t(it - f.anims.begin()));
             }
+            figureVariant = bu.weaponVariant;
+            if (!bu.weapon.empty() && !loadFigure(bu.weapon + ".geom", u.weapon, &err)) SDL_Log("battle weapon %s: %s", bu.weapon.c_str(), err.c_str());
             figureVariant.clear();
             if (!bu.player) u.phase = float(monsters++) + 0.25f; // (Standby: its slot's 0 / 1 / 2, + up to 0.5 at random)
         }
@@ -6234,7 +6270,7 @@ struct Viewer {
         bool found = false;
         for (ViewFigure* part : {&u.body, &u.head}) {
             if (part->meshes.empty()) continue;
-            const std::string base = part->name.substr(0, part->name.size() - 5);
+            const std::string base = motionBase(part->name.substr(0, part->name.size() - 5));
             const auto it = std::find(part->anims.begin(), part->anims.end(), base + "_" + suffix + ".anim");
             if (it == part->anims.end()) continue;
             const float keep = time;
@@ -6737,6 +6773,7 @@ struct Viewer {
                 pose(*part, mt, u.motionLoop);
                 drawFigure(*part, vp.data());
             }
+            drawAttached(u.weapon, u.body, "DummyWP", cr3BattleClock, vp.data());
         }
         drawCr3Glass();
     }
@@ -14159,14 +14196,26 @@ struct Viewer {
         int step = 0;           // 0 the slots, 1 a slot's candidates
         std::vector<int> rows;  // (1: the candidates' full ids; 0 none)
         int row = 0;
+        // the model view (camEquBtnPanel's button: CampEquip2Menu +0x440 - the panel closed, the
+        // character's model shown, turned by a drag across and sized 2 .. 3 by one up and down)
+        bool model = false;
+        float modelSince = 0, yaw = 0, scale = 2;
+        float btnX = 0, btnY = -100;
     } campEquip;
+    struct Cr3CampModel { // (the model drawn: its key - the character, body, weapon -, its figures)
+        std::string key;
+        ViewFigure body, head, weapon;
+    } campModel;
     std::map<int, int>& cr3Worn(int slot) { return slot == 0 ? game.cr3Weapon : slot == 1 ? game.cr3Armour : game.cr3Accessory; }
-    // a character's worn item's full id in a slot (0 none; armour - the new game's where none put on)
+    // a character's worn item's full id in a slot (0 none; where none put on, the starting kit's -
+    // char_para's +0x10 .. +0x18, j001's armour 83 - as Cr3BattleRules::playerStats wears it)
     int cr3WornItem(int ch, int slot) {
         const std::map<int, int>& worn = cr3Worn(slot);
         const auto it = worn.find(ch);
         int id = it != worn.end() ? it->second : 0;
-        if (slot == 1 && it == worn.end() && cr3TablesReady()) id = cr3BattleTables.defaultArmour(ch);
+        cr3::MbeFile::Row r;
+        if (it == worn.end() && cr3TablesReady())
+            id = slot == 1 ? cr3BattleTables.defaultArmour(ch) : cr3BattleTables.character.find("Char", ch, "iiiiiii", r) ? r.i(slot == 0 ? 4 : 6) : 0;
         return id > 0 ? (slot + 1) * 100000 + id : 0;
     }
     bool cr3CanWear(int ch, int full) {
@@ -14219,23 +14268,213 @@ struct Viewer {
         if (ce.slot == 1) cr3BodiesChanged();
         SDL_Log("camp: %d wears %d (was %d)", ce.chara, full, old);
     }
+    // a party member's numbers with one slot's item changed (0: none) - CrxCharacter's
+    // SetTemporary*ById; slot -1 as worn
+    bool cr3EquipStats(int ch, int slot, int full, cr3::Cr3Fighter& f) {
+        if (!cr3TablesReady()) return false;
+        cr3PartyRules();
+        if (slot >= 0 && slot < 3) {
+            auto it = cr3Rules.partyEquip.find(ch);
+            if (it == cr3Rules.partyEquip.end()) it = cr3Rules.partyEquip.emplace(ch, std::array<int, 3>{-1, -1, -1}).first;
+            it->second[size_t(slot)] = full > 0 ? full % 100000 : 0;
+        }
+        return cr3Rules.playerStats(cr3BattleTables, ch, f);
+    }
+    // a character's gene's name (a guest's: its GuestGene's gene)
+    std::string cr3GeneNameOf(int ch) {
+        const int k = game.wornGene(ch);
+        if (k >= 0) return cr3NameOf("gene_name.mbe", "GeneName", game.cr3Genes[size_t(k)].master);
+        cr3::MbeFile::Row r, g;
+        if (cr3TablesReady() && cr3BattleTables.character.find("Char", ch, "iiiiiiii", r) && (r.i(3) & 1) && r.i(7) > 0 &&
+            cr3BattleTables.gene.find("GuestGene", r.i(7), "ii", g))
+            return cr3NameOf("gene_name.mbe", "GeneName", g.i(1));
+        return std::string();
+    }
+    // a change shown (CampEquip2Menu::SetNumberOfUpDown: camEquNumUp_num00's comNum03_fr00 - the
+    // arrow at frame 20 up / 21 down, the digits at their own frames - + 10 down -, leading zeros
+    // left out; a percent sign after them, 22 / 23; nothing at 0)
+    void cr3EquipChange(const UiFig& panel, const std::string& joint, int value, int places, bool percent, const Mat4& view) {
+        float x, y;
+        if (value == 0 || !cr3UiCall(panel, joint, x, y)) return;
+        UiFig& num = cr3UiPut("camequnumup_num00", "", 0, x, y, view);
+        const bool down = value < 0;
+        const auto put = [&](int slot, int frame) {
+            char name[40];
+            std::snprintf(name, sizeof name, "call_comNum03_fr00_%03d", slot);
+            float cx, cy;
+            if (cr3UiCall(num, name, cx, cy)) cr3UiPut("comnum03_fr00", "", float(frame) / 30, cx, cy, view);
+        };
+        put(1, down ? 21 : 20);
+        long most = 1;
+        for (int k = 0; k < places; ++k) most *= 10;
+        const long v = std::min(long(std::abs(value)), most - 1);
+        bool shown = false;
+        for (int k = 0; k < places; ++k) {
+            most /= 10;
+            const int d = int(v / most % 10);
+            if (d > 0 || k == places - 1) shown = true;
+            if (shown) put(2 + k, d + (down ? 10 : 0));
+        }
+        if (percent) put(places + 2, down ? 23 : 22);
+    }
+    // a number on the panel (SetNumberOfStatus: camEquNumSts_num00's five comNum00_fr00)
+    void cr3EquipNumber(const UiFig& panel, int k, int value, const Mat4& view) {
+        char joint[40];
+        std::snprintf(joint, sizeof joint, "call_camEquNumSts_num00_%03d", k);
+        float x, y;
+        if (!cr3UiCall(panel, joint, x, y)) return;
+        UiFig& num = cr3UiPut("camequnumsts_num00", "", 0, x, y, view);
+        cr3UiDigits(num, "call_comNum00_fr00", "comnum00_fr00", std::max(value, 0), 5, 0, view);
+    }
+    // the panel's numbers (CampEquip2Menu::SetEquipParam / SetEquipParamID): the weapon's and the
+    // armour's panel - weight, power, hits as worn (ChangeOriginalParameter) and how the item in
+    // focus changes them, then its resistances (the weapon's lowered ones from the first of
+    // camEquZok_fr00_010 .., the armour's from _014; those not 0, four at most - camEquZok_fr00 at
+    // frame 0 physical, 1 magic, 2 .. 7 the elements 1 .. 6 - each as a change with its percent
+    // sign); the accessory's panel - HP, MP, attack, defence, speed, luck and their changes, the HP
+    // and MP bars at the share of the worn's left (100 at most). `both`: the weapon's resistances
+    // and the armour's (statusEquipMenu's)
+    void drawCr3EquipNumbers(const UiFig& panel, int slot, const cr3::Cr3Fighter& was, const cr3::Cr3Fighter& now, const Mat4& view, bool both = false) {
+        char joint[40];
+        const auto upJoint = [&](int k) {
+            std::snprintf(joint, sizeof joint, "call_camEquNumUp_num00_%03d", k);
+            return std::string(joint);
+        };
+        if (slot == 2) {
+            const int a[6] = {was.maxHp, was.maxMp, was.attack, was.defence, was.speed, was.luck};
+            const int b[6] = {now.maxHp, now.maxMp, now.attack, now.defence, now.speed, now.luck};
+            for (int k = 0; k < 6; ++k) cr3EquipNumber(panel, k, a[k], view), cr3EquipChange(panel, upJoint(k), b[k] - a[k], 5, false, view);
+            float x, y;
+            const auto share = [](int to, int from) { return from == 0 ? 100.0f : std::clamp(float(to) * 100.0f / float(from), 0.0f, 100.0f); };
+            if (cr3UiCall(panel, "call_camEquHp_per", x, y)) cr3UiPut("camequhp_per", "", share(now.maxHp, was.maxHp) / 30, x, y, view);
+            if (cr3UiCall(panel, "call_camEquMp_per", x, y)) cr3UiPut("cameqump_per", "", share(now.maxMp, was.maxMp) / 30, x, y, view);
+            return;
+        }
+        const int a[3] = {was.weight, was.weaponConstant, was.weaponHits};
+        const int b[3] = {now.weight, now.weaponConstant, now.weaponHits};
+        for (int k = 0; k < 3; ++k) cr3EquipNumber(panel, k, a[k], view), cr3EquipChange(panel, upJoint(k), b[k] - a[k], 5, false, view);
+        for (int set = 0; set < 2; ++set) {
+            if (!both && set != slot) continue;
+            int at = set * 4;
+            for (int e = 0; e < 8 && at < set * 4 + 4; ++e) {
+                const int v = set == 0 ? (e == 0 ? now.lowerPhysical : e == 1 ? now.lowerMagic : now.lowerElement[size_t(e - 1)])
+                                       : (e == 0 ? now.physical : e == 1 ? now.magic : now.elementResist[size_t(e - 1)]);
+                if (v == 0) continue;
+                float x, y;
+                std::snprintf(joint, sizeof joint, "call_camEquZok_fr00_01%d", at);
+                if (cr3UiCall(panel, joint, x, y)) cr3UiPut("camequzok_fr00", "", float(e) / 30, x, y, view);
+                std::snprintf(joint, sizeof joint, "call_camEquNumUp_num00_01%d", at);
+                cr3EquipChange(panel, joint, v, 4, true, view);
+                ++at;
+            }
+        }
+    }
+    // the model shown (CampEquip2Menu::SetCharaModelID: the character's CrxModel in the item in
+    // focus - its body the armour's, its weapon -, bb01 looped, at (-2.8, (scale - 2) x -0.7 - 1.54,
+    // 9) in the interface's space, `scale` x, turned by the yaw; faded in over 0.3 s; lit by
+    // camp_light's lights)
+    void drawCr3CampModel(int w, int h, const Mat4& view) {
+        Cr3CampEquip& ce = campEquip;
+        cr3::MbeFile::Row c, m;
+        if (!cr3TablesReady() || !cr3BattleTables.character.find("Char", ce.chara, "ii", c) || !cr3BattleTables.model.find("Model", c.i(1), "iippffiffii", m))
+            return;
+        const std::string name = m.s(2);
+        const bool parts = (m.i(10) & 1) != 0;
+        const auto focused = [&](int slot) {
+            const int id = ce.step == 1 && ce.slot == slot && ce.row < int(ce.rows.size()) ? ce.rows[size_t(ce.row)] : cr3WornItem(ce.chara, slot);
+            return id > 0 ? id % 100000 : 0;
+        };
+        std::map<int, int> armour = {{ce.chara, focused(1)}}, weapon = {{ce.chara, focused(0)}};
+        if (game.cr3Armour.find(ce.chara) == game.cr3Armour.end() && armour[ce.chara] == 0) armour.clear();
+        const std::string body = parts ? cr3BattleTables.body(name, armour.empty() ? cr3BattleTables.defaultArmour(ce.chara) : armour[ce.chara]) : name;
+        std::string wfig, wvar;
+        if (!cr3BattleTables.weaponModel(cr3BattleTables.weaponOf(ce.chara, &weapon), wfig, wvar)) wfig.clear();
+        Cr3CampModel& cm = campModel;
+        const std::string key = body + "/" + wfig + "/" + wvar;
+        if (cm.key != key) {
+            unload(cm.body), unload(cm.head), unload(cm.weapon);
+            cm = Cr3CampModel();
+            cm.key = key;
+            std::string err;
+            for (int part = 0; part < 2; ++part) {
+                const std::string fig = part ? (parts ? name + "h01" : std::string()) : body;
+                ViewFigure& f = part ? cm.head : cm.body;
+                if (fig.empty()) continue;
+                if (!loadFigure(fig + ".geom", f, &err)) {
+                    SDL_Log("camp model %s: %s", fig.c_str(), err.c_str());
+                    continue;
+                }
+                const auto it = std::find(f.anims.begin(), f.anims.end(), motionBase(fig) + "_bb01.anim");
+                if (it != f.anims.end()) loadAnim(f, size_t(it - f.anims.begin()));
+            }
+            figureVariant = wvar;
+            if (!wfig.empty() && !loadFigure(wfig + ".geom", cm.weapon, &err)) SDL_Log("camp weapon %s: %s", wfig.c_str(), err.c_str());
+            figureVariant.clear();
+        }
+        cr3::SceneLighting l;
+        if (!figureLights("camp_light", l)) l = cr3::SceneLighting();
+        l.camera[0] = 0, l.camera[1] = 0, l.camera[2] = 8.81f;
+        l.time = uiClock;
+        dev->setLighting(l);
+        const float a = std::clamp(ce.modelSince / 0.3f, 0.0f, 1.0f);
+        const float yc = std::cos(ce.yaw) * ce.scale, ys = std::sin(ce.yaw) * ce.scale;
+        for (ViewFigure* part : {&cm.body, &cm.head}) {
+            if (part->meshes.empty()) continue;
+            part->place = cr3::Mat34();
+            part->place.m[0] = yc, part->place.m[2] = ys, part->place.m[8] = -ys, part->place.m[10] = yc, part->place.m[5] = ce.scale;
+            part->place.m[3] = -2.8f, part->place.m[7] = (ce.scale - 2) * -0.7f - 1.54f, part->place.m[11] = 9.0f;
+            part->tint[3] = a;
+            pose(*part, uiClock, true);
+            drawFigure(*part, view.data());
+        }
+        drawAttached(cm.weapon, cm.body, "DummyWP", uiClock, view.data());
+        dev->setLighting(cr3::SceneLighting());
+        (void)w, (void)h;
+    }
+    // a drag on the model (TouchSimpleMove: across turns it a radian each 100 of the screen's 960,
+    // up and down sizes it a hundredth each, 2 .. 3)
+    bool cr3CampDrag(float dx, float dy) {
+        if (cr3Camp.stage != 5 || !campEquip.model) return false;
+        campEquip.yaw += dx / 100;
+        campEquip.scale = std::clamp(campEquip.scale + dy / 100, 2.0f, 3.0f);
+        return true;
+    }
     void drawCampEquip(int w, int h, const Mat4& view) {
         const float t = cr3Camp.since;
         Cr3CampEquip& ce = campEquip;
         float x, y, cx, cy;
         const int focusItem = ce.step == 0 ? cr3WornItem(ce.chara, ce.slot) : ce.row < int(ce.rows.size()) ? ce.rows[size_t(ce.row)] : 0;
         // (the status: the slot's panel)
-        UiFig& pos = cr3UiPut("camequposition", "", t, 0, 0, view); // (its own animation slides it in over 5 frames)
+        // (its own animation slides it in over 5 frames; the model view plays it back out -
+        // InterfaceCloseAnimeSet - and leaves the button where it was)
+        const float slide = ce.model ? std::max(0.1f - ce.modelSince, 0.0f) : t;
+        UiFig& pos = cr3UiPut("camequposition", "", slide, 0, 0, view);
         if (cr3UiCall(pos, "ragdoll_call_camEquMenu", x, y, w, h)) {
             UiFig& menu = cr3UiPut("camequmenu", "", 0, x, y, view);
             float px, py;
             if (cr3UiCall(menu, ce.slot == 2 ? "call_camEquJewPanel" : "call_camEquWepPanel", px, py)) {
                 UiFig& panel = cr3UiPut(ce.slot == 2 ? "camequjewpanel" : "camequweppanel", "", 0, px, py, view);
-                if (cr3UiCall(panel, "call_camEquCharaIcon_fr00", cx, cy)) cr3UiPut("camequcharaicon_fr00", "", float(ce.chara - 1) / 30, cx, cy, view);
-                cr3UiLabel(panel, "typeM_L01", cr3NameOf("char_name.mbe", "CharName", ce.chara), w, h, 0.26f);
-                cr3UiLabel(panel, "typeM_L02", focusItem > 0 ? cr3ItemText(focusItem, false) : std::string(), w, h, 0.26f);
+                if (cr3UiCall(panel, "call_camEquCharaIcon_fr00", cx, cy)) cr3UiPut("genecngcahaicon_fr00", "", float(ce.chara - 1) / 30, cx, cy, view); // (SetCharaParam: the part is geneCngCahaIcon_fr00)
+                cr3::Cr3Fighter was, now;
+                if (cr3EquipStats(ce.chara, -1, 0, was) && cr3EquipStats(ce.chara, ce.slot, focusItem, now)) drawCr3EquipNumbers(panel, ce.slot, was, now, view);
+                // (SetCharaParam: the name at the first typeM_L, the gene's at the next - lighter, smaller)
+                cr3UiLabel(panel, "typeM_L01", cr3NameOf("char_name.mbe", "CharName", ce.chara), w, h, 0.22f);
+                float tx, ty;
+                const std::string gene = cr3GeneNameOf(ce.chara);
+                if (!gene.empty() && cr3UiCall(panel, "typeM_L02", tx, ty)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(gene, 24, (tx + 0.06f) / 10, (ty - 0.12f) / 10, w, h, true, 0.43f);
+                }
+            }
+            if (cr3UiCall(menu, "call_camEquBtnPanel", px, py)) {
+                if (!ce.model || ce.btnY < -50) ce.btnX = px, ce.btnY = py; // (+0x4cc: held where it was while the model shows)
+                UiFig& bp = cr3UiPut("camequbtnpanel", "", 0, ce.btnX, ce.btnY, view);
+                if (cr3UiCall(bp, "call_camEquBtnText_fr00", cx, cy)) cr3UiPut("camequbtntext_fr00", "", ce.model ? 1.0f / 30 : 0.0f, cx, cy, view);
+                float ax, ay, ex, ey;
+                if (cr3UiCall(bp, "tapAreaS01", ax, ay) && cr3UiCall(bp, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 800});
             }
         }
+        if (ce.model) drawCr3CampModel(w, h, view);
         // (the list: the slots, or a slot's candidates)
         UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", t, 0, 0, view);
         if (cr3UiCall(lp, "call_comListMenu", x, y, w, h)) {
@@ -14294,6 +14533,13 @@ struct Viewer {
             else cr3Camp.stage = 1, cr3Camp.since = 0;
             return;
         }
+        if (id == 800) { // (the model view, on or off)
+            audio.playSe("com_003", false);
+            ce.model = !ce.model, ce.modelSince = 0;
+            if (ce.model) ce.yaw = 0, ce.scale = 2;
+            SDL_Log("camp: equipment model %s", ce.model ? "shown" : "hidden");
+            return;
+        }
         if (id >= 700 && id < 705) { // (another character)
             const std::vector<int> members = cr3PartyMembers();
             if (id - 700 >= int(members.size()) || members[size_t(id - 700)] == ce.chara) return;
@@ -14331,6 +14577,7 @@ struct Viewer {
         const bool up = key == SDLK_UP, down = key == SDLK_DOWN, left = key == SDLK_LEFT, right = key == SDLK_RIGHT;
         const bool enter = key == SDLK_RETURN || key == SDLK_SPACE;
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampEquip(-1);
+        if (key == SDLK_TAB) return chooseCampEquip(800);
         if (left || right) {
             const std::vector<int> members = cr3PartyMembers();
             const auto it = std::find(members.begin(), members.end(), ce.chara);
@@ -14782,20 +15029,23 @@ struct Viewer {
 
     // ---- the camp's Status (StatusMain 0xbc, StatusMenu 0xbd) ----
     // The character's picture (camStaPosition - its own animation -, camStaCut at its call_camStaCut
-    // + (1.92, -2.56), the frame the character - 1), its gene's status (camEqustaJPanel at
-    // call_camEqustaJPanel: the gene's name, HP and MP - the MP left of the most - bars
-    // camEquHp_per / camEquMp_per and numbers, attack, defence, speed, luck - camEquNumSts_num00's
-    // five comNum00_fr00 digits, the leading zeros hidden: statusEquipMenu::SetNumberOfStatus), and a
-    // list (SetCategoryBarWithText: Skills - the gene's eight slots, a command's or skill's name;
-    // Equipment - the three worn); the characters' buttons below (CreateCampEquipMenuFutter); the
-    // header title 6, the row in focus's help
+    // + (1.92, -2.56), the frame the character - 1) and four categories (StatusMain::Update's
+    // SetCategoryBarWithText: icons 0xe, 3, 0x15, 4 - texts 0x42 .. 0x45; SetStatusParameter): 0 the
+    // status (camEqustaJPanel at camStaPosition's call_camEqustaJPanel: the gene's name, HP and MP -
+    // the MP left of the most - bars camEquHp_per / camEquMp_per and numbers, attack, defence,
+    // speed, luck - camEquNumSts_num00's five comNum00_fr00 digits, the leading zeros hidden:
+    // statusEquipMenu::SetNumberOfStatus), 1 the equipment's numbers (camEqustaWPanel at
+    // call_camEqustaWPanel: weight, power, hits, the weapon's lowered resistances and the armour's -
+    // CampEquip2Menu's panel without the changes), 2 Skills - the gene's eight slots, a command's or
+    // skill's name -, 3 Equipment - the three worn; the characters' buttons below
+    // (CreateCampEquipMenuFutter); the header title 6, the row in focus's help
     struct Cr3CampStatus {
         int chara = 0;
-        int category = 0; // (0 Equipment Stats - the panel -, 1 Skills, 2 Equipment)
+        int category = 0; // (0 the status, 1 the equipment's numbers - the panels -, 2 Skills, 3 Equipment)
         int row = 0;
     } campStatus;
-    static constexpr int kStatusTabs[3] = {3, 0x1b, 4};
-    static constexpr int kStatusTexts[3] = {0x43, 0x44, 0x45};
+    static constexpr int kStatusTabs[4] = {0xe, 3, 0x15, 4};
+    static constexpr int kStatusTexts[4] = {0x42, 0x43, 0x44, 0x45};
     struct Cr3StatusRow {
         std::string name, help;
         int icon = -1;
@@ -14803,8 +15053,8 @@ struct Viewer {
     std::vector<Cr3StatusRow> campStatusRows() {
         std::vector<Cr3StatusRow> out;
         Cr3CampStatus& cs = campStatus;
-        if (cs.category == 0) return out;
-        if (cs.category == 2) {
+        if (cs.category < 2) return out;
+        if (cs.category == 3) {
             for (int slot = 0; slot < 3; ++slot) {
                 const int id = cr3WornItem(cs.chara, slot);
                 Cr3StatusRow r;
@@ -14840,17 +15090,20 @@ struct Viewer {
         const std::vector<Cr3StatusRow> rows = campStatusRows();
         UiFig& pos = cr3UiPut("camstaposition", "", t, 0, 0, view);
         if (cr3UiCall(pos, "call_camStaCut", x, y, w, h)) cr3UiPut("camstacut", "", float(cs.chara - 1) / 30, x + 1.92f, y - 2.56f, view);
-        const int k = game.wornGene(cs.chara);
         cr3::Cr3Fighter cf;
-        float sx, sy;
-        if (cs.category == 0 && cr3CharaStats(cs.chara, cf) && cr3UiCall(pos, "call_camStaCut", sx, sy, w, h)) {
-            // (StatusMenu::Pose: SetCampEquipStatusPosition - the picture's joint + (4.76, -2.24) - for
-            // the status menu's own position figure; the panel's top here under the list's buttons, an
-            // estimate - the port has no reference frame of this screen)
-            x = sx + 4.76f, y = sy - 2.24f + 1.2f;
+        // (the panels: statusEquipMenu's own camStaPosition plays its first 4 frames alone - their
+        // joint slid in to x 0 -, where StatusMenu's plays on, its "motion" leaving to the left and
+        // the picture moving right)
+        poseUi(pos, "camstaposition", std::min(t, 4.0f / 30));
+        if (cs.category == 1 && cr3CharaStats(cs.chara, cf) && cr3UiCall(pos, "call_camEqustaWPanel", x, y, w, h)) {
+            UiFig& panel = cr3UiPut("camequstawpanel", "", 0, x, y, view);
+            cr3UiLabel(panel, "typeM_L01", cr3GeneNameOf(cs.chara), w, h, 0.26f);
+            drawCr3EquipNumbers(panel, 0, cf, cf, view, true);
+        }
+        if (cs.category == 0 && cr3CharaStats(cs.chara, cf) && cr3UiCall(pos, "call_camEqustaJPanel", x, y, w, h)) {
             const int mp = cr3CharaMp(cs.chara, cf.maxMp);
             UiFig& panel = cr3UiPut("camequstajpanel", "", 0, x, y, view);
-            cr3UiLabel(panel, "typeM_L01", k >= 0 ? cr3NameOf("gene_name.mbe", "GeneName", game.cr3Genes[size_t(k)].master) : std::string(), w, h, 0.26f);
+            cr3UiLabel(panel, "typeM_L01", cr3GeneNameOf(cs.chara), w, h, 0.26f);
             if (cr3UiCall(panel, "call_camEquHp_per", cx, cy)) cr3UiPut("camequhp_per", "", 100.0f / 30, cx, cy, view);
             if (cr3UiCall(panel, "call_camEquMp_per", cx, cy)) cr3UiPut("cameqump_per", "", float(cf.maxMp > 0 ? mp * 100 / cf.maxMp : 0) / 30, cx, cy, view);
             const int values[6] = {cf.maxHp, mp, cf.attack, cf.defence, cf.speed, cf.luck};
@@ -14867,7 +15120,7 @@ struct Viewer {
         if (cr3UiCall(lp, "call_comListMenu", x, y, w, h)) {
             UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
             float labelX = 0, labelY = -100, lx, ly;
-            drawCr3Categories(menu, kStatusTabs, 3, cs.category, 400, labelX, labelY, view);
+            drawCr3Categories(menu, kStatusTabs, 4, cs.category, 400, labelX, labelY, view);
             if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                 const int n = int(rows.size());
                 const int top = std::clamp(cs.row - 2, 0, std::max(n - 5, 0));
@@ -14922,7 +15175,7 @@ struct Viewer {
             audio.playSe("com_002", false);
             return;
         }
-        if (id >= 400 && id < 403) {
+        if (id >= 400 && id < 404) {
             if (id - 400 == cs.category) return;
             cs.category = id - 400, cs.row = 0;
             audio.playSe("com_002", false);
@@ -14934,7 +15187,7 @@ struct Viewer {
         Cr3CampStatus& cs = campStatus;
         const bool up = key == SDLK_UP, down = key == SDLK_DOWN, left = key == SDLK_LEFT, right = key == SDLK_RIGHT;
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampStatus(-1);
-        if (key == SDLK_TAB) return chooseCampStatus(400 + (cs.category + 1) % 3);
+        if (key == SDLK_TAB) return chooseCampStatus(400 + (cs.category + 1) % 4);
         if (left || right) {
             const std::vector<int> members = cr3PartyMembers();
             const auto it = std::find(members.begin(), members.end(), cs.chara);
@@ -17263,7 +17516,12 @@ int main(int argc, char** argv) {
                     else if (v.aim.stage == 2) v.aimPointer(fx, fy, 1);
                     else v.unlockPointer(fx, fy, 1);
                 }
-                else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.campOpen && v.campLink == 201) { // (the scenarios dragged up and down)
+                else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && [&] { // (the camp's model turned and sized: in the screen's 960 x 640)
+                             int ww = 1, wh = 1;
+                             SDL_GetWindowSize(win, &ww, &wh);
+                             return v.cr3CampDrag(e.motion.xrel * 960.0f / float(std::max(ww, 1)), e.motion.yrel * 640.0f / float(std::max(wh, 1)));
+                         }()) {
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.campOpen && v.campLink == 201) { // (the scenarios dragged up and down)
                     int ww = 1, wh = 1;
                     SDL_GetWindowSize(win, &ww, &wh);
                     v.scrollScenarios(-e.motion.yrel / float(std::max(wh, 1)) * 0.64f);
