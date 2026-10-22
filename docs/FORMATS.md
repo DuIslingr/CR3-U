@@ -616,8 +616,39 @@ joints in from -8 / +8 over 3 frames) holds `mpTopLog` and `mpTopMenu`.
   `mpTopIcon` (frame n - 1) at `call_mpTopIcon0n`, the mode you're in's not drawn; the menu at frame n
   while pressed, SE com_005 where off. Over 80 presents: 0x2f5 on the way in.
 
+- Get Gifts (PresentGetMain 0x92, PresentGetMenu 0x93 - the header kept, its line the focused row's
+  help): `comListSPosition` (in from -5.5 over 5 frames) / `comListSMenu`'s `comListPanel` rows, 0.76
+  apart, three above the system window - Accept All (icon 0xc0, 0x2db / 0x2dc) first with two or
+  more, then the presents: an item its icon, name, count; a gene icon 0xad and 0x321 ({genename}:
+  {generarety} - 0x242 + its grade). The window: the focused one (0x14c - {itemname}, {itemnumber} -
+  or 0x2dc) with OK (off where GetBuyCanItemNumbers - an item's 99 - held - is 0) and Cancel (the
+  screen closes). OK: ReceivePresent (with one left Accept All goes; none left, the screen closes)
+  or ReceivePresents and close. A gene with 50 held (IsGeneFull, the stock not counted): 0x235, then
+  a gene to discard - the present's own first (SetGeneDeleteListItem), then the held - on
+  GeneChangeMenuCamp's cards, asked 0x236: the present's - RejectPresent -, else RemoveGene and
+  ReceivePresent; told 0x237.
+- Gene Index (PictureBookMain 0xc6 / PictureBookMenu; the header and footer gone): collection_book's
+  lines (_id, available, five genes), six to a page, two pages a spread. All (the eighth
+  `mpCatTopMat_fr00`, first chosen): every line, its highest gene ever had (else an empty card); a
+  kind (tabs 0 .. 5 kinds 1 .. 6, tab 6 kind 0 - gene_para +0x30): those lines with one of that kind
+  had. `mpCatTopPositon`: `mpCatTopBgMenu` (the title 0x21c, the collection rate - 0x21d, those had x
+  100 / all lines, three `mpCatNum01_fr00` -, the spread's right page / pages in `mpCatNum02_fr00`,
+  the tabs - the others at 0.75 x, half lit), two `mpCatTopCardMenu` of six `mpCatTopCardPanel`
+  (card_default 3.6 x at `call_GeneCard`, then the line's _id - `mpCatNum03_fr00`, leading zeros
+  hidden - and `mpCatTopNew` over it while not looked at), `mpCatTopArrowMenu` (the spread turned,
+  with more than two pages). A card tapped is looked at (CheckTapCard - the save's `cr3seen`) and its
+  profile opens: `mpCatDataPositon_in`, `mpCatDataMenu` - 0x21e right-aligned at `typeM_R01`, the
+  name at `typeM_C01`, card_default 5.6 x, `message\collection_book<n + 1>`'s text of the line (the
+  line's place + 1) at `typeM_L01` .. `L12` (broken at each `\` and the character after it -
+  Cr3UtilNPrint), a `mpCatRarity_fr00` for N .. the gene's grade (frame 2n chosen, 2n + 1 not; n
+  picks the file); the arrows step through the list's genes had (looked at too); a tap outside
+  closes it. My Page's `mpTopNew` shows while any line's highest isn't looked at
+  (GetGeneCardNewnumber).
+
 `cr3view --input camp:mypage,camp:button<n>,camp:yes,camp:scroll<rows x 0.48>` (or the field's
-`camp:field5`). Not in yet: the presents (PresentGetMain) and the picture book (PictureBookMain).
+`camp:field5`), `camp:row<n>` the presents' rows (`camp:row700 + k` a Gene Index card, `row500 + n`
+a rarity), `camp:cat200 + k` a tab; `--present item:count` / `--present g<gene>:<level>` fill the
+presents box. Not in: the profile card's own status (CreateGeneCardMenu).
 
 ## Battles (CR3)
 

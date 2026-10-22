@@ -361,6 +361,9 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "cr3book";
     for (int id : cr3GeneBook) o << ' ' << id;
     o << '\n';
+    o << "cr3seen";
+    for (int id : cr3GeneSeen) o << ' ' << id;
+    o << '\n';
     for (const auto& [name, p] : cr3Sheets) {
         o << "cr3sheet " << name << ' ' << p.completed << ' ' << int(p.completedNew) << ' ' << int(p.completedSeen) << ' ' << p.opened.size();
         for (size_t k = 0; k < p.opened.size(); ++k) o << ' ' << p.opened[k] << ' ' << int(k < p.mark.size() && p.mark[k]);
@@ -410,7 +413,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
         return false;
     }
     flags.clear();
-    cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear();
+    cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear(), cr3GeneSeen.clear();
     cr3Weapon.clear(), cr3Accessory.clear(), cr3GeneOf.clear(), cr3Mp.clear(), cr3GeneUid = 0;
     cr3Records = Cr3Records();
     cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests(), cr3Vs = Cr3Vs();
@@ -498,6 +501,8 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             if (readGene(l, g)) cr3Genes.push_back(g);
         } else if (key == "cr3book") {
             for (int id; l >> id;) cr3GeneBook.insert(id);
+        } else if (key == "cr3seen") {
+            for (int id; l >> id;) cr3GeneSeen.insert(id);
         } else if (key == "cr3sheet") {
             std::string name;
             Cr3SheetProgress p;

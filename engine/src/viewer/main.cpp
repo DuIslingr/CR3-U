@@ -5685,6 +5685,8 @@ struct Viewer {
         cr3Camp.since += dt;
         campEquip.modelSince += dt;
         myPage.toldSince += dt;
+        myPage.screenSince += dt;
+        myPage.profileSince += dt;
         campItems.toldSince += dt;
         campGifts.toldSince += dt;
         vs.since += dt;
@@ -12108,9 +12110,11 @@ struct Viewer {
     // AnnounceData (message\AnnounceMenuName.dat - Cr3UtilGetMnlCmpAnnounceData's): u32 the
     // records' offset, the texts', the count; a record two u32s - the Japanese text's, the
     // English's - by number from 1; "\r\n" in them a line break
-    std::string menuAnnounce(int id) {
-        std::vector<uint8_t>& d = messageFiles["AnnounceMenuName"];
-        if (d.empty() && !archive.read("message\\AnnounceMenuName.dat", d)) return {};
+    std::string menuAnnounce(int id) { return announceText("AnnounceMenuName", id); }
+    // an AnnounceData file's text (message\<file>.dat: 8-byte records - Japanese, English)
+    std::string announceText(const std::string& file, int id) {
+        std::vector<uint8_t>& d = messageFiles[file];
+        if (d.empty() && !archive.read("message\\" + file + ".dat", d)) return {};
         auto u32 = [&](size_t o) { return o + 4 <= d.size() ? uint32_t(d[o] | d[o + 1] << 8 | d[o + 2] << 16 | uint32_t(d[o + 3]) << 24) : 0u; };
         if (id < 1 || uint32_t(id) > u32(8)) return {};
         const size_t o = size_t(u32(4)) + u32(size_t(u32(0)) + size_t(id - 1) * 8 + (optionLanguage == 0 ? 0 : 4));
@@ -15260,6 +15264,19 @@ struct Viewer {
         bool vs = false;      // (opened in the VS mode: GameMain +0x24b)
         std::string told;
         float toldSince = 0;
+        int screen = 0;       // 0 the top, 1 the presents, 2 a gene to discard for one, 3 the picture book
+        float screenSince = 0;
+        std::vector<int> rows; // (1: the presents listed - cr3Presents indices; -1 Accept All, first with two or more)
+        int row = 0;
+        int present = -1;      // (2: the present whose gene there's no room for)
+        std::vector<int> genes; // (2: the cards - cr3Genes indices; -1 the present's own gene)
+        int focus = 0;
+        int asked = -1;        // (2: the card asked about)
+        int bookTab = 7;       // (3: mpCatTopMat_fr00's chosen - 0 .. 5 the kinds 1 .. 6, 6 kind 0, 7 all)
+        int bookPage = 0;      // (3: the spread's left page, from 0 - even)
+        int profile = 0;       // (3: the gene whose profile shows; 0 none)
+        int rarity = 0;        // (3: the profile's rarity button - collection_book<n + 1>)
+        float profileSince = 0;
     } myPage;
     void openMyPage() {
         myPage = Cr3MyPage();
@@ -15328,6 +15345,9 @@ struct Viewer {
             if (cr3UiCall(menu, "call_comBgMark_id", cx, cy)) cr3UiPut("combgmark_id00", "", 0, cx, cy, view);
         }
         dev->clearDepth();
+        if (mp.screen == 1) return drawPresents(w, h, view);
+        if (mp.screen == 2) return drawPresentDiscard(w, h, view);
+        if (mp.screen == 3) return drawGeneIndex(w, h, view);
         UiFig& pos = cr3UiPut("mptopposition", "mptopposition_in", std::min(t, 0.1f), 0, 0, view); // (_in: the two slid in from +-8 over 3 frames, then held)
         // (the log)
         if (cr3UiCall(pos, "call_mpTopLog", x, y, w, h)) {
@@ -15368,6 +15388,7 @@ struct Viewer {
                 if (cr3UiCall(menu, joint, px, py)) cr3UiPut(fig, "", frame, px, py, view);
             };
             put(mp.vs ? "call_mpTopVSOff" : "call_mpTopStoryOff", mp.vs ? "mptopvsoff" : "mptopstoryoff");
+            if (geneIndexNew() > 0) put("call_mpTopNew", "mptopnew"); // (GetGeneCardNewnumber: cards not yet looked at)
             if (game.cr3Presents.empty()) put("call_mpTopPresentOff", "mptoppresentoff");
             for (int b = 1; b <= 4; ++b) {
                 if ((b == 1 && !mp.vs) || (b == 2 && mp.vs)) continue;
@@ -15395,6 +15416,9 @@ struct Viewer {
     }
     void chooseMyPage(int id) {
         Cr3MyPage& mp = myPage;
+        if (mp.screen == 1) return choosePresents(id);
+        if (mp.screen == 2) return choosePresentDiscard(id);
+        if (mp.screen == 3) return chooseGeneIndex(id);
         if (!mp.told.empty()) {
             if (id == 502 || id == -1) mp.told.clear();
             return;
@@ -15426,12 +15450,496 @@ struct Viewer {
         audio.playSe("com_003", false);
         mp.pressed = b;
         if (b <= 2) mp.ask = b;
-        else {
-            SDL_Log("my page: %s (not in yet)", b == 3 ? "the presents" : "the picture book");
-            mp.pressed = 0;
+        else if (b == 3) openPresents();
+        else openGeneIndex();
+    }
+
+    // ---- My Page's Gene Index (PictureBookMain 0xc6, PictureBookMenu; MyPageNewTopMain 0xd: the
+    // header and footer gone, its own back button) ----
+    // collection_book's lines (DAT_0141e0a8), six to a page, two pages a spread: SetGeneData - all
+    // (mpCatTopMat_fr00 7, the first chosen): every line, the highest of its genes ever had (else an
+    // empty card); a kind (tabs 0 .. 5 kinds 1 .. 6, tab 6 kind 0 - gene_para +0x30): the lines with
+    // one of that kind ever had, its highest. mpCatTopPositon holds mpCatTopBgMenu (fit0: the title
+    // 0x21c, the collection rate - 0x21d, those had of all x 100, three mpCatNum01_fr00 -, the page
+    // - the spread's right - and of how many in two mpCatNum02_fr00 each, the eight tabs - the
+    // others at 0.75 x, half lit), the two mpCatTopCardMenu (each six mpCatTopCardPanel: card_default
+    // 3.6 x at call_GeneCard, the line's _id in three mpCatNum03_fr00 - leading zeros hidden -,
+    // mpCatTopNew over those not yet looked at) and mpCatTopArrowMenu (with more than two pages:
+    // turns the spread). A card tapped: looked at (CheckTapCard), its profile (SetCardProfile:
+    // mpCatDataPositon_in over 5 frames, mpCatDataMenu at its fit0 - 0x21e at typeM_R01, the gene's
+    // name at typeM_C01, its card 5.6 x at call_GeneCard, collection_book<n + 1>'s text of the line
+    // at typeM_L01 .. L12, broken at its \ - Cr3UtilNPrint -, a mpCatRarity_fr00 for each of N ..
+    // its own grade - frame 2n chosen, 2n + 1 not; the arrows the list's next or last gene, looked
+    // at too); tapped outside it, the profile closes
+    void openGeneIndex() {
+        Cr3MyPage& mp = myPage;
+        mp.screen = 3, mp.screenSince = 0, mp.pressed = 0, mp.bookTab = 7, mp.bookPage = 0, mp.profile = 0;
+        SDL_Log("my page: gene index (%zu lines)", game.cr3Db ? game.cr3Db->book().size() : size_t(0));
+    }
+    // the cards listed: (the line's _id, the gene shown - 0 none)
+    std::vector<std::pair<int, int>> geneIndexCards(int& had) const {
+        std::vector<std::pair<int, int>> out;
+        had = 0;
+        if (!game.cr3Db) return out;
+        const int kind = myPage.bookTab == 7 ? -1 : myPage.bookTab == 6 ? 0 : myPage.bookTab + 1;
+        for (const cr3::Cr3OfflineDb::BookLine& line : game.cr3Db->book()) {
+            int best = 0;
+            for (const int g : line.genes) {
+                if (g <= 0 || !game.cr3GeneBook.count(g)) continue;
+                const auto* gi = game.cr3Db->geneInfo(g);
+                if (kind < 0 || (gi && gi->kind == kind)) best = g;
+            }
+            if (kind < 0 || best > 0) out.push_back({line.id, best});
+            had += best > 0;
+        }
+        return out;
+    }
+    int geneIndexNew() const { // (GetGeneCardNewnumber: the lines whose highest had isn't looked at)
+        int had = 0, n = 0;
+        const int tab = myPage.bookTab;
+        const_cast<Cr3MyPage&>(myPage).bookTab = 7;
+        for (const auto& [line, g] : geneIndexCards(had)) n += g > 0 && !game.cr3GeneSeen.count(g);
+        const_cast<Cr3MyPage&>(myPage).bookTab = tab;
+        return n;
+    }
+    std::vector<std::string> geneProfileLines(int gene, int rarity) {
+        std::vector<std::string> out;
+        if (!game.cr3Db) return out;
+        int entry = 0;
+        const auto& book = game.cr3Db->book();
+        for (size_t k = 0; k < book.size() && !entry; ++k)
+            for (const int g : book[k].genes)
+                if (g == gene) entry = int(k) + 1;
+        const std::string text = announceText("collection_book" + std::to_string(rarity + 1), entry);
+        std::string line;
+        for (size_t k = 0; k < text.size() && out.size() < 12; ++k) {
+            if (text[k] == '\\') out.push_back(line), line.clear(), ++k; // (Cr3UtilNPrint: a \ and the one after it end the line)
+            else if (text[k] != '\n') line += text[k];
+        }
+        if (!line.empty() && out.size() < 12) out.push_back(line);
+        return out;
+    }
+    void drawGeneIndex(int w, int h, const Mat4& view) {
+        Cr3MyPage& mp = myPage;
+        float x, y, cx, cy;
+        int had = 0;
+        const std::vector<std::pair<int, int>> cards = geneIndexCards(had);
+        const int total = game.cr3Db ? int(game.cr3Db->book().size()) : 0;
+        const int pages = cards.empty() ? 1 : (int(cards.size()) - 1) / 6 + 1;
+        mp.bookPage = std::clamp(mp.bookPage, 0, std::max((pages - 1) / 2 * 2, 0));
+        const auto digits = [&](const UiFig& on, const char* prefix, const char* fig, int value, int places) {
+            cr3UiDigits(on, prefix, fig, std::max(value, 0), places, 0, view);
+        };
+        if (mp.profile > 0) cr3CampTaps.push_back({-6, -4, 6, 4, 902}); // (outside the profile: it closes)
+        UiFig& pos = cr3UiPut("mpcattoppositon", "", 0, 0, 0, view);
+        if (cr3UiCall(pos, "call_mpCatTopBgMenu", x, y, w, h)) {
+            UiFig& bg = cr3UiPut("mpcattopbgmenu", "", 0, x, y, view);
+            float px, py;
+            if (cr3UiCall(bg, "call_mpCatTopTitlePanel", px, py)) {
+                UiFig& title = cr3UiPut("mpcattoptitlepanel", "", 0, px, py, view);
+                cr3UiLabel(title, "typeM_L01", menuAnnounce(0x21c), w, h, 1.0f);
+            }
+            if (cr3UiCall(bg, "call_mpCatTopCompPanel", px, py)) {
+                UiFig& comp = cr3UiPut("mpcattopcomppanel", "", 0, px, py, view);
+                float tx, ty;
+                if (cr3UiCall(comp, "typeM_L01", tx, ty)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(menuAnnounce(0x21d), 20, (tx + 0.06f) / 10, (ty - 0.12f) / 10, w, h, true, 1.0f);
+                }
+                digits(comp, "call_mpCatNum01_fr00", "mpcatnum01_fr00", total ? had * 100 / total : 0, 3);
+            }
+            for (int k = 0; k < 2; ++k) { // (the page - the spread's right - and of how many)
+                char joint[40];
+                std::snprintf(joint, sizeof joint, "call_mpCatTopPage_num00_%03d", k + 1);
+                if (!cr3UiCall(bg, joint, px, py)) continue;
+                UiFig& num = cr3UiPut("mpcattoppage_num00", "", 0, px, py, view);
+                digits(num, "call_mpCatNum02_fr00", "mpcatnum02_fr00", k == 0 ? std::min(mp.bookPage + 2, pages) : pages, 2);
+            }
+            for (int k = 0; k < 8; ++k) {
+                char joint[40];
+                std::snprintf(joint, sizeof joint, "call_mpCatTopMat_fr00_%03d", k + 1);
+                if (!cr3UiCall(bg, joint, px, py)) continue;
+                const bool on = k == mp.bookTab;
+                UiFig& u = uiFig("mpcattopmat_fr00");
+                u.fig.place = cr3::Mat34();
+                u.fig.place.m[0] = u.fig.place.m[5] = u.fig.place.m[10] = on ? 1.0f : 0.75f;
+                u.fig.place.m[3] = px, u.fig.place.m[7] = py;
+                poseUi(u, "mpcattopmat_fr00", float(k) / 30);
+                u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = on ? 1.0f : 0.5f;
+                drawFigure(u.fig, view.data());
+                u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = 1.0f;
+                float ax, ay, ex, ey;
+                if (!mp.profile && cr3UiCall(u, "tapAreaS01", ax, ay) && cr3UiCall(u, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 600 + k});
+            }
+        }
+        for (int m = 0; m < 2; ++m) {
+            char joint[40];
+            std::snprintf(joint, sizeof joint, "call_mpCatTopCardMenu_%03d", m + 1);
+            if (!cr3UiCall(pos, joint, x, y, w, h)) continue;
+            UiFig& menu = cr3UiPut("mpcattopcardmenu", "", 0, x, y, view);
+            for (int k = 0; k < 6; ++k) {
+                std::snprintf(joint, sizeof joint, "call_mpCatTopCardPanel_%03d", k + 1);
+                float px, py;
+                if (!cr3UiCall(menu, joint, px, py)) continue;
+                UiFig& panel = cr3UiPut("mpcattopcardpanel", "", 0, px, py, view);
+                const int at = (mp.bookPage + m) * 6 + k;
+                if (at >= int(cards.size())) continue;
+                const auto [line, gene] = cards[size_t(at)];
+                // (PictureBookMenuCardPanel::Render: the card, then its number and new mark over it)
+                if (gene > 0 && cr3UiCall(panel, "call_GeneCard", cx, cy)) drawCr3Card(gene, cx, cy, 1.0f, 3.6f, view), dev->clearDepth();
+                if (cr3UiCall(panel, "call_mpCatTopNo_num00", cx, cy)) digits(cr3UiPut("mpcattopno_num00", "", 0, cx, cy, view), "call_mpCatNum03_fr00", "mpcatnum03_fr00", line, 3);
+                if (gene <= 0) continue;
+                if (!game.cr3GeneSeen.count(gene) && cr3UiCall(panel, "call_mpCatTopNew", cx, cy)) cr3UiPut("mpcattopnew", "mpcattopnew_loop", uiClock, cx, cy, view, 1, true);
+                float ax, ay, ex, ey;
+                if (!mp.profile && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 1000 + at});
+            }
+        }
+        // (the profile over them)
+        if (mp.profile > 0) {
+            dev->clearDepth();
+            UiFig& dp = cr3UiPut("mpcatdatapositon", "mpcatdatapositon_in", std::min(mp.profileSince, 5.0f / 30), 0, 0, view);
+            if (cr3UiCall(dp, "call_mpCatDataMenu", x, y, w, h)) {
+                UiFig& menu = cr3UiPut("mpcatdatamenu", "", 0, x, y, view);
+                float ax, ay, ex, ey;
+                if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 903}); // (the card's status - not in)
+                float tx, ty;
+                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                // (SetStringData: "Profile" right-aligned, the name centred, the lines from the left - white)
+                if (cr3UiCall(menu, "typeM_R01", tx, ty)) {
+                    const std::string label = menuAnnounce(0x21e);
+                    drawUiText(label, 24, (tx - 0.06f) / 10 - uiTextWidth(label, 24, w, h), (ty - 0.12f) / 10, w, h, true, 1.0f);
+                }
+                if (cr3UiCall(menu, "typeM_C01", tx, ty)) drawUiText(cr3NameOf("gene_name.mbe", "GeneName", mp.profile), 22, tx / 10, (ty - 0.12f) / 10, w, h, false, 0.25f);
+                const std::vector<std::string> lines = geneProfileLines(mp.profile, mp.rarity);
+                for (size_t k = 0; k < lines.size(); ++k) {
+                    char joint[16];
+                    std::snprintf(joint, sizeof joint, "typeM_L%02d", int(k) + 1);
+                    if (cr3UiCall(menu, joint, tx, ty)) drawUiText(lines[k], 22, (tx + 0.06f) / 10, (ty - 0.12f) / 10, w, h, true, 1.0f, 0.44f); // (narrowed to the box)
+                }
+                if (cr3UiCall(menu, "call_GeneCard", cx, cy)) drawCr3Card(mp.profile, cx, cy, 1.0f, 5.6f, view);
+                const auto* gi = game.cr3Db ? game.cr3Db->geneInfo(mp.profile) : nullptr;
+                for (int k = 0; gi && k <= gi->grade && k < 5; ++k) {
+                    char joint[40];
+                    std::snprintf(joint, sizeof joint, "call_mpCatRarity_fr00_%03d", k + 1);
+                    if (!cr3UiCall(menu, joint, cx, cy)) continue;
+                    UiFig& b = cr3UiPut("mpcatrarity_fr00", "", float(k == mp.rarity ? 2 * k : 2 * k + 1) / 30, cx, cy, view);
+                    if (cr3UiCall(b, "tapAreaS01", ax, ay) && cr3UiCall(b, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 800 + k});
+                }
+            }
+        }
+        if ((pages > 2 || mp.profile > 0) && cr3UiCall(pos, "call_mpCatTopArrowMenu", x, y, w, h)) {
+            UiFig& arrows = cr3UiPut("mpcattoparrowmenu", "mpcattoparrowmenu_loop", uiClock, x, y, view, 1, true);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(arrows, "tapAreaS01", ax, ay) && cr3UiCall(arrows, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 700});
+            if (cr3UiCall(arrows, "tapAreaS02", ax, ay) && cr3UiCall(arrows, "tapAreaE02", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 701});
+        }
+        UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view); // (ComBackButton)
+        if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+            UiFig& bm = cr3UiPut("combackmenu", "", 0, x, y, view);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
+        }
+    }
+    void chooseGeneIndex(int id) {
+        Cr3MyPage& mp = myPage;
+        int had = 0;
+        const std::vector<std::pair<int, int>> cards = geneIndexCards(had);
+        const int pages = cards.empty() ? 1 : (int(cards.size()) - 1) / 6 + 1;
+        if (id == -1 || id == 902) {
+            audio.playSe(id == -1 ? "com_004" : "com_003", false);
+            if (mp.profile > 0) mp.profile = 0;
+            else mp.screen = 0, mp.screenSince = 0, mp.pressed = 0, SDL_Log("my page: gene index closed");
+            return;
+        }
+        if (id >= 600 && id < 608 && !mp.profile) { // (a tab: SetGeneData by its kind)
+            if (id - 600 == mp.bookTab) return;
+            audio.playSe("com_003", false);
+            mp.bookTab = id - 600, mp.bookPage = 0;
+            return;
+        }
+        if (id == 700 || id == 701) {
+            audio.playSe("com_003", false);
+            const int dir = id == 700 ? -1 : 1;
+            if (mp.profile > 0) { // (GetPictureBookMenuGeneID: the list's next or last gene had)
+                std::vector<int> genes;
+                for (const auto& c : cards)
+                    if (c.second > 0) genes.push_back(c.second);
+                const auto it = std::find(genes.begin(), genes.end(), mp.profile);
+                if (genes.empty() || it == genes.end()) return;
+                const int at = int(it - genes.begin());
+                mp.profile = genes[size_t((at + dir + int(genes.size())) % int(genes.size()))];
+                mp.rarity = 0, mp.profileSince = 0;
+                game.cr3GeneSeen.insert(mp.profile); // (SetNewOffPictureBookMenu)
+                return;
+            }
+            const int spreads = (pages + 1) / 2;
+            mp.bookPage = ((mp.bookPage / 2 + dir + spreads) % spreads) * 2;
+            return;
+        }
+        if (id >= 800 && id < 805 && mp.profile > 0) { // (SetRarityText: com_005 the chosen again)
+            if (id - 800 == mp.rarity) return (void)audio.playSe("com_005", false);
+            audio.playSe("com_003", false);
+            mp.rarity = id - 800;
+            return;
+        }
+        if (id >= 1000 && id - 1000 < int(cards.size()) && !mp.profile) {
+            const int gene = cards[size_t(id - 1000)].second;
+            if (gene <= 0) return;
+            audio.playSe("com_003", false);
+            game.cr3GeneSeen.insert(gene); // (CheckTapCard: looked at)
+            mp.profile = gene, mp.rarity = 0, mp.profileSince = 0;
+            SDL_Log("my page: gene index - profile of %d", gene);
+        }
+    }
+
+    // ---- My Page's presents (PresentGetMain 0x92, PresentGetMenu 0x93) ----
+    // comListSPosition's comListSMenu (fit4) - its comListPanel rows, 0.76 apart, three showing: the
+    // presents (PresentGetMain 1: AddPresentListItem - an item its icon, name, count, help; a gene
+    // its card icon 0xad and 0x321 - {genename}: {generarety}, 0x242 + grade -), Accept All (icon
+    // 0xc0, 0x2db / 0x2dc) first with two or more; the one in focus's help the header's line. Below,
+    // the system window and its OK / Cancel (SetBasicYNChoice2Window): the one in focus - 0x14c
+    // ({itemname}, {itemnumber}) or 0x2dc - OK off where no more of the item can be held
+    // (GetBuyCanItemNumbers: 99 - held). OK: ReceivePresent (its row gone, Accept All too with one
+    // left; none left - the screen closes) or, for Accept All, ReceivePresents and the screen
+    // closes; Cancel closes it. A gene with 50 held (CrxGameData::IsGeneFull - the stock not
+    // counted): told 0x235, then a gene to discard among the held and the present's own
+    // (SetGeneDeleteListItem), asked 0x236 - the present's: RejectPresent, else RemoveGene and then
+    // ReceivePresent -, told 0x237 ({genename})
+    void openPresents() {
+        Cr3MyPage& mp = myPage;
+        mp.screen = 1, mp.screenSince = 0, mp.pressed = 0, mp.row = 0;
+        presentRows();
+        SDL_Log("my page: presents (%zu)", game.cr3Presents.size());
+    }
+    void presentRows() {
+        Cr3MyPage& mp = myPage;
+        mp.rows.clear();
+        if (game.cr3Presents.size() > 1) mp.rows.push_back(-1);
+        for (int k = 0; k < int(game.cr3Presents.size()); ++k) mp.rows.push_back(k);
+        mp.row = std::clamp(mp.row, 0, std::max(int(mp.rows.size()) - 1, 0));
+    }
+    std::string presentName(int k) {
+        if (k < 0) return menuAnnounce(0x2db);
+        const cr3::Cr3Present& p = game.cr3Presents[size_t(k)];
+        if (!p.gene) return cr3ItemText(p.item, false);
+        const auto* gi = game.cr3Db ? game.cr3Db->geneInfo(p.geneData.master) : nullptr;
+        std::string s = menuAnnounce(0x321);
+        if (const size_t at = s.find("{genename}"); at != std::string::npos) s.replace(at, 10, cr3NameOf("gene_name.mbe", "GeneName", p.geneData.master));
+        if (const size_t at = s.find("{generarety}"); at != std::string::npos) s.replace(at, 12, menuAnnounce(0x242 + (gi ? gi->grade : 0)));
+        return s;
+    }
+    bool presentTakeable(int k) const { // (GetBuyCanItemNumbers: an item's 99 - held; the rest as DBEmu decides)
+        if (k < 0) return true;
+        const cr3::Cr3Present& p = game.cr3Presents[size_t(k)];
+        if (p.gene || p.item / 100000 == 1 || p.item / 100000 == 2 || p.item / 100000 == 3) return true;
+        const auto it = game.cr3Items.find(p.item);
+        return 99 - (it == game.cr3Items.end() ? 0 : it->second) >= 1;
+    }
+    void drawPresents(int w, int h, const Mat4& view) {
+        Cr3MyPage& mp = myPage;
+        const float t = mp.screenSince;
+        float x, y, cx, cy;
+        const int focused = mp.row < int(mp.rows.size()) ? mp.rows[size_t(mp.row)] : -2;
+        UiFig& pos = cr3UiPut("comlistsposition", "", std::min(t, 5.0f / 30), 0, 0, view); // (its own animation: in from -5.5 over 5 frames)
+        if (cr3UiCall(pos, "call_comListSMenu", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("comlistsmenu", "", 0, x, y, view);
+            float lx, ly;
+            if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
+                const int n = int(mp.rows.size());
+                const int top = std::clamp(mp.row - 1, 0, std::max(n - 3, 0)); // (three above the system window)
+                for (int r = top; r < n && r < top + 3; ++r) {
+                    const int k = mp.rows[size_t(r)];
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, lx, ly - 0.76f * float(r - top), view);
+                    if (r == mp.row && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                    int icon = k < 0 ? 0xc0 : game.cr3Presents[size_t(k)].gene ? 0xad : -1;
+                    cr3::MbeFile::Row ir;
+                    if (icon < 0 && cr3ItemRow(game.cr3Presents[size_t(k)].item, ir)) icon = ir.i(3);
+                    if (icon >= 0 && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy)) cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), icon), cx, cy, view);
+                    if (k >= 0 && cr3UiCall(panel, "call_comListNumI_num00", cx, cy)) {
+                        UiFig& num = cr3UiPut("comlistnumi_num00", "", 0, cx, cy, view);
+                        const std::string digits = std::to_string(std::max(game.cr3Presents[size_t(k)].gene ? 1 : game.cr3Presents[size_t(k)].count, 0));
+                        int slots = 0;
+                        for (const std::string& j : num.joints) slots += j.rfind("call_comListNum_fr00_", 0) == 0;
+                        for (int d = 0; d < int(digits.size()) && d < slots; ++d) {
+                            float dx, dy;
+                            if (cr3UiCall(num, "call_comListNum_fr00_00" + std::to_string(slots - int(digits.size()) + d + 1), dx, dy))
+                                cr3UiPut("comlistnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
+                        }
+                    }
+                    cr3UiLabel(panel, "typeM_L01", presentName(k), w, h, 0.3f);
+                    float ax, ay, bx, by;
+                    if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 300 + r});
+                }
+            }
+        }
+        // (the system window: the one in focus, OK / Cancel)
+        if (focused >= -1 && mp.told.empty()) {
+            std::string text = focused < 0 ? menuAnnounce(0x2dc) : menuAnnounce(0x14c);
+            if (focused >= 0) {
+                const cr3::Cr3Present& p = game.cr3Presents[size_t(focused)];
+                std::string name = p.gene ? cr3NameOf("gene_name.mbe", "GeneName", p.geneData.master) : cr3ItemText(p.item, false);
+                if (const size_t at = text.find("{itemname}"); at != std::string::npos) text.replace(at, 10, name);
+                if (const size_t at = text.find("{itemnumber}"); at != std::string::npos) text.replace(at, 12, std::to_string(p.gene ? 1 : p.count));
+            }
+            drawCr3Asked(text, t, 0, presentTakeable(focused), 500, 501, w, h, view);
+        }
+        if (!mp.told.empty()) drawCr3Told(mp.told, mp.toldSince, 502, w, h, view);
+        std::string help;
+        if (focused == -1) help = menuAnnounce(0x2dc);
+        else if (focused >= 0 && !game.cr3Presents[size_t(focused)].gene) help = cr3ItemText(game.cr3Presents[size_t(focused)].item, true);
+        drawCr3Header(cr3Camp.since, 8, help, w, h, view);
+    }
+    void closePresents() {
+        myPage.screen = 0, myPage.screenSince = 0, myPage.pressed = 0;
+        SDL_Log("my page: presents closed");
+    }
+    void choosePresents(int id) {
+        Cr3MyPage& mp = myPage;
+        if (!mp.told.empty()) {
+            if (id == 502 || id == -1) {
+                mp.told.clear();
+                if (mp.present >= 0 && mp.screen == 1) { // (0x235 read: the gene to discard)
+                    mp.screen = 2, mp.screenSince = 0, mp.genes.clear(), mp.focus = 0, mp.asked = -1;
+                    mp.genes.push_back(-1);
+                    for (int g = 0; g < int(game.cr3Genes.size()); ++g)
+                        if (!game.cr3Genes[size_t(g)].stocked) mp.genes.push_back(g);
+                }
+                if (mp.rows.empty() && mp.screen == 1) closePresents();
+            }
+            return;
+        }
+        if (id == 501 || id == -1) { // (Cancel: PresentGetMain 2 - the screen closes)
+            audio.playSe("com_004", false);
+            return closePresents();
+        }
+        if (id >= 300 && id < 300 + int(mp.rows.size())) {
+            if (id - 300 != mp.row) mp.row = id - 300, audio.playSe("com_002", false);
+            return;
+        }
+        if (id != 500 || mp.row >= int(mp.rows.size()) || !game.cr3Db) return;
+        const int k = mp.rows[size_t(mp.row)];
+        if (!presentTakeable(k)) return;
+        audio.playSe("com_003", false);
+        if (k < 0) { // (Accept All: ReceivePresents, then the screen closes)
+            const int r = game.cr3Db->receivePresents(game);
+            SDL_Log("my page: accepted all presents -> %#x (%zu left)", r, game.cr3Presents.size());
+            return closePresents();
+        }
+        const cr3::Cr3Present& p = game.cr3Presents[size_t(k)];
+        if (p.gene && geneLabHeld() >= game.cr3Db->constant("GENE_CAPACITY", 50)) { // (IsGeneFull: 0x235, then the gene to discard)
+            mp.present = k, mp.told = menuAnnounce(0x235), mp.toldSince = 0;
+            return;
+        }
+        acceptPresent(k);
+    }
+    void acceptPresent(int k) {
+        const int r = game.cr3Db->receivePresent(game, k);
+        SDL_Log("my page: accepted present %d -> %#x (%zu left)", k, r, game.cr3Presents.size());
+        presentRows();
+        if (myPage.rows.empty()) closePresents();
+    }
+    // a gene to discard for a present's (PresentGetMain 0xb .. 0x10: GeneChangeMenuCamp's cards -
+    // the present's own first)
+    void drawPresentDiscard(int w, int h, const Mat4& view) {
+        Cr3MyPage& mp = myPage;
+        if (!mp.told.empty()) { // (0x237: the cards gone - DeleteGeneChangeMenuCamp)
+            drawCr3Told(mp.told, mp.toldSince, 502, w, h, view);
+            return drawCr3Header(cr3Camp.since, 8, std::string(), w, h, view);
+        }
+        if (mp.present < 0 || mp.present >= int(game.cr3Presents.size())) return;
+        // (the present's gene a card for the while: its own index past the held)
+        game.cr3Genes.push_back(game.cr3Presents[size_t(mp.present)].geneData);
+        const int own = int(game.cr3Genes.size()) - 1;
+        std::vector<int> cards;
+        for (const int g : mp.genes) cards.push_back(g < 0 ? own : g);
+        std::swap(cr3Camp.genes, cards), std::swap(cr3Camp.focus, mp.focus);
+        const float since = cr3Camp.since;
+        cr3Camp.since = mp.screenSince;
+        drawCr3CampGenes(w, h, view);
+        cr3Camp.since = since;
+        std::swap(cr3Camp.genes, cards), std::swap(cr3Camp.focus, mp.focus);
+        game.cr3Genes.pop_back();
+        if (mp.asked >= 0 && mp.asked < int(mp.genes.size())) {
+            const int g = mp.genes[size_t(mp.asked)];
+            std::string text = menuAnnounce(0x236);
+            const int master = g < 0 ? game.cr3Presents[size_t(mp.present)].geneData.master : game.cr3Genes[size_t(g)].master;
+            if (const size_t at = text.find("{genename}"); at != std::string::npos) text.replace(at, 10, cr3NameOf("gene_name.mbe", "GeneName", master));
+            drawCr3Asked(text, mp.screenSince, 0, true, 500, 501, w, h, view);
+        }
+        drawCr3Header(cr3Camp.since, 8, std::string(), w, h, view); // (no title of its own: My Page's)
+    }
+    void choosePresentDiscard(int id) {
+        Cr3MyPage& mp = myPage;
+        if (!mp.told.empty()) { // (0x237 read: the list again)
+            if (id == 502 || id == -1) {
+                mp.told.clear(), mp.present = -1, mp.screen = 1, mp.screenSince = 0;
+                presentRows();
+                if (mp.rows.empty()) closePresents();
+            }
+            return;
+        }
+        if (mp.asked >= 0) {
+            if (id == 501 || id == -1) mp.asked = -1, audio.playSe("com_004", false);
+            else if (id == 500) {
+                audio.playSe("com_003", false);
+                const int g = mp.genes[size_t(mp.asked)];
+                const int master = g < 0 ? game.cr3Presents[size_t(mp.present)].geneData.master : game.cr3Genes[size_t(g)].master;
+                if (g < 0) game.cr3Db->dropPresent(game, mp.present); // (RejectPresent)
+                else {
+                    game.cr3Db->removeGene(game, g);
+                    game.cr3Db->receivePresent(game, mp.present);
+                }
+                SDL_Log("my page: discarded gene %d (%s) - %d held, %zu presents", master, g < 0 ? "the present's" : "held", geneLabHeld(), game.cr3Presents.size());
+                mp.asked = -1;
+                mp.told = menuAnnounce(0x237), mp.toldSince = 0;
+                if (const size_t at = mp.told.find("{genename}"); at != std::string::npos) mp.told.replace(at, 10, cr3NameOf("gene_name.mbe", "GeneName", master));
+            }
+            return;
+        }
+        if (id == -1) { // (the footer's back: the list again, the present kept)
+            audio.playSe("com_004", false);
+            mp.present = -1, mp.screen = 1, mp.screenSince = 0;
+            return;
+        }
+        if (id >= kTapCard && id < kTapRow) {
+            const int g = id - kTapCard;
+            if (g < 0 || g >= int(mp.genes.size())) return;
+            if (g != mp.focus) return (void)(mp.focus = g, audio.playSe("com_002", false));
+            mp.asked = g;
+            audio.playSe("com_003", false);
         }
     }
     void myPageKey(SDL_Keycode key) {
+        Cr3MyPage& mp = myPage;
+        const bool enter = key == SDLK_RETURN || key == SDLK_SPACE, back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
+        if (mp.screen == 3) {
+            if (back) return chooseMyPage(-1);
+            if (key == SDLK_LEFT || key == SDLK_RIGHT) return chooseMyPage(key == SDLK_LEFT ? 700 : 701);
+            if (key == SDLK_TAB) return chooseMyPage(mp.profile ? 800 + (mp.rarity + 1) % 5 : 600 + (mp.bookTab + 1) % 8);
+            if (enter && !mp.profile) { // (the first card had on the spread)
+                int had = 0;
+                const auto cards = geneIndexCards(had);
+                for (int k = mp.bookPage * 6; k < int(cards.size()) && k < mp.bookPage * 6 + 12; ++k)
+                    if (cards[size_t(k)].second > 0) return chooseMyPage(1000 + k);
+            }
+            return;
+        }
+        if (mp.screen == 1 || mp.screen == 2) {
+            if (!mp.told.empty()) return (enter || back) ? chooseMyPage(502) : void();
+            if (mp.screen == 2 && mp.asked >= 0) return enter ? chooseMyPage(500) : back ? chooseMyPage(501) : void();
+            if (back) return chooseMyPage(-1);
+            if (mp.screen == 1) {
+                const int n = int(mp.rows.size());
+                if ((key == SDLK_UP || key == SDLK_DOWN) && n > 0) return chooseMyPage(300 + std::clamp(mp.row + (key == SDLK_DOWN ? 1 : -1), 0, n - 1));
+                if (enter) return chooseMyPage(500);
+                return;
+            }
+            const int n = int(mp.genes.size());
+            if ((key == SDLK_LEFT || key == SDLK_RIGHT) && n > 0) return chooseMyPage(kTapCard + std::clamp(mp.focus + (key == SDLK_RIGHT ? 1 : -1), 0, n - 1));
+            if (enter && n > 0) return chooseMyPage(kTapCard + mp.focus);
+            return;
+        }
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseMyPage(myPage.ask ? 501 : -1);
         if (myPage.ask && (key == SDLK_RETURN || key == SDLK_SPACE)) return chooseMyPage(500);
         if (key == SDLK_UP || key == SDLK_DOWN) myPageScroll(key == SDLK_DOWN ? 0.48f : -0.48f);
@@ -16972,6 +17480,7 @@ int main(int argc, char** argv) {
     std::vector<int> flagsArg;
     std::vector<std::pair<int, int>> genesArg; // (--gene id[:level]: a gene held to begin with - tests)
     int goldArg = -1, coinsArg = -1;
+    std::vector<std::string> presentsArg; // (--present item:count | g<gene>:level: in the presents box - tests)
     bool continueSave = false;
     std::string gameSavePath;
     bool titleScreen = false; // (--title: the game's title screen first)
@@ -17030,7 +17539,9 @@ int main(int argc, char** argv) {
         else if (a == "--gene" && next) { // (a gene held to begin with, at its level: tests)
             const char* colon = std::strchr(next, ':');
             genesArg.push_back({std::atoi(next), colon ? std::atoi(colon + 1) : 1}), ++i;
-        } else if (a == "--gold" && next)
+        } else if (a == "--present" && next)
+            presentsArg.push_back(next), ++i;
+        else if (a == "--gold" && next)
             goldArg = std::atoi(next), ++i;
         else if (a == "--coins" && next)
             coinsArg = std::atoi(next), ++i;
@@ -17360,6 +17871,15 @@ int main(int argc, char** argv) {
         }
         if (goldArg >= 0) v.game.cr3Money = goldArg;
         if (coinsArg >= 0) v.game.cr3Coins = coinsArg;
+        for (const std::string& a : presentsArg) {
+            cr3::Cr3Present p;
+            const size_t colon = a.find(':');
+            const int n = colon == std::string::npos ? 1 : std::atoi(a.c_str() + colon + 1);
+            if (!a.empty() && a[0] == 'g') p.gene = true, p.geneData = cr3::Cr3Gene(std::atoi(a.c_str() + 1), v.game.cr3Db->geneExp(std::atoi(a.c_str() + 1), std::max(n, 1)));
+            else p.item = std::atoi(a.c_str()), p.count = std::max(n, 1);
+            p.from = v.game.cr3Db->constant("PRESENT_FROM_SERVICE");
+            v.game.cr3Db->sendPresent(v.game, p);
+        }
     }
     for (const auto& [id, level] : sopiaArg)
         if (id >= 0 && id < 32) v.game.sopiaLevel[id] = static_cast<signed char>(level);

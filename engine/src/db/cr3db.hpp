@@ -180,6 +180,12 @@ public:
     int geneExp(int id, int level) const;   // (MbGeneInfo::GetExp: the EXP a level needs; the top one's past it)
     int geneLevel(const Cr3Gene& g) const;  // (MbGeneInfo::GetLevel: the highest its EXP reaches; 1 at least)
     int geneRarity(int id) const;           // (CrxGameTable::GetGeneRarity: its place in its collection line, 0 ..)
+    // the Gene Index's lines (collection_book - DAT_0141e0a8: _id, available, five genes - N .. 0 none)
+    struct BookLine {
+        int id = 0;
+        std::array<int, 5> genes{};
+    };
+    const std::vector<BookLine>& book() const { return book_; }
     // CrxGameData::InitGene: a gene with no slots yet learns its own (its level's, by Initialize);
     // what it had in slots 6 and 7 (a merge's: 1 and 2) kept as inherited - the Vita's InheritSkill:
     // into 6, else 7, where it has it not already
@@ -392,6 +398,7 @@ private:
     std::map<int, std::vector<int>> expTable_; // (level: the EXP of each curve)
     std::vector<std::array<int, 3>> mergePairs_; // (a, b, result)
     std::map<int, int> rarity_;
+    std::vector<BookLine> book_;
     std::vector<MergePreview> previews_;
     std::vector<VsTournament> vsTournaments_;
     int vsChosen_ = -1;

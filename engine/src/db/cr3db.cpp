@@ -235,9 +235,15 @@ bool Cr3OfflineDb::load(const Database& release, std::string* error) {
                 mergePairs_.push_back({ids->items[0].asInt(), ids->items[1].asInt(), ids->items[2].asInt()});
     if (const BsonValue* t = table("collection_book"))
         for (const BsonValue& r : t->items)
-            if (const BsonValue* ids = r.get("ids"); ids && ids->isArray())
-                for (size_t k = 0; k < ids->items.size(); ++k)
+            if (const BsonValue* ids = r.get("ids"); ids && ids->isArray()) {
+                BookLine line;
+                line.id = r.integer("_id");
+                for (size_t k = 0; k < ids->items.size(); ++k) {
                     if (ids->items[k].asInt() > 0) rarity_.emplace(ids->items[k].asInt(), int(k));
+                    if (k < 5) line.genes[k] = std::max(ids->items[k].asInt(), 0);
+                }
+                if (r.integer("available") > 0) book_.push_back(line);
+            }
     // GetItemPrice: item_para's tables (MbItemInfo: +4 the full id, +0x18 the price a shop pays)
     std::vector<uint8_t> d;
     MbeFile items;

@@ -71,6 +71,7 @@ struct GameState {
     std::map<std::string, Cr3SheetProgress> cr3Sheets;
     std::vector<Cr3Gene> cr3Genes;
     std::set<int> cr3GeneBook; // (the genes ever had: utils::CheckNewGene - CrxGameData +0x28198's bits)
+    std::set<int> cr3GeneSeen; // (those looked at in the Gene Index - DAT_014d0448's bits: the rest marked new)
     std::vector<Cr3Present> cr3Presents;
     Cr3Quests cr3Quests;
     Cr3Vs cr3Vs;
