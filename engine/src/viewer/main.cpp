@@ -5572,9 +5572,11 @@ struct Viewer {
                 const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
                 for (size_t j = 0; j < names.size() && j < w.size(); ++j)
                     if (names[j].compare(0, 11, "ragdoll_evt") == 0 || names[j].compare(0, 12, "ragdoll_cobj") == 0 ||
-                        (names[j].size() > 9 && names[j].compare(0, 9, "ragdoll_c") == 0 && std::isdigit(static_cast<unsigned char>(names[j][9]))))
-                        // (event boxes, check objects, and the people: ragdoll_c<id>_<nn> - c115_00, its
-                        // function named so, tapped like a check object)
+                        (names[j].size() > 9 && names[j].compare(0, 8, "ragdoll_") == 0 && std::strchr("cjm", names[j][8]) &&
+                         std::isdigit(static_cast<unsigned char>(names[j][9]))))
+                        // (event boxes, check objects, and the people: ragdoll_c<id>_<nn> - c115_00 -, the
+                        // party's j<id>_00, the monsters' m<id>_<nn>, each's function named so, tapped like
+                        // a check object)
                         areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false, {}});
                     else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
                         areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
