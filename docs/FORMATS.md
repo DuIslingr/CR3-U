@@ -1241,6 +1241,19 @@ call_btGameOverMenu_fit0, its own animation to its end; then FadeOut(0.5) and th
 (PaymentJem) and phaseContinue - command 59 (all the player's side, formula 18, 100: HP and MP
 whole), the gauge even (BtlBreakGaugeUI::Even), the battle's music again, the next turn.
 
+### The hit effects (CR3)
+
+BtlDamageTarget::PlaySingleHitEffect, on every hit that lands (BtlUnitList::PlayHitEffect, at the
+target): the command's CommandDirection +0x2c effect (direction.mbe column 9 - the attacks' 1 and
+3, ...), and with +0x59 bit 0 the critical's (4, GetCriticalHitEffectId) and the element's (element
++ 4, GetElementHitEffectId). +0x58: bit 3 a random turn about +0x60 / +0x64, bit 7 a random size
+(rand x 2 - 1) x +0x68 + 1, bit 2 the unit's effect scale. `data\effect.mbe` "Effect", 56-byte
+rows: the id, the figure (`be001hit01` ..: geom, skel, its own animation, some with `.sprk`
+particles), two sounds (the first played with it), floats. The figures blend additively (SRC_ALPHA,
+ONE) or take their dark parts off (REVERSE_SUBTRACT). CR3-U plays the figure once at the target's
+DummyDP01 with its sound; not yet the particles, the random turn, the effect scale, the bullets
+(+0x18 / +0x20: a shot's effects by hit) or the other directions' effects (casts, auras).
+
 ### The battle's announcements (CR3)
 
 BtlAnnounceUI puts one line at a time in InterfaceMain's BattleAnnouncementMenu - a OneHelpMenu

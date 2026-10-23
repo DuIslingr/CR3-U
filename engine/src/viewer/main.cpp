@@ -6702,7 +6702,7 @@ struct Viewer {
         }
     }
     bool startCr3Battle(int coupling, int fieldId) {
-        cr3BattleLost = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1; // (BtlSystem::Init: s_ResultParam -1)
+        cr3BattleLost = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1, cr3Fx.clear(); // (BtlSystem::Init: s_ResultParam -1)
         cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
         cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
         std::string err;
@@ -6976,6 +6976,70 @@ struct Viewer {
         return type >= 0 && size_t(type) < cr3AnimCommon.size() ? cr3AnimCommon[size_t(type)] : std::string();
     }
     // a unit's joint as last posed (DummyCP its camera point, DummyDP01 where its damage shows)
+    // the hit effects (BtlDamageTarget::PlaySingleHitEffect -> BtlUnitList::PlayHitEffect): the
+    // command's CommandDirection +0x2c (direction.mbe column 9: attack 1, be001hit01), on every hit
+    // that lands, at the target; and with +0x59 bit 0 set the critical's (4) and the element's
+    // (element + 4) too. Its effect.mbe Effect row: the figure and its sound (+0x10). A random size
+    // with +0x58 bit 7 ((rand - 0.5) x 2 x +0x68 + 1). Each a figure of its own animation, played
+    // once (the .sprk particles and the random turn - bit 3 - not in)
+    struct Cr3Fx {
+        std::string figure;
+        std::array<float, 3> at{};
+        float start = 0, scale = 1;
+    };
+    std::vector<Cr3Fx> cr3Fx;
+    std::map<std::string, std::unique_ptr<ViewFigure>> cr3FxFigures;
+    ViewFigure* cr3FxFigure(const std::string& name) {
+        auto& slot = cr3FxFigures[name];
+        if (!slot) {
+            slot = std::make_unique<ViewFigure>();
+            std::string err;
+            if (!loadFigure(name + ".geom", *slot, &err)) SDL_Log("effect %s: %s", name.c_str(), err.c_str());
+            slot->absolute = true;
+        }
+        return slot->meshes.empty() ? nullptr : slot.get();
+    }
+    void spawnCr3Effect(int id, const std::array<float, 3>& at, float scale) {
+        static cr3::MbeFile table;
+        if (!table.table("Effect")) {
+            std::vector<uint8_t> d;
+            if (archive.read("data\\effect.mbe", d)) table.parse(d);
+        }
+        cr3::MbeFile::Row r;
+        if (id <= 0 || !table.find("Effect", id, "i_ppp", r) || r.s(1).empty() || !cr3FxFigure(r.s(1))) return;
+        cr3Fx.push_back({r.s(1), at, cr3BattleClock, scale});
+        if (!r.s(2).empty()) audio.playSe(r.s(2), false);
+    }
+    void cr3HitEffects(int command, int element, size_t targetUnit, bool critical) {
+        cr3::MbeFile::Row d;
+        if (!cr3BattleTables.direction.find("CommandDirection", command, "iiiiiii_piiiiiiiiiiiiiiiii", d)) return;
+        const uint32_t flags = uint32_t(d.i(20)); // (+0x58)
+        float scale = 1;
+        if (flags & 0x80) scale = (SDL_randf() * 2 - 1) * d.f(24) + 1; // (+0x68)
+        const std::array<float, 3> at = unitPoint(targetUnit, "DummyDP01", 1.2f);
+        spawnCr3Effect(d.i(9), at, scale);
+        if (flags & 0x100) { // (+0x59 bit 0)
+            if (critical) spawnCr3Effect(4, at, scale);
+            if (element > 0) spawnCr3Effect(element + 4, at, scale);
+        }
+    }
+    void drawCr3Effects(const cr3::Mat34& camera, const Mat4& vp) {
+        for (auto it = cr3Fx.begin(); it != cr3Fx.end();) {
+            ViewFigure* f = cr3FxFigure(it->figure);
+            const float t = cr3BattleClock - it->start;
+            if (!f || (f->animLoaded ? t > f->anim.duration() : t > 1.0f)) {
+                it = cr3Fx.erase(it);
+                continue;
+            }
+            f->place = cr3::Mat34();
+            for (int c = 0; c < 3; ++c) f->place.m[c * 5] = it->scale;
+            f->place.m[3] = it->at[0], f->place.m[7] = it->at[1], f->place.m[11] = it->at[2];
+            poseView = camera;
+            pose(*f, t, false);
+            drawFigure(*f, vp.data());
+            ++it;
+        }
+    }
     std::array<float, 3> unitPoint(size_t k, const char* joint, float up) {
         const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
         ViewFigure& f = cr3BattleUnits[k].body;
@@ -7268,6 +7332,11 @@ struct Viewer {
                 }
                 cr3Popups.push_back({std::abs(d), unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock});
                 if (flags & 1) cr3Popups.push_back({-1, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock, 5});
+                {
+                    cr3::Cr3Command hc;
+                    cr3Rules.command(a.command, hc);
+                    cr3HitEffects(a.command, hc.element, tu, flags & 1);
+                }
                 if (d < 0) continue; // (a heal: no flinch)
                 const bool last = h + 1 == th.hits.size();
                 if (last && th.killed) rollCr3Drop(th.target);
@@ -7602,6 +7671,7 @@ struct Viewer {
             }
             drawAttached(u.weapon, u.body, "DummyWP", cr3BattleClock, vp.data());
         }
+        drawCr3Effects(cw, vp);
         drawCr3Glass();
     }
 
