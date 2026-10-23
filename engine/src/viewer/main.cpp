@@ -22085,7 +22085,8 @@ int main(int argc, char** argv) {
             fe.geom = &g, fe.skeleton = &sk;
             if (v.archive.read(base + ".name", d)) fe.jointNames = cr3::parseJointNames(d), fe.materialNames = cr3::parseMaterialNames(d);
             for (const cr3::GeomMaterial& m : g.materials)
-                for (const auto& [id, img] : m.textures) {
+                for (const auto& [id, picture] : m.textures) {
+                    const std::string& img = picture; // (a lambda can't take a structured binding before C++20 - Apple's clang)
                     if (img.empty() || std::any_of(fe.images.begin(), fe.images.end(), [&](const auto& p) { return p.first == img; })) continue;
                     cr3::Image im;
                     if (v.decode(img, im)) fe.images.emplace_back(img, std::move(im));
