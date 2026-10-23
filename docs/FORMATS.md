@@ -662,8 +662,35 @@ SelectFreeSpacePort true once (`quest_cancel`), then - faded out, a second - the
 (Update 0x22; its back the Space Port again, 0x23). Back: faded out, a second, CheckQuestReturn 1. `cr3view --input call:ReserveSpacePortMenu,port:quests,port:row<n>,
 port:ok,port:yes` (also `port:talk / explore / back / no / left / right / told / cat<n>`).
 
+Shuffle Quests (comListMenu's `comShufflePanel` at `comListPosition`'s `call_comShufflePanel`, 4.4
+left and 2.2 up - ViewShuffleButtonListMenu: on Sub Quests with fewer than ten): asks 0x313; yes -
+CrxGameData::ShuffleQuest clears the day's draw (+0x2869c bit 2, the port's `cr3Daily & 4`), FindQuests
+again, Sub Quests anew. `port:shuffle`.
+
 The global work (Cr3UtilGlobalWorkGet / Set - the scripts' GetVar / SetVar) holds 100 values; 24 is
 the quest set off on.
+
+### A town's shop (CR3)
+
+ShopMenuMain from the scripts' `ReserveShopMenu(shop, clerk, talk)` (FadeOut 5, InterfaceWindow.
+CreateShopMenu(shop, clerk), FadeIn; while CheckEndShopMenu: the talk while CheckSelectTalkShopMenu,
+EndTalkNextShopMenu after it). `shBgMenu` (untextured, as in the gene lab), the clerk at the shop's
+place, the header (0x1a T01_1, 0x1b T03_1, 0x1c T04_1; "Select command." 0x26e), comBtnMenu's Talk
+0x11, Buy 0x14, Sell 0x15 (SetShopTopButton), the camp's footer. Buy / Sell (title 0xd / 0xe,
+0x26f / 0x270): Items 8, Weapons 0x16, Armor 0x17, Accessories 0x18 (SetShopSecondButton - the
+categories 0x14, 3, 4, 5) and `shTabPositon`'s `optSltBtn_fr00` (3 to the right; Buy 0x114 and Sell
+0x115, the other tapped switches - SetBuySellTab). One chosen: the clerk away, the list - buying
+data\shops' goods of the shop whose flag holds (GoodsAvailable) by their first item's category,
+selling the items held (not those worn) at item_para's price - comListPanel rows (icon, name, x the
+count, the price on `comListNumUn_num00` with `comListUnIcon_fr00` 0 coins, 1 GP, 2 gold), the
+categories that have rows as buttons over it, the focused row's help the header's line. The
+focused row again: an Item - how many (CampItemNumberSelect's reels; at most what's affordable and
+99 held - none: 0x233 told; `camItemPrice_num00` the price for them, `camItemStock_num00` the count
+held) - or equipment, one; asked 0x248 ({itemname}, {currency} 0x249 + the unit) / selling 0x210;
+yes: BuyGoods / SellItem, com_024, the list anew. `cr3view --input call:cobj_02,shop:buy,shop:second0,
+shop:row0,shop:up,shop:yes` (also `shop:talk / sell / back / no / tab / row<n> / cat<n>`). Not in: the
+equipment's status beside the list (CampEquipStatusMenu, the characters' footer, EquipOwnMenu) and
+"equip it now?" after buying (0x20e).
 
 ### The world select (CR3)
 
@@ -692,7 +719,7 @@ WarpTask (EnterDungeon, SpacePortJump / ppJump). Back from the planet: the same 
 of the screen's 960 each, the pitch too (a quarter past -0.785 / 0.523), spun on by an 800th, 0.95 a
 frame. `cr3view --input call:ReserveWorldSelectMenu,world:point<n>,world:level<n>,world:yes` (also
 `world:no / back / list / row<n> / gift<n> / help<kind x 10 + slot> / close`; `--cr3-sheet
-sheet:entry[:1]` marks an item sheet's entry won - and new).
+sheet:entry[:1]` marks an item sheet's entry won - and new -, entry -1 its prize).
 
 The dungeons' list (`spListBtn`: WorldSelectListMenu, Update 3) - each open dungeon a
 WorldSelectListLItem (`comListImgPanel`) behind DummyAddListItem's blank at each end: rows 1.24 apart
@@ -706,7 +733,8 @@ its hit flag and the dungeon's name (size 29) at `typeM_L00`. Its item sheet is 
 in the table (DAT_0141dae8 + n x 0x150). The planet turns to the focused dungeon, its ring on; the
 map name hidden. A tap on the focused row: its levels - back (or no when asked) returns to the list,
 its focus kept (Update 0xb / 0xc: 0x490 clear); on the next or the one before: scrolled to it
-(com_002). Its back: the planet (SetReturnWorldMap).
+(com_002). Its back: the planet (SetReturnWorldMap). Its OneHelpMenu (btHelpMenu at btHelpPosition's
+call: the focused dungeon's name) sits under the header.
 
 The collection (CollectListMain / CollectListMenu): from the gift, Cr3FadeOut 5 frames with the
 header hidden, half a second, CreateCollectListMain(World_Dungeon_Tbl[point]) - its sheet
@@ -727,9 +755,34 @@ then; `mpListGetEffe` only for those a dungeon just added (CheckAddItem's list -
 `mpListCollected` (`_in`, then `_loop`) with those won (`mpListColNumL_fr00` tens and ones) of the
 sheet's count (`mpListColNumS_fr00`) - or, all won, `mpListCmpMenu`. A panel tapped: its name over it
 (HelpSet: `mpListHelp`, size 22 at `typeM_C00`). The close button (`tapAreaCP01` / `AP01`) or back:
-Cr3FadeOut 10 frames, a second, Cr3FadeIn, the planet. Not in: the prize's first showing
-(`mpListCglMenu` and the gene's window: +0x148) and the screen after a dungeon (CR3InterfaceEvent's
-SetCollectList* natives).
+Cr3FadeOut 10 frames, a second, Cr3FadeIn, the planet.
+
+The prize's first showing (CollectListMenu::Update 6 .. 0xb, the sheet's +0x148 - cleared): com_027,
+`mpListCglMenu` at `mpListPositon`'s `call_mpListCglMenu_fit0` (`_in` 1.8 s, `_loop` until a tap
+anywhere, `_out` 0.5 s - its own animation's first frame, every alpha 0, the animators' values added
+to that, not to the file's 1), then the gene's window (SetGeneParameter(prize, 1, .., not owned)),
+once it's closed the prize's `mpListNew` and `mpListGetEffe` (ShinePanel, com_026); a second later
+`mpListCmpMenu` and the close button.
+
+From a script (the treasure boxes' `CollectListDisp(dungeon, category, id)` - InterfaceWindow.
+CreateCollectListMain, then CheckEndCollectList until it's closed): the same board over the field,
+no fades, the entry just added (CheckAddItem: its category - 1 a gene - and id) with `mpListGetEffe`;
+closed: slid out, a sixth of a second. `cr3view --input gene:collect:<dungeon>:<category>:<id>`.
+
+The gene obtained window (GetGeneMenu, interface 0x41: InterfaceWindow.CreateGeneGetWindow, then
+SetGeneParameter(id, level, .., new) / _attr / SetGeneParameter_Card(id, exp, new) - its level the
+one its EXP reaches; CheckGeneGetWindow while it's up - the scripts' CardGet_Msg, OpenGBox_Gene ...):
+`feGetPosition`'s `call_feGetMenu` - `feGetMenu` (`feGetMenu_in` to 0.2 s; on a tap on to 0.467,
+out), its `feGetPanel` with `feGetName_fr00` frame 2, the gene icon 0xad, `feGetDeco` and the line
+(FldAnnounce - message\AnnounceField - 0x11 with {item.name}, size 32 at `tyepM_L00`, so spelt),
+fading in with it; `feGetGenePosition` 3 nearer, `feGetGeneMenu` 0.6 nearer (`feGetGeneMenu_in` to
+0.267 s, backwards out), `feGetGenePanel` 0.8 back, the card at its `call_cardModel` 1 nearer, 8 x,
+turned -17.2 degrees about its normal, then once about its upright (0.314 a frame); a new gene
+`feGetNew` (its loop) from 1.5 x to 1 over a sixth of a second, above level 1 `feGetCardLv_fr00`
+with `camEquNumLv_num00`'s three `comNum04_fr00` ("MAX", frames 10 .. 12, at its top level). These
+parts' materials have alpha 0 in their files - PartsBase::SetAlpha sets it outright. Tappable two
+thirds of a second after it's all shown; closed in 0.267 s. `cr3view --input gene:<id>[:level[:new]]`,
+`gene:tap`.
 
 ### My Page (CR3)
 

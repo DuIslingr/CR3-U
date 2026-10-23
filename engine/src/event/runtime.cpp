@@ -332,6 +332,47 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (spacePort_.open) clerk(kSpacePortClerk); // (SpacePortMain 4: the header, Sally and the buttons again)
     });
     vm.setNative("InterfaceWindow", "CreateWorldSelectMenu", [this](NativeCall&) { openWorldSelect(false); });
+    // the gene obtained window (GeneGet in runtime.hpp)
+    vm.setNative("InterfaceWindow", "CreateGeneGetWindow", [this](NativeCall&) { openGeneGet(0, 1, false, false); });
+    vm.setNative("InterfaceWindow", "SetGeneParameter", [this](NativeCall& c) { openGeneGet(c.integer(0), c.integer(1, 1), c.boolean(6), true); });
+    vm.setNative("InterfaceWindow", "SetGeneParameter_attr", [this](NativeCall& c) { openGeneGet(c.integer(0), c.integer(1, 1), false, true); });
+    vm.setNative("InterfaceWindow", "SetGeneParameter_Card", [this](NativeCall& c) {
+        int level = 1; // (MbGeneInfo::GetLevel of its EXP)
+        if (state_.cr3Db) {
+            Cr3Gene g;
+            g.master = c.integer(0), g.exp = c.integer(1);
+            level = state_.cr3Db->geneLevel(g);
+        }
+        openGeneGet(c.integer(0), level, c.boolean(2), false);
+    });
+    // a town's shop (Shop in runtime.hpp)
+    vm.setNative("InterfaceWindow", "CreateShopMenu", [this, clerk](NativeCall& c) {
+        shop_ = Shop();
+        shop_.open = askYesNo && !autoMenus, shop_.id = c.string(0), shop_.clerk = c.string(1);
+        if (shop_.open) clerk(shop_.clerk);
+    });
+    vm.setNative("InterfaceWindow", "CheckEndShopMenu", [this](NativeCall& c) { c.result(shop_.open); });
+    vm.setNative("InterfaceWindow", "CheckSelectTalkShopMenu", [this](NativeCall& c) {
+        const bool talk = shop_.talk;
+        if (talk) shop_.talk = false, shop_.talking = true;
+        c.result(talk);
+    });
+    vm.setNative("InterfaceWindow", "EndTalkNextShopMenu", [this, clerk](NativeCall&) {
+        shop_.talking = false;
+        if (shop_.open) clerk(shop_.clerk); // (the clerk back - the talk's own cut-ins closed)
+    });
+    // a dungeon's collection (CollectList in runtime.hpp)
+    vm.setNative("InterfaceWindow", "CreateCollectListMain", [this](NativeCall& c) {
+        collectListOpen(c.integer(0), c.integer(1, -1), c.integer(2, -1));
+    });
+    vm.setNative("InterfaceWindow", "CheckEndCollectList", [this](NativeCall& c) {
+        if (!askYesNo || autoMenus) collectList_.open = false; // (headless: no one to close it)
+        c.result(!collectList_.open);
+    });
+    vm.setNative("InterfaceWindow", "CheckGeneGetWindow", [this](NativeCall& c) {
+        if (!askYesNo) geneGet_.open = false; // (headless: no one to tap it)
+        c.result(geneGet_.open);
+    });
     vm.setNative("InterfaceWindow", "SelectFreeSpacePort", [this](NativeCall& c) {
         c.result(spacePort_.explore);
         spacePort_.explore = false;
@@ -569,6 +610,7 @@ bool EventRuntime::update(ScriptVM* vm) {
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
+    if (geneGet_.open && (geneGet_.age += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) geneGet_.open = false; // (pages by themselves: a tap)
     for (auto& [w, t] : opened_) t += kTick;
     if (mapName_ >= 0 && (mapNameAge_ += kTick) >= kMapNameSeconds) mapName_ = -1;
     for (auto it = closing_.begin(); it != closing_.end();) // (out animations: a second at most)
@@ -711,5 +753,34 @@ std::string EventRuntime::speakerName() const {
 }
 
 std::map<std::string, int> EventRuntime::stubCalls() const { return vm_ ? vm_->stubCalls() : std::map<std::string, int>(); }
+
+void EventRuntime::shopTalk() {
+    if (!shop_.open || shop_.talking) return;
+    shop_.talk = true;
+    if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
+}
+
+void EventRuntime::shopEnd() {
+    if (!shop_.open) return;
+    shop_.open = shop_.talk = shop_.talking = false;
+    if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
+}
+
+void EventRuntime::shopClerk(bool shown) {
+    if (!shop_.open) return;
+    if (!shown) {
+        if (cutIns_[2].open && cutIns_[2].shop) cutIns_[2].closing = true;
+        return;
+    }
+    if (cutIns_[2].open && cutIns_[2].shop && !cutIns_[2].closing) return;
+    Portrait p{true, false, 0, kClerkFace, 1};
+    p.shop = true;
+    cutIns_[2] = p;
+}
+
+void EventRuntime::openGeneGet(int gene, int level, bool isNew, bool se) {
+    if (!geneGet_.open) geneGet_ = GeneGet(), geneGet_.open = true;
+    if (gene > 0) geneGet_.gene = gene, geneGet_.level = std::max(level, 1), geneGet_.isNew = isNew, geneGet_.se = se, geneGet_.age = 0;
+}
 
 } // namespace cr3

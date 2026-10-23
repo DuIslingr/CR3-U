@@ -125,6 +125,9 @@ public:
     // only when `askYesNo` (a player to answer: the viewer); else the check answers nothing (the
     // headless runs' scripts go on as without the buttons). With autoPage, yes after that long.
     bool askYesNo = false;
+    // the scripts' menus a player would close (a shop, a dungeon's collection) done at once - the
+    // tests' runs (cr3tool events / play), with no viewer to draw them
+    bool autoMenus = false;
     // The fast-forward button (FastForward: `speedUp` on the message windows 0 .. 6, shown with a
     // page while EvtWindow.SetSkipButtonEnable allows - each Open allows it again): held
     // (EvtWindow::IsSkip), a page shows whole and turns at once, without a tap
@@ -256,6 +259,46 @@ public:
     void openWorldSelect(bool fromPort);
     // done: chosen (CheckQuestReturn 3), or back from the Space Port's (its menu again)
     void worldSelectEnd(bool chosen);
+    // A town's shop (ShopMenuMain - InterfaceWindow.CreateShopMenu(shop, clerk) from the scripts'
+    // ReserveShopMenu: data\shops' "T01_1" .., the clerk's portrait at the shop's place). The
+    // script loops while CheckEndShopMenu (open), running the clerk's talk while CheckSelectTalk
+    // ShopMenu says so (once - EndTalkNextShopMenu brings the clerk back); headless it's done at once
+    struct Shop {
+        bool open = false;
+        bool talk = false, talking = false;
+        std::string id, clerk;
+    };
+    const Shop& shop() const { return shop_; }
+    void shopTalk();
+    void shopEnd();
+    void shopClerk(bool shown);
+    // The gene obtained window (GetGeneMenu, interface 0x41: InterfaceWindow.CreateGeneGetWindow -
+    // the scripts' CardGet_Msg, OpenGBox_Gene ... -, its gene by SetGeneParameter(id, level, ..,
+    // new) / SetGeneParameter_attr / SetGeneParameter_Card(id, exp, new): the level its EXP
+    // reaches; the line FldAnnounce 0x11 with {item.name} the gene's). CheckGeneGetWindow while it
+    // is up - closed by a tap (geneGetClose: the viewer's), or with askYesNo and autoPage after
+    // that long and a second; headless (no askYesNo) at once
+    struct GeneGet {
+        bool open = false;
+        int gene = 0, level = 1;
+        bool isNew = false;
+        bool se = false; // (SetGeneParameter: com_017 as it shows - not the _Card's, whose scripts play it)
+        float age = 0;
+    };
+    const GeneGet& geneGet() const { return geneGet_; }
+    void openGeneGet(int gene, int level, bool isNew, bool se);
+    void geneGetClose() { geneGet_.open = false; }
+    // A dungeon's collection from a script (CollectListMain, interface 0x79: InterfaceWindow.Create
+    // CollectListMain(dungeon, category, id) - the scripts' CollectListDisp after a treasure box -
+    // the entry just added shown with its get effect); CheckEndCollectList true once it's closed
+    // (collectListEnd: the viewer's), headless at once
+    struct CollectList {
+        bool open = false;
+        int dungeon = 0, category = -1, id = -1;
+    };
+    const CollectList& collectList() const { return collectList_; }
+    void collectListEnd() { collectList_.open = false; }
+    void collectListOpen(int dungeon, int category, int id) { collectList_ = CollectList{true, dungeon, category, id}; }
     // a fade the menus start (Cr3FadeOut(0, n) / Cr3FadeIn: black over n frames)
     void menuFade(bool out, int frames) { fade_.start(0, frames, out ? 0 : 1, out ? 1 : 0); }
     std::string cutInImage(int id) const; // a loaded face's image ("" none)
@@ -287,6 +330,9 @@ private:
     EventFade fade_;
     SpacePort spacePort_;
     WorldSelect worldSelect_;
+    GeneGet geneGet_;
+    Shop shop_;
+    CollectList collectList_;
     std::map<int, std::string> faces_;
     TextData text_, names_;
     std::map<int, TextData> windowText_; // (LoadMessageData(window, name): that window's own)

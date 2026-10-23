@@ -202,7 +202,8 @@ int events(const char* path, const char* only, int seconds) {
             cr3::GameState state;
             cr3::EventRuntime rt(a, state);
             rt.autoPage = 1.0f;
-    rt.askYesNo = true; // (questions, choices and text entry answered as a player confirming would)
+            rt.askYesNo = true; // (questions, choices and text entry answered as a player confirming would)
+            rt.autoMenus = true; // (a shop, a dungeon's collection: closed at once)
             if (!rt.start(script, fn)) {
                 ++outcomes["failed to start"];
                 continue;
@@ -714,6 +715,7 @@ int playEvent(const cr3::MvglArchive& a, const std::string& event, bool quiet, s
     cr3::EventRuntime rt(a, state);
     rt.autoPage = 1.0f;
     rt.askYesNo = true; // (questions, choices and text entry answered as a player confirming would)
+    rt.autoMenus = true; // (a shop, a dungeon's collection: closed at once)
     // CR3 keeps an area's events in one script: "<script>:<function>" (t01:s212_d08_01501)
     const size_t colon = event.find(':');
     if (colon != std::string::npos ? !rt.start(event.substr(0, colon), event.substr(colon + 1)) : !rt.start(event)) {
