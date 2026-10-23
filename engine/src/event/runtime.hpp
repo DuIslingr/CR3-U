@@ -54,6 +54,9 @@ public:
     bool start(const std::string& function);
     // another script's function (`script\<script>.nut`: title's manual_disp) - the same
     bool start(const std::string& script, const std::string& function);
+    // another function of the script loaded, the scene and windows kept (EvtSystem::CallScript
+    // without CreateScene: a lunch's balloon's talk). False: still running, or no such function
+    bool call(const std::string& function);
     // one update; false: the script failed
     bool tick();
     bool running() const;     // the script hasn't ended
@@ -257,6 +260,22 @@ public:
         bool open = false;
         bool fromPort = false;
     };
+    // A lunch (LunchMain - a vista whose scene stays): LunchEvent.Setup gives each of the scene's
+    // models a balloon (LunchBalloon: feFlag_fr00 over its place, hidden), SetBalloon(model, shown,
+    // marked) shows it - frame 1 marked, 0 not; SetBalloonFinish frame 2, kept -, SetBalloonOffset
+    // moves it from the model's place; Shutdown ends the lunch once its script has
+    struct LunchBalloon {
+        std::string model;
+        bool shown = false;
+        int frame = 0;
+        float offset[3] = {0, 0, 0};
+        int delay = 3; // (+0xa0: the updates it waits shown before a tap counts)
+    };
+    struct Lunch {
+        bool setup = false, shutdown = false;
+        std::vector<LunchBalloon> balloons;
+    };
+    Lunch& lunch() { return lunch_; }
     const WorldSelect& worldSelect() const { return worldSelect_; }
     void openWorldSelect(bool fromPort);
     // done: chosen (CheckQuestReturn 3), or back from the Space Port's (its menu again)
@@ -332,6 +351,7 @@ private:
     EventFade fade_;
     SpacePort spacePort_;
     WorldSelect worldSelect_;
+    Lunch lunch_;
     GeneGet geneGet_;
     Shop shop_;
     CollectList collectList_;

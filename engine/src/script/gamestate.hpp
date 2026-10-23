@@ -228,6 +228,9 @@ struct GameState {
         bool pub = false;         // (ReservePUB - FldMain step 0xd)
         int changeDungeon = -1, changeArea = -1; // (ChangeDungeon(d, a) / ChangeArea(a): FldUtilReserveChange*)
         int credit = -1;          // (ReserveCredit(n): cr3_script_work[0xc] / [0x14] - VistaMain::BranchAfterVista 3, the staff roll)
+        // (LunchEvent.SetFuncName / SetMapName - utils::SetLunchFuncName: the vista's function and
+        // map, reserved as a lunch, Cr3ScriptWork 0xf - VistaMain::BranchAfterVista 0xf, LunchMain)
+        bool lunch = false;
     } next;
 };
 

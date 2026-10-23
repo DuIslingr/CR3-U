@@ -144,10 +144,15 @@ public:
     // than 0.05 s; the timelines are linear in time, so this is where they will be): a model's
     // place, the camera, the lights
     Mat34 placeAt(const EventModel& m, float lead) const;
+    // a model's locator (ev_<model>) at the scene's start (EvtScene::GetLocatorPos(model, 0): a lunch's balloons)
+    Mat34 locatorAtStart(const std::string& model) const { return locator(model, 0); }
 
     // the camera now: its world matrix (looking down -Z), vertical field of view (degrees), near, far
     // (VistaCamera::Init: near at least 0.05, far five times - at most 5000 - but for two events')
     bool camera(Mat34& world, float& fovY, float& zn, float& zf, float lead = 0) const;
+    // the scene figure's own camera taken where it has no _camera figure (LunchMain::Setup:
+    // GetContaindCamera on the scene's figure - a lunch's s001_t02_00301_evt camera1)
+    void useOwnCamera();
     // the lights now (the light figure's, posed); false: none
     bool lights(SceneLighting& out, float lead = 0) const;
     // where the leader goes when the scene ends (its ev_p000 joint: EvtScene's +0x610, read by

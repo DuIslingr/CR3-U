@@ -284,6 +284,10 @@ bool EventScene::camera(Mat34& world, float& fovY, float& zn, float& zf, float l
     return true;
 }
 
+void EventScene::useOwnCamera() {
+    if (!hasCamera_ && !scene_.geom.cameras.empty()) camera_ = scene_, hasCamera_ = true;
+}
+
 bool EventScene::lights(SceneLighting& out, float lead) const {
     if (!hasLight_) return false;
     // (the light figure posed at its time: the lights' joints carry their directions)

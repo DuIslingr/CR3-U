@@ -248,6 +248,35 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (tutorialPicture_.images.size() < 5) tutorialPicture_.images.push_back(c.string(0));
     };
     auto pictureShow = [this](NativeCall& c) { tutorialPicture_.shown = c.integer(0, -1); };
+    // (LunchEvent: utils::SetupLunchEvent .. SetLunchBalloonFinish - LunchMain's)
+    vm.setNative("LunchEvent", "Setup", [this](NativeCall&) {
+        lunch_.setup = true, lunch_.balloons.clear();
+        scene_.useOwnCamera();
+        for (const EventModel& m : scene_.models()) {
+            LunchBalloon b;
+            b.model = m.name;
+            lunch_.balloons.push_back(b);
+        }
+    });
+    vm.setNative("LunchEvent", "Shutdown", [this](NativeCall&) { lunch_.shutdown = true; });
+    auto balloon = [this](const std::string& model) -> LunchBalloon* {
+        for (LunchBalloon& b : lunch_.balloons)
+            if (b.model == model) return &b;
+        return nullptr;
+    };
+    vm.setNative("LunchEvent", "SetBalloon", [balloon](NativeCall& c) {
+        if (LunchBalloon* b = balloon(c.string(0))) {
+            if (b->frame != 2) b->frame = c.boolean(2) ? 1 : 0;
+            b->shown = c.boolean(1);
+        }
+    });
+    vm.setNative("LunchEvent", "SetBalloonOffset", [balloon](NativeCall& c) {
+        if (LunchBalloon* b = balloon(c.string(0)))
+            for (int k = 0; k < 3; ++k) b->offset[k] = c.number(1 + k);
+    });
+    vm.setNative("LunchEvent", "SetBalloonFinish", [balloon](NativeCall& c) {
+        if (LunchBalloon* b = balloon(c.string(0))) b->frame = 2;
+    });
     vm.setNative("InterfaceWindow", "CreateTutorialMenuNum", [this](NativeCall& c) {
         if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
         parsed_ = parseMessage(filterMessage(tutorialTexts_.message(c.integer(0), language)));
@@ -579,6 +608,7 @@ void EventRuntime::reset() {
     yesNoShown_ = false, yesNo_ = 0;
     cutIns_ = {}, cutInImages_.clear();
     geneLab_ = GeneLab();
+    lunch_ = Lunch();
     messageWindow_ = Vista, message_ = page_ = revealed_ = 0, pageTime_ = stopTime_ = 0, stop_ = 0;
     execution_ = false;
     terminated_ = drawSkip_ = false;
@@ -603,6 +633,15 @@ bool EventRuntime::start(const std::string& name, const std::string& function) {
     }
     const std::string fn = vm_->findFunction(function);
     if (fn.empty()) return error_ = script + ": no function " + function, false;
+    if (!vm_->call(fn)) return error_ = fn + ": " + vm_->error(), false;
+    return true;
+}
+
+bool EventRuntime::call(const std::string& function) {
+    error_.clear();
+    if (!vm_ || vm_->waiting()) return error_ = "the script is still running", false;
+    const std::string fn = vm_->findFunction(function);
+    if (fn.empty()) return error_ = "no function " + function, false;
     if (!vm_->call(fn)) return error_ = fn + ": " + vm_->error(), false;
     return true;
 }

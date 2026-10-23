@@ -194,6 +194,8 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3System", "SetVistaFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.vista = true; });
     vm.setNative("Cr3System", "SetVistaMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });
+    vm.setNative("LunchEvent", "SetFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.lunch = true; });
+    vm.setNative("LunchEvent", "SetMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });
     vm.setNative("Cr3System", "SetVistaFuncName2", [&next](NativeCall& c) { next.vistaFunction = c.string(0); }); // (Fld2SetVistaFuncName2)
     vm.setNative("Cr3System", "SetBattleNext", [&next](NativeCall& c) { next.battleNext = c.integer(0, 1); }); // (FldUtilSetBattleNext)
     vm.setNative("Cr3System", "BattleIN", [&next](NativeCall& c) { next.battle = c.integer(0); }); // (FldUtilReserveBattleIN)

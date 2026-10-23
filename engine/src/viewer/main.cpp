@@ -2424,6 +2424,19 @@ struct Viewer {
                 inputScript.pop_front(), fastUntil = uiClock + 2.0f; // (each two seconds of it, one after the other)
             ev->fastForward = fastHeld || uiClock < fastUntil;
         }
+        if (!inputScript.empty() && inputScript.front().compare(0, 6, "lunch:") == 0 && lunchIdle()) { // (--input lunch:<model> / lunch:any: its balloon tapped)
+            std::string want = inputScript.front().substr(6);
+            if (want == "any") // (the marked one, else the meal's end, else another)
+                for (int frame : {1, 2, 0})
+                    for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons)
+                        if (want == "any" && b.shown && b.delay <= 0 && b.frame == frame) want = b.model;
+            for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons)
+                if (b.model == want && b.shown && b.delay <= 0) {
+                    inputScript.pop_front();
+                    chooseLunchBalloon(b.model);
+                    break;
+                }
+        }
         if (!inputScript.empty() && (inputScript.front() == "yes" || inputScript.front() == "no") && yesNoShown() &&
             activeEvents()->yesNoAge() > 0.5f) { // (--input: an event's yes / no)
             answerYesNo(inputScript.front() == "yes");
@@ -5698,6 +5711,15 @@ struct Viewer {
     // first five letters, the player at that joint of its <map>p), a battle
     void afterAreaScript() {
         cr3::GameState::Next& n = game.next;
+        if (n.lunch && !n.vistaFunction.empty()) { // (Fld2Main: Cr3ScriptWork 0xf - LunchMain)
+            const cr3::GameState::Next keep = n;
+            n = cr3::GameState::Next();
+            const cr3::Vec3 p = areaWalker->position();
+            savedArea = area.name, savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
+            initEventDrawing();
+            startLunch(keep.vistaFunction, keep.vistaMap);
+            return;
+        }
         if (n.vista && !n.vistaFunction.empty()) {
             const cr3::GameState::Next keep = n;
             n = cr3::GameState::Next();
@@ -7771,6 +7793,75 @@ struct Viewer {
         return true;
     }
 
+    // A lunch (LunchMain: LunchEventStart's function and map - a vista whose scene stays). Its
+    // script runs as a vista's (LoadScript: the function, its script by its name - s001_t02_00301_evt
+    // t02's); once over, LunchEvent.Setup's balloons shown over the models (feFlag_fr00 at the
+    // model's place and its offset, through the scene's camera - Cr3UtilSetBalloonPos); a tap
+    // within 0.55 of the point half a unit above one (ProcessBalloonTouch: its square under 0.3)
+    // runs <function less _evt>_<model> (s001_t02_00301_c106), the balloons held while it runs.
+    // LunchEvent.Shutdown, the script over: on as a vista ends (BranchAfterVista)
+    bool lunchActive = false, lunchWaitLogged = false;
+    std::string lunchFunction;
+    Mat4 lastEventVP{};
+    bool lastEventVPSet = false;
+    void startLunch(const std::string& function, const std::string& map) {
+        SDL_Log("lunch: %s in %s", function.c_str(), map.c_str());
+        const std::string script = eventScriptOf(function);
+        if (!startVista(script.empty() ? function : script + ":" + function, map.empty() ? "null" : map)) return;
+        lunchActive = true, lunchWaitLogged = false, lunchFunction = function;
+    }
+    // a balloon's place on the screen (UI units, the screen 9.6 x 6.4 at least): false behind the camera
+    bool lunchBalloonAt(const cr3::EventRuntime::LunchBalloon& b, float& x, float& y) {
+        if (!event || !lastEventVPSet) return false;
+        for (const cr3::EventModel& m : event->scene().models()) {
+            if (m.name != b.model) continue;
+            const cr3::Mat34 pl = event->scene().locatorAtStart(m.name); // (EvtScene::GetLocatorPos(model, 0): ev_<model> at the scene's start)
+            const float q[3] = {pl.m[3] + b.offset[0], pl.m[7] + b.offset[1], pl.m[11] + b.offset[2]};
+            const float* v = lastEventVP.data(); // (column-major)
+            const float cw = v[3] * q[0] + v[7] * q[1] + v[11] * q[2] + v[15];
+            if (cw <= 0) return false;
+            const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+            x = (v[0] * q[0] + v[4] * q[1] + v[8] * q[2] + v[12]) / cw * float(screenW) / 2 / k;
+            y = (v[1] * q[0] + v[5] * q[1] + v[9] * q[2] + v[13]) / cw * float(screenH) / 2 / k;
+            return true;
+        }
+        return false;
+    }
+    bool lunchIdle() const { return lunchActive && event && eventMode && !event->running() && !event->lunch().shutdown; }
+    void chooseLunchBalloon(const std::string& model) {
+        const std::string base = lunchFunction.size() > 4 && lunchFunction.compare(lunchFunction.size() - 4, 4, "_evt") == 0
+                                     ? lunchFunction.substr(0, lunchFunction.size() - 4) : lunchFunction;
+        SDL_Log("lunch: %s", (base + "_" + model).c_str());
+        if (!event->call(base + "_" + model)) SDL_Log("lunch: %s", event->error().c_str());
+    }
+    bool lunchClick(float fx, float fy) {
+        if (!lunchIdle()) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons) {
+            float x, y;
+            if (!b.shown || b.delay > 0 || !lunchBalloonAt(b, x, y)) continue;
+            if ((x - ux) * (x - ux) + (y + 0.5f - uy) * (y + 0.5f - uy) < 0.3f) {
+                chooseLunchBalloon(b.model);
+                return true;
+            }
+        }
+        return false;
+    }
+    void drawLunchBalloons(int w, int h) {
+        if (!lunchActive || !event || event->running()) return; // (LunchBalloon: shown while no talk runs - ProcessBalloonTouch's)
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons) {
+            float x, y;
+            if (b.shown && lunchBalloonAt(b, x, y)) cr3UiPut("feflag_fr00", "", float(b.frame) / 30, x, y, view);
+        }
+    }
+
     // one of the game's updates, the figures following the scene's models
     void stepEvent() {
         if (eventEnded) return;
@@ -7778,7 +7869,15 @@ struct Viewer {
             SDL_Log("event: %s", event->error().c_str());
             eventEnded = true;
         }
+        if (!event->running() && !eventEnded && lunchActive && !event->lunch().shutdown) { // (LunchMain 200: the balloons' taps)
+            for (cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons)
+                if (b.shown && b.delay > 0) --b.delay;
+            if (!lunchWaitLogged) lunchWaitLogged = true, SDL_Log("lunch: the balloons, at frame %d", event->frame());
+            syncEventFigures(*event);
+            return;
+        }
         if (!event->running() && !eventEnded) {
+            if (lunchActive) lunchActive = false, SDL_Log("lunch: over"); // (LunchMain 10000: then as a vista ends)
             eventEnded = true;
             SDL_Log("event ended at frame %d (%.2f s)%s", event->frame(), event->frame() * cr3::EventRuntime::kTick,
                     event->battle() >= 0 ? (": battle " + std::to_string(event->battle())).c_str() : "");
@@ -7793,6 +7892,13 @@ struct Viewer {
                 game.next.battle = -1;
                 SDL_Log("event: battle %d on field %d", id, fieldId);
                 requestCr3Battle(id, fieldId);
+                return;
+            }
+            // (VistaMain::BranchAfterVista 0xf: a lunch reserved - LunchEventStart - its scene next)
+            if (game.next.lunch && !game.next.vistaFunction.empty() && !eventScript.empty()) {
+                const cr3::GameState::Next n = game.next;
+                game.next = cr3::GameState::Next();
+                startLunch(n.vistaFunction, n.vistaMap);
                 return;
             }
             // (--event: an event that hands over to the next vista - SetVistaEvent at its end, as the
@@ -7957,6 +8063,7 @@ struct Viewer {
             const Mat4 world = cr3::mat4FromMat34(cw);
             const Mat4 vp = cr3::mat4Multiply(perspective(fov * 3.14159265f / 180, float(w) / float(std::max(h, 1)), zn, zf),
                                               cr3::mat4RigidInverse(world));
+            lastEventVP = vp, lastEventVPSet = true; // (a lunch's balloons: placed through it)
             // VistaMain::Draw: the vista light figure's lights for the map and the models
             cr3::SceneLighting l = lighting;
             event->scene().lights(l, eventLead());
@@ -20526,6 +20633,7 @@ struct Viewer {
         drawCr3GeneLab(*ev, screenW, screenH, true);
         drawCr3SpacePort(*ev, screenW, screenH);
         drawCr3Shop(*ev, screenW, screenH, true);
+        if (ev == event.get()) drawLunchBalloons(screenW, screenH); // (a lunch's)
         drawCr3WorldSelect(*ev, screenW, screenH);
         if (ev == areaEvents.get()) drawCr3Field(screenW, screenH); // (the field's buttons, the camp)
         if (ev == areaEvents.get()) drawAreaDrag(screenW, screenH);  // (the drag's controller)
@@ -21496,6 +21604,7 @@ int main(int argc, char** argv) {
                     else if (v.geneGetTap()) {}
                     else if (v.collectClick(fx, fy)) {}
                     else if (v.yesNoClick(fx, fy)) {}
+                    else if (v.lunchClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
                     else if (v.spacePortClick(fx, fy)) {}
                     else if (v.cr3ShopClick(fx, fy)) {}
