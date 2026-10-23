@@ -2174,6 +2174,31 @@ by `decode` under `gltf\<figure>\<n>`. `cr3tool gltfcheck <release> <figure|all>
 2599 figures (356 with meshes) land exactly on the originals in the base pose and their first four
 animations.
 
+## Add-ons (CR3-U)
+
+Outfits and weapons of the player's own (`assets/addons.cpp`): `models/addons/*.ini` (`CR3_ADDONS`
+elsewhere), each naming a glTF model, become the game's own items before anything reads the tables
+- Database::setEdit changes three files as they are read (the release's or the overlay's), with
+MbeFile::appendRow (a copy of a row at its table's end, the file rebuilt - later tables' rows and
+the chunks moved, the 64-bit or the Vita's layout kept):
+
+- `item_para.mbe` Armor / Weapon: the `like` item's row as id 9000 + id (+4 the full id, 209000 /
+  109000 + id), +0x2c only the character's bit, +0x30 its model - an outfit's body number 100 + id
+  (CrxModel::GetBodyModelNo's `%sb%02d`: j001b101), a weapon's AttachmentModel 9000 + id;
+- `model.mbe` AttachmentModel (a weapon): the like weapon's, its figure `wa<id>`;
+- `item_name.mbe` ArmorName / WeaponName: id 9000 + id, the name (Japanese, English).
+
+The figure is the like item's (`j001b02`, `w001_01` - Database::addAlias: its .geom, .skel, .name; a
+weapon's .anim; a body's motions are the b01 body's, as every costume's) with the add-on's meshes
+put on it as HD Models puts a replacement's (applyFigureReplacement) - everything else (its
+numbers, the help line, its icon, the lists, battles, the camp's model, saves) is the game's as it
+is. Cr3OfflineDb::addGoods puts it on its shop's list (`com_1` - the premium shop, PiuComMenu,
+which the field's Shop button opens: Fld2Main::SM_Shop, CreatePiucomTop - and the VS mode's Sp
+Shop), goods 10000 + id (a weapon) / 11000 + id, its price in coins, GP or gold. While HD Models
+replaces a figure of the wearer's (`models/hd/<model>*`) an add-on not made for it (`hd_models`)
+is left off the shop's list and the equipment's candidates, and drawn as its like item's figure.
+`cr3tool addons <release> <folder>`: each one's rows read back, its goods, its model on its figure.
+
 ## Text (`message\*.dat`)
 
 From `EvtTextData` and `EvtWindowMessage::ReadPage`; `tools/msg.py check`: all 874 files in the

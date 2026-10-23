@@ -662,6 +662,35 @@ int Cr3OfflineDb::buyGoods(GameState& s, int shop, int goods, int n) {
     return finish(kDbBad);
 }
 
+bool Cr3OfflineDb::addGoods(const std::string& id, int goodsId, int item, int price, const std::string& currency, int icon) {
+    const auto it = tables_.find("shops");
+    if (it == tables_.end()) return false;
+    for (BsonValue& shop : it->second.items) {
+        if (shop.string("_id") != id) continue;
+        for (auto& [key, goods] : shop.members) {
+            if (key != "goods" || !goods.isArray()) continue;
+            const auto number = [](int v) {
+                BsonValue b;
+                b.kind = BsonValue::Kind::Int, b.i = v;
+                return b;
+            };
+            BsonValue entry, items, one, category;
+            category.kind = BsonValue::Kind::String, category.s = "item";
+            one.kind = BsonValue::Kind::Object;
+            one.members = {{"category", category}, {"item_id", number(item)}, {"count", number(1)}};
+            items.kind = BsonValue::Kind::Array, items.items = {one};
+            entry.kind = BsonValue::Kind::Object;
+            entry.members = {{"sort", number(0)}, {"buy", number(0)},
+                             {"gold", number(currency == "gold" ? price : 0)}, {"GP", number(currency == "GP" ? price : 0)},
+                             {"items", items}, {"_id", number(goodsId)}, {"discount", number(0)}, {"flag", number(-1)},
+                             {"coin", number(currency == "coin" ? price : 0)}, {"icon", number(icon)}};
+            goods.items.push_back(std::move(entry));
+            return true;
+        }
+    }
+    return false;
+}
+
 int Cr3OfflineDb::sellItem(GameState& s, int item, int n) {
     const int price = itemPrice(item);
     if (!removeItem(s, item, n)) return finish(kDbBad);

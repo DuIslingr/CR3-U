@@ -268,6 +268,7 @@ void Database::close() {
     loose_.clear();
     entries_.clear(), overlay_.clear();
     byName_.clear(), overlayByName_.clear();
+    edits_.clear();
     overlayActive_ = false;
 }
 
@@ -422,6 +423,11 @@ const Database::Entry* Database::find(const std::string& name) const {
 }
 
 bool Database::read(const Entry& e, std::vector<uint8_t>& out, std::string* error) const {
+    const auto it = edits_.empty() ? edits_.end() : edits_.find(key(e.name));
+    return readStored(e, out, error) && (it == edits_.end() || it->second(out, error));
+}
+
+bool Database::readStored(const Entry& e, std::vector<uint8_t>& out, std::string* error) const {
     if (e.file < 0) {
         if (e.offset >= loose_.size()) return fail(error, e.name + ": no such file");
         std::FILE* f = std::fopen(loose_[size_t(e.offset)].c_str(), "rb");
@@ -446,6 +452,29 @@ std::string Database::sourceOf(const std::string& name) const {
     if (!e) return {};
     if (e->file < 0) return e->offset < loose_.size() ? loose_[size_t(e->offset)] : std::string();
     return baseName(files_[size_t(e->file)]->path());
+}
+
+void Database::setEdit(const std::string& name, Edit edit) {
+    if (edit) edits_[key(name)] = std::move(edit);
+    else edits_.erase(key(name));
+}
+
+bool Database::addAlias(const std::string& name, const std::string& of) {
+    const std::string k = key(name), o = key(of);
+    if (byName_.count(k) || overlayByName_.count(k)) return false;
+    const auto it = byName_.find(o);
+    if (it == byName_.end()) return false;
+    Entry e = entries_[it->second];
+    e.name = name;
+    byName_.emplace(k, entries_.size());
+    entries_.push_back(e);
+    if (const auto ov = overlayByName_.find(o); ov != overlayByName_.end()) {
+        Entry v = overlay_[ov->second];
+        v.name = name;
+        overlayByName_.emplace(k, overlay_.size());
+        overlay_.push_back(v);
+    }
+    return true;
 }
 
 } // namespace cr3

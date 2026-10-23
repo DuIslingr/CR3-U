@@ -55,6 +55,7 @@
 #include <string>
 #include <vector>
 
+#include "assets/addons.hpp"
 #include "assets/geom.hpp"
 #include "assets/gltf_figure.hpp"
 #include "battle/battledata.hpp"
@@ -497,7 +498,9 @@ int usage() {
                  "cr3tool glass <seeds>\n"
                  "cr3tool save-import <game.dat | cont.dat> [system.dat]  (a CR3-U save on stdout)\n"
                  "cr3tool save-export <archive> <CR3-U save> <game.dat>\n"
-                 "cr3tool db <release> [item sheet]  (the offline database: tables, requests, a sheet's boxes)\n");
+                 "cr3tool db <release> [item sheet]  (the offline database: tables, requests, a sheet's boxes)\n"
+                 "cr3tool gltfcheck <release> <figure | all> [file.glb]  (HD Models' round trip)\n"
+                 "cr3tool addons <release> <folder>  (the add-ons' outfits and weapons, as the game takes them)\n");
     return 2;
 }
 
@@ -1744,6 +1747,62 @@ int saveExport(const char* path, const char* save, const char* out) {
 
 } // namespace
 
+// addons <release> <folder>: the add-ons (assets/addons.hpp) as the game would take them - each one's
+// rows read back from the release's tables (its item, name, wearer, model, shop goods) and its
+// glTF model put on its figure
+int addons(const char* path, const char* folder) {
+    cr3::Database db;
+    std::string err;
+    if (!db.open(path, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    cr3::Cr3Addons addons;
+    addons.load(db, folder);
+    for (const std::string& p : addons.problems()) std::printf("left out: %s\n", p.c_str());
+    cr3::Cr3BattleTables t;
+    if (!t.load(db, &err)) return std::fprintf(stderr, "tables: %s\n", err.c_str()), 1;
+    cr3::Cr3OfflineDb odb;
+    if (!odb.load(db, &err)) return std::fprintf(stderr, "database: %s\n", err.c_str()), 1;
+    addons.addGoods(odb);
+    std::vector<uint8_t> d;
+    cr3::MbeFile names;
+    if (db.read("data\\item_name.mbe", d)) names.parse(d);
+    int bad = 0;
+    for (const cr3::Cr3Addon& a : addons.list()) {
+        std::string problem;
+        cr3::MbeFile::Row r, n;
+        const int id = a.item % 100000;
+        if (!t.item.find(a.weapon ? "Weapon" : "Armor", id, "iiiiiiiiiiiii", r) || r.i(1) != a.item) problem = "no item row";
+        else if (!(r.i(11) >> a.character & 1)) problem = "not the character's to wear";
+        else if (!names.find(a.weapon ? "WeaponName" : "ArmorName", id, "ipp", n) || n.s(2) != a.name) problem = "no name";
+        std::string figure = a.figure, variant;
+        if (problem.empty() && a.weapon && (!t.weaponModel(id, figure, variant) || figure != a.figure)) problem = "no attachment model";
+        if (problem.empty() && !a.weapon && (figure = t.body(a.wearer, id)) != a.figure) problem = "the body is " + figure;
+        int goods = 0;
+        if (const cr3::BsonValue* shops = odb.table("shops"))
+            for (const cr3::BsonValue& s : shops->items)
+                if (s.string("_id") == a.shop)
+                    if (const cr3::BsonValue* g = s.get("goods"))
+                        for (const cr3::BsonValue& x : g->items)
+                            if (const cr3::BsonValue* items = x.get("items"); items && !items->items.empty() && items->items[0].integer("item_id") == a.item) ++goods;
+        if (problem.empty() && a.shop != "none" && goods != 1) problem = "not in shop " + a.shop;
+        cr3::Geom g;
+        cr3::Skeleton sk;
+        std::vector<std::pair<std::string, cr3::Image>> pictures;
+        cr3::GltfStats st;
+        if (problem.empty() && (!db.read(a.figure + ".geom", d) || !cr3::parseGeom(d, g))) problem = "no figure " + a.figure;
+        if (problem.empty() && db.read(a.figure + ".skel", d)) cr3::parseSkeleton(d, sk);
+        if (problem.empty() && !cr3::applyFigureReplacement(g, sk, a.model, "addon\\" + a.figure + "\\", pictures, &err, &st)) problem = "the model: " + err;
+        std::printf("%s %d %s for %s (%d): item %d, %s over %s%s%s, %d %s in %s%s%s\n", a.weapon ? "weapon" : "outfit", a.id, a.name.c_str(),
+                    a.wearer.c_str(), a.character, a.item, a.figure.c_str(), a.base.c_str(), a.hdAny ? ", any HD model" : "",
+                    a.hdFits.empty() ? "" : ", fits HD models", a.price, a.currency.c_str(), a.shop.c_str(), problem.empty() ? "" : " - ",
+                    problem.c_str());
+        if (problem.empty())
+            std::printf("  %d meshes, %d triangles, %d pictures of its own\n", st.meshes, st.triangles, int(pictures.size()));
+        bad += !problem.empty();
+    }
+    std::printf("%zu add-ons, %d with a problem, %zu left out\n", addons.list().size(), bad, addons.problems().size());
+    return bad || !addons.problems().empty() ? 1 : 0;
+}
+
 // gltfcheck <archive> <figure|all> [file.glb]: the model bridge's round trip - the figure exported
 // (or the .glb given, e.g. Blender's re-export) loaded back as its replacement, then both skinned as
 // cr3view skins them (world x inverse bind, the palette's rows) in the base pose and their first
@@ -1940,6 +1999,7 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "check")) return check(argv[2]);
     if (!std::strcmp(argv[1], "scripts")) return scripts(argv[2], argc > 3 ? argv[3] : nullptr);
     if (!std::strcmp(argv[1], "models")) return models(argv[2]);
+    if (!std::strcmp(argv[1], "addons") && argc > 3) return addons(argv[2], argv[3]);
     if (!std::strcmp(argv[1], "gltfcheck") && argc > 3) return gltfcheck(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "animations")) return animations(argv[2]);
     if (!std::strcmp(argv[1], "pose") && argc > 5) return pose(argv[2], argv[3], argv[4], float(std::atof(argv[5])));

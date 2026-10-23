@@ -7,3 +7,6 @@ Chaos Rings III (CR3-U): HD models.
 
 With HD Models on (it is by default) a replacement here is drawn in place of the original.
 Personal use only: they are made from the game's models. The README's "HD models".
+
+  addons/  outfits and weapons of your own, beside the game's (sold in the premium shop): a
+           manifest <anything>.ini and its .glb each - addons/README.txt, the README's "Add-ons"

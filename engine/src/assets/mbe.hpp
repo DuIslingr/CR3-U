@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cr3 {
@@ -23,6 +24,7 @@ public:
         std::string name;
         uint32_t rowSize = 0;
         std::vector<size_t> rows; // (their file offsets)
+        size_t at = 0;            // (its name's length's offset)
     };
     const Table* table(const std::string& name) const;
     const std::vector<Table>& tables() const { return tables_; }
@@ -40,8 +42,16 @@ public:
     // the first row whose column 0 (an int) is `id`
     bool find(const std::string& table, int id, const char* layout, Row& out) const;
 
+    // CR3-U's add-ons: a new row at `table`'s end - a copy of the row whose id is `like` (its
+    // strings too), with columns of the layout set: ints, and pointer columns to strings of their
+    // own; column 0 becomes `id`. bytes() is the file with it.
+    bool appendRow(const std::string& table, int like, int id, const char* layout, const std::vector<std::pair<size_t, int32_t>>& ints,
+                   const std::vector<std::pair<size_t, std::string>>& strings, std::string* error = nullptr);
+    const std::vector<uint8_t>& bytes() const { return d_; }
+
 private:
     bool parseAs(bool wide, std::string* error);
+    bool columnOffset(const Table& t, const char* layout, size_t column, size_t& at, bool& pointer) const;
     std::vector<uint8_t> d_;
     bool wide_ = true;
     std::vector<Table> tables_;

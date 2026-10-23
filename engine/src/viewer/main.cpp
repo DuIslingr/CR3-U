@@ -67,6 +67,7 @@
 #include "assets/geom.hpp"
 #include "assets/hd_texture.hpp"
 #include "assets/gltf_figure.hpp"
+#include "assets/addons.hpp"
 #include "assets/image.hpp"
 #include "assets/maptable.hpp"
 #include "assets/release.hpp"
@@ -259,6 +260,36 @@ struct Viewer {
     std::string modelsDir;
     int hdModelsLoaded = 0;
     std::map<std::string, cr3::Image> modelImages; // "gltf\\<figure>\\<n>" -> its pixels (decode's first look)
+    // the add-ons (assets/addons.hpp): outfits and weapons of the player's own, from models/addons/
+    // (CR3_ADDONS elsewhere) - their items, names and goods in the release's tables; one isn't for a
+    // character HD Models replaces, unless it says it fits (Cr3Addons::usable)
+    cr3::Cr3Addons addons;
+    std::map<std::string, std::vector<std::string>> hdReplacedCache; // (a wearer's: its figures in modelsDir)
+    std::vector<std::string> hdReplaced(const std::string& wearer) {
+        if (!hdModels || modelsDir.empty() || wearer.empty()) return {};
+        const auto it = hdReplacedCache.find(wearer);
+        if (it != hdReplacedCache.end()) return it->second;
+        std::vector<std::string>& out = hdReplacedCache[wearer];
+        int count = 0;
+        if (char** names = SDL_GlobDirectory(modelsDir.c_str(), nullptr, SDL_GLOB_CASEINSENSITIVE, &count)) {
+            for (int k = 0; k < count; ++k) {
+                std::string n = names[k];
+                for (char& c : n) c = char(std::tolower(static_cast<unsigned char>(c)));
+                for (const char* ext : {".glb", ".gltf"}) {
+                    const size_t e = std::strlen(ext);
+                    if (n.size() > e && n.compare(n.size() - e, e, ext) == 0 && n.compare(0, wearer.size(), wearer) == 0 && !addons.byFigure(n.substr(0, n.size() - e)))
+                        out.push_back(n.substr(0, n.size() - e));
+                }
+            }
+            SDL_free(names);
+        }
+        return out;
+    }
+    bool addonUsable(const cr3::Cr3Addon& a) { return cr3::Cr3Addons::usable(a, hdReplaced(a.wearer)); }
+    bool itemUsable(int full) { // (an add-on's item: not while its wearer's model is replaced, unless it fits)
+        const cr3::Cr3Addon* a = addons.byItem(full);
+        return !a || addonUsable(*a);
+    }
     std::map<std::string, bool> textureMips; // (each cached texture's mip chain: a reload's)
 
     // CR3-U's own settings - the options' Display & Graphics list (settingsOpen), kept in
@@ -358,6 +389,7 @@ struct Viewer {
             appliedDisplay = s.display;
         }
         if (s.hdTextures != hdTextures) hdTextures = s.hdTextures, reloadTextures();
+        if (hdModels != s.hdModels) hdReplacedCache.clear();
         hdModels = s.hdModels; // (from the next figure loaded)
     }
     // Every cached texture again (HD Textures turned on or off): in place, so what holds one sees the new
@@ -1456,7 +1488,7 @@ struct Viewer {
 
     // the name a figure's motions go by: a hero's costume body's the b01 body's (j001b02 -> j001b01)
     static std::string motionBase(const std::string& base) {
-        return base.size() == 7 && base[0] == 'j' && base[4] == 'b' ? base.substr(0, 4) + "b01" : base;
+        return base.size() >= 7 && base[0] == 'j' && base[4] == 'b' ? base.substr(0, 4) + "b01" : base; // (an add-on's j001b101 too)
     }
 
     // HD Models: models/hd/<figure>.glb (or .gltf) in place of the figure's meshes - its skeleton,
@@ -1488,6 +1520,34 @@ struct Viewer {
         }
     }
 
+    // an add-on's figure (assets/addons.hpp: its base's files under its name): the add-on's meshes
+    // on it - or, while it isn't usable (its wearer replaced by HD Models), its base as that is drawn
+    bool addonFigure(const std::string& name, cr3::Geom& g) {
+        if (name.size() < 6) return false;
+        const cr3::Cr3Addon* a = addons.byFigure(name.substr(0, name.size() - 5));
+        if (!a) return false;
+        if (!addonUsable(*a)) {
+            replaceFigure(a->base + ".geom", g);
+            return true;
+        }
+        std::vector<uint8_t> d;
+        cr3::Skeleton sk;
+        if (archive.read(a->figure + ".skel", d)) cr3::parseSkeleton(d, sk);
+        std::vector<std::pair<std::string, cr3::Image>> pictures;
+        std::string why;
+        cr3::GltfStats st;
+        if (cr3::applyFigureReplacement(g, sk, a->model, "addon\\" + a->figure + "\\", pictures, &why, &st)) {
+            for (auto& [k, img] : pictures) {
+                modelImages[k] = std::move(img);
+                textures.erase(k);
+            }
+            SDL_Log("%s: add-on %s (%d meshes, %d triangles)", name.c_str(), a->model.c_str(), st.meshes, st.triangles);
+        } else {
+            SDL_Log("%s: add-on %s left out: %s", name.c_str(), a->model.c_str(), why.c_str());
+        }
+        return true;
+    }
+
     bool loadFigure(const std::string& name, ViewFigure& f, std::string* err) {
         unload(f);
         const size_t keepAnim = f.animIndex;
@@ -1499,7 +1559,7 @@ struct Viewer {
         std::vector<uint8_t> data;
         cr3::Geom g;
         if (!archive.read(name, data, err) || !cr3::parseGeom(data, g, err)) return false;
-        replaceFigure(name, g);
+        if (!addonFigure(name, g)) replaceFigure(name, g);
         static const float kWhite[4] = {1, 1, 1, 1}, kZero[3] = {0, 0, 0};
         for (const cr3::GeomMesh& m : g.meshes) {
             ViewMesh vm;
@@ -5941,7 +6001,7 @@ struct Viewer {
         unload(areaPlayer), unload(areaPlayerHead);
         areaPlayer = ViewFigure(), areaPlayerHead = ViewFigure();
         if (!loadFigure(areaPlayerName + ".geom", areaPlayer, &err)) SDL_Log("player %s: %s", areaPlayerName.c_str(), err.c_str());
-        if (areaPlayerName.size() == 7 && areaPlayerName[4] == 'b' && archive.contains(areaPlayerName.substr(0, 4) + "h01.geom") &&
+        if (areaPlayerName.size() >= 7 && areaPlayerName[4] == 'b' && archive.contains(areaPlayerName.substr(0, 4) + "h01.geom") &&
             !loadFigure(areaPlayerName.substr(0, 4) + "h01.geom", areaPlayerHead, &err))
             SDL_Log("player head: %s", err.c_str());
         areaWalker = std::make_unique<cr3::CharacterController>(area.walls);
@@ -15782,6 +15842,8 @@ struct Viewer {
             }
             else if (id == 105) // (feBtnMypage: My Page)
                 openMyPage();
+            else if (id == 106) // (feBtnShop: Fld2Main::SM_Shop - CreatePiucomTop, the premium shop: PiuComMenu, data\shops' com_1)
+                openPremiumShop();
             else if (id == 102) {
                 encountersOff = !encountersOff;
                 audio.playSe("com_003", false);
@@ -16473,7 +16535,7 @@ struct Viewer {
         static const char* const kTables[3] = {"Weapon", "Armor", "Accessory"};
         const int slot = full / 100000 - 1;
         if (slot < 0 || slot > 2 || !cr3TablesReady() || !cr3BattleTables.item.find(kTables[slot], full % 100000, "iiiiiiiiiiii", r)) return false;
-        return ch > 0 && ch < 31 && (r.i(11) >> ch & 1) != 0;
+        return ch > 0 && ch < 31 && (r.i(11) >> ch & 1) != 0 && itemUsable(full);
     }
     void campEquipRows() {
         Cr3CampEquip& ce = campEquip;
@@ -20293,6 +20355,7 @@ struct Viewer {
         float wildAt = 0;
         long itemBonus = 0, wildBonus = 0, endScore = 0;
         int ask = 0;             // (asked: 1 the tournament entered, 2 MP recovered, 3 goods bought)
+        bool shopOnly = false;   // (the Sp Shop opened from the field's Shop button: back closes it)
         std::string told;        // (an alert over it)
         float toldSince = 0;
     } vs;
@@ -20316,6 +20379,13 @@ struct Viewer {
         vs.screen = 1;
         audio.playSe("com_003", false);
         SDL_Log("vs: open - %zu tournaments, mission %d (goal %d)", game.cr3Db->vsTournaments().size(), game.cr3Vs.mission, game.cr3Vs.missionGoal);
+    }
+    void openPremiumShop() {
+        if (!game.cr3Db) return;
+        vs = Cr3VsMode();
+        vs.screen = 8, vs.shopOnly = true;
+        audio.playSe("com_003", false);
+        SDL_Log("shop: the premium shop - %zu goods", vsShopGoods().size());
     }
     void vsList(int mode) {
         vs.mode = mode, vs.rows.clear(), vs.row = 0;
@@ -20606,7 +20676,7 @@ struct Viewer {
                     v.flag = g.integer("flag", -1);
                     if (const cr3::BsonValue* items = g.get("items"); items && !items->items.empty())
                         v.item = items->items[0].integer("item_id"), v.count = items->items[0].integer("count");
-                    if (v.flag < 0 || game.flag(v.flag)) out.push_back(v);
+                    if ((v.flag < 0 || game.flag(v.flag)) && itemUsable(v.item)) out.push_back(v);
                 }
         }
         return out;
@@ -21001,7 +21071,7 @@ struct Viewer {
         }
         if (id == -1) {
             audio.playSe("com_004", false);
-            vs.screen = vs.screen == 4 ? 3 : vs.screen == 3 ? 2 : vs.screen == 2 ? 1 : vs.screen == 8 ? 1 : 0, vs.since = 0;
+            vs.screen = vs.screen == 4 ? 3 : vs.screen == 3 ? 2 : vs.screen == 2 ? 1 : vs.screen == 8 && !vs.shopOnly ? 1 : 0, vs.since = 0;
             if (vs.screen == 0) SDL_Log("vs: closed");
             return;
         }
@@ -21937,9 +22007,18 @@ int main(int argc, char** argv) {
     SDL_Log("data: %s", data.c_str());
     if (patchFound && v.archive.kind() != cr3::MvglArchive::Kind::Vita) patch.clear(); // (the others are in English already)
     if (!patch.empty() && !v.archive.addOverlay(patch, &err) && !patchFound) SDL_Log("fan translation: %s", err.c_str());
-    if (v.offlineDb.load(v.archive, &err))
+    { // the add-ons: models/addons/ in the game folder (CR3_ADDONS elsewhere) - before anything reads the tables
+        const char* env = SDL_getenv("CR3_ADDONS");
+        std::string dir = env && *env ? std::string(env) : gameFolder + "models/addons/";
+        v.addons.load(v.archive, dir);
+        for (const cr3::Cr3Addon& a : v.addons.list())
+            SDL_Log("add-on: %s %d \"%s\" for %s (item %d, %s)", a.weapon ? "weapon" : "outfit", a.id, a.name.c_str(), a.wearer.c_str(), a.item, a.figure.c_str());
+        for (const std::string& p : v.addons.problems()) SDL_Log("add-on left out: %s", p.c_str());
+    }
+    if (v.offlineDb.load(v.archive, &err)) {
+        v.addons.addGoods(v.offlineDb);
         SDL_Log("database: offline, %zu server tables, %zu item sheets", v.offlineDb.tables().size(), v.offlineDb.itemSheets().size());
-    else if (v.archive.kind() != cr3::Database::Kind::None)
+    } else if (v.archive.kind() != cr3::Database::Kind::None)
         SDL_Log("database: %s", err.c_str());
     v.resetGame();
     {
@@ -21972,6 +22051,7 @@ int main(int argc, char** argv) {
         for (const auto& e : v.archive.entries()) {
             if (e.name.size() < 6 || e.name.compare(e.name.size() - 5, 5, ".geom") != 0) continue;
             const std::string base = e.name.substr(0, e.name.size() - 5);
+            if (v.addons.byFigure(base)) continue; // (an add-on's: its base's under another name)
             std::vector<uint8_t> d;
             cr3::Geom g;
             cr3::Skeleton sk;

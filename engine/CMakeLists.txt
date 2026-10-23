@@ -38,6 +38,7 @@ add_library(cr3core STATIC
     src/assets/release.cpp
     src/assets/hd_texture.cpp
     src/assets/gltf_figure.cpp
+    src/assets/addons.cpp
     src/assets/text.cpp
     src/assets/language.cpp
     src/field/fieldmap.cpp

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -98,8 +99,16 @@ public:
 
     static std::string key(const std::string& name);
 
+    // CR3-U's add-ons (assets/addons.hpp): a file changed as it is read - the release's or the
+    // overlay's (data\\item_para.mbe with the add-ons' rows) -, and a name for another's file
+    // (j001b101.geom: j001b02.geom), in entries() like the rest. close() drops them.
+    using Edit = std::function<bool(std::vector<uint8_t>& bytes, std::string* error)>;
+    void setEdit(const std::string& name, Edit edit);
+    bool addAlias(const std::string& name, const std::string& of); // (false: `of` isn't here, or `name` is)
+
 private:
     bool addArchive(const std::string& path, uint64_t base, bool overlay, std::string* error);
+    bool readStored(const Entry& e, std::vector<uint8_t>& out, std::string* error) const;
     void addLoose(const std::string& path, const std::string& name, bool overlay);
 
     Kind kind_ = Kind::None;
@@ -108,6 +117,7 @@ private:
     std::vector<std::string> loose_; // loose files' paths
     std::vector<Entry> entries_, overlay_;
     std::unordered_map<std::string, size_t> byName_, overlayByName_;
+    std::unordered_map<std::string, Edit> edits_;
     bool overlayActive_ = false;
 };
 

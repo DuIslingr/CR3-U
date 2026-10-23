@@ -264,6 +264,9 @@ public:
     // _MAX); GetDailyItem(id): data\dailyItems' row, once - its flag
     int findShop(const std::string& id) const; // (-1 none)
     int buyGoods(GameState& s, int shop, int goods, int n);
+    // CR3-U's add-ons (assets/addons.hpp): goods of their own on a shop's list, after its others -
+    // `item` x 1 for `price` gold, GP or coins (`currency` "gold", "GP", "coin"); false: no such shop
+    bool addGoods(const std::string& shop, int id, int item, int price, const std::string& currency, int icon);
     int sellItem(GameState& s, int item, int n);
     int useItem(GameState& s, int item, int n);
     int useContinue(GameState& s);

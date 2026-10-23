@@ -174,6 +174,38 @@ back: every figure lands exactly on the original in every animation). `CR3_HD_MO
 them from elsewhere. Personal use: the exports are the game's models - keep them, and what you make
 from them, out of anything shared.
 
+## Add-ons: outfits and weapons of your own
+
+New outfits and weapons - beside the game's, not in place of them - sold in the premium shop (the
+field's Shop button, or the VS mode's Sp Shop) next to its special ones, worn like any other:
+
+1. Make the model from an export (`cr3view --export-models --no-animations`): an outfit over a
+   character's body - `j001b02.glb`, the hero's Worn Hoodie -, a weapon over a weapon -
+   `w001_01.glb`, the Chain Sword. Keep the armature (bones `node_<n>...`) and the material names
+   (`cr_mat_<n>...`); new pictures, more detail, another shape are all yours. Save it as `.glb`.
+2. Beside it in `<game folder>/models/addons/`, a manifest `<anything>.ini`:
+
+   ```ini
+   id = 1               # 1 .. 999 - keep it: saves know what you own by it
+   kind = outfit        # or weapon
+   character = 1        # who wears it (1 the hero)
+   name = Night Coat    # (name_ja = for Japanese)
+   model = coat.glb
+   like = 200083        # the item it's made from - its numbers, icon and body or weapon (default: the character's own)
+   price = 30           # in the premium shop...
+   currency = coin      # ...in coin, GP or gold (shop = none: not sold)
+   hd_models = no       # see below
+   ```
+
+3. Start the game: it is in the shop (`cr3tool addons <release> <game folder>/models/addons`
+   checks them first - each one's item, name, shop goods and model, as the game takes them).
+
+An add-on is made for the character as the game draws it: while HD Models replaces any of that
+character's figures (`models/hd/j001*.glb`), its add-ons aren't sold, can't be put on, and one worn
+is drawn as the item it's made from - unless it says it fits: `hd_models = yes` (any), or the
+replaced figures it is made for (`hd_models = j001b01 j001h01`). `CR3_ADDONS=<folder>` reads them from
+elsewhere. Personal use, as HD Models: they're made from the game's models.
+
 ## Layout
 
 | Path | Purpose |
