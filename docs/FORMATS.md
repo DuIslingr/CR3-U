@@ -764,7 +764,9 @@ weapons, armour, accessories): CampEquip2Menu's status (interface 0x6d, SetShopC
 the slot 0 / 1 / 2) for the footer's character - its numbers with the row in focus in that slot -
 and the characters' footer (CreateCampEquipMenuFutter: comFtrEquipMenu's buttons; a tap -
 GetCampEquipFutterSelectChara - chooses who, com_002); equipment bought goes on that character.
-Not in: EquipOwnMenu (the other categories' comListEquip panel).
+In the others, EquipOwnMenu: comListEquip at comListEqPosition's call_comListEquip, the equipment
+held - CrxGameData::GetWeaponCount / GetArmorCount / GetAccessoryCount - at its three
+comListNumL_num00, three comListNum_fr00 digits each (leading zeros hidden), against 100.
 
 The scripts' yes / no (EvtWindow.ShowYesNoButton - Cr3EvtWindowShowYesNoButton:
 SetYNChoiceTWindowParameter, YNChoiceButton - interface 0xe): the screen dimmed (a black figure at

@@ -17324,8 +17324,21 @@ struct Viewer {
                 if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
                 if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, -1});
             }
-        } else
+        } else {
+            if (m.screen >= 2) { // (EquipOwnMenu: the equipment held - weapons, armour, accessories -, three digits each, comListEquip at comListEqPosition's call)
+                UiFig& ep = cr3UiPut("comlisteqposition", "", 0, 0, 0, view);
+                if (cr3UiCall(ep, "call_comListEquip", x, y, w, h)) {
+                    UiFig& eq = cr3UiPut("comlistequip", "", 0, x, y, view);
+                    long held[3] = {0, 0, 0}; // (CrxGameData::GetWeaponCount, GetArmorCount, GetAccessoryCount)
+                    for (const auto& [id, n] : game.cr3Items)
+                        if (id / 100000 >= 1 && id / 100000 <= 3 && n > 0) held[id / 100000 - 1] += n;
+                    for (int k = 0; k < 3; ++k)
+                        if (cr3UiCall(eq, "call_comListNumL_num00_00" + std::to_string(k + 1), cx, cy))
+                            cr3UiDigits(cr3UiPut("comlistnuml_num00", "", 0, cx, cy, view), "call_comListNum_fr00", "comlistnum_fr00", held[k], 3, 0, view);
+                }
+            }
             drawCr3CampFooter(w, h, view);
+        }
         drawCr3Header(m.clock, m.screen == 0 ? shopTitle() : m.buy ? 0xd : 0xe, sentence, w, h, view);
         // how many, asked
         const Cr3ShopMenu::Row* r = m.row < int(m.rows.size()) ? &m.rows[size_t(m.row)] : nullptr;
