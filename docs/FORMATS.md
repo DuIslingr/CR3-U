@@ -372,6 +372,27 @@ orange arrow) over the person the story goes on with (its offset by name - 1.2 u
 SetFlagMarkField a pop point's `fe007poin01` (blue), ClearFlagMark takes them away as one is
 talked to. CR3-U logs each (`area t0104: effect fe007poin02 on c111_01`).
 
+### The bomb, rocks and solid gimmicks (CR3)
+
+The goods buttons (Cr3TabMenu.AddGoodsButton / DelGoodsButton - Fld2GoodsButton: 0 the bomb, 1
+the toy camera, 2 the detector, 3 the darts; an area's MenuTabAddALL gives them back by flags 4101 ..
+4104): FieldGoodsMenu (interface 0x36) - feGoodsMenu at feGoodsPosition's call_feGoodsMenu_fit3, five
+slots call_feGoodsPanel_01 .. _05 arcing out of the bottom right corner, the goods a feGoodsPanel
+with feGoodsIcon_fr00 at its frame. Tapped, the bomb (Fld2BombManager::PutBomb - three at most):
+fe002bom01 at the player's feet (SE fe_011; fe_012 looped while any fuse burns), going off at its
+fuse's end or 1.5 s - fe002bom02 there, turned at random, SE fe_013 -, its blast on for its first 15
+frames, gone at its animation's end. A blast sets off a bomb within 1 after the chain's count x 0.4 s
+(CheckBlastChain). A rock (Fld2Rock, ragdoll_krock_..: data\field_<x>.mbe's Field row, its model -
+d0200rock00 - and +0x34 its radius, 3) within its radius of a blast breaks (UpdateBlast): StartQuake
+(20, 1 to 0 over 30 frames - QuakeControlTask: the layer moved up and down by that, the other way each
+frame), its function (krock_11: a flag, SE fe_014), its body gone, its model hidden; thirty chips fly
+- ten of <model less 2>01, twenty smaller of ..02 - 0.98 down an update, one bounce at 0.7, faded by
+1.2 s. The area script puts broken rocks back on a new visit (flags 4031 .. reset).
+
+A Field row's +0x2c makes its gimmick solid (a rigid body: its body in `<area>p.phys`, named as it) -
+rocks, boxes, check objects, people - a wall while it stands and is shown.
+`cr3view --input goods:<n>` (a goods button), `near:<rock>`.
+
 ### Random encounters (CR3)
 
 Fld2TaskEncount, in a dungeon's areas (`dDDAA`):

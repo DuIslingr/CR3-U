@@ -323,6 +323,8 @@ void bindGameState(ScriptVM& vm, GameState& state) {
             for (int k = 0; k < 3; ++k) e.scale[size_t(k)] = c.number(2 + k, 1), e.offset[size_t(k)] = c.number(5 + k, 0);
             state.fieldEffects.push_back(e);
         });
+    vm.setNative("Cr3TabMenu", "AddGoodsButton", [&state](NativeCall& c) { state.goodsButtons.insert(c.integer(0)); });
+    vm.setNative("Cr3TabMenu", "DelGoodsButton", [&state](NativeCall& c) { state.goodsButtons.erase(c.integer(0)); });
     vm.setNative("Cr3FieldMapEffectResident", "EffectResidentOut", [&state](NativeCall& c) {
         const std::string target = c.string(0);
         state.fieldEffects.erase(std::remove_if(state.fieldEffects.begin(), state.fieldEffects.end(),

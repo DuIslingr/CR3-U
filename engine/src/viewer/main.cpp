@@ -5880,6 +5880,181 @@ struct Viewer {
             drawFigure(f, vp);
         }
     }
+    // the walls: the area's own (<area>c.phys) and the solid gimmicks standing (their <area>p.phys
+    // bodies - Fld2Gimmick's rigid bodies: a broken rock's, a hidden one's gone)
+    cr3::CollisionWorld areaBaseWalls;
+    cr3::PhysScene areaPhysP;
+    std::string areaWallKey, areaPrefix;
+    void updateGimmickWalls() {
+        std::string key;
+        for (const AreaNpc& npc : areaNpcs)
+            if (npc.solid && !npc.broken && game.gimmickVisible(npc.name)) key += npc.name + ";";
+        if (key == areaWallKey) return;
+        areaWallKey = key;
+        area.walls = areaBaseWalls;
+        for (const AreaNpc& npc : areaNpcs) {
+            if (!npc.solid || npc.broken || !game.gimmickVisible(npc.name)) continue;
+            for (const cr3::PhysBody& b : areaPhysP.bodies)
+                if (b.name == npc.name) {
+                    cr3::PhysScene one = areaPhysP;
+                    one.bodies = {b};
+                    one.bodies[0].contactResponse = true;
+                    area.walls.addScene(one);
+                }
+        }
+    }
+    // The bomb (Fld2BombManager, Fld2Bomb - the goods button's first): three at most, each put at the
+    // player's feet (Put; SE fe_011, the fuse fe_012 looped while any burns) as fe002bom01 - its fuse,
+    // played once; at its end or 1.5 s (or a blast's chain: 0.4 s a bomb gone off) it goes off
+    // (fe002bom02 there, turned at random; SE fe_013), its blast on for its first 15 frames
+    // (CheckBlastObject: a rock within its radius of it breaks; CheckBlastChain: a bomb put within 1
+    // goes off after the chain's count x 0.4 s), then gone at its animation's end
+    struct FieldBomb {
+        bool on = false, blasting = false, chained = false;
+        int stage = 0; // 1 the fuse, 2 gone off (blasting), 3 dying away
+        float t = 0, chainT = 0, chainDelay = 0, yaw = 0;
+        cr3::Vec3 pos{};
+    };
+    std::array<FieldBomb, 3> fieldBombs;
+    std::vector<std::string> fieldPendingFunctions; // (gimmicks' functions set off while another ran)
+    struct FieldQuake { // (utils::StartQuake - QuakeControlTask: the layer moved up and down by width x (from .. to over the time), each frame the other way)
+        bool on = false;
+        float width = 0, from = 0, to = 0, time = 0, seconds = 0;
+        int parity = 0;
+    } fieldQuake;
+    float fieldAnimDuration(const std::string& model) {
+        auto it = fieldEffectFigs.find(model);
+        if (it == fieldEffectFigs.end()) {
+            ViewFigure f;
+            std::string err;
+            if (!loadFigure(model + ".geom", f, &err)) SDL_Log("field: %s: %s", model.c_str(), err.c_str());
+            f.absolute = true;
+            it = fieldEffectFigs.emplace(model, std::move(f)).first;
+        }
+        return it->second.animLoaded ? it->second.anim.duration() : 0.0f;
+    }
+    void putBomb() {
+        for (FieldBomb& b : fieldBombs) {
+            if (b.on) continue;
+            const cr3::Vec3 p = areaWalker->position();
+            b = FieldBomb();
+            b.on = true, b.stage = 1, b.pos = {p[0], p[1] - areaWalker->radius, p[2]};
+            const bool first = std::none_of(fieldBombs.begin(), fieldBombs.end(), [&](const FieldBomb& o) { return &o != &b && o.on && o.stage == 1; });
+            audio.playSe("fe_011", false);
+            if (first) audio.playSe("fe_012", true);
+            SDL_Log("area %s: a bomb put at (%.2f %.2f %.2f)", area.name.c_str(), b.pos[0], b.pos[1], b.pos[2]);
+            return;
+        }
+    }
+    static float bombDist(const cr3::Vec3& a, const cr3::Vec3& b) {
+        return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+    }
+    void stepFieldBombs(float dt) {
+        const float fuseEnd = std::min(fieldAnimDuration("fe002bom01"), 1.5f), blastEnd = fieldAnimDuration("fe002bom02");
+        for (FieldBomb& b : fieldBombs) {
+            if (!b.on) continue;
+            b.t += dt;
+            if (b.stage == 1) {
+                if (b.chained) b.chainT += dt;
+                if ((fuseEnd > 0 && b.t >= fuseEnd) || b.t >= 1.5f || (b.chained && b.chainT >= b.chainDelay)) {
+                    b.stage = 2, b.t = 0, b.blasting = true;
+                    b.yaw = float(std::rand()) / float(RAND_MAX) * 3.14159f;
+                    if (std::none_of(fieldBombs.begin(), fieldBombs.end(), [](const FieldBomb& o) { return o.on && o.stage == 1; })) audio.stopSe("fe_012", 0);
+                    audio.playSe("fe_013", false);
+                    SDL_Log("area %s: a bomb goes off", area.name.c_str());
+                }
+            } else if (b.stage == 2) {
+                if (int(b.t / (1.0f / 30)) > 14) b.stage = 3, b.blasting = false;
+            } else if (b.stage == 3 && b.t >= std::max(blastEnd, 0.5f)) {
+                b = FieldBomb();
+            }
+        }
+        for (FieldBomb& b : fieldBombs) // (CheckBlastChain: a blast sets off the bombs within 1, one after another)
+            if (b.on && b.blasting)
+                for (FieldBomb& o : fieldBombs)
+                    if (&o != &b && o.on && o.stage == 1 && !o.chained && bombDist(o.pos, b.pos) < 1.0f) {
+                        int n = 1;
+                        for (const FieldBomb& c : fieldBombs) n += c.chained ? 1 : 0;
+                        o.chained = true, o.chainT = 0, o.chainDelay = float(n) * 0.4f;
+                    }
+        // (Fld2Rock::UpdateBlast: a blast within its radius - the quake, its function, its body gone, its chips)
+        for (AreaNpc& npc : areaNpcs) {
+            if (!npc.rock || npc.broken || !game.gimmickVisible(npc.name)) continue;
+            const cr3::Vec3 at{npc.place.m[3], npc.place.m[7], npc.place.m[11]};
+            const bool hit = std::any_of(fieldBombs.begin(), fieldBombs.end(), [&](const FieldBomb& b) { return b.on && b.blasting && bombDist(b.pos, at) <= npc.blastRadius; });
+            if (!hit) continue;
+            npc.broken = true, npc.brokenAt = areaClock;
+            game.brokenRocks.insert(area.name + ":" + npc.name);
+            fieldQuake = FieldQuake();
+            fieldQuake.on = true, fieldQuake.width = 20, fieldQuake.from = 1, fieldQuake.to = 0, fieldQuake.seconds = 1.0f; // (StartQuake(20, 1, 0, 30))
+            auto rnd = []() { return float(std::rand()) / float(RAND_MAX); };
+            for (int k = 0; k < 30; ++k) {
+                AreaNpc::Chip c;
+                c.big = k < 10;
+                c.pos = {at[0] + rnd() * 0.6f - 0.3f, at[1] + rnd() * 0.4f + 0.1f, at[2] + rnd() * 0.6f - 0.3f};
+                const float sp = (c.big ? rnd() * 0.4f + 0.6f : rnd() * 0.8f + 0.2f) * 20;
+                c.vel = {(rnd() * 0.4f - 0.2f) * sp, (rnd() * 0.2f + 0.5f) * sp, (rnd() * 0.4f - 0.2f) * sp};
+                c.rx = rnd() * 3.14159f, c.ry = rnd() * 3.14159f;
+                c.vrx = (rnd() * 0.5f + 0.5f) * (rnd() < 0.51f ? 1 : -1) * 10, c.vry = (rnd() * 0.5f + 0.5f) * (rnd() < 0.51f ? 1 : -1) * 10;
+                c.scale = c.big ? rnd() * 0.3f + 0.5f : rnd() * 0.4f + 0.1f;
+                npc.chips.push_back(c);
+            }
+            SDL_Log("area %s: %s broken", area.name.c_str(), npc.name.c_str());
+            fieldPendingFunctions.push_back(npc.name); // (SetScript: its function - krock_11: flag 4034, SE fe_014 - once the area's script is free)
+        }
+        for (AreaNpc& npc : areaNpcs) { // (the chips: 0.98 down an update - 30 a second -, one bounce at the rock's foot)
+            if (npc.chips.empty()) continue;
+            const float age = areaClock - npc.brokenAt;
+            if (age > 1.3f) {
+                npc.chips.clear();
+                continue;
+            }
+            for (AreaNpc::Chip& c : npc.chips) {
+                c.vel[1] -= 0.98f * dt * 30;
+                for (int a = 0; a < 3; ++a) c.pos[size_t(a)] += c.vel[size_t(a)] * dt;
+                c.rx += c.vrx * dt, c.ry += c.vry * dt;
+                if (!c.bounced && c.vel[1] < 0 && c.pos[1] < npc.place.m[7]) c.bounced = true, c.vel = {c.vel[0] * 0.7f, -c.vel[1] * 0.7f, c.vel[2] * 0.7f};
+            }
+        }
+        if (fieldQuake.on && (fieldQuake.time += dt) >= fieldQuake.seconds) fieldQuake.on = false;
+    }
+    void drawFieldBombs(const float* vp) {
+        for (const FieldBomb& b : fieldBombs) {
+            if (!b.on) continue;
+            const std::string model = b.stage == 1 ? "fe002bom01" : "fe002bom02";
+            fieldAnimDuration(model);
+            ViewFigure& f = fieldEffectFigs[model];
+            if (f.meshes.empty()) continue;
+            f.place = cr3::Mat34();
+            const float c = std::cos(b.yaw), sn = std::sin(b.yaw);
+            f.place.m[0] = c, f.place.m[2] = sn, f.place.m[8] = -sn, f.place.m[10] = c;
+            f.place.m[3] = b.pos[0], f.place.m[7] = b.pos[1], f.place.m[11] = b.pos[2];
+            const float d = f.animLoaded ? f.anim.duration() : 0.0f;
+            pose(f, d > 0 ? std::min(b.t, d) : 0.0f, false);
+            drawFigure(f, vp);
+        }
+        for (const AreaNpc& npc : areaNpcs) {
+            if (npc.chips.empty()) continue;
+            const std::string base = npc.model.size() > 2 ? npc.model.substr(0, npc.model.size() - 2) : npc.model;
+            const float alpha = std::clamp(1.2f - (areaClock - npc.brokenAt), 0.0f, 1.0f);
+            for (const AreaNpc::Chip& c : npc.chips) {
+                const std::string model = base + (c.big ? "01" : "02");
+                fieldAnimDuration(model);
+                ViewFigure& f = fieldEffectFigs[model];
+                if (f.meshes.empty()) continue;
+                const float cx = std::cos(c.rx), sx = std::sin(c.rx), cy = std::cos(c.ry), sy = std::sin(c.ry);
+                f.place = cr3::Mat34(); // (turned about x, then y; scaled)
+                const float r[9] = {cy, sx * sy, cx * sy, 0, cx, -sx, -sy, sx * cy, cx * cy};
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j) f.place.m[i * 4 + j] = r[i * 3 + j] * c.scale;
+                f.place.m[3] = c.pos[0], f.place.m[7] = c.pos[1], f.place.m[11] = c.pos[2];
+                f.tint[3] = alpha;
+                pose(f, 0, false);
+                drawFigure(f, vp);
+                f.tint[3] = 1;
+            }
+        }
+    }
     // the area's people (Fld2NPC): data\field_<town>.mbe's Field rows for this area - the area +0,
     // the quest +0x10 (-1: any; GetFieldParamByName takes those first), the gimmick +0x18
     // (ragdoll_c121_00), the model +0x20 (c121b: c121 with its b textures - CrxModel::
@@ -5893,6 +6068,20 @@ struct Viewer {
         float phase = 0;
         bool box = false;               // (a Fld2Box: f0000box00 ..)
         float openAt = -1, fade = 1;    // (BoxOpen: its _a01 from then, held; DeleteBox: 0.1 less each update)
+        bool solid = false;             // (the Field row's +0x2c: a rigid body - its <area>p.phys body, named as it)
+        bool rock = false;              // (Fld2Rock: ragdoll_krock_..)
+        float blastRadius = 0;          // (+0x34: a bomb's blast this near breaks it - CheckBlastObject)
+        bool broken = false;
+        float brokenAt = 0;
+        // its chips flying (Fld2Rock::RockChip: ten of <model less 2>01, twenty smaller of ..02 -
+        // each its place, speed, turn and spin; 0.98 down an update, a bounce off the ground at 0.7;
+        // faded out by 1.2 s)
+        struct Chip {
+            bool big = false, bounced = false;
+            cr3::Vec3 pos{}, vel{};
+            float rx = 0, ry = 0, vrx = 0, vry = 0, scale = 1;
+        };
+        std::vector<Chip> chips;
     };
     std::vector<AreaNpc> areaNpcs;
     bool cr3CampWasOpen = false;
@@ -5931,7 +6120,7 @@ struct Viewer {
         const int areaNo = std::atoi(name.substr(3, 2).c_str()) - 1;
         for (size_t r = 0; r < t->rows.size(); ++r) {
             cr3::MbeFile::Row row;
-            if (!f.row(*t, r, "iiiiiipp", row) || row.i(0) != areaNo || row.i(4) != -1) continue;
+            if (!f.row(*t, r, "iiiiiippiiif", row) || row.i(0) != areaNo || row.i(4) != -1) continue;
             const std::string gimmick = row.s(6), model = row.s(7);
             if (model.size() < 4 || gimmick.compare(0, 8, "ragdoll_") != 0) continue;
             // (a treasure or gift box only where its dungeon's draw gave it something - Fld2Box::Create:
@@ -5970,6 +6159,10 @@ struct Viewer {
                 time = keep;
             }
             npc.box = gimmick.compare(0, 12, "ragdoll_kbox") == 0;
+            npc.solid = row.i(9) != 0;
+            npc.rock = gimmick.compare(0, 13, "ragdoll_krock") == 0;
+            npc.blastRadius = row.f(11);
+            npc.broken = npc.rock && game.brokenRocks.count(name + ":" + npc.name);
             npc.phase = float(areaNpcs.size()) * 0.37f;
             areaNpcs.push_back(std::move(npc));
         }
@@ -5993,6 +6186,13 @@ struct Viewer {
         areaNpcs.clear();
         game.gimmickShown.clear(), game.fieldBoxes.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
         game.fieldEffects.clear();
+        if (name.compare(0, 3, areaPrefix) != 0) game.brokenRocks.clear(); // (another dungeon or a town: its rocks whole again)
+        areaPrefix = name.substr(0, 3);
+        for (FieldBomb& b : fieldBombs) b = FieldBomb();
+        fieldPendingFunctions.clear();
+        audio.stopSe("fe_012", 0);
+        fieldQuake = FieldQuake();
+        areaBaseWalls = area.walls, areaPhysP = cr3::PhysScene(), areaWallKey = "~";
         for (const std::string& n : area.figures) {
             ViewFigure f;
             if (!loadFigure(n + ".geom", f, &err)) {
@@ -6058,6 +6258,10 @@ struct Viewer {
                     else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
                         areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
                 loadAreaNpcs(name, names, w);
+                // (the solid gimmicks' bodies - rocks, boxes, check objects: their <area>p.phys bodies,
+                // walls while they stand - updateGimmickWalls)
+                areaBaseWalls = area.walls, areaPhysP = cr3::PhysScene(), areaWallKey = "~";
+                if (archive.read(name + "p.phys", d)) cr3::parsePhys(d, areaPhysP);
                 cr3::PhysScene phys; // (the area changes' boxes: their bodies, named as they are)
                 if (std::any_of(areaGimmicks.begin(), areaGimmicks.end(), [](const AreaGimmick& g) { return !g.areaChange.empty(); }) &&
                     archive.read(name + "p.phys", d) && cr3::parsePhys(d, phys))
@@ -6614,7 +6818,10 @@ struct Viewer {
         if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 5, "near:") == 0) {
             const std::string want = inputScript.front().substr(5);
             inputScript.pop_front();
-            for (const AreaGimmick& g : areaGimmicks)
+            std::vector<AreaGimmick> near = areaGimmicks;
+            for (const AreaNpc& npc : areaNpcs) // (a rock, a box: by its place)
+                if (npc.name == want) near.push_back({npc.name, false, npc.place, false, {}});
+            for (const AreaGimmick& g : near)
                 if (g.function == want) {
                     const cr3::Vec3 p = areaWalker->position();
                     float dx = p[0] - g.world.m[3], dz = p[2] - g.world.m[11];
@@ -6697,6 +6904,19 @@ struct Viewer {
         }
         for (AreaNpc& npc : areaNpcs)
             if (npc.box) stepAreaBox(npc, dt);
+        stepFieldBombs(dt);
+        updateGimmickWalls();
+        if (!fieldPendingFunctions.empty() && areaEvents && !areaEvents->running()) {
+            const std::string fn = fieldPendingFunctions.front();
+            fieldPendingFunctions.erase(fieldPendingFunctions.begin());
+            runAreaFunction(fn);
+        }
+        // (--input goods:<n> - the field's goods button n: tests)
+        if (!scripted && !inputScript.empty() && inputScript.front().compare(0, 6, "goods:") == 0 && cr3FieldIdle()) {
+            const int n = std::atoi(inputScript.front().c_str() + 6);
+            inputScript.pop_front();
+            useGoods(n);
+        }
         // (Fld2Main::SM_Camp 5: the camp closed, the area script's evt001 - the story's steps that
         // wait on the camp: s101_d02_00606_set, a gift merged)
         if (cr3CampWasOpen && cr3Camp.stage == 0 && !scripted) runAreaFunction("evt001");
@@ -6721,7 +6941,16 @@ struct Viewer {
         const float fov = areaCamera.fovY * 3.14159265f / 180;
         dev->setCamera(areaCamera.zNear, areaCamera.zFar, fov);
         const Mat4 world = cr3::mat4FromMat34(cw);
-        const Mat4 vp = cr3::mat4Multiply(perspective(fov, float(w) / float(std::max(h, 1)), areaCamera.zNear, areaCamera.zFar), cr3::mat4RigidInverse(world));
+        Mat4 proj = perspective(fov, float(w) / float(std::max(h, 1)), areaCamera.zNear, areaCamera.zFar);
+        if (fieldQuake.on) { // (QuakeControlTask::Render: the layer's offset, 640 high)
+            const float k = fieldQuake.from + (fieldQuake.to - fieldQuake.from) * std::min(fieldQuake.time / std::max(fieldQuake.seconds, 1e-3f), 1.0f);
+            Mat4 shift{};
+            shift[0] = shift[5] = shift[10] = shift[15] = 1;
+            shift[13] = (fieldQuake.parity ? 1.0f : -1.0f) * fieldQuake.width * k * 2.0f / 640.0f;
+            proj = cr3::mat4Multiply(shift, proj);
+            fieldQuake.parity ^= 1;
+        }
+        const Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
         cr3::SceneLighting l = lighting;
         l.camera[0] = e[0], l.camera[1] = e[1], l.camera[2] = e[2];
         l.time = time;
@@ -6735,8 +6964,9 @@ struct Viewer {
             drawFigure(f, vp.data());
         }
         drawFieldEffects(vp.data());
+        drawFieldBombs(vp.data());
         for (AreaNpc& npc : areaNpcs) { // (Fld2NPC::Draw, Fld2Box::Draw)
-            if (!game.gimmickVisible(npc.name)) continue;
+            if (!game.gimmickVisible(npc.name) || npc.broken) continue;
             if (npc.box) {
                 if (npc.fade <= 0) continue;
                 ViewFigure& f = npc.body;
@@ -15677,6 +15907,32 @@ struct Viewer {
             float ax, ay, ex, ey;
             if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 100 + b.id});
         }
+        drawCr3Goods(w, h, view);
+    }
+    // The goods button (FieldGoodsMenu, interface 0x36 - Fld2GoodsButton): feGoodsMenu at
+    // feGoodsPosition's call_feGoodsMenu_fit3 (the bottom right), its five slots call_feGoodsPanel_01
+    // .. _05 an arc out of the corner; the goods in focus a feGoodsPanel (feGoodsPanel_in) at the
+    // middle one - feGoodsIcon_fr00 at its frame by the goods: 0 the bomb, 1 the toy camera -;
+    // tapped, used (Fld2GoodsButton::OnUpdate: 1 PutBomb). The others round the arc, the
+    // feGoodsNext arrows, the names: not yet
+    void drawCr3Goods(int w, int h, const Mat4& view) {
+        if (game.goodsButtons.empty()) return;
+        float x, y, px, py, ix, iy;
+        UiFig& pos = cr3UiPut("fegoodsposition", "", 0, 0, 0, view);
+        if (!cr3UiCall(pos, "call_feGoodsMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("fegoodsmenu", "", 0, x, y, view);
+        const int goods = *game.goodsButtons.begin(); // (the one in focus: the first held)
+        if (!cr3UiCall(menu, "call_feGoodsPanel_03", px, py)) return; // (the arc's middle - _01 .. _05 down from the corner)
+        UiFig& panel = cr3UiPut("fegoodspanel", "fegoodspanel_in", 1.0f, px, py, view);
+        if (cr3UiCall(panel, "call_feGoodsIcon_fr00", ix, iy)) cr3UiPut("fegoodsicon_fr00", "", float(goods) / 30, ix, iy, view);
+        float ax, ay, ex, ey;
+        if (cr3UiCall(panel, "tapAreaCP00", ax, ay) && cr3UiCall(panel, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 120 + goods});
+        else cr3CampTaps.push_back({px - 0.5f, py - 0.5f, px + 0.5f, py + 0.5f, 120 + goods});
+    }
+    void useGoods(int goods) {
+        if (!game.goodsButtons.count(goods)) return;
+        if (goods == 0) putBomb(); // (Fld2BombManager::PutBomb)
+        else SDL_Log("field: goods %d (not in yet)", goods);
     }
     void openCr3Camp() {
         cr3Camp.stage = 1, cr3Camp.since = 0, cr3Camp.button = 0;
@@ -15920,6 +16176,8 @@ struct Viewer {
                 // takes the party home)
                 if (area.name.size() > 1 && area.name[0] == 't') audio.playSe(0x16d, false), openTownMove(true);
                 else audio.playSe(0x16d, false), runAreaFunction("DungeonExit");
+            } else if (id >= 120 && id < 124) { // (the goods button)
+                useGoods(id - 120);
             } else if (id == 101) { // (feBtnSave: Fld2TabMenu::Save)
                 audio.playSe(0x16d, false);
                 writeCr3Save();

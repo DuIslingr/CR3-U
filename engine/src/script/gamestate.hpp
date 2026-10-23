@@ -171,6 +171,13 @@ struct GameState {
         float age = 0;
     };
     std::vector<FieldEffect> fieldEffects;
+    // the field's goods buttons (Cr3TabMenu.AddGoodsButton / DelGoodsButton - Fld2GoodsButton::
+    // SetButtonEnableOne: 0 the bomb, 1 the toy camera, 2 the detector, 3 the darts; the areas'
+    // MenuTabAddALL puts them back by flags 4101 ..) - not saved
+    std::set<int> goodsButtons;
+    // the rocks broken (Fld2Rock: by a bomb's blast) this visit to a dungeon - "<area>:<gimmick>";
+    // a new dungeon's areas have them back - not saved
+    std::set<std::string> brokenRocks;
     bool gimmickVisible(const std::string& name) const {
         const auto it = gimmickShown.find(name);
         return it == gimmickShown.end() || it->second;
