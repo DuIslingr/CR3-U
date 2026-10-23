@@ -306,6 +306,36 @@ the squared distance under 0.3, after three touches) runs `<function less _evt>_
 (s001_t02_00301_c106) on the scene as it is; the meal's scripts keep its stages (Cr3Work 14 ..).
 LunchEvent.Shutdown, the script over and the fade done: on as after a vista (BranchAfterVista).
 
+### The town map (CR3)
+
+TwonMoveMenu (interface 0x37; Fld2Main::SM_TownMove): opened by the field's feBtnTown in a town
+(Fld2TabMenu tab 8: SetDirectTownMove) or a script's ReserveTownMove (Cr3ScriptWork 0xe, its
+SetPopPoint2 where a cancel goes). The area script's TownQuestClearNEXT runs first. The map is the
+town's painting, t0100plane on a CustomFigure 5.945 square - 344.5 / 118 UI units to its unit, so
+17.36 across - scrolled within limits per screen shape (3:2: x +-1.337, y -1.426 .. 1.128 of its
+units); eleven places (tables at 0xf6995c .. in the Android library: shown by flags 1041 ..
+1069; hit marks 1071 .. / 1171 ..; New 1160 ..; icons spIcon_fr00 18 .. 24; ids 1 .. 11, 6 and 7
+none) on t0100town00's joints (town01_01 .., scaled 2.5929 across, then x 3.8 / y 10 by 890 /
+1100), the first two one point once both are open. It opens on the list (WorldSelectListMenu:
+the places in 0xf69b38's order, pictures 0xf69b90 by row, names AnnounceMenuName 0x91 + id
+through FilterMessage); the focused row's point moves to (-3, 0), half the way each update.
+Back: the map alone (dragged, its points and spListBtn tapped); back again leaves - to
+SetPopPoint2's point, if any. Chosen: the System window asks (0x9f), then a 30-frame fade, two
+seconds, and the map by id (0xf3fb1c: Fld2TaskMap indices into the executable's map table - 12-byte
+records from "t0101" -, 0xf3fb4c with flag 2401 and not 2500; index 25, the monorail, runs
+MonorailSound), the pop point cleared.
+
+### The field's people (CR3)
+
+data\field_<town or dungeon>.mbe's Field table (0x48 a row): +0 the area from 0, +0x10 the quest
+(-1 any; GetFieldParamByName tries those first), +0x18 the gimmick (ragdoll_c121_00), +0x20 its
+model, +0x2c its kind, +0x38 flags. A row with a model is a Fld2NPC (or a box, a rock, an object):
+the model at the gimmick's own joint (c121_00: position, rotation, scale), a person's by its first
+four letters with the fifth its texture variation (c121b), an object's by its whole name; a person
+idles on Fld2NPCAnimeNameTbl[0], fn01. Cr3GimmickData.Disp(name, shown) - the scripts'
+ModelDisp_Field, Fld2SetGimmickVisible - hides or shows one. The party's j<id>_00 and the
+monsters' m<id>_<nn> are talked to like the c<id>_<nn> people (their functions named so).
+
 ### Random encounters (CR3)
 
 Fld2TaskEncount, in a dungeon's areas (`dDDAA`):
