@@ -1191,10 +1191,13 @@ return of melee attacks, effects (eff### figures), voices, the list's icons and 
 
 ### The result's EXP (CR3)
 
-The battle's EXP (each monster's mon_para EXP + (level - 1) x its growth; x (1 + every unit's
+The battle's EXP (BtlStatusList::AcquireRemuneration: the fallen monsters' alone - each its mon_para
+EXP + (level - 1) x its growth, x (1 + (the monsters' average level - the party's highest gene
+level) x 0.02) held to 0.5 .. 2, at least 1 (VAcquireExperience) -, + what the battle's script added
+(Battle.AddExperience), x its factor (SetExperienceFactor); then x (1 + every unit's
 skill kind 0x6c constants / 100) - GetExprienceCorrection, skill 201's 10 -, the money likewise by
-0x6d - 202 -; the items' and scripts' factors - BtlResult::GetExperienceFactor, Battle.
-SetExperienceFactor - not in CR3-U) goes into
+0x6d - 202 -; the potions' and items' factors - BtlResult::GetExperienceFactor - not in CR3-U)
+goes into
 the genes (BattleResultMenu::Update - CrxGene::AddTemporaryExp, SaveExp): each party member's worn
 gene, in party order - the first three slots' standing members the whole of it, the rest and the
 fallen half - learning its new commands and skills as it levels (gene_command_skill). The gene's level is the highest its EXP reaches (MbGeneInfo::GetLevel); at its top
@@ -1202,6 +1205,20 @@ its EXP is held at that level's. A level up plays com_018. Each card (SetCharaCa
 character's icon at frame (character - 1), the gene's level, its bar at (1 - CrxGene::GetExpRate)
 x 100 / 30 s - the share of the level done. (EffectGeneUp's card and gene model want the panel's
 call_btRsltCharaCard / call_btRsltUpEffe, which btRsltCharaPanel doesn't have.)
+
+### The battle scripts' Battle natives (CR3)
+
+`battle_NNNN` (BtlScriptSystem) is called at its boot, its start, each direction's end
+(Battle_Direction_End_Base), each turn's end (Battle_Turn_End_Base), the victory and the defeat
+(Battle_Defeat_Base - CR3-U ran no defeat script before). Its `Battle`: GetTurn (BtlResult +0,
+counted as each turn's command selection starts - BtlSysStateSelect::phaseStart - a surprise
+attack's turn too), GetNumberOfKilledNonPlayer, AddExperience / AddMoney (BtlResult +4 / +8),
+SetExperienceFactor / SetMoneyFactor (+0x28 / +0x2c, multiplied), ForceVictory / ForceEnd
+(s_ResultParam 0 won / 3 over - CR3-U checks them after the direction, or while choosing; a defeat
+script's ForceEnd ends a story's lost battle as over, not lost), HasAdvantageToPlayer / ToEnemy and
+GetBreakPoint (the gauge as shown), AddBreakPoint, GetFiledId. Battle 9 grants 100 EXP and 200 ML
+and forces the win after turn 5; the ace battles (503, 506, 509, 515) triple EXP and money when
+all three fall; battle 3's defeat plays its event and ends.
 
 ### The battle's announcements (CR3)
 

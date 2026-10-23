@@ -6259,6 +6259,27 @@ struct Viewer {
             auto fighter = [this](int id) -> const cr3::Cr3Fighter* {
                 return id >= 0 && size_t(id) < cr3Rules.fighters.size() ? &cr3Rules.fighters[size_t(id)] : nullptr;
             };
+            // (Battle: BtlScript::Battle - the turn - BtlResult +0, counted at each command selection -,
+            // the monsters fallen, the result's EXP and money - +4 / +8 added to, +0x28 / +0x2c factors
+            // multiplied -, the end forced - BtlSystem::s_ResultParam 0 won, 3 over -, the break
+            // gauge as shown, the field)
+            vm.setNative("Battle", "GetTurn", [this](cr3::NativeCall& c) { c.result(cr3Turn); });
+            vm.setNative("Battle", "GetNumberOfKilledNonPlayer", [this](cr3::NativeCall& c) {
+                int n = 0;
+                for (const cr3::Cr3Fighter& f : cr3Rules.fighters) n += !f.player && f.dead();
+                c.result(n);
+            });
+            vm.setNative("Battle", "AddExperience", [this](cr3::NativeCall& c) { cr3ResultAdd[0] += c.integer(0); });
+            vm.setNative("Battle", "AddMoney", [this](cr3::NativeCall& c) { cr3ResultAdd[1] += c.integer(0); });
+            vm.setNative("Battle", "SetExperienceFactor", [this](cr3::NativeCall& c) { cr3ResultFactor[0] *= c.integer(0, 1); });
+            vm.setNative("Battle", "SetMoneyFactor", [this](cr3::NativeCall& c) { cr3ResultFactor[1] *= c.integer(0, 1); });
+            vm.setNative("Battle", "ForceVictory", [this](cr3::NativeCall&) { cr3ForcedEnd = 0; });
+            vm.setNative("Battle", "ForceEnd", [this](cr3::NativeCall&) { cr3ForcedEnd = 3; });
+            vm.setNative("Battle", "HasAdvantageToPlayer", [this](cr3::NativeCall& c) { c.result(cr3GaugeShown > 0); });
+            vm.setNative("Battle", "HasAdvantageToEnemy", [this](cr3::NativeCall& c) { c.result(cr3GaugeShown < 0); });
+            vm.setNative("Battle", "AddBreakPoint", [this](cr3::NativeCall& c) { cr3Rules.addBreak(c.integer(0)), cr3GaugeShown = cr3Rules.gauge; });
+            vm.setNative("Battle", "GetBreakPoint", [this](cr3::NativeCall& c) { c.result(cr3GaugeShown); });
+            vm.setNative("Battle", "GetFiledId", [this](cr3::NativeCall& c) { c.result(cr3BattleFieldId); });
             vm.setNative("BattleStatus", "GetIdByPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(true, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByNonPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(false, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByCharId", [this](cr3::NativeCall& c) {
@@ -6517,6 +6538,8 @@ struct Viewer {
     }
     bool startCr3Battle(int coupling, int fieldId) {
         cr3BattleLost = false, cr3Drops.clear(); // (BtlSystem::Init: s_ResultParam -1)
+        cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId; // (BtlResult's: 0, +4 / +8 none, factors 1)
+        cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
         std::string err;
         if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, &err))) {
             SDL_Log("battle: %s", err.c_str());
@@ -6619,7 +6642,7 @@ struct Viewer {
             runCr3BattleScript("Battle_Start_Base");
         } else if (cr3BattleStage == Cr3BattleStage::GetSet && !scripted && camT >= cr3Cam.end + 0.5f && !vs.wildOpen) { // (VS: a wildcard first)
             if (cr3StartMode == 2) { // (phaseFirstStrike: a surprise attack - phaseCalculate at once, the party's commands none)
-                cr3StartMode = 0;
+                cr3StartMode = 0, ++cr3Turn;
                 cr3Choices.clear();
                 cr3Actions = cr3Rules.turn(cr3Choices);
                 cr3CountRecords();
@@ -6628,6 +6651,8 @@ struct Viewer {
                 startCr3Action();
             } else
                 beginCr3Turn();
+        } else if (cr3ForcedEnd >= 0 && !scripted && cr3BattleStage >= Cr3BattleStage::Menu && cr3BattleStage <= Cr3BattleStage::Escape) {
+            endCr3Actions(); // (forced by a script while choosing - the start's, the turn end's)
         } else if (cr3BattleStage == Cr3BattleStage::Menu || cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target ||
                    cr3BattleStage == Cr3BattleStage::List || (cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk)) {
             // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive; "escape" then
@@ -6687,7 +6712,11 @@ struct Viewer {
                 inputScript.pop_front();
             if (!inputScript.empty() && inputScript.front() == "result" && cr3BattleClock - cr3StageStart > 1.5f) inputScript.pop_front(), endCr3Battle();
         } else if (cr3BattleStage == Cr3BattleStage::Lost) {
-            if (cr3BattleClock - cr3StageStart > 2.5f) {
+            if (!scripted && cr3ForcedEnd == 3) { // (a story's loss: its defeat script's event, then Battle.ForceEnd - over, not lost)
+                cr3ForcedEnd = -1, cr3BattleLost = false;
+                SDL_Log("battle %d: ended by its script", cr3Battle.coupling);
+                endCr3Battle();
+            } else if (!scripted && cr3BattleClock - cr3StageStart > 2.5f) {
                 if (vs.screen == 5) vsBattleOver(false); // (VS: the tournament lost, no game over)
                 else endCr3Battle();
             }
@@ -6794,6 +6823,7 @@ struct Viewer {
     bool cr3GetSetSeen = false;
     std::map<int, int> cr3TurnItems; // (the items chosen this turn, by fighter: their names announced)
     void beginCr3Turn() {
+        ++cr3Turn; // (BtlSysStateSelect::phaseStart)
         cr3Choices.clear(), cr3TurnItems.clear();
         cr3Chooser = -1;
         cr3BattleStage = Cr3BattleStage::Menu, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
@@ -6969,7 +6999,7 @@ struct Viewer {
     // under the attack camera on it, the hits landing on the target - its bd01, the numbers -, a
     // fall bd03)
     void startCr3Action() {
-        if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
+        if (cr3ActionAt >= cr3Actions.size() || cr3ForcedEnd >= 0) return endCr3Actions(); // (a script's forced end: after the direction)
         const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
         cr3ActionStart = cr3BattleClock;
         cr3ActionPlay = Cr3ActionPlay();
@@ -7086,7 +7116,13 @@ struct Viewer {
         }
     }
     void endCr3Actions() {
-        const int outcome = cr3Rules.outcome();
+        if (cr3ForcedEnd == 3) { // (Battle.ForceEnd: over - no victory, no result)
+            SDL_Log("battle %d: ended by its script", cr3Battle.coupling);
+            cr3ForcedEnd = -1;
+            return endCr3Battle();
+        }
+        const int outcome = cr3ForcedEnd == 0 ? 1 : cr3Rules.outcome(); // (Battle.ForceVictory)
+        cr3ForcedEnd = -1;
         if (outcome != 0) // (InterfaceMain::SaveCharacterMp: what the party has left kept)
             for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
                 if (f.player) {
@@ -7105,7 +7141,8 @@ struct Viewer {
             SDL_Log("battle %d: won", cr3Battle.coupling);
         } else if (outcome == 2) {
             cr3BattleStage = Cr3BattleStage::Lost, cr3StageStart = cr3BattleClock;
-            cr3BattleLost = true; // (phaseDefeatEventStart: the result 1)
+            cr3BattleLost = true; // (phaseDefeatEventStart: the result 1, Battle_Defeat_Base)
+            runCr3BattleScript("Battle_Defeat_Base");
             SDL_Log("battle %d: lost (no continue screen yet: on to the field's evt002)", cr3Battle.coupling);
         } else {
             // (the turn's end: the status effects' HP changes - poison, regeneration - and their
@@ -7174,12 +7211,20 @@ struct Viewer {
     }
     void enterCr3Result() {
         cr3ResultExp = cr3ResultMoney = 0;
+        // (BtlStatusList::AcquireRemuneration: the fallen monsters' alone; VAcquireExperience: x (1 +
+        // (the monsters' average level - the party's highest gene level) x 0.02), 0.5 .. 2, at least 1)
+        int levels = 0, monsters = 0, geneTop = 1;
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
+            if (f.player) geneTop = std::max(geneTop, f.geneLevel);
+            else levels += f.level, ++monsters;
+        const float gap = std::clamp(1.0f + float((monsters ? levels / monsters : 0) - geneTop) * 0.02f, 0.5f, 2.0f);
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
-            if (f.player) continue;
+            if (f.player || !f.dead()) continue;
             cr3::MbeFile::Row r;
             if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiii", r)) continue;
-            cr3ResultExp += r.i(14) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) & 0xffff));
-            cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16));
+            const int exp = r.i(14) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) & 0xffff));
+            if (exp >= 1) cr3ResultExp += std::max(int(gap * float(exp)), 1);
+            cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16)); // (+ a steal skill's - kind 0x74 -: not in)
         }
         // (BtlInterfaceSystem::EntryResult: x (1 + every unit's skills' kind 0x6c constants / 100) - the
         // money's 0x6d)
@@ -7188,6 +7233,9 @@ struct Viewer {
             for (int c : cr3Rules.skillConstants(f, 0x6c)) expBy += float(c) / 100;
             for (int c : cr3Rules.skillConstants(f, 0x6d)) moneyBy += float(c) / 100;
         }
+        // (BtlResult::GetExperience: (+4 - the monsters', what scripts added) x its factor - +0x28, the
+        // scripts' SetExperienceFactor; the potions' and items' not in -; the money's likewise)
+        cr3ResultExp = (cr3ResultExp + cr3ResultAdd[0]) * cr3ResultFactor[0], cr3ResultMoney = (cr3ResultMoney + cr3ResultAdd[1]) * cr3ResultFactor[1];
         cr3ResultExp = int(expBy * float(cr3ResultExp)), cr3ResultMoney = int(moneyBy * float(cr3ResultMoney));
         game.cr3Money += cr3ResultMoney;
         giveCr3GeneExp();
@@ -7275,6 +7323,8 @@ struct Viewer {
     // the battle over (won): where SetBattleNext sent it - the vista SetVistaFuncName2 named
     // (SetBattleToVista), else the field it came from (Fld2Main::SM_FirstEvent: evt000, evt002 if lost)
     bool cr3BattleLost = false;
+    int cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = -1;
+    int cr3ResultAdd[2] = {0, 0}, cr3ResultFactor[2] = {1, 1}; // (the scripts' EXP / money added, and factors)
     void endCr3Battle() {
         cr3BattleMode = false;
         cr3::GameState::Next& n = game.next;
