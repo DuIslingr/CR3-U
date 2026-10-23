@@ -5929,6 +5929,7 @@ struct Viewer {
             else if (want.compare(0, 6, "second") == 0) chooseShop(*areaEvents, kTapShopSecond + std::atoi(want.c_str() + 6));
             else if (want.compare(0, 3, "row") == 0) chooseShop(*areaEvents, kTapShopRow + std::atoi(want.c_str() + 3));
             else if (want.compare(0, 3, "cat") == 0) chooseShop(*areaEvents, kTapShopCat + std::atoi(want.c_str() + 3));
+            else if (want.compare(0, 5, "chara") == 0) chooseShop(*areaEvents, kTapShopChara + std::atoi(want.c_str() + 5));
         }
         stepCr3GeneGet(dt);
         // (--input gene:<id>[:level[:new]] - the gene obtained window as the scripts open it -, gene:tap, gene:collect:<dungeon>:<category>:<id> - a script's collection - and gene:close, for tests)
@@ -15568,6 +15569,33 @@ struct Viewer {
         campEquip.scale = std::clamp(campEquip.scale + dy / 100, 2.0f, 3.0f);
         return true;
     }
+    // CampEquip2Menu's status (the camp's Equipment, the shop's: SetCampEquipStatusCharacter /
+    // SetShopCampEquipStatusParts): camEquPosition (its own animation at `t`), camEquMenu at its
+    // ragdoll_call_camEquMenu, camEquWepPanel - a weapon, armour - or camEquJewPanel - an accessory:
+    // the character's icon, its numbers as they are and with `item` in the slot, its name and its
+    // gene's. The menu drawn (for the camp's button), or null
+    UiFig* drawCr3EquipStatus(int chara, int slot, int item, float t, int w, int h, const Mat4& view) {
+        float x, y, cx, cy;
+        UiFig& pos = cr3UiPut("camequposition", "", t, 0, 0, view);
+        if (!cr3UiCall(pos, "ragdoll_call_camEquMenu", x, y, w, h)) return nullptr;
+        UiFig& menu = cr3UiPut("camequmenu", "", 0, x, y, view);
+        float px, py;
+        if (cr3UiCall(menu, slot == 2 ? "call_camEquJewPanel" : "call_camEquWepPanel", px, py)) {
+            UiFig& panel = cr3UiPut(slot == 2 ? "camequjewpanel" : "camequweppanel", "", 0, px, py, view);
+            if (cr3UiCall(panel, "call_camEquCharaIcon_fr00", cx, cy)) cr3UiPut("genecngcahaicon_fr00", "", float(chara - 1) / 30, cx, cy, view); // (SetCharaParam: the part is geneCngCahaIcon_fr00)
+            cr3::Cr3Fighter was, now;
+            if (cr3EquipStats(chara, -1, 0, was) && cr3EquipStats(chara, slot, item, now)) drawCr3EquipNumbers(panel, slot, was, now, view);
+            // (SetCharaParam: the name at the first typeM_L, the gene's at the next - lighter, smaller)
+            cr3UiLabel(panel, "typeM_L01", cr3NameOf("char_name.mbe", "CharName", chara), w, h, 0.22f);
+            float tx, ty;
+            const std::string gene = cr3GeneNameOf(chara);
+            if (!gene.empty() && cr3UiCall(panel, "typeM_L02", tx, ty)) {
+                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                drawUiText(gene, 24, (tx + 0.06f) / 10, (ty - 0.12f) / 10, w, h, true, 0.43f);
+            }
+        }
+        return &menu;
+    }
     void drawCampEquip(int w, int h, const Mat4& view) {
         const float t = cr3Camp.since;
         Cr3CampEquip& ce = campEquip;
@@ -15577,24 +15605,9 @@ struct Viewer {
         // (its own animation slides it in over 5 frames; the model view plays it back out -
         // InterfaceCloseAnimeSet - and leaves the button where it was)
         const float slide = ce.model ? std::max(0.1f - ce.modelSince, 0.0f) : t;
-        UiFig& pos = cr3UiPut("camequposition", "", slide, 0, 0, view);
-        if (cr3UiCall(pos, "ragdoll_call_camEquMenu", x, y, w, h)) {
-            UiFig& menu = cr3UiPut("camequmenu", "", 0, x, y, view);
+        if (UiFig* menuAt = drawCr3EquipStatus(ce.chara, ce.slot, focusItem, slide, w, h, view)) {
+            UiFig& menu = *menuAt;
             float px, py;
-            if (cr3UiCall(menu, ce.slot == 2 ? "call_camEquJewPanel" : "call_camEquWepPanel", px, py)) {
-                UiFig& panel = cr3UiPut(ce.slot == 2 ? "camequjewpanel" : "camequweppanel", "", 0, px, py, view);
-                if (cr3UiCall(panel, "call_camEquCharaIcon_fr00", cx, cy)) cr3UiPut("genecngcahaicon_fr00", "", float(ce.chara - 1) / 30, cx, cy, view); // (SetCharaParam: the part is geneCngCahaIcon_fr00)
-                cr3::Cr3Fighter was, now;
-                if (cr3EquipStats(ce.chara, -1, 0, was) && cr3EquipStats(ce.chara, ce.slot, focusItem, now)) drawCr3EquipNumbers(panel, ce.slot, was, now, view);
-                // (SetCharaParam: the name at the first typeM_L, the gene's at the next - lighter, smaller)
-                cr3UiLabel(panel, "typeM_L01", cr3NameOf("char_name.mbe", "CharName", ce.chara), w, h, 0.22f);
-                float tx, ty;
-                const std::string gene = cr3GeneNameOf(ce.chara);
-                if (!gene.empty() && cr3UiCall(panel, "typeM_L02", tx, ty)) {
-                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(gene, 24, (tx + 0.06f) / 10, (ty - 0.12f) / 10, w, h, true, 0.43f);
-                }
-            }
             if (cr3UiCall(menu, "call_camEquBtnPanel", px, py)) {
                 if (!ce.model || ce.btnY < -50) ce.btnX = px, ce.btnY = py; // (+0x4cc: held where it was while the model shows)
                 UiFig& bp = cr3UiPut("camequbtnpanel", "", 0, ce.btnX, ce.btnY, view);
@@ -17099,6 +17112,7 @@ struct Viewer {
         std::vector<Row> rows;
         int amount = 1, most = 1; // (how many, and at most)
         int bought = 0;           // (5: the equipment just bought)
+        int chara = 0;            // (the footer's character - ShopMenuMain +0x60 -: the status's, who wears what's bought; 0 the party's first)
         std::string told;
         float toldSince = 0;
     } shopMenu;
@@ -17108,7 +17122,17 @@ struct Viewer {
     static constexpr int kShopFirst[4] = {0x14, 3, 4, 5}; // (the second buttons' categories)
     static constexpr int kShopTabs[8] = {0x14, 0, 0x15, 0x16, 0x17, 3, 4, 5};
     static constexpr int kTapShopYes = 801, kTapShopNo = 802, kTapShopTold = 803, kTapShopBuyTab = 804, kTapShopSellTab = 805;
-    static constexpr int kTapShopSecond = 810, kTapShopRow = 820, kTapShopCat = 900, kTapShopReel = 950;
+    static constexpr int kTapShopSecond = 810, kTapShopRow = 820, kTapShopCat = 900, kTapShopReel = 950, kTapShopChara = 960;
+    int shopChara() {
+        const std::vector<int> members = cr3PartyMembers();
+        if (std::find(members.begin(), members.end(), shopMenu.chara) != members.end()) return shopMenu.chara;
+        return members.empty() ? 0 : members[0];
+    }
+    // (an equipment category - 3 weapons, 4 armour, 5 accessories: GetListCategoryPanelStatus -: its slot)
+    int shopEquipSlot() const {
+        const int v = kShopTabs[std::clamp(shopMenu.category, 0, 7)];
+        return v >= 3 && v <= 5 ? v - 3 : -1;
+    }
     int shopTitle() const {
         const std::string& id = areaEvents ? areaEvents->shop().id : std::string();
         return id == "T03_1" ? 0x1b : id == "T04_1" ? 0x1c : 0x1a;
@@ -17276,7 +17300,32 @@ struct Viewer {
                 }
             }
         }
-        drawCr3CampFooter(w, h, view);
+        // (an equipment category's: CampEquip2Menu's status for the footer's character - the row in
+        // focus in its slot -, and the characters' footer, CreateCampEquipMenuFutter; else the shop's)
+        const int slot = m.screen >= 2 ? shopEquipSlot() : -1;
+        if (slot >= 0) {
+            const int focusItem = m.row < int(m.rows.size()) ? m.rows[size_t(m.row)].item : 0;
+            drawCr3EquipStatus(shopChara(), slot, focusItem, m.screen == 2 ? m.since : 1.0f, w, h, view);
+            UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+            if (cr3UiCall(foot, "call_comFtrEquipMenu", x, y, w, h)) {
+                UiFig& fm = cr3UiPut("comftrequipmenu", "", 0, x, y, view);
+                const std::vector<int> members = cr3PartyMembers();
+                const int chara = shopChara();
+                for (int k = 0; k < 5 && k < int(members.size()); ++k) {
+                    if (!cr3UiCall(fm, "call_comFtrCharaBtn_fr00_00" + std::to_string(k + 1), cx, cy)) continue;
+                    const int ch = members[size_t(k)];
+                    const int frame = ch <= 5 ? ch - 1 + (ch == chara ? 0 : 5) : ch == chara ? 10 : 11;
+                    UiFig& b = cr3UiPut("comftrcharabtn_fr00", "", float(frame) / 30, cx, cy, view);
+                    if (m.screen == 2 && cr3UiCall(b, "tapAreaS01", ax, ay) && cr3UiCall(b, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapShopChara + k});
+                }
+            }
+            if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+                UiFig& bm = cr3UiPut("combackmenu", "", 0, x, y, view);
+                if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+                if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, -1});
+            }
+        } else
+            drawCr3CampFooter(w, h, view);
         drawCr3Header(m.clock, m.screen == 0 ? shopTitle() : m.buy ? 0xd : 0xe, sentence, w, h, view);
         // how many, asked
         const Cr3ShopMenu::Row* r = m.row < int(m.rows.size()) ? &m.rows[size_t(m.row)] : nullptr;
@@ -17343,6 +17392,12 @@ struct Viewer {
         Cr3ShopMenu& m = shopMenu;
         if (!m.told.empty()) {
             if (id == kTapShopTold || id == -1) m.told.clear();
+            return;
+        }
+        if (m.screen == 2 && id >= kTapShopChara && id < kTapShopChara + 5) { // (GetCampEquipFutterSelectChara)
+            const std::vector<int> members = cr3PartyMembers();
+            if (id - kTapShopChara < int(members.size()) && members[size_t(id - kTapShopChara)] != shopChara())
+                m.chara = members[size_t(id - kTapShopChara)], audio.playSe("com_002", false);
             return;
         }
         if (m.screen == 0) {
@@ -17415,7 +17470,7 @@ struct Viewer {
                 // (0x1a: equipment bought - "Equip it?" on the list's character, the party's first;
                 // not for the fifth while flag 1155 holds)
                 const std::vector<int> members = cr3PartyMembers();
-                const int chara = members.empty() ? 0 : members[0];
+                const int chara = shopChara();
                 if (m.buy && rc == cr3::kDbOk && group >= 1 && group <= 3 && chara > 0 && !(chara == 5 && game.flag(1155))) m.bought = bought, shopScreen(5);
             }
             return;
@@ -17425,7 +17480,7 @@ struct Viewer {
                 audio.playSe("com_003", false);
                 const std::vector<int> members = cr3PartyMembers();
                 const Cr3CampEquip keepEquip = campEquip;
-                campEquip.chara = members.empty() ? 0 : members[0], campEquip.slot = m.bought / 100000 - 1;
+                campEquip.chara = shopChara(), campEquip.slot = m.bought / 100000 - 1;
                 campEquipWear(m.bought);
                 campEquip = keepEquip;
                 shopScreen(2);

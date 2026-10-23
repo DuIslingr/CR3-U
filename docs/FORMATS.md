@@ -759,8 +759,12 @@ yes: BuyGoods / SellItem, com_024, the list anew. Equipment bought (0x1a): asked
 ({itemname}) - not for character 5 while flag 1155 holds -, yes putting it on the list's character,
 the party's first (SetEquipParts: the slot the category - 3), com_003. `cr3view --input
 call:cobj_02,shop:buy,shop:second0,shop:row0,shop:up,shop:yes` (also `shop:talk / sell / back / no / tab
-/ row<n> / cat<n>`). Not in: the equipment's status beside the list (CampEquipStatusMenu, the
-characters' footer, EquipOwnMenu).
+/ row<n> / cat<n> / chara<n>`). In an equipment category (GetListCategoryPanelStatus 3 / 4 / 5 -
+weapons, armour, accessories): CampEquip2Menu's status (interface 0x6d, SetShopCampEquipStatusParts:
+the slot 0 / 1 / 2) for the footer's character - its numbers with the row in focus in that slot -
+and the characters' footer (CreateCampEquipMenuFutter: comFtrEquipMenu's buttons; a tap -
+GetCampEquipFutterSelectChara - chooses who, com_002); equipment bought goes on that character.
+Not in: EquipOwnMenu (the other categories' comListEquip panel).
 
 The scripts' yes / no (EvtWindow.ShowYesNoButton - Cr3EvtWindowShowYesNoButton:
 SetYNChoiceTWindowParameter, YNChoiceButton - interface 0xe): the screen dimmed (a black figure at
