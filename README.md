@@ -130,8 +130,9 @@ To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `C
 
 ## Field and battle speed
 
-The camp's Options, Other, Display & Graphics (a list of CR3-U's own settings - graphics, HD,
-controls - scrolling, with the game's scroll bar): **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
+Options (the camp's; the title's Options button, lower right - or O; a battle's get-set Options),
+Other, Display & Graphics (a list of CR3-U's own settings - graphics, HD, controls - scrolling, with
+the game's scroll bar): **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
 field (its scenes, talk and menus as they are) and the battles that many times as fast. Kept in
 settings.ini (`field_speed`, `battle_speed`); `--field-speed n` / `--battle-speed n` for one run.
 

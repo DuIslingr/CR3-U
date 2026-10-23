@@ -721,7 +721,10 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
   Resolution (`optSltLRPanel`); the volumes saved on the way out. CR3-U puts its own Display & Graphics
   on the menu's spare `call_optSltPanel_002` (an `optSltLRPanel`, either arrow opening it): its settings as a
   comListMenu list (setting at typeM_L01, value at typeM_R01, comListBarPanel's scroll bar, the help on the
-  header's line - two lines when it's wider than that).
+  header's line - two lines when it's wider than that). The game has its Options in the camp alone; CR3-U
+  opens the same screen over the title (its own button: comBtnSPanel with comBtnIconS_fr00's Options
+  frame at the lower right - or O / G -, while the title waits for the tap) and over a battle (the
+  get-set menu's Options, which the game leaves to the camp), back returning there.
 
 `cr3view --input camp:open,camp:button<n>,camp:cat<n>,camp:row<n>,camp:card<n>,camp:reel<n>,camp:chara<n>,
 camp:yes,camp:no,camp:ok,camp:back,camp:model,camp:turn<px>,camp:zoom<px>` (or `camp:genes`,

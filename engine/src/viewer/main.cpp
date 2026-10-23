@@ -2570,10 +2570,11 @@ struct Viewer {
         optionsWasOpen = optionsOpen;
         if (credits.stage) return updateCredits(dt);
         if (titleMenu.stage) return updateTitle(dt);
+        if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt; // (its clock: the field's camp keeps its own)
         if (cr3Title.stage) return updateCr3Title(dt);
         // (Battle Speed, Field Speed: the battles, and the field while the player walks it - nothing
         // running or open over it -, that many times as fast)
-        if (cr3BattleMode) return updateCr3Battle(dt * float(optionsOpen || settingsOpen ? 1 : settings.battleSpeed));
+        if (cr3BattleMode) return updateCr3Battle(dt * float(optionsOpen || settingsOpen || cr3OptionsOver() ? 1 : settings.battleSpeed));
         if (areaMode && !eventMode)
             return updateArea(dt * float(cr3FieldIdle() && cr3Camp.stage == 0 && !optionsOpen && !settingsOpen ? settings.fieldSpeed : 1), sx, sy, run);
         if (playMode && (fieldMode || eventMode || battleMode) && !paused) playSeconds += dt; // (the save's play time)
@@ -6582,6 +6583,7 @@ struct Viewer {
             else if (want.compare(0, 5, "field") == 0) chooseCr3Camp(100 + std::atoi(want.c_str() + 5));
             else if (want.compare(0, 6, "button") == 0) chooseCr3Camp(200 + std::atoi(want.c_str() + 6));
             else if (want.compare(0, 3, "cat") == 0) chooseCr3Camp(400 + std::atoi(want.c_str() + 3));
+            else if (want.compare(0, 2, "id") == 0) chooseCr3Camp(std::atoi(want.c_str() + 2)); // (a tap's id: id650 the Options' Display & Graphics)
             else if (want.compare(0, 4, "reel") == 0) chooseCr3Camp(600 + std::atoi(want.c_str() + 4));
             else if (want.compare(0, 5, "chara") == 0) chooseCr3Camp(700 + std::atoi(want.c_str() + 5));
             else if (want == "yes" || want == "no" || want == "ok") chooseCr3Camp(want == "yes" ? 500 : want == "no" ? 501 : 502);
@@ -7488,9 +7490,9 @@ struct Viewer {
                 } else if (cr3BattleStage == Cr3BattleStage::Escape && (tok == "yes" || tok == "no")) {
                     inputScript.pop_front();
                     chooseCr3Escape(tok == "yes" ? 0 : 1);
-                } else if (cr3BattleStage == Cr3BattleStage::Menu && (tok == "battle" || tok == "escape")) {
+                } else if (cr3BattleStage == Cr3BattleStage::Menu && (tok == "battle" || tok == "escape" || tok == "options")) {
                     inputScript.pop_front();
-                    chooseCr3GetSet(tok == "battle" ? 0 : 1);
+                    chooseCr3GetSet(tok == "battle" ? 0 : tok == "escape" ? 1 : 2);
                 } else if (cr3BattleStage == Cr3BattleStage::Command && tok.compare(0, 4, "gene") == 0) {
                     chooseCr3Command(1);
                 } else if (cr3BattleStage == Cr3BattleStage::Command && tok.compare(0, 4, "item") == 0) {
@@ -7729,6 +7731,7 @@ struct Viewer {
     bool cr3EscapeAllowed() const { return (cr3Battle.couplingFlags & 2) == 0; }
     // the get-set menu's choice: 0 Battle, 1 Escape, 2 Options
     void chooseCr3GetSet(int b) {
+        if (b == 2) return openCr3OptionsFrom(2); // (the Options: CR3-U's - the camp's Options screen over the battle)
         if (b == 0) {
             audio.playSe(0x153, false);
             nextCr3Chooser();
@@ -9416,6 +9419,7 @@ struct Viewer {
         if (t.shotClock >= kDemoShots[t.shot].seconds) t.shotClock -= kDemoShots[t.shot].seconds, t.shot = (t.shot + 1) % 6;
         if (t.stage == 1 && t.stageClock >= 1.0f) t.stage = 2, t.stageClock = 0; // (Cr3FadeIn(1, 30): in over 30 frames)
         if (t.stage == 2 && t.stageClock > 0.5f && !inputScript.empty() && inputScript.front() == "title:tap") inputScript.pop_front(), cr3TitleTap(); // (tests)
+        if (t.stage == 2 && t.stageClock > 0.5f && !inputScript.empty() && inputScript.front() == "title:options") inputScript.pop_front(), openCr3OptionsFrom(1); // (tests)
         if (t.stage == 3 && t.stageClock >= 1.0f) { // (out, then the game: a new one's prologue)
             t.stage = 0;
             for (ViewFigure& f : t.maps) unload(f);
@@ -9464,6 +9468,7 @@ struct Viewer {
     void drawCr3TitleUi() {
         Cr3Title& t = cr3Title;
         drawCr3Part(t.logo, screenW, screenH, t.clock, 1);
+        drawCr3TitleOptions();
         // the shots' fades, then the title's own (in from black; out to white)
         const DemoShot& sh = kDemoShots[t.shot];
         float a = 0, c = 0;
@@ -9480,6 +9485,29 @@ struct Viewer {
             const float rgba[4] = {c, c, c, std::min(a, 1.0f)};
             dev->drawQuad(white, kScreen, id.data(), rgba);
         }
+        drawCr3OptionsOver(screenW, screenH);
+    }
+    // (CR3-U's: an Options button on the title - the camp's, comBtnSPanel with comBtnIconS_fr00's
+    // Options frame, where the camp's own sits - while it waits for the tap; O / G too)
+    void drawCr3TitleOptions() {
+        if (cr3Title.stage != 2 || cr3Camp.stage != 0) return;
+        cr3CampTaps.clear();
+        const int w = screenW, h = screenH;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        float cx, cy;
+        // (at the screen's lower right, clear of the logo and the copyright)
+        const float k = std::min(float(w) / 9.6f, float(h) / 6.4f);
+        const float px = float(w) / k / 2 - 1.2f, py = -3.2f + 0.75f;
+        UiFig& panel = cr3UiPut("combtnspanel", "", 0, px, py, view);
+        if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", 0, cx, cy, view);
+        if (cr3UiCall(panel, "call_comBtnIconS_fr00", cx, cy)) cr3UiPut("combtnicons_fr00", "", 6.0f / 30, cx, cy, view);
+        float ax, ay, ex, ey;
+        if (cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, kTapTitleOptions});
     }
 
     // CR3's map name (MapNameMenu): feNameMenu at feNamePosition's call_feNameMenu_fit3, its _in
@@ -20235,7 +20263,55 @@ struct Viewer {
     struct Cr3CampOptions {
         int tab = 0;
         int hands = 0; // (Controls: 0 two-handed, 1 one-handed)
+        int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
     } campOptions;
+    // the Options screen over the title or a battle (CR3-U's: the game has it in the camp alone);
+    // back, back to that
+    void openCr3OptionsFrom(int from) {
+        const int hands = campOptions.hands;
+        cr3Camp.stage = 9, cr3Camp.since = 0;
+        campOptions = Cr3CampOptions();
+        campOptions.hands = hands, campOptions.from = from;
+        audio.playSe("com_003", false);
+        SDL_Log("options: open (from the %s)", from == 1 ? "title" : "battle");
+    }
+    bool cr3OptionsOver() const { return cr3Camp.stage == 9 && campOptions.from != 0; }
+    void drawCr3OptionsOver(int w, int h) {
+        if (!cr3OptionsOver()) return;
+        cr3CampTaps.clear();
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        drawCr3Camp(w, h, view);
+    }
+    // a click while it's over the title or a battle (all its), or on the title's Options button
+    bool cr3OptionsClick(float fx, float fy) {
+        const bool over = cr3OptionsOver(), title = cr3Title.stage == 2 && cr3Camp.stage == 0;
+        if (!over && !title) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = cr3CampTaps.rbegin(); it != cr3CampTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                if (it->id == kTapTitleOptions) openCr3OptionsFrom(1);
+                else chooseCr3Camp(it->id);
+                return true;
+            }
+        return over;
+    }
+    static constexpr int kTapTitleOptions = 7000;
+    // (tests: --input camp:cat<n> / id<n> / back over the title or a battle, as the camp's)
+    void cr3OptionsInput() {
+        if (inputScript.empty() || inputScript.front().compare(0, 5, "camp:") != 0 || uiClock < inputNext) return;
+        const std::string want = inputScript.front().substr(5);
+        inputScript.pop_front();
+        inputNext = uiClock + 0.5f;
+        if (want == "back") chooseCr3Camp(-1);
+        else if (want.compare(0, 3, "cat") == 0) chooseCr3Camp(400 + std::atoi(want.c_str() + 3));
+        else if (want.compare(0, 2, "id") == 0) chooseCr3Camp(std::atoi(want.c_str() + 2));
+    }
     void openCampOptions() {
         cr3Camp.stage = 9, cr3Camp.since = 0;
         campOptions.tab = 0;
@@ -20421,7 +20497,8 @@ struct Viewer {
         }
         if (id == -1) {
             audio.playSe("com_004", false);
-            cr3Camp.stage = 1, cr3Camp.since = 0;
+            cr3Camp.stage = co.from ? 0 : 1, cr3Camp.since = 0; // (from the title or a battle: back to it)
+            co.from = 0;
             if (scriptSaves) writeSystem(); // (Cr3Util_Save_SystemData)
             return;
         }
@@ -21687,6 +21764,7 @@ struct Viewer {
             }
         }
         drawCr3BattleHud(screenW, screenH);
+        drawCr3OptionsOver(screenW, screenH); // (the Options over a battle)
         if (cr3BattleMode && cr3Ctn.stage != 0) drawCr3Continue(screenW, screenH);
         if (cr3BattleMode && cr3GameOverAt >= 0) drawCr3GameOver(screenW, screenH);
         cr3::EventRuntime* ev = activeEvents();
@@ -22680,6 +22758,14 @@ int main(int argc, char** argv) {
                 else if (e.type == SDL_EVENT_KEY_DOWN) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
+                    if (v.cr3OptionsOver()) { // (CR3-U's Options over the title or a battle: all its keys)
+                        v.cr3CampKey(k);
+                        continue;
+                    }
+                    if (v.cr3Title.stage == 2 && v.cr3Camp.stage == 0 && (k == SDLK_O || k == SDLK_G)) { // (the title's Options)
+                        v.openCr3OptionsFrom(1);
+                        continue;
+                    }
                     if ((k == SDLK_RETURN || k == SDLK_SPACE || k == SDLK_ESCAPE || k == SDLK_BACKSPACE) && v.geneGetTap()) continue; // (the gene obtained window's)
                     if ((k == SDLK_RETURN || k == SDLK_SPACE || k == SDLK_ESCAPE || k == SDLK_BACKSPACE) && v.collectList.open && v.collectList.scripted) {
                         v.chooseCollectList(-1); // (a script's collection: closed)
@@ -22817,6 +22903,7 @@ int main(int argc, char** argv) {
                     float fx, fy;
                     screenFraction(e.button.x, e.button.y, fx, fy);
                     if (v.overFast(fx, fy)) v.fastHeld = true; // (the fast-forward button: held, not a tap)
+                    else if (v.cr3OptionsClick(fx, fy)) {} // (CR3-U's Options over the title or a battle; the title's button)
                     else if (v.titleMenu.stage) v.titleClick(fx, fy);
                     else if (v.geneGetTap()) {}
                     else if (v.collectClick(fx, fy)) {}
