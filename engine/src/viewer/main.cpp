@@ -6960,9 +6960,13 @@ struct Viewer {
             vm.setNative("BattleStatus", "GetLevel", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->level : 0); });
             vm.setNative("BattleStatus", "GetMonsterId", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f && !f->player ? f->id : -1); });
             vm.setNative("BattleStatus", "GetElement", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->element : 0); });
-            vm.setNative("BattleStatus", "LowHp", [fighter](cr3::NativeCall& c) { // (BtlStatus::IsLowHp: under its share)
-                const auto* f = fighter(c.integer(0, -1));
-                c.result(f && f->maxHp > 0 && float(f->hp) / float(f->maxHp) < (c.count() > 1 ? float(c.integer(1)) / 100.0f : 0.2f));
+            // (LowHp(id, share) - BtlStatus::IsDirectionHpLow, BtlBasicStatus::IsLowHp: the HP as shown /
+            // the most at or under the share - battle_0007's 0.4)
+            vm.setNative("BattleStatus", "LowHp", [this, fighter](cr3::NativeCall& c) {
+                const int id = c.integer(0, -1);
+                const auto* f = fighter(id);
+                const int hp = id >= 0 && size_t(id) < cr3HpShown.size() ? cr3HpShown[size_t(id)] : f ? f->hp : 0;
+                c.result(f && f->maxHp > 0 && float(hp) / float(f->maxHp) <= c.number(1, 0.2f));
             });
         };
         cr3BattleEventClock = 0;
@@ -7481,8 +7485,8 @@ struct Viewer {
         } else if (cr3BattleStage == Cr3BattleStage::Menu || cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target ||
                    cr3BattleStage == Cr3BattleStage::List || (cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk)) {
             // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive; "escape" then
-            // "yes" / "no")
-            if (!inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
+            // "yes" / "no" - once the battle's script is over, as the menu waits: a turn end's scene)
+            if (!scripted && !inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
                 const std::string tok = inputScript.front();
                 if (cr3BattleStage == Cr3BattleStage::Command && (tok == "attack" || tok == "guard")) {
                     inputScript.pop_front();

@@ -68,6 +68,7 @@ struct Cr3Command {
                           //  7 can be cooperated in)
     float hitRate = 1;    // (+0x1c: x the hit chance)
     std::vector<int> effects; // (+0x40 / +0x48: the status effects it gives - Guard's 2)
+    std::vector<int> removes; // (+0x50 / +0x58: the status effects it takes away - MbCommandInfo::HaveRemovesStatusEffect; battle 7's release 1844)
     int effectsAnnounce = -1; // (+0xe8: AnnounceBattle's line when it gives one target several)
     int type = 0;         // (+0x04: 0 an attack, 1 a physical skill, 2 magic, 3 support, 4 special, 7 a guard)
     int damage = -1;      // (its CommandFomula row's damage: 1 physical, 2 magic, 5 an HP heal, ...)
@@ -178,8 +179,8 @@ public:
     // this turn, in place of its own pick), by fighter; the next turn() takes them
     std::map<int, std::vector<int>> scripted;
     // (BtlStatus::IsNonTarget: a kind 32 status effect; BtlStatusEffectList::HasProhibitedTarget: a
-    // kind 72 one - held, hidden)
-    bool targetable(int fighter) const;
+    // kind 72 one - held, hidden - but for a command that takes it away)
+    bool targetable(int fighter, const Cr3Command* by = nullptr) const;
     int heal(const Cr3Fighter& source, const Cr3Command& c); // (calculateHpHeal)
     int mpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetMpCost)
     // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the skills
@@ -220,7 +221,7 @@ private:
     std::set<std::pair<int, int>> usedSkills_; // (fighter, skill: the added commands fired)
     std::array<float, 4> coopScale_{0, 1, 3, 5}; // (battle.mbe Battle +0x80 / +0x88: MbBattleInfo::GetCooperationScale, by the units in it)
     float coopNow_ = 1;                          // (the action's: calculateBasicDamage's x scale)
-    int livingTarget(bool player, int preferred);
+    int livingTarget(bool player, int preferred, const Cr3Command* by = nullptr);
 };
 
 } // namespace cr3

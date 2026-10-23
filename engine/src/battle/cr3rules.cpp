@@ -176,6 +176,8 @@ bool Cr3BattleRules::command(int id, Cr3Command& c) const {
     c.hitRate = r.f(7);                                               // (+0x1c)
     for (int k = 0; k < r.i(13) && k < 8; ++k)
         if (r.element(14, size_t(k)) > 0) c.effects.push_back(r.element(14, size_t(k))); // (+0x40 / +0x48)
+    for (int k = 0; k < r.i(15) && k < 8; ++k)
+        if (r.element(16, size_t(k)) > 0) c.removes.push_back(r.element(16, size_t(k))); // (+0x50 / +0x58)
     c.spread = r.i(27);
     c.effectsAnnounce = int16_t(uint32_t(r.i(41)) & 0xffff);
     c.type = r.i(1);
@@ -333,9 +335,10 @@ std::vector<std::pair<int, int>> Cr3BattleRules::endTurn() {
     std::vector<std::pair<int, int>> out;
     for (size_t k = 0; k < fighters.size(); ++k) {
         Cr3Fighter& f = fighters[k];
-        if (f.dead()) continue;
-        // (calculateStatusEffectHpChange: (kind 45 heal rate - kind 46 damage rate) x the max HP)
-        const int change = int(float(effectSum(f, 45) - effectSum(f, 46)) / 100.0f * float(f.maxHp));
+        // (calculateStatusEffectHpChange: (kind 45 heal rate - kind 46 damage rate) x the max HP -
+        // the living's; every unit's effects count down - BtlStatusList::AllEndEffectToCalculation:
+        // a fallen one's too, battle 7's hold timer 161 on the first held)
+        const int change = f.dead() ? 0 : int(float(effectSum(f, 45) - effectSum(f, 46)) / 100.0f * float(f.maxHp));
         if (change != 0) {
             f.hp = std::clamp(f.hp + change, change < 0 ? 1 : 0, f.maxHp);
             out.emplace_back(int(k), change);
@@ -433,18 +436,25 @@ int Cr3BattleRules::heal(const Cr3Fighter& s, const Cr3Command& c) {
     return std::max(int(ratio * float(c.power) * (float(s.geneLevel) / 20.0f + 1.0f)), 1);
 }
 
-bool Cr3BattleRules::targetable(int i) const {
+bool Cr3BattleRules::targetable(int i, const Cr3Command* by) const {
     if (i < 0 || size_t(i) >= fighters.size()) return false;
     const Cr3Fighter& f = fighters[size_t(i)];
-    return !f.dead() && !hasKind(f, 32) && !hasKind(f, 72);
+    if (f.dead() || hasKind(f, 32)) return false;
+    MbeFile::Row r;
+    if (tables_)
+        for (const auto& [id, turns] : f.effects)
+            if (tables_->skill.find("StatusEffect", id, kStatusEffect, r))
+                for (size_t k = 0; k < 4; ++k)
+                    if (r.i(14 + k * 2) == 72 && !(by && std::find(by->removes.begin(), by->removes.end(), id) != by->removes.end())) return false;
+    return true;
 }
 
-int Cr3BattleRules::livingTarget(bool player, int preferred) {
-    if (preferred >= 0 && size_t(preferred) < fighters.size() && targetable(preferred) && fighters[size_t(preferred)].player == player)
+int Cr3BattleRules::livingTarget(bool player, int preferred, const Cr3Command* by) {
+    if (preferred >= 0 && size_t(preferred) < fighters.size() && targetable(preferred, by) && fighters[size_t(preferred)].player == player)
         return preferred;
     std::vector<int> alive;
     for (size_t k = 0; k < fighters.size(); ++k)
-        if (fighters[k].player == player && targetable(int(k))) alive.push_back(int(k));
+        if (fighters[k].player == player && targetable(int(k), by)) alive.push_back(int(k));
     if (alive.empty()) // (none to take: a living one all the same)
         for (size_t k = 0; k < fighters.size(); ++k)
             if (fighters[k].player == player && !fighters[k].dead()) alive.push_back(int(k));
@@ -577,11 +587,12 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         // party member, 2 all of them, 3 an enemy, 4 all enemies, 5 everyone, 6 a random enemy, 8 / 9
         // either side's one / all - a heal its own -, 10 / 11 the player's, 12 / 13 the other party
         // members' one / all)
-        const bool ownSide = c.target == 2 || c.target == 11 || c.target == 13 || (c.target == 9 && ally);
+        const bool ownSide = c.target == 2 || c.target == 13 || (c.target == 9 && ally);
+        const bool playersSide = c.target == 10 || c.target == 11; // (the player's: whoever uses it - battle 7's 1844 by a monster)
         const bool ownOne = c.target == 1 || c.target == 12 || (c.target == 8 && ally);
         if (c.all)
             for (size_t k = 0; k < fighters.size(); ++k) {
-                if ((c.target == 5 || fighters[k].player == (ownSide ? s.player : !s.player)) && targetable(int(k)) &&
+                if ((c.target == 5 || fighters[k].player == (playersSide ? true : ownSide ? s.player : !s.player)) && targetable(int(k), &c) &&
                     (c.target != 13 || int(k) != src))
                     targets.push_back(int(k));
             }
@@ -595,7 +606,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                 if (!side.empty()) targets.push_back(side[size_t(random() * float(side.size())) % side.size()]);
             }
         }
-        else if (int t = livingTarget(!s.player, tgt); t >= 0) targets.push_back(t);
+        else if (int t = livingTarget(playersSide ? true : !s.player, tgt, &c); t >= 0) targets.push_back(t);
         if (targets.empty()) break; // (no one left on the other side)
         std::vector<int> downed; // (its targets downed: their commands wait - delayCommandByDown)
         for (int ti : targets) {
@@ -641,6 +652,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                         if (down && std::find(downed.begin(), downed.end(), ti) == downed.end()) downed.push_back(ti);
                     }
             }
+            // the status effects it takes away (BtlDamage's RemovesStatusEffect), where it landed
+            if (landed)
+                for (int e : c.removes) removeEffect(ti, e);
             // its status effects, where it landed and the target lives (IsStatusEffectHit)
             if (landed && !t.dead())
                 for (int e : c.effects)

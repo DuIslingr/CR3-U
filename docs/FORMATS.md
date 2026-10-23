@@ -1390,6 +1390,14 @@ by the units in it (0, 1, 3, 5). Battle 5 is won by one (Battle_Direction_End: f
 WasCooperated - its scene, 25 EXP, 60 money, ForceVictory); its party needs two members wearing
 genes with a command in common (the gene swap tutorial's), else its turn end's hint scene.
 
+A command's +0x50 / +0x58 list is the status effects it takes away where it lands
+(HaveRemovesStatusEffect - battle 5's 1756 lets go of the held hero, battle 7's 1844 of the
+party); a kind 72 effect bars targeting but for a command that takes it away. Target kinds 10 /
+11 are the player's side whoever uses them. Every unit's status effects count down at a turn's
+end, a fallen one's too (battle 7's hold timer 161, read through GetIdByStatusEffect's first).
+BattleStatus.LowHp(id, share): the HP as shown / the most at or under the share (a float,
+IsDirectionHpLow). The command menu waits while the battle's script runs (a turn end's scene).
+
 ### The continue (CR3)
 
 A defeat (phaseDefeatEventStart: the result 1, Battle_Defeat_Base), where the coupling allows it
