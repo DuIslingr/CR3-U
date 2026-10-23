@@ -257,6 +257,13 @@ void EventScene::quakeStop() {
     quake_ = Quake();
 }
 
+bool EventScene::cameraAtStart(Mat34& world, float& fovY, float& zn, float& zf) const {
+    if (!hasCamera_) return false;
+    EventScene at = *this; // (the scene figure posed at 0 - GetLocatorPos(.., 0): its camera with it)
+    at.cameraTime_ = at.cameraEnd_ = 0;
+    return at.camera(world, fovY, zn, zf, 0);
+}
+
 bool EventScene::camera(Mat34& world, float& fovY, float& zn, float& zf, float lead) const {
     if (!hasCamera_) return false;
     const GeomCamera& c = camera_.geom.cameras[0];

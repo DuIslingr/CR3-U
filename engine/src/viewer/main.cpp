@@ -7997,7 +7997,13 @@ struct Viewer {
             if (m.name != b.model) continue;
             const cr3::Mat34 pl = event->scene().locatorAtStart(m.name); // (EvtScene::GetLocatorPos(model, 0): ev_<model> at the scene's start)
             const float q[3] = {pl.m[3] + b.offset[0], pl.m[7] + b.offset[1], pl.m[11] + b.offset[2]};
-            const float* v = lastEventVP.data(); // (column-major)
+            Mat4 vpStart = lastEventVP; // (Cr3UtilSetBalloonPos through the scene camera as posed at 0 - see cameraAtStart)
+            cr3::Mat34 startCam;
+            float fov = 45, zn = 0.1f, zf = 100;
+            if (event->scene().cameraAtStart(startCam, fov, zn, zf))
+                vpStart = cr3::mat4Multiply(perspective(fov * 3.14159265f / 180, float(screenW) / float(std::max(screenH, 1)), zn, zf),
+                                            cr3::mat4RigidInverse(cr3::mat4FromMat34(startCam)));
+            const float* v = vpStart.data(); // (column-major)
             const float cw = v[3] * q[0] + v[7] * q[1] + v[11] * q[2] + v[15];
             if (cw <= 0) return false;
             const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);

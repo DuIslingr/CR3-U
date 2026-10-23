@@ -150,6 +150,9 @@ public:
     // the camera now: its world matrix (looking down -Z), vertical field of view (degrees), near, far
     // (VistaCamera::Init: near at least 0.05, far five times - at most 5000 - but for two events')
     bool camera(Mat34& world, float& fovY, float& zn, float& zf, float lead = 0) const;
+    // the camera at the scene's start (a lunch's balloons: projected through it - LunchMain::
+    // UpdateBalloonPosition's GetLocatorPos(model, 0) poses the scene figure, its camera too)
+    bool cameraAtStart(Mat34& world, float& fovY, float& zn, float& zf) const;
     // the scene figure's own camera taken where it has no _camera figure (LunchMain::Setup:
     // GetContaindCamera on the scene's figure - a lunch's s001_t02_00301_evt camera1)
     void useOwnCamera();
