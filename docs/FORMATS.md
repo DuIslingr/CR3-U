@@ -849,6 +849,20 @@ left and 2.2 up - ViewShuffleButtonListMenu: on Sub Quests with fewer than ten):
 CrxGameData::ShuffleQuest clears the day's draw (+0x2869c bit 2, the port's `cr3Daily & 4`), FindQuests
 again, Sub Quests anew. `port:shuffle`.
 
+A quest's progress (the scripts): the global work's 24 is the quest set off on - its database
+`_id` (SpacePortMain: the list item's id; the detail shows the record's `no`), `quest_check` by it
+sets the quest up - an item delivery (`item_delivery(item, count)`: the goods held - ItemCheck -
+asked for at once, else told and cancelled), a dungeon (WorldSelect_NextTo, DungeonRoot), a town's
+person (a town map hit flag 1171 ..). The quest's own steps set flag 1500 (cleared); entering the
+Space Port's area with it runs `quest_report` (CompleteQuest, EarnQuestRewards, EndQuest).
+DBEmu::EndQuest adds one to the global work's 25 - the quests cleared, which AfterQuestClearEvent
+reads (two after flag 2121: flag 2095, main quest 1 - chapter 3). A dungeon's town button
+(Fld2Main::SM_TownJump) runs the area script's `DungeonExit`. The detail's "{item_cnt}" is the
+goods held (GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock). Itemizing gift 600022 sets flag
+28 (DBSystem::SM_ItemizeGift: Explorer Training's step). The tutorial quests (rank 6: Explorer
+Training, Basic Combat - the Colosseum -, Using Coins - the Sp Shop's Lucky Box, not in yet) are
+among the Sub Quests.
+
 The global work (Cr3UtilGlobalWorkGet / Set - the scripts' GetVar / SetVar) holds 100 values; 24 is
 the quest set off on.
 

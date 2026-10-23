@@ -1418,6 +1418,7 @@ int Cr3OfflineDb::endQuest(GameState& s, int id) {
     s.cr3Quests.state = 3;
     s.cr3Quests.ended.insert(id);
     ++s.cr3Quests.endedCount;
+    ++s.globalWork[25]; // (DBEmu::EndQuest: the global work's 25 too - the scripts' quests cleared, AfterQuestClearEvent's)
     auto& o = s.cr3Quests.offered;
     for (auto it = o.begin(); it != o.end(); ++it)
         if (*it >= 0 && size_t(*it) < quests_.size() && quests_[size_t(*it)].id == id) {

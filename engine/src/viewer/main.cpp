@@ -15911,9 +15911,11 @@ struct Viewer {
                 encountersOff = !encountersOff;
                 audio.playSe("com_003", false);
                 SDL_Log("field: encounters %s", encountersOff ? "off" : "on");
-            } else if (id == 108) { // (feBtnTown: Fld2TabMenu tab 8 - in a town SetDirectTownMove; a dungeon's own window: not yet)
+            } else if (id == 108) { // (feBtnTown: Fld2TabMenu tab 8 - in a town SetDirectTownMove)
+                // (a dungeon's: Fld2Main::SM_TownJump - the area script's DungeonExit, which asks and
+                // takes the party home)
                 if (area.name.size() > 1 && area.name[0] == 't') audio.playSe(0x16d, false), openTownMove(true);
-                else SDL_Log("field: the dungeon's town button (not in yet)");
+                else audio.playSe(0x16d, false), runAreaFunction("DungeonExit");
             } else if (id == 101) { // (feBtnSave: Fld2TabMenu::Save)
                 audio.playSe(0x16d, false);
                 writeCr3Save();
@@ -16477,6 +16479,9 @@ struct Viewer {
             const std::map<int, int> before = game.cr3Items;
             if (game.cr3Db && game.cr3Db->itemizeGift(game, ci.item) == cr3::kDbOk) {
                 audio.playSe("com_034", false); // (CreateGiftItemizeEffect)
+                // (DBSystem::SM_ItemizeGift: gift 600022 itemised - the Explorer Training quest's
+                // step, q056_d02_00107_set - flag 28)
+                if (ci.item == 600022) game.setFlag(28, true);
                 std::string got;
                 for (const auto& [item, n] : game.cr3Items)
                     if (item != ci.item && n > (before.count(item) ? before.at(item) : 0)) got = cr3ItemText(item, false);
@@ -16614,6 +16619,9 @@ struct Viewer {
         if (ce.slot == 2) ce.rows.push_back(0); // (none)
         const auto it = std::find(ce.rows.begin(), ce.rows.end(), worn);
         ce.row = it != ce.rows.end() ? int(it - ce.rows.begin()) : 0;
+        std::string listed;
+        for (int id : ce.rows) listed += " " + std::to_string(id);
+        SDL_Log("camp: character %d's slot %d:%s", ce.chara, ce.slot, listed.c_str());
     }
     void openCampEquip() {
         const std::vector<int> members = cr3PartyMembers();
@@ -17354,8 +17362,8 @@ struct Viewer {
     // Space Port's; no background of its own): spQstMenu at spQstPosition's ragdoll_call_spQstMenu -
     // the title (Quest_Title) at typeM_C01, dark; "No." and the quest's number (its record's +4:
     // spQstNumPanel_num00's three spQstNum_fr00, zeros kept); Quest_text's lines - the reward - at
-    // typeM_L01 (white, on the red bar), L02, L03 (dark); Quest_message's ("{item_cnt}" the goods'
-    // count) on spQstText's bands - typeM_L01 .. L10, white, five shown: the window masked below
+    // typeM_L01 (white, on the red bar), L02, L03 (dark); Quest_message's ("{item_cnt}" the goods
+    // held) on spQstText's bands - typeM_L01 .. L10, white, five shown: the window masked below
     // (SetMaskSprite: a 10.15 x 2.5 quad from y -0.75 down); its bar (spQstBar, the spQstCursor at
     // its call - moved with six lines or more, AutoScroll); the OK button (spQstBtn); the clear mark
     // once ended (SetClearMark: spQstClear on its _loop at call_spQstClear); with two quests or more
@@ -17403,7 +17411,10 @@ struct Viewer {
             cr3UiLabel(menu, ("typeM_L0" + std::to_string(k + 1)).c_str(), reward[k], w, h, k == 0 ? 1.0f : 0.26f);
         if (cr3UiCall(menu, "call_spQstText", cx, cy)) {
             std::string body = filtered("Quest_message");
-            for (size_t at; (at = body.find("{item_cnt}")) != std::string::npos;) body.replace(at, 10, cr3Number(std::max(q.itemCount, 0)));
+            // ({item_cnt}: GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock, the goods held)
+            const auto held = game.cr3Items.find(q.item);
+            const int have = q.item > 0 && held != game.cr3Items.end() ? std::max(held->second, 0) : 0;
+            for (size_t at; (at = body.find("{item_cnt}")) != std::string::npos;) body.replace(at, 10, cr3Number(have));
             const std::vector<std::string> text = lines(body);
             // (the window: the mask below it from y -0.75 - the bands masked there)
             const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
@@ -19004,7 +19015,10 @@ struct Viewer {
         m.first = false;
         campQuestRows();
         spacePortScreen(1);
-        SDL_Log("space port: quests (%zu)", cq.rows.size());
+        std::string ids;
+        if (game.cr3Db)
+            for (int k : cq.rows) ids += " " + std::to_string(game.cr3Db->quests()[size_t(k)].id);
+        SDL_Log("space port: quests (%zu):%s", cq.rows.size(), ids.c_str());
     }
     void spacePortLeave(int questReturn) {
         Cr3SpacePortMenu& m = spacePortMenu;
