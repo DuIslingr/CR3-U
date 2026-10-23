@@ -8629,11 +8629,13 @@ struct Viewer {
         t.clock += dt, t.stageClock += dt, t.shotClock += dt;
         if (t.shotClock >= kDemoShots[t.shot].seconds) t.shotClock -= kDemoShots[t.shot].seconds, t.shot = (t.shot + 1) % 6;
         if (t.stage == 1 && t.stageClock >= 1.0f) t.stage = 2, t.stageClock = 0; // (Cr3FadeIn(1, 30): in over 30 frames)
+        if (t.stage == 2 && t.stageClock > 0.5f && !inputScript.empty() && inputScript.front() == "title:tap") inputScript.pop_front(), cr3TitleTap(); // (tests)
         if (t.stage == 3 && t.stageClock >= 1.0f) { // (out, then the game: a new one's prologue)
             t.stage = 0;
             for (ViewFigure& f : t.maps) unload(f);
             unload(t.logo.position), unload(t.logo.fig);
             resetGame();
+            if (!cr3SavedArea().empty() && loadCr3Save()) return; // (TitleMain: the save loaded, its field)
             SDL_Log("title: a new game");
             startEvent("t01:s000_t01_00101_evt", "null", pageSeconds);
         }
@@ -10416,6 +10418,65 @@ struct Viewer {
         SDL_Log("save: %s %s", path.c_str(), ok ? "written" : "not written");
         if (ok && std::strcmp(file, "save1.txt") == 0) writeSystem(); // (SaveConfirmationMenu: Cr3Util_Save_SystemData too)
         return ok;
+    }
+    // CR3's save (Fld2TabMenu::Save, the field's feBtnSave - tab 3: SE 0x16d, Fld2SaveData(-2) -
+    // the dungeon, area, place and turn - and DBSystem::Sync, the game's data kept): CR3-U's save1.txt
+    // with the area and the place; the title's tap takes it back up (TitleMain: CrxGameData::Load,
+    // then the field where it was - Fld2Main::SM_FirstEvent's evt000)
+    bool writeCr3Save() {
+        if (!areaMode || !areaWalker) return false;
+        std::map<std::string, std::string> extra;
+        const cr3::Vec3 p = areaWalker->position();
+        char pos[96];
+        std::snprintf(pos, sizeof pos, "%.6f %.6f %.6f %.6f", p[0], p[1], p[2], areaYaw);
+        extra["area"] = area.name, extra["place"] = pos;
+        extra["saved"] = std::to_string(static_cast<long long>(std::time(nullptr)));
+        extra["playtime"] = std::to_string(static_cast<long>(playSeconds * 20.0));
+        extra["options"] = std::to_string(optionLanguage) + " " + std::to_string(optionQuality) + " " + std::to_string(optionVolume[0]) + " " +
+                           std::to_string(optionVolume[1]) + " " + std::to_string(optionVolume[2]);
+        const std::string text = game.save(extra), path = savePath();
+        std::FILE* f = std::fopen(path.c_str(), "wb");
+        const bool ok = f && std::fwrite(text.data(), 1, text.size(), f) == text.size();
+        if (f) std::fclose(f);
+        SDL_Log("save: %s %s (%s)", path.c_str(), ok ? "written" : "not written", area.name.c_str());
+        if (ok) writeSystem();
+        return ok;
+    }
+    std::string readSaveText() {
+        std::string text;
+        if (std::FILE* f = std::fopen(savePath().c_str(), "rb")) {
+            char buf[4096];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+            std::fclose(f);
+        }
+        return text;
+    }
+    // the save's area, if there is one (a CR3 save: one with "area")
+    std::string cr3SavedArea() {
+        const std::string text = readSaveText();
+        const size_t at = text.find("\narea ");
+        if (at == std::string::npos) return {};
+        const size_t end = text.find('\n', at + 6);
+        return text.substr(at + 6, end == std::string::npos ? std::string::npos : end - at - 6);
+    }
+    bool loadCr3Save() {
+        std::map<std::string, std::string> extra;
+        std::string err;
+        if (!game.load(readSaveText(), &extra, &err) || extra["area"].empty())
+            return SDL_Log("continue: %s (%s)", err.empty() ? "no area saved" : err.c_str(), savePath().c_str()), false;
+        int o[5] = {optionLanguage, optionQuality, optionVolume[0], optionVolume[1], optionVolume[2]};
+        if (std::sscanf(extra["options"].c_str(), "%d %d %d %d %d", &o[0], &o[1], &o[2], &o[3], &o[4]) == 5)
+            optionLanguage = o[0], optionQuality = o[1], optionVolume[0] = o[2], optionVolume[1] = o[3], optionVolume[2] = o[4];
+        applySystem();
+        playSeconds = double(std::atol(extra["playtime"].c_str())) / 20.0;
+        float q[4];
+        if (std::sscanf(extra["place"].c_str(), "%f %f %f %f", &q[0], &q[1], &q[2], &q[3]) == 4)
+            savedArea = extra["area"], savedPos = {q[0], q[1], q[2]}, savedYaw = q[3]; // (loadArea puts the player back there)
+        game.next = cr3::GameState::Next();
+        playMode = true;
+        if (!loadArea(extra["area"], "")) return false;
+        SDL_Log("continue: %s", extra["area"].c_str());
+        return true;
     }
     // --continue: the save read back, its map entered there
     bool continueSave(const std::string& binary, const std::string& dataPath, const char* only = nullptr) {
@@ -14669,6 +14730,9 @@ struct Viewer {
                 encountersOff = !encountersOff;
                 audio.playSe("com_003", false);
                 SDL_Log("field: encounters %s", encountersOff ? "off" : "on");
+            } else if (id == 101) { // (feBtnSave: Fld2TabMenu::Save)
+                audio.playSe(0x16d, false);
+                writeCr3Save();
             } else
                 SDL_Log("field: button %d (not in yet)", id - 100);
             return;
@@ -20888,6 +20952,10 @@ int main(int argc, char** argv) {
     v.settings.upscaler = int(upscale.mode); // (one that can't run here: off)
     v.applySettings();
     v.shaders = std::make_unique<cr3::ShaderLibrary>(v.archive);
+    // (nothing asked for - the release's own launch -: the title)
+    if (model.empty() && animName.empty() && fieldName.empty() && eventName.empty() && areaName.empty() && battleId <= 0 && !continueSave &&
+        gameSavePath.empty() && playFrom.empty() && creditsArg < 0 && bgmArg.empty() && seArg.empty() && voiceArg.empty())
+        titleScreen = true;
     const bool cr3Title = titleScreen && v.archive.contains("ttlLogoMenu.geom"); // (CR3's title: its own flow, into the prologue)
     if (titleScreen && playFrom.empty() && !cr3Title) playFrom = "d1020"; // (the title's New Game: --play's start)
     if (!playFrom.empty()) fieldName = playFrom, v.playMode = true;

@@ -264,6 +264,16 @@ earlier, the vista `s000_d01_00401_evt`'s (d0102f) BattleIn2 of coupling 1 - see
 `cr3view --area <area> [--player <model>]` walks one (WASD / the stick, Shift a walk; Q / E turn
 the camera, R / V tilt it); `--walk x,y,s --run s` for captures.
 
+### Saving and carrying on (CR3)
+
+The field's feBtnSave (Fld2TabMenu tab 3 - SE 0x16d, the UI hidden while it saves):
+Fld2SaveData(-2) keeps the dungeon, the area, the player's place and turn in Cr3FieldData, and
+DBSystem::Sync writes the game's data. The title (TitleMain) loads it - CrxGameData::Load, t01's
+`Login` - and goes on to the field where it was (Fld2Main::SM_FirstEvent: `evt000`); with no game
+yet, the prologue. CR3-U writes its own save, `save1.txt` in the profile folder (GameState::save
+with the area and place), on the Save button; a tap on the title resumes it, else starts a new
+game. `cr3view` with nothing asked for opens the title (the release's launch).
+
 ### Random encounters (CR3)
 
 Fld2TaskEncount, in a dungeon's areas (`dDDAA`):

@@ -15,36 +15,41 @@ code of the game, and nothing generated from them. You need your own copy of the
 Licence: GPL-2.0-or-later (`LICENSE`); the bundled libraries keep their own (`THIRD_PARTY.md`).
 Not affiliated with or endorsed by Square Enix or Media.Vision.
 
-## Status: early
+## Status: playable, in progress
 
-This is the start of the port. What works today:
+Start `cr3view` with your copy in place and the game's title comes up; a tap starts a new game -
+or, with a save, carries on from it. What works today:
 
+- **The story's start**: the title (its camera reel and logo), the prologue's events and the
+  scenes after them as the reference playthrough shows them - message windows, cut-ins, voices
+- **Towns and dungeons** (CR3's `Fld2` field): walking by keys, pad, mouse or touch, the follow
+  camera, doors, event boxes and people, the area scripts, map names, the field's buttons; **random
+  encounters** with first strikes, surprise attacks and ace monsters; **saving** with the field's
+  Save button (one save, in the profile folder)
+- **Battles**: the glass break, the get-set menu, commands, genes and items, the break gauge,
+  criticals, downs and combos, status effects, hit effects, the battle scripts, announcements,
+  escape, the result - EXP into the worn genes, money, monster drops - and the continue and game over
+- **Menus**: the camp (items, equipment, status, Gene Swap, gifts), the gene lab (combine, enhance,
+  sell, the repository), town shops, the Space Port's quests, the world select, My Page, the Gene
+  Index, the VS mode - with the game's online services **offline** (the Vita's own DBEmu rules,
+  every release; CR3-U never contacts Square Enix's servers)
+- **Sound**: the 54 music tracks with their loops, the 1,033 effects and every voice, in each
+  release's own format - iOS AAC in MP4, Android Ogg Vorbis, the Vita's ATRAC9 and HE-VAG
 - **Data, all three releases standalone**: a release is found from its folder and every one of its
-  archives indexed together (`engine/src/assets/mvgl.hpp`, `Database`) - the iPhone's ~170
-  `CRDB*.ios.mvgl` and loose movies, Android's `main.10007.android.mvgl` (read straight out of the
-  APK or `.apks`, no unpacking) and its asset packs, the Vita's ~236 `CR3/resources/**.psp2.mvgl`.
-  Every file of all three decodes (`cr3tool check`); every texture, mesh, skeleton and animation
-  parses (`cr3tool images` / `models` / `animations`) - including CR3's new 64-bit mesh and
-  animation layouts (geom version 0x64, iOS / Android) and the Vita's triangle lists
+  archives indexed together - the iPhone's ~170 `CRDB*.ios.mvgl` and loose movies, Android's
+  `main.10007.android.mvgl` (read straight out of the APK or `.apks`) and its asset packs, the Vita's
+  ~236 `CR3/resources/**.psp2.mvgl`; every file, texture, mesh, skeleton and animation of all three
+  decodes (`cr3tool check`, `images`, `models`, `animations`)
 - **Languages**: Japanese and English on iOS / Android; the Vita's Japanese - and the **fan
   translation** ([Chaos Rings III Translation Project](https://gbatemp.net/threads/chaos-rings-iii-translation-project.443742/))
   as an *option*: given its `rePatch` folder next to an unpatched Vita copy, "English (fan
-  translation)" is a language of its own and the Japanese stays (`--patch`, `assets/language.hpp`).
-  A Vita copy with the patch already installed over it shows that English
-- **Models**: `cr3view --data <release> --model c101.geom` draws any figure skinned, textured and
-  animated, the same from each release (`--capture` to a BMP)
+  translation)" is a language of its own (`--patch`, `assets/language.hpp`)
+- **Scripts**: all 194 of CR3's compiled scripts in the game's own Squirrel 2.2.4, with its 600
+  natives bound; every one of its 4,127 events plays through to its end (`cr3tool events`)
 
-- **Sound**: the 54 music tracks with their loops, the 1,033 effects and every voice, in each
-  release's own format - iOS AAC in MP4, Android Ogg Vorbis, the Vita's ATRAC9 and HE-VAG
-  (`audio/cr3sound.hpp`; `cr3tool sound <release> [--full]`; `cr3view --bgm m01 --se bt_001 --voice
-  <name>` plays them)
-- **Tables**: the game's parameter tables (`data\*.mbe`) read in every release (`tools/mbe.py`)
-- **Scripts**: all 194 of CR3's compiled scripts load in the game's own Squirrel 2.2.4 in every
-  release, with CR3's 600 natives bound; every one of its 4,127 events plays through to its end
-  (`cr3tool events`), on iOS, the Vita and the fan translation - many natives still stubs
-
-The rest - fields, events, battles, menus - is CR2-U's game layer still, and does not run CR3 yet:
-CR3's own (its `Fld2` field, the gene system, its scripts' natives) is the work ahead.
+Not yet: much of what's later in the story is untested; the battles' particle effects and some
+spell directions, a few menus' rarer screens; see `docs/FORMATS.md` for each system's notes and
+what each still leaves out.
 
 ## Quick start
 
