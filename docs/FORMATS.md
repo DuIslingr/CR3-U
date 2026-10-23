@@ -881,7 +881,12 @@ asked for at once, else told and cancelled), a dungeon (WorldSelect_NextTo, Dung
 person (a town map hit flag 1171 ..). The quest's own steps set flag 1500 (cleared); entering the
 Space Port's area with it runs `quest_report` (CompleteQuest, EarnQuestRewards, EndQuest).
 DBEmu::EndQuest adds one to the global work's 25 - the quests cleared, which AfterQuestClearEvent
-reads (two after flag 2121: flag 2095, main quest 1 - chapter 3). A dungeon's town button
+reads (two after flag 2121: flag 2095, main quest 1 - chapter 3; six after 2153: flag 2154, the
+s141 scene); the Space Port's clerk (`c121_00`) opens main quest 3 (flag 2157) at nine with flag 6053.
+Main quests list once their `flags` say (-600n not set - not yet cleared -, then the story flag: 2095,
+2095, 2157, 2173 ..). `_id` is the scripts' `q<id>`; `no` only the shown number (Yae 53 is no. 20).
+The quest tab last shown stays for the Space Port's next visit (the second visit after a delivery:
+Sub Quests still, not the empty Main). A dungeon's town button
 (Fld2Main::SM_TownJump) runs the area script's `DungeonExit`. The detail's "{item_cnt}" is the
 goods held (GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock). Itemizing gift 600022 sets flag
 28 (DBSystem::SM_ItemizeGift: Explorer Training's step). The tutorial quests (rank 6: Explorer

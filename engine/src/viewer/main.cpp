@@ -18765,6 +18765,9 @@ struct Viewer {
         m.category = cats.empty() ? 0 : std::find(cats.begin(), cats.end(), at) != cats.end() ? at : cats[0]; // (SearchListCategoryPanelIndex)
         m.rows = shopRows(kShopTabs[m.category]);
         m.row = std::clamp(m.row, 0, std::max(int(m.rows.size()) - 1, 0));
+        std::string items;
+        for (const Cr3ShopMenu::Row& r : m.rows) items += " " + std::to_string(r.item) + " (" + std::to_string(r.price) + ")";
+        SDL_Log("shop: %s list %d (%zu):%s", m.buy ? "buy" : "sell", m.category, m.rows.size(), items.c_str());
     }
     void shopScreen(int screen) { shopMenu.screen = screen, shopMenu.since = 0; }
     void drawCr3Shop(cr3::EventRuntime& ev, int w, int h, bool front) {
@@ -19295,7 +19298,11 @@ struct Viewer {
         spacePortScreen(1);
         std::string ids;
         if (game.cr3Db)
-            for (int k : cq.rows) ids += " " + std::to_string(game.cr3Db->quests()[size_t(k)].id);
+            for (int k : cq.rows) { // (the id - the scripts' q<id> -, then its shown number, rank and the goods it asks for)
+                const cr3::Cr3OfflineDb::Quest& q = game.cr3Db->quests()[size_t(k)];
+                ids += " " + std::to_string(q.id) + " (no. " + std::to_string(q.no) + ", rank " + std::to_string(q.rank) +
+                       (q.item > 0 ? ", " + std::to_string(q.itemCount) + " of " + std::to_string(q.item) + ", " + std::to_string(game.cr3Items[q.item]) + " held" : "") + ")";
+            }
         SDL_Log("space port: quests (%zu):%s", cq.rows.size(), ids.c_str());
     }
     void spacePortLeave(int questReturn) {
@@ -19510,7 +19517,9 @@ struct Viewer {
             const bool first = m.first;
             m = Cr3SpacePortMenu();
             m.first = first;
+            const int category = campQuests.category; // (InterfaceMain's: the tab last shown kept)
             campQuests = Cr3CampQuests();
+            campQuests.category = category;
             SDL_Log("space port: open");
         }
         m.wasOpen = open;
