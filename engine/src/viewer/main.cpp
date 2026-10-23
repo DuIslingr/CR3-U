@@ -261,8 +261,8 @@ struct Viewer {
     int hdModelsLoaded = 0;
     std::map<std::string, cr3::Image> modelImages; // "gltf\\<figure>\\<n>" -> its pixels (decode's first look)
     // the add-ons (assets/addons.hpp): outfits and weapons of the player's own, from models/addons/
-    // (CR3_ADDONS elsewhere) - their items, names and goods in the release's tables; one isn't for a
-    // character HD Models replaces, unless it says it fits (Cr3Addons::usable)
+    // (CR3_ADDONS elsewhere) - their items, names and goods in the release's tables; an outfit worn by
+    // a character HD Models replaces looks like its like item, unless it says it fits (Cr3Addons::ownModel)
     cr3::Cr3Addons addons;
     std::map<std::string, std::vector<std::string>> hdReplacedCache; // (a wearer's: its figures in modelsDir)
     std::vector<std::string> hdReplaced(const std::string& wearer) {
@@ -285,11 +285,7 @@ struct Viewer {
         }
         return out;
     }
-    bool addonUsable(const cr3::Cr3Addon& a) { return cr3::Cr3Addons::usable(a, hdReplaced(a.wearer)); }
-    bool itemUsable(int full) { // (an add-on's item: not while its wearer's model is replaced, unless it fits)
-        const cr3::Cr3Addon* a = addons.byItem(full);
-        return !a || addonUsable(*a);
-    }
+    bool addonOwnModel(const cr3::Cr3Addon& a) { return cr3::Cr3Addons::ownModel(a, hdReplaced(a.wearer)); }
     std::map<std::string, bool> textureMips; // (each cached texture's mip chain: a reload's)
 
     // CR3-U's own settings - the options' Display & Graphics list (settingsOpen), kept in
@@ -1530,12 +1526,13 @@ struct Viewer {
     }
 
     // an add-on's figure (assets/addons.hpp: its base's files under its name): the add-on's meshes
-    // on it - or, while it isn't usable (its wearer replaced by HD Models), its base as that is drawn
+    // on it - or, for an outfit whose wearer HD Models replaces (not made to fit), its base as that
+    // is drawn: the like item's look, its own numbers kept, as the game's armour
     bool addonFigure(const std::string& name, cr3::Geom& g) {
         if (name.size() < 6) return false;
         const cr3::Cr3Addon* a = addons.byFigure(name.substr(0, name.size() - 5));
         if (!a) return false;
-        if (!addonUsable(*a)) {
+        if (!addonOwnModel(*a)) {
             replaceFigure(a->base + ".geom", g);
             return true;
         }
@@ -16547,7 +16544,7 @@ struct Viewer {
         static const char* const kTables[3] = {"Weapon", "Armor", "Accessory"};
         const int slot = full / 100000 - 1;
         if (slot < 0 || slot > 2 || !cr3TablesReady() || !cr3BattleTables.item.find(kTables[slot], full % 100000, "iiiiiiiiiiii", r)) return false;
-        return ch > 0 && ch < 31 && (r.i(11) >> ch & 1) != 0 && itemUsable(full);
+        return ch > 0 && ch < 31 && (r.i(11) >> ch & 1) != 0;
     }
     void campEquipRows() {
         Cr3CampEquip& ce = campEquip;
@@ -20688,7 +20685,7 @@ struct Viewer {
                     v.flag = g.integer("flag", -1);
                     if (const cr3::BsonValue* items = g.get("items"); items && !items->items.empty())
                         v.item = items->items[0].integer("item_id"), v.count = items->items[0].integer("count");
-                    if ((v.flag < 0 || game.flag(v.flag)) && itemUsable(v.item)) out.push_back(v);
+                    if (v.flag < 0 || game.flag(v.flag)) out.push_back(v);
                 }
         }
         return out;

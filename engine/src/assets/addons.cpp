@@ -251,8 +251,8 @@ void Cr3Addons::addGoods(Cr3OfflineDb& db) const {
             db.addGoods(a.shop, (a.weapon ? 10000 : 11000) + a.id, a.item, a.price, a.currency, a.icon);
 }
 
-bool Cr3Addons::usable(const Cr3Addon& a, const std::vector<std::string>& replaced) {
-    if (replaced.empty() || a.hdAny) return true;
+bool Cr3Addons::ownModel(const Cr3Addon& a, const std::vector<std::string>& replaced) {
+    if (a.weapon || replaced.empty() || a.hdAny) return true; // (a weapon's model is its own whatever wears it)
     for (const std::string& r : replaced)
         if (std::find(a.hdFits.begin(), a.hdFits.end(), lower(r)) == a.hdFits.end()) return false;
     return true;

@@ -12,9 +12,9 @@ weapon (w001_01.glb), keeping the armature (bones node_<n>...) and material name
   like = 200083        the item it is made from: its numbers, icon, body or weapon (default: the character's own)
   price = 30           in the premium shop (shop = none: not sold)
   currency = coin      coin, GP or gold
-  hd_models = no       yes: also while HD Models replaces the character; or the replaced figures it fits (j001b01 j001h01)
+  hd_models = no       an outfit: yes - its own model while HD Models replaces the character; or the replaced figures it fits (j001b01 j001h01)
 
-They're sold in the premium shop (the field's Shop button; the VS mode's Sp Shop). While HD Models
-replaces one of the character's figures, an add-on that doesn't say it fits isn't sold, can't be
-put on, and is drawn as the item it's made from. cr3tool addons <release> <this folder> checks them.
+They're sold in the premium shop (the field's Shop button; the VS mode's Sp Shop) and worn like the
+game's. A weapon is always drawn as its own model. While HD Models replaces one of the character's
+figures, an outfit that doesn't say it fits looks like the item it's made from (its numbers its own). cr3tool addons <release> <this folder> checks them.
 Personal use only: they are made from the game's models. The README's "Add-ons".

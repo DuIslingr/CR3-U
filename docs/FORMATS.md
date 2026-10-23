@@ -2194,9 +2194,10 @@ put on it as HD Models puts a replacement's (applyFigureReplacement) - everythin
 numbers, the help line, its icon, the lists, battles, the camp's model, saves) is the game's as it
 is. Cr3OfflineDb::addGoods puts it on its shop's list (`com_1` - the premium shop, PiuComMenu,
 which the field's Shop button opens: Fld2Main::SM_Shop, CreatePiucomTop - and the VS mode's Sp
-Shop), goods 10000 + id (a weapon) / 11000 + id, its price in coins, GP or gold. While HD Models
-replaces a figure of the wearer's (`models/hd/<model>*`) an add-on not made for it (`hd_models`)
-is left off the shop's list and the equipment's candidates, and drawn as its like item's figure.
+Shop), goods 10000 + id (a weapon) / 11000 + id, its price in coins, GP or gold. Add-ons are
+always sold and worn; a weapon is always drawn as its own. While HD Models replaces a figure of
+the wearer's (`models/hd/<model>*`) an outfit not made for it (`hd_models`) is drawn as its like
+item's body (with that one's replacement, if any) - its numbers still its own, as the game's armour.
 `cr3tool addons <release> <folder>`: each one's rows read back, its goods, its model on its figure.
 
 ## Text (`message\*.dat`)

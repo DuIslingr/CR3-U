@@ -12,8 +12,8 @@
 //                          (default: the character's own kit's)
 //   price = 30             in the shop (`shop`, default com_1 - the premium shop)
 //   currency = coin        coin, GP or gold
-//   hd_models = no         yes: worn, too, by a character HD Models replaces; or the replaced
-//                          figures it is made to fit (j001b01 j001h01)
+//   hd_models = no         an outfit: yes - its own model, too, on a character HD Models replaces
+//                          (else the like item's look there); or the replaced figures it fits
 //
 // It becomes the game's own: a row of item_para's Armor / Weapon (a copy of the like item's - id
 // 9000 + id, the full id 209000 / 109000 + id, only the character may wear it, its model a new
@@ -65,9 +65,10 @@ public:
     const Cr3Addon* byFigure(const std::string& figure) const; // (its name, no ".geom")
     // the goods on their shops' lists (after Cr3OfflineDb::load)
     void addGoods(Cr3OfflineDb& db) const;
-    // whether it may be used while HD Models replaces `replaced` - the wearer's figures with a
-    // replacement (none: always)
-    static bool usable(const Cr3Addon& a, const std::vector<std::string>& replaced);
+    // whether it is drawn with its own model while HD Models replaces `replaced` - the wearer's
+    // figures with a replacement: a weapon always; an outfit with none replaced, or made to fit
+    // them (hd_models) - else it looks like its like item (its numbers its own all the same)
+    static bool ownModel(const Cr3Addon& a, const std::vector<std::string>& replaced);
 
 private:
     std::vector<Cr3Addon> list_;

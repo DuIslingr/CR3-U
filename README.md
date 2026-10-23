@@ -200,16 +200,18 @@ field's Shop button, or the VS mode's Sp Shop) next to its special ones, worn li
    like = 200083        # the item it's made from - its numbers, icon and body or weapon (default: the character's own)
    price = 30           # in the premium shop...
    currency = coin      # ...in coin, GP or gold (shop = none: not sold)
-   hd_models = no       # see below
+   hd_models = no       # an outfit's look with HD Models - see below
    ```
 
 3. Start the game: it is in the shop (`cr3tool addons <release> <game folder>/models/addons`
    checks them first - each one's item, name, shop goods and model, as the game takes them).
 
-An add-on is made for the character as the game draws it: while HD Models replaces any of that
-character's figures (`models/hd/j001*.glb`), its add-ons aren't sold, can't be put on, and one worn
-is drawn as the item it's made from - unless it says it fits: `hd_models = yes` (any), or the
-replaced figures it is made for (`hd_models = j001b01 j001h01`). `CR3_ADDONS=<folder>` reads them from
+Add-ons are always sold and worn, their numbers their own. A weapon is always drawn as its own
+model; an outfit is made for the character as the game draws it, so while HD Models replaces any
+of that character's figures (`models/hd/j001*.glb`) it looks like the item it's made from - as the
+game's own armour does, its numbers still the add-on's - unless it says it fits: `hd_models = yes`
+(any), or the replaced figures it is made for (`hd_models = j001b01 j001h01`). (`like` an armour
+whose body is your replaced one - the hero's b01, the Black Jacket - keeps your model on show.) `CR3_ADDONS=<folder>` reads them from
 elsewhere. Personal use, as HD Models: they're made from the game's models.
 
 ## Layout
