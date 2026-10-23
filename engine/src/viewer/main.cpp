@@ -6130,7 +6130,7 @@ struct Viewer {
                 if (g.function == want) {
                     if (g.shaped) areaWalker->setPosition({g.boxAt[0] + (g.boxLo[0] + g.boxHi[0]) / 2, g.boxAt[1] + (g.boxLo[1] + g.boxHi[1]) / 2, g.boxAt[2] + (g.boxLo[2] + g.boxHi[2]) / 2});
                     else areaWalker->setPosition({g.world.m[3], g.world.m[7] - 1.0f, g.world.m[11]});
-                    for (int k = 0; k < 30; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
+                    for (int k = 0; k < 30 && !g.shaped; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step(); // (an area change's: held in it - it may hang past a floor's edge)
                     SDL_Log("area %s: put in %s", area.name.c_str(), want.c_str());
                 }
         }
@@ -7913,7 +7913,9 @@ struct Viewer {
             // (CR3: SetVistaToField - Cr3System.SetComeFromVistaToField - back to the field it's in:
             // the area its map is of, d0101f's d0101)
             // - or where SetPopPoint2 put it (Fld2Main::SM_Init: the pop point first)
-            if (game.next.fieldMode == 2 && !eventScript.empty() && !game.popPoint2.empty()) {
+            // (nothing else reserved - VistaMain::BranchAfterVista's field, SM_Init - the same)
+            const bool toField = game.next.credit < 0 && game.next.popPoint.empty() && !game.next.title;
+            if ((game.next.fieldMode == 2 || toField) && !eventScript.empty() && !game.popPoint2.empty()) {
                 const std::string pop = game.popPoint2;
                 game.next = cr3::GameState::Next();
                 SDL_Log("event: back to the field, at %s", pop.c_str());
@@ -7923,6 +7925,14 @@ struct Viewer {
             }
             if (game.next.fieldMode == 2 && !eventScript.empty() && vistaMapName.size() == 6 && vistaMapName.back() == 'f') {
                 const std::string a = vistaMapName.substr(0, 5);
+                game.next = cr3::GameState::Next();
+                SDL_Log("event: back to the field, %s", a.c_str());
+                eventMode = false;
+                if (!loadArea(a, "")) SDL_Log("area %s: not entered", a.c_str());
+                return;
+            }
+            if (playMode && toField && !eventScript.empty() && !savedArea.empty()) { // (the field the vista was left from, where the player stood)
+                const std::string a = savedArea;
                 game.next = cr3::GameState::Next();
                 SDL_Log("event: back to the field, %s", a.c_str());
                 eventMode = false;
