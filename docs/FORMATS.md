@@ -1209,8 +1209,15 @@ then closed. What CR3-U shows of them:
   name; several on one: the command's +0xe8 (Command column 41's low short), else 99 / 0x6a; the
   same one on several targets: the several-targets line.
 
-Not yet: the assists' (OpenAssist), Analyze's HP (OpenHpAndMaxHp), the drops (AddDrop), the field
-effects' (AddById), stolen gold.
+- A drop (BtlMonsterStatus::vDrop, once, as the monster falls): mon_para Monster +0x70 and +0x7c,
+  (kind, id, chance) each - kind 1 an Item, 2 a Weapon, 3 Armor, 4 an Accessory, 5 a Cheet item,
+  6 an Event item, 7 a Gift, 8 a seasonal one (only during its event); rand() % 256 under the first's
+  chance its first, under the two together its second, else none. Announced (vAnnounceDrop:
+  `AnnounceBattle` 0x1d, its "{item.name}"; com_013) and, at the result, one of it in the bag
+  (VAcquireDrop, MbDropInfo::AddToSaveData). The frogs: item 234 at 39 / 256, item 3 at 6.
+
+Not yet: the assists' (OpenAssist), Analyze's HP (OpenHpAndMaxHp), the field effects' (AddById),
+stolen gold; the drop-rate bonuses (BtlDropParam).
 
 The target kinds (Command +0x10, MbTargetType - BtlStatusList::collectDamageTarget*): 0 self, 1 a
 party member (the actor's side), 2 all of them, 3 an enemy, 4 all enemies, 5 everyone, 6 a random

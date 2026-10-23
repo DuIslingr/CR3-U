@@ -6432,6 +6432,34 @@ struct Viewer {
         if (!text.empty()) setCr3Announce(text, 1.0f);
         SDL_Log("battle %.2f s: status effects on %zu - line %d", cr3BattleClock, got.size(), id);
     }
+    // a monster's drop (BtlMonsterStatus::vDrop, once, as it falls): mon_para Monster +0x70 and +0x7c
+    // - (kind, id, chance) each; rand() % 256 under the first's chance its first, under both its
+    // second, else none (a seasonal one - kind 8 - only in its event: none here). Announced
+    // (vAnnounceDrop: AnnounceBattle 0x1d, its "{item.name}", com_013) and kept for the result
+    // (VAcquireDrop - MbDropInfo::AddToSaveData: one of it)
+    std::map<int, int> cr3Drops; // (fighter: the item's full id)
+    void rollCr3Drop(int fi) {
+        const cr3::Cr3Fighter& f = cr3Rules.fighters[size_t(fi)];
+        if (f.player || cr3Drops.count(fi)) return;
+        cr3Drops[fi] = 0;
+        cr3::MbeFile::Row r;
+        if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r)) return;
+        const int kind0 = r.i(27), kind1 = r.i(30);
+        if (kind0 == 8) return;
+        const int c0 = kind0 > 0 ? r.i(29) : 0, c1 = kind1 > 0 && kind1 != 8 ? r.i(32) : 0;
+        const int roll = int(SDL_rand(256));
+        const int pick = roll < c0 ? 0 : roll < c0 + c1 ? 1 : -1;
+        if (pick < 0) return;
+        const int kind = pick ? kind1 : kind0, id = pick ? r.i(31) : r.i(28);
+        if (kind < 1 || kind > 7 || id <= 0) return;
+        const int full = (kind - 1) * 100000 + id;
+        cr3Drops[fi] = full;
+        std::string text = announceText("AnnounceBattle", 0x1d);
+        if (const size_t at = text.find("{item.name}"); at != std::string::npos) text.replace(at, 11, cr3ItemText(full, false));
+        setCr3Announce(text, 1.0f);
+        audio.playSe("com_013", false);
+        SDL_Log("battle %.2f s: fighter %d drops item %d", cr3BattleClock, fi, full);
+    }
     void rollCr3StartMode() {
         cr3StartMode = 0, cr3Announce = Cr3Announce();
         const int first = game.next.battleFirstStrike[0], surprise = game.next.battleFirstStrike[1];
@@ -6466,7 +6494,7 @@ struct Viewer {
         }
     }
     bool startCr3Battle(int coupling, int fieldId) {
-        cr3BattleLost = false; // (BtlSystem::Init: s_ResultParam -1)
+        cr3BattleLost = false, cr3Drops.clear(); // (BtlSystem::Init: s_ResultParam -1)
         std::string err;
         if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, &err))) {
             SDL_Log("battle: %s", err.c_str());
@@ -7010,6 +7038,7 @@ struct Viewer {
                 if (flags & 1) cr3Popups.push_back({-1, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock, 5});
                 if (d < 0) continue; // (a heal: no flinch)
                 const bool last = h + 1 == th.hits.size();
+                if (last && th.killed) rollCr3Drop(th.target);
                 if (last && th.killed) setCr3Motion(tu, "bd03", false, true);
                 else setCr3Motion(tu, "bd01", false);
             }
@@ -7091,6 +7120,8 @@ struct Viewer {
             cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16));
         }
         game.cr3Money += cr3ResultMoney;
+        for (const auto& [fi, item] : cr3Drops) // (VAcquireDrop: the drops into the bag)
+            if (item > 0) game.cr3Items[item] = std::clamp(game.cr3Items[item] + 1, 0, 99), SDL_Log("battle %d: item %d into the bag", cr3Battle.coupling, item);
         if (game.next.battleMusicAfter >= 0) audio.stopBgm(20); // (phaseResult: FadeBgm, a second)
         cr3BattleStage = Cr3BattleStage::Result, cr3StageStart = cr3BattleClock;
         SDL_Log("battle %d: result - %d EXP, %d money", cr3Battle.coupling, cr3ResultExp, cr3ResultMoney);
