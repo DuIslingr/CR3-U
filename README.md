@@ -130,7 +130,8 @@ To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `C
 
 ## Field and battle speed
 
-Options, Display & Graphics: **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
+The camp's Options, Other, Display & Graphics (a list of CR3-U's own settings - graphics, HD,
+controls - scrolling, with the game's scroll bar): **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
 field (its scenes, talk and menus as they are) and the battles that many times as fast. Kept in
 settings.ini (`field_speed`, `battle_speed`); `--field-speed n` / `--battle-speed n` for one run.
 
@@ -147,7 +148,7 @@ the originals:
    lossless and block-compressed pictures, Real-ESRGAN (`--esrgan <the folder with
    realesrgan-ncnn-vulkan and models/>`) for the 16-bit ones - or `--engine waifu2x` for all. It
    needs Python 3 with NumPy and Pillow; `--help` lists the rest (`--scale`, `--noise`, `--only` ...).
-3. Start the game: with `textures/hd/` there, HD Textures is on by itself (Options, Graphics, HD Textures switches
+3. Start the game: with `textures/hd/` there, HD Textures is on by itself (Options, Other, Display & Graphics, HD Textures switches
    it; `--no-hd-textures` for a run without). One `textures/hd/` can hold every release's.
 
 `CR3_HD_TEXTURES=<folder>` reads them from elsewhere; the older `hd-textures/` beside the program or in
@@ -169,7 +170,7 @@ retextured - moving with the game's own skeleton and animations:
    A material keeps the game's render state by its name `cr_mat_<n>...`; give it a picture of your own
    (PNG or JPEG, any size, packed in the `.glb`) and that picture replaces the figure's.
 3. Export it from Blender as glTF 2.0 (`.glb`, the defaults) to `models/hd/<figure>.glb` (`j001b01.glb`
-   for the figure `j001b01`). With HD Models on (Options, Display & Graphics; on by itself) it is drawn
+   for the figure `j001b01`). With HD Models on (Options, Other, Display & Graphics; on by itself) it is drawn
    instead of the original from the next scene on.
 
 What it reads: triangles, the first UV set and the second and colour set, four weights a vertex; meshes

@@ -718,7 +718,10 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
 - Options (OptionMain 0xac, OptionMenu 0xad): `optTopPositon`'s `optTab_fr00` (Sound, Controls, Other),
   Sound's three `optSltPanel` (BGM, Sound Effects, Voiceovers) with `optSltBar_fr00` at the volume's
   frame and `optSltBarCursor` along the bar (SetBarControlPoint), Controls' `optHnd_fr00` pair, Other's
-  Resolution (`optSltLRPanel`); the volumes saved on the way out.
+  Resolution (`optSltLRPanel`); the volumes saved on the way out. CR3-U puts its own Display & Graphics
+  on the menu's spare `call_optSltPanel_002` (an `optSltLRPanel`, either arrow opening it): its settings as a
+  comListMenu list (setting at typeM_L01, value at typeM_R01, comListBarPanel's scroll bar, the help on the
+  header's line - two lines when it's wider than that).
 
 `cr3view --input camp:open,camp:button<n>,camp:cat<n>,camp:row<n>,camp:card<n>,camp:reel<n>,camp:chara<n>,
 camp:yes,camp:no,camp:ok,camp:back,camp:model,camp:turn<px>,camp:zoom<px>` (or `camp:genes`,

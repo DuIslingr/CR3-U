@@ -414,6 +414,12 @@ struct Viewer {
 
     // The list's rows: its label and value, its help (the list's window), what Left / Right / a
     // tap does (+1 / -1)
+    // a folder as the settings' help shows it: its last two names (".../models/hd/")
+    static std::string shortDir(const std::string& dir) {
+        size_t at = dir.size() > 1 ? dir.find_last_of("/\\", dir.size() - 2) : std::string::npos;
+        if (at != std::string::npos && at > 0) at = dir.find_last_of("/\\", at - 1);
+        return at == std::string::npos ? dir : "..." + dir.substr(at);
+    }
     struct SettingRow {
         std::string label, value, help;
         bool enabled = true;
@@ -506,16 +512,16 @@ struct Viewer {
             SDL_PathInfo info;
             const bool have = !hdDir.empty() && SDL_GetPathInfo(hdDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
             rows.push_back({"HD Textures", onOff(s.hdTextures),
-                            have ? "Upscaled textures (waifu2x / Real-ESRGAN: tools/hd_textures.py) from " + hdDir
-                                 : "None in " + hdDir + " yet: cr3view --export-textures, then tools/hd_textures.py",
+                            have ? "Upscaled textures (waifu2x / Real-ESRGAN: tools/hd_textures.py) from " + shortDir(hdDir)
+                                 : "None in " + shortDir(hdDir) + " yet: --export-textures, then tools/hd_textures.py",
                             true, [&s](int) { s.hdTextures = !s.hdTextures; }});
         }
         {
             SDL_PathInfo info;
             const bool have = !modelsDir.empty() && SDL_GetPathInfo(modelsDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
             rows.push_back({"HD Models", onOff(s.hdModels),
-                            have ? "Replacement models (glTF) from " + modelsDir + ", in place of the game's - from the next scene on"
-                                 : "None in " + modelsDir + " yet: cr3view --export-models, edit in Blender, save as models/hd/<figure>.glb",
+                            have ? "Replacement models (glTF) from " + shortDir(modelsDir) + " - from the next scene on"
+                                 : "None in " + shortDir(modelsDir) + " yet: --export-models, edit, save as models/hd/<figure>.glb",
                             true, [&s](int) { s.hdModels = !s.hdModels; }});
         }
         auto speed = [](int x) { return x > 1 ? std::to_string(x) + "x" : std::string("Off"); };
@@ -10438,10 +10444,30 @@ struct Viewer {
             poseUi(win, "scrlwin_io", t);
             drawFigure(win.fig, view.data());
             // (BattleSkillListMenu::Update: SetStringData - near black, 0.01; within the window)
-            const std::string& s = rows[size_t(fi)].help; // (its break the text's "\\n")
-            const size_t br = s.find("\\n");
+            std::string s = rows[size_t(fi)].help; // (its break the text's "\\n")
             const float right = uiRight(win) - 0.03f;
             float x, y;
+            // (CR3-U's own longer lines - the settings' -: broken at the last word that fits the window)
+            static std::map<std::string, std::string> wrapped; // (by the text and the screen's size)
+            if (s.find("\\n") == std::string::npos && uiJoint(win, "typeS_L01", x, y)) {
+                const std::string key = s + "\n" + std::to_string(w) + "x" + std::to_string(h);
+                auto it = wrapped.find(key);
+                if (it == wrapped.end()) {
+                    std::string out = s;
+                    if (uiTextWidth(s, 26, w, h) > right - x) {
+                        size_t cut = std::string::npos; // (the space whose two lines' wider is the narrowest)
+                        float best = 1e9f;
+                        for (size_t at = s.find(' '); at != std::string::npos; at = s.find(' ', at + 1)) {
+                            const float wider = std::max(uiTextWidth(s.substr(0, at), 26, w, h), uiTextWidth(s.substr(at + 1), 26, w, h));
+                            if (wider < best) best = wider, cut = at;
+                        }
+                        if (cut != std::string::npos) out = s.substr(0, cut) + "\\n" + s.substr(cut + 1);
+                    }
+                    it = wrapped.emplace(key, out).first;
+                }
+                s = it->second;
+            }
+            const size_t br = s.find("\\n");
             if (uiJoint(win, "typeS_L01", x, y)) drawUiText(s.substr(0, br), 26, x, y, w, h, true, 0.01f, right - x);
             if (br != std::string::npos && uiJoint(win, "typeS_L02", x, y)) drawUiText(s.substr(br + 2), 26, x, y, w, h, true, 0.01f, right - x);
         }
@@ -20215,7 +20241,72 @@ struct Viewer {
         campOptions.tab = 0;
         SDL_Log("camp: options");
     }
+    // CR3-U's Display & Graphics over the options (settingRows): comListMenu's rows - the setting at
+    // typeM_L01, its value at typeM_R01 -, five shown about the focused one with comListBarPanel's
+    // scroll bar, the focused one's help on the header's line, the footer's back
+    void drawCr3Settings(int w, int h, const Mat4& view) {
+        const float t = uiClock - settingsStart;
+        const std::vector<SettingRow> rows = settingRows();
+        const int n = int(rows.size()), focus = std::clamp(settingsCursor, 0, std::max(n - 1, 0));
+        float x, y, cx, cy;
+        UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", t, 0, 0, view);
+        if (cr3UiCall(lp, "call_comListMenu", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+            float lx, ly;
+            if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
+                const int top = std::clamp(focus - 2, 0, std::max(n - 5, 0));
+                drawCr3ListBar(menu, false, top, n, 5, view);
+                for (int k = top; k < n && k < top + 5; ++k) {
+                    const SettingRow& r = rows[size_t(k)];
+                    Cr3FocusRow focusRow(*this, k == focus, r.enabled);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, focus), cr3ListRowY(ly, k, top, focus), view);
+                    if (k == focus && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                    cr3UiLabel(panel, "typeM_L01", r.label, w, h, 0.3f);
+                    float tx, ty;
+                    if (!r.value.empty() && cr3UiCall(panel, "typeM_R01", tx, ty)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        const float sz = k == focus ? 26 * 1.1f : 26;
+                        drawUiText(r.value, sz, (tx - 0.06f) / 10 - uiTextWidth(r.value, sz, w, h), (ty - 0.15f) / 10, w, h, true,
+                                   k == focus ? 1.0f : r.enabled ? 0.3f : 0.15f);
+                    }
+                    float ax, ay, bx, by;
+                    if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 900 + k});
+                }
+            }
+        }
+        UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+        if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+            UiFig& bm = cr3UiPut("combackmenu", "", 0, x, y, view);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
+        }
+        // (the header's line: a help too wide for it as two, broken where they're most even)
+        std::string help = focus < n ? rows[size_t(focus)].help : std::string();
+        if (uiTextWidth(help, 23, w, h) > 0.97f) { // (0.97: as far as the battery)
+            size_t cut = std::string::npos;
+            float best = 1e9f;
+            for (size_t at = help.find(' '); at != std::string::npos; at = help.find(' ', at + 1)) {
+                const float wider = std::max(uiTextWidth(help.substr(0, at), 18, w, h), uiTextWidth(help.substr(at + 1), 18, w, h));
+                if (wider < best) best = wider, cut = at;
+            }
+            if (cut != std::string::npos) help = help.substr(0, cut) + "\\n" + help.substr(cut + 1);
+        }
+        drawCr3Header(t, 7, help, w, h, view);
+    }
+    void chooseCr3Settings(int id) {
+        const int n = int(settingRows().size());
+        if (id == -1) {
+            audio.playSe("com_004", false);
+            closeSettings();
+            return;
+        }
+        if (id < 900 || id >= 900 + n) return;
+        if (id - 900 != settingsCursor) settingsCursor = id - 900, audio.playSe("com_002", false);
+        else settingChange(settingsCursor, 1);
+    }
     void drawCampOptions(int w, int h, const Mat4& view) {
+        if (settingsOpen) return drawCr3Settings(w, h, view);
         const float t = cr3Camp.since;
         Cr3CampOptions& co = campOptions;
         float x, y, cx, cy;
@@ -20290,6 +20381,25 @@ struct Viewer {
                     if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 601});
                 }
             }
+            // (CR3-U's own: Display & Graphics - its settings' list, settingRows - on the menu's
+            // second LR panel, which the game leaves empty; either arrow opens it)
+            if (cr3UiCall(menu, "call_optSltPanel_002", px, py)) {
+                UiFig& panel = cr3UiPut("optsltlrpanel", "", 0, px, py, view);
+                cr3UiLabel(panel, "typeM_L00", "Display & Graphics", w, h, 0.26f);
+                float tx, ty;
+                if (cr3UiCall(panel, "typeM_C01", tx, ty)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText("Open", 24, tx / 10, (ty - 0.12f) / 10, w, h, false, 0.26f);
+                }
+                if (cr3UiCall(panel, "call_optSltLbtn", cx, cy)) {
+                    float ax, ay, bx, by;
+                    UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
+                    if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 650});
+                    UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f, cy, view);
+                    if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 650});
+                    cr3CampTaps.push_back({cx, cy - 0.3f, cx + 3.0f, cy + 0.3f, 650}); // (the panel between them)
+                }
+            }
         }
         // (the back)
         UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
@@ -20303,6 +20413,12 @@ struct Viewer {
     }
     void chooseCampOptions(int id) {
         Cr3CampOptions& co = campOptions;
+        if (settingsOpen) return chooseCr3Settings(id);
+        if (id == 650) { // (CR3-U's Display & Graphics)
+            audio.playSe("com_003", false);
+            openSettings();
+            return;
+        }
         if (id == -1) {
             audio.playSe("com_004", false);
             cr3Camp.stage = 1, cr3Camp.since = 0;
@@ -20320,7 +20436,14 @@ struct Viewer {
     }
     void campOptionsKey(SDL_Keycode key) {
         Cr3CampOptions& co = campOptions;
+        if (settingsOpen) { // (the settings' list: up / down, left / right / Return change, Escape / Backspace back)
+            if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCr3Settings(-1);
+            if (key == SDLK_UP || key == SDLK_DOWN) audio.playSe("com_002", false);
+            settingsKey(key);
+            return;
+        }
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampOptions(-1);
+        if (co.tab == 2 && (key == SDLK_RETURN || key == SDLK_G)) return chooseCampOptions(650); // (Other: Display & Graphics)
         if (key == SDLK_TAB) return chooseCampOptions(400 + (co.tab + 1) % 3);
         if (co.tab == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) // (the BGM's volume; 1 .. 3 pick which)
             return chooseCampOptions(800 + optionFocus * 20 + std::clamp(optionVolume[optionFocus] / 10 + (key == SDLK_RIGHT ? 1 : -1), 0, 10));
@@ -22387,6 +22510,16 @@ int main(int argc, char** argv) {
         }
         for (float t = 0; t < walkSeconds; t += 1.0f / 60.0f) v.advance(1.0f / 60.0f, walkX, walkY, true);
         if (tapAfter) v.tap(); // (--tap: then a tap, before --run)
+        if (const char* row = SDL_getenv("CR3_CAPTURE_SETTINGS")) { // (tests: as below, before --run)
+            if (v.areaMode) { // (CR3's camp: Options, its Other tab; -1 that alone)
+                v.openCr3Camp();
+                v.openCampOptions();
+                v.campOptions.tab = 2;
+            } else {
+                v.optionsOpen = true, v.campOpen = !v.battleMode;
+            }
+            if (std::atoi(row) >= 0) v.openSettings(), v.settingsCursor = std::atoi(row);
+        }
         for (float t = 0; t < runSeconds; t += 1.0f / 60.0f) v.advance(1.0f / 60.0f, 0, 0, false), catchGlass(); // (--run: on after the walk)
         runSeconds = 0;
         SDL_Log("play: after %.2f s (+ %.2f s walking) %s, %d battles skipped", startTime, walkSeconds,
@@ -22434,6 +22567,16 @@ int main(int argc, char** argv) {
         if (v.cr3Title.stage && !v.playMode) { // (CR3's title: --time that long on it, --tap then a tap, then --run)
             for (float t = 0; t + 0.5f / 60.0f < startTime; t += 1.0f / 60.0f) v.advance(1.0f / 60.0f, 0, 0, false), v.pose();
             if (tapAfter) v.tap();
+        }
+        if (const char* row = SDL_getenv("CR3_CAPTURE_SETTINGS"); row && !v.settingsOpen) { // (tests: the Display & Graphics list over the camp's options, that row in focus)
+            if (v.areaMode) { // (CR3's camp: Options, its Other tab; -1 that alone)
+                v.openCr3Camp();
+                v.openCampOptions();
+                v.campOptions.tab = 2;
+            } else {
+                v.optionsOpen = true, v.campOpen = !v.battleMode;
+            }
+            if (std::atoi(row) >= 0) v.openSettings(), v.settingsCursor = std::atoi(row);
         }
         for (int k = 0; k < int(runSeconds * 60.0f + 0.5f); ++k) {
             v.time += 1.0f / 60.0f;
@@ -22746,6 +22889,8 @@ int main(int argc, char** argv) {
                     int ww = 1, wh = 1;
                     SDL_GetWindowSize(win, &ww, &wh);
                     v.scrollScenarios(-e.motion.yrel / float(std::max(wh, 1)) * 0.64f);
+                } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.settingsOpen) { // (the settings' list: a row up / down)
+                    if (e.wheel.y != 0) v.settingsKey(e.wheel.y > 0 ? SDLK_UP : SDLK_DOWN);
                 } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.campOpen && v.campLink == 201) {
                     v.scrollScenarios(e.wheel.y > 0 ? -0.1f : 0.1f);
                 } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && !v.fieldMode) {
