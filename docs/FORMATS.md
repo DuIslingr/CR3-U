@@ -886,7 +886,22 @@ s141 scene); the Space Port's clerk (`c121_00`) opens main quest 3 (flag 2157) a
 Main quests list once their `flags` say (-600n not set - not yet cleared -, then the story flag: 2095,
 2095, 2157, 2173 ..). `_id` is the scripts' `q<id>`; `no` only the shown number (Yae 53 is no. 20).
 The quest tab last shown stays for the Space Port's next visit (the second visit after a delivery:
-Sub Quests still, not the empty Main). A dungeon's town button
+Sub Quests still, not the empty Main). Chapter 4's gate: twelve cleared with quest 71 (flag 6071)
+- s160_00301, flag 2169 -, fifteen with 62 - s160_00401, 2170 -, the clerk (2171, s161_00401), j005
+at work 12 = 15 (s161_00501, 2172), then twenty with 63 and 2074: the clerk sets 2173, main quest 4.
+Rank 1 quests are drawn once a day, so one whose flags open later (62, 71 after main quest 3) shows
+after a Shuffle. Kinds met: a talk at the Colosseum desk (`c121_00` in area 1) starting a quest battle
+(71), a pickup (`cobj_24`, 62), a person whose talk starts a battle (150), a Terror Cube (`TerrorCube`:
+yes, its battle, then `CubeBreak` - 165, 198), a kill count (`KilledSet(dungeon, monster, n)`: works
+52 / 55 and flag 1496; each won battle's Battle_Victory_Base - with flag 1400 - CountKilledMonster
+adds the fallen of that monster to work 56, a fallen unit having status effect 1, the KO
+TriggerSkillToDirection gives it; KilledCheck in the field announces), deliveries. A quest battle's
+SetBattleToVista may name a function no script has (q071_t01_00102_evt): VistaMain::LoadScript calls
+nothing, so the vista ends at its next step and goes on as any. Team level (Invoke 0) follows the
+collection book: the lines with a gene held (Invoke 1). Tests: `cr3tool db <release> quests` lists
+the quests; `--input auto` / `manual` fights the later battles alone (attack the first monster,
+take the result), `wander:<seconds>` runs the player round a small circle (the encounters' steps).
+A dungeon's town button
 (Fld2Main::SM_TownJump) runs the area script's `DungeonExit`. The detail's "{item_cnt}" is the
 goods held (GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock). Itemizing gift 600022 sets flag
 28 (DBSystem::SM_ItemizeGift: Explorer Training's step). The tutorial quests (rank 6: Explorer

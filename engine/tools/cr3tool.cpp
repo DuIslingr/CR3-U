@@ -269,6 +269,12 @@ int db(const char* path, const char* sheet) {
     }
     int offline = 0;
     for (int k = 0; k < cr3::kCr3RequestCount; ++k) offline += cr3::cr3Request(k).offline;
+    if (sheet && !std::strcmp(sheet, "quests")) { // (each quest: _id - the scripts' q<id> -, shown number, rank, flags, level, goods)
+        for (const cr3::Cr3OfflineDb::Quest& q : d.quests())
+            std::printf("quest %d: no. %d, rank %d, flags %d %d %d %d %d %d, level %d, goods %d x%d\n", q.id, q.no, q.rank, q.flags[0], q.flags[1],
+                        q.flags[2], q.flags[3], q.flags[4], q.flags[5], q.level, q.item, q.itemCount);
+        return 0;
+    }
     std::printf("%zu server tables, %zu item sheets, %zu quests; %d requests, %d played offline\n", d.tables().size(),
                 d.itemSheets().size(), d.quests().size(), cr3::kCr3RequestCount, offline);
     for (const auto& [name, t] : d.tables()) std::printf("  %-22s %zu rows\n", name.c_str(), t.size());
@@ -498,7 +504,7 @@ int usage() {
                  "cr3tool glass <seeds>\n"
                  "cr3tool save-import <game.dat | cont.dat> [system.dat]  (a CR3-U save on stdout)\n"
                  "cr3tool save-export <archive> <CR3-U save> <game.dat>\n"
-                 "cr3tool db <release> [item sheet]  (the offline database: tables, requests, a sheet's boxes)\n"
+                 "cr3tool db <release> [item sheet | quests]  (the offline database: tables, requests, a sheet's boxes, the quests)\n"
                  "cr3tool gltfcheck <release> <figure | all> [file.glb]  (HD Models' round trip)\n"
                  "cr3tool addons <release> <folder>  (the add-ons' outfits and weapons, as the game takes them)\n");
     return 2;

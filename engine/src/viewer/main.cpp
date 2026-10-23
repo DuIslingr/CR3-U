@@ -6627,6 +6627,7 @@ struct Viewer {
     float areaScriptRun = 0;     // (seconds the area's script has run)
     bool areaScriptOver = false; // (the area's evt000 over as it started - its BranchAfterEvent still to come)
     void updateArea(float dt, float sx, float sy, bool run) {
+        takeAutoBattleToken();
         areaClock += dt, areaMotionAge += dt;
         stepFieldEffects(dt);
         if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
@@ -6854,6 +6855,17 @@ struct Viewer {
                     else areaWalker->setPosition({g.world.m[3], g.world.m[7], g.world.m[11]}); // (held in it - a drop may miss a small one, or a floor's edge)
                     SDL_Log("area %s: put in %s", area.name.c_str(), want.c_str());
                 }
+        }
+        // (--input wander:<seconds>: tests - the player runs round in a small circle that long, the
+        // encounters' steps counted)
+        if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 7, "wander:") == 0) {
+            wanderLeft = std::max(float(std::atof(inputScript.front().c_str() + 7)), 0.0f);
+            inputScript.pop_front();
+            SDL_Log("area %s: wander %.0f s", area.name.c_str(), wanderLeft);
+        }
+        if (wanderLeft > 0 && !(areaEvents && areaEvents->running())) {
+            wanderLeft -= dt, wanderTurn += dt * 2.0f;
+            sx = std::cos(wanderTurn), sy = std::sin(wanderTurn), run = true;
         }
         const bool* keys = SDL_GetKeyboardState(nullptr);
         if (keys) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
@@ -7177,7 +7189,13 @@ struct Viewer {
             });
             vm.setNative("BattleStatus", "GiveStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.giveEffect(c.integer(0, -1), c.integer(1)); });
             vm.setNative("BattleStatus", "RemovesStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.removeEffect(c.integer(0, -1), c.integer(1)); });
-            vm.setNative("BattleStatus", "HaveStatusEffect", [this](cr3::NativeCall& c) { c.result(cr3Rules.hasEffect(c.integer(0, -1), c.integer(1))); });
+            // (BtlStatusList::HaveStatusEffectToDirection: the direction's effects - 1, KO, taken as a
+            // unit falls - BtlStatus::TriggerSkillToDirection's trigger 7 -, CountKilledMonster's)
+            vm.setNative("BattleStatus", "HaveStatusEffect", [this, fighter](cr3::NativeCall& c) {
+                const int id = c.integer(0, -1), effect = c.integer(1);
+                const auto* f = fighter(id);
+                c.result(cr3Rules.hasEffect(id, effect) || (effect == 1 && f && f->dead()));
+            });
             vm.setNative("BattleStatus", "GetIdByStatusEffect", [this](cr3::NativeCall& c) { // (the first unit with it; -1 none)
                 int id = -1;
                 for (size_t k = 0; k < cr3Rules.fighters.size() && id < 0; ++k)
@@ -7440,6 +7458,18 @@ struct Viewer {
         cr3Ctn = Cr3Continue(), cr3Ctn.stage = 1, cr3Ctn.since = cr3BattleClock;
         audio.playBgm(0x2f, 0);
         SDL_Log("battle %d: continue? (%d jems)", cr3Battle.coupling, cr3Jems());
+    }
+    // --input auto / manual (tests): the battles from then on fought alone - each command an
+    // attack on the first monster alive, the result taken - where the input has no choice of its own
+    bool autoBattle = false;
+    float wanderLeft = 0, wanderTurn = 0; // (--input wander:<seconds>)
+    void takeAutoBattleToken() {
+        while (!inputScript.empty() && (inputScript.front() == "auto" || inputScript.front() == "manual"))
+            autoBattle = inputScript.front() == "auto", inputScript.pop_front(), SDL_Log("battles: %s", autoBattle ? "auto" : "manual");
+    }
+    static bool isCr3BattleToken(const std::string& t) {
+        return t == "battle" || t == "escape" || t == "options" || t == "attack" || t == "guard" ||
+               t.compare(0, 4, "gene") == 0 || t.compare(0, 4, "item") == 0 || (t.size() > 1 && t[0] == 't' && std::isdigit(static_cast<unsigned char>(t[1])));
     }
     void stepCr3Continue() {
         // (--input ctn:giveup / jem / yes / no / ok: tests - the battle's leftover choices dropped)
@@ -7725,7 +7755,14 @@ struct Viewer {
                    cr3BattleStage == Cr3BattleStage::List || (cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk)) {
             // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive; "escape" then
             // "yes" / "no" - once the battle's script is over, as the menu waits: a turn end's scene)
-            if (!scripted && !inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
+            takeAutoBattleToken();
+            const bool own = !inputScript.empty() && isCr3BattleToken(inputScript.front());
+            if (!scripted && autoBattle && !own && cr3BattleClock - cr3StageStart > 0.6f) { // (--input auto: attack the first monster alive)
+                if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(0);
+                else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(0);
+                else if (cr3BattleStage == Cr3BattleStage::Target) chooseCr3Target(0);
+                else if (cr3BattleStage == Cr3BattleStage::List) cr3BattleStage = Cr3BattleStage::Command;
+            } else if (!scripted && !inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
                 const std::string tok = inputScript.front();
                 if (cr3BattleStage == Cr3BattleStage::Command && (tok == "attack" || tok == "guard")) {
                     inputScript.pop_front();
@@ -7779,6 +7816,7 @@ struct Viewer {
                     inputScript.front().compare(0, 4, "item") == 0 || (inputScript.front().size() > 1 && inputScript.front()[0] == 't')))
                 inputScript.pop_front();
             if (!inputScript.empty() && inputScript.front() == "result" && cr3BattleClock - cr3StageStart > 1.5f) inputScript.pop_front(), endCr3Battle();
+            else if (autoBattle && cr3BattleClock - cr3StageStart > 1.5f) endCr3Battle(); // (--input auto: the result taken)
         } else if (cr3BattleStage == Cr3BattleStage::Lost) {
             if (!scripted && cr3ForcedEnd == 3) { // (a story's loss: its defeat script's event, then Battle.ForceEnd - over, not lost)
                 cr3ForcedEnd = -1, cr3BattleLost = false;
@@ -8620,13 +8658,16 @@ struct Viewer {
         const std::string fn = colon != std::string::npos ? function.substr(colon + 1) : function;
         if (!eventScript.empty() ? !event->start(eventScript, fn) : !event->start(fn)) {
             SDL_Log("event %s: %s", function.c_str(), event->error().c_str());
-            return false;
+            // (VistaMain::LoadScript: a function its script lacks - q071_t01_00102_evt, a quest
+            // battle's SetBattleToVista - calls nothing; nothing running, the vista is over at its
+            // next step and goes on as any ends, BranchAfterVista)
+            if (event->error().find(": no function ") == std::string::npos) return false;
         }
         eventMode = true;
         dev->resetHistory();
-        stepEvent(); // (the update the game starts it in)
         status = function + " in " + map;
         SDL_Log("event %s: vista %s, %zu scene models", function.c_str(), map.c_str(), event->scene().models().size());
+        stepEvent(); // (the update the game starts it in)
         return true;
     }
 
