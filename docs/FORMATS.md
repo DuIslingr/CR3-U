@@ -270,9 +270,13 @@ The field's feBtnSave (Fld2TabMenu tab 3 - SE 0x16d, the UI hidden while it save
 Fld2SaveData(-2) keeps the dungeon, the area, the player's place and turn in Cr3FieldData, and
 DBSystem::Sync writes the game's data. The title (TitleMain) loads it - CrxGameData::Load, t01's
 `Login` - and goes on to the field where it was (Fld2Main::SM_FirstEvent: `evt000`); with no game
-yet, the prologue. CR3-U writes its own save, `save1.txt` in the profile folder (GameState::save
-with the area and place), on the Save button; a tap on the title resumes it, else starts a new
-game. `cr3view` with nothing asked for opens the title (the release's launch).
+yet, the prologue. The game also syncs - so saves - by
+itself: entering a field and changing areas (Fld2Main::SM_Init / SM_ChangeArea / SM_TownMove), after
+a battle (BattleSession::SM_Sync), and at the scripts' Cr3System.Sync / Sync2 / SavePoint
+(utils::Sync, SavePoint::SM_Sync). CR3-U writes its own save, `save1.txt` in the profile folder
+(GameState::save with the area and place), on the Save button and - in a game played from the
+title - at those points, once the area's script is done and the field idle; a tap on the title
+resumes it, else starts a new game. `cr3view` with nothing asked for opens the title (the release's launch).
 
 ### Random encounters (CR3)
 

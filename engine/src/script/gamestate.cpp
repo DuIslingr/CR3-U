@@ -82,9 +82,14 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3System", "Sync2", [&state, &db](NativeCall& c) {
         if (db) db->sync2(state, c.string(0));
+        if (state.onSync) state.onSync();
     });
-    vm.setNative("Cr3System", "Sync", [&db](NativeCall&) {
+    vm.setNative("Cr3System", "Sync", [&state, &db](NativeCall&) {
         if (db) db->finish(kDbOk);
+        if (state.onSync) state.onSync();
+    });
+    vm.setNative("Cr3System", "SavePoint", [&state](NativeCall&) { // (utils::SavePoint: a sync)
+        if (state.onSync) state.onSync();
     });
     // the day's ticket: utils::CheckTicketReceived (GotTicket) - its Result -, ReceiveTicket
     vm.setNative("Cr3System", "CheckTicketReceived", [&state, &db](NativeCall&) {

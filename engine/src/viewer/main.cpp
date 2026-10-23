@@ -539,6 +539,7 @@ struct Viewer {
     void resetGame() { // (Cr3UtilResetWork: a new game's state, the database kept - logged in, as Auth offline)
         game = cr3::GameState();
         game.cr3Db = offlineDb.loaded() ? &offlineDb : nullptr;
+        game.onSync = [this] { cr3SavePending = cr3Playing; };
         if (game.cr3Db) offlineDb.login(game, std::time(nullptr));
     }
     std::unique_ptr<cr3::FieldScript> script;   // the dungeon's script
@@ -5581,6 +5582,7 @@ struct Viewer {
             SDL_Log("area %s: %s - %s", name.c_str(), entry.c_str(), areaEvents->error().c_str());
         else SDL_Log("area %s: %s running, %zu gimmicks", name.c_str(), entry.c_str(), areaGimmicks.size());
         setupAreaEncounters(name);
+        cr3SavePending = cr3SavePending || cr3Playing; // (Fld2Main::SM_Init / SM_ChangeArea: DBSystem::Sync)
         const cr3::Vec3 at = areaWalker->position();
         SDL_Log("area %s: %zu figures, player %s at %s (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
                 restored ? "where it left" : "defaultPos", at[0], at[1], at[2]);
@@ -6110,6 +6112,7 @@ struct Viewer {
             return;
         }
         if (cr3FieldIdle() && !cr3BattleRequest.active) countEncounter();
+        if (cr3SavePending && cr3FieldIdle() && !cr3BattleRequest.active) cr3SavePending = false, writeCr3Save();
     }
 
     void drawArea(int w, int h) {
@@ -8635,6 +8638,7 @@ struct Viewer {
             for (ViewFigure& f : t.maps) unload(f);
             unload(t.logo.position), unload(t.logo.fig);
             resetGame();
+            cr3Playing = true;
             if (!cr3SavedArea().empty() && loadCr3Save()) return; // (TitleMain: the save loaded, its field)
             SDL_Log("title: a new game");
             startEvent("t01:s000_t01_00101_evt", "null", pageSeconds);
@@ -10423,6 +10427,10 @@ struct Viewer {
     // the dungeon, area, place and turn - and DBSystem::Sync, the game's data kept): CR3-U's save1.txt
     // with the area and the place; the title's tap takes it back up (TitleMain: CrxGameData::Load,
     // then the field where it was - Fld2Main::SM_FirstEvent's evt000)
+    // (a game played from the title: saved where the game syncs - entering an area, Fld2Main's
+    // SM_Init / SM_ChangeArea / SM_TownMove, back from a battle, the scripts' Sync and SavePoint -,
+    // once the area's script is done and the field is idle)
+    bool cr3Playing = false, cr3SavePending = false;
     bool writeCr3Save() {
         if (!areaMode || !areaWalker) return false;
         std::map<std::string, std::string> extra;

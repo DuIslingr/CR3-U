@@ -25,7 +25,8 @@ or, with a save, carries on from it. What works today:
 - **Towns and dungeons** (CR3's `Fld2` field): walking by keys, pad, mouse or touch, the follow
   camera, doors, event boxes and people, the area scripts, map names, the field's buttons; **random
   encounters** with first strikes, surprise attacks and ace monsters; **saving** with the field's
-  Save button (one save, in the profile folder)
+  Save button and where the game saves by itself - entering areas, after battles (one save, in
+  the profile folder)
 - **Battles**: the glass break, the get-set menu, commands, genes and items, the break gauge,
   criticals, downs and combos, status effects, hit effects, the battle scripts, announcements,
   escape, the result - EXP into the worn genes, money, monster drops - and the continue and game over

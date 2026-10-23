@@ -4,6 +4,7 @@
 // when the script running has finished (FldMain::BranchAfterEvent, VistaMain::BranchAfterVista).
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -72,6 +73,9 @@ struct GameState {
     // them - the release's, set by whoever opened it; null: none) and what it keeps in the save:
     // the item sheets' progress by sheet, the genes held, the presents box, the quests
     Cr3OfflineDb* cr3Db = nullptr;
+    // the game's data written where the game syncs it (DBSystem::Sync: Cr3System.Sync / Sync2 /
+    // SavePoint - utils::Sync, SavePoint::SM_Sync); the player's (null: nothing)
+    std::function<void()> onSync;
     std::map<std::string, Cr3SheetProgress> cr3Sheets;
     std::vector<Cr3Gene> cr3Genes;
     std::set<int> cr3GeneBook; // (the genes ever had: utils::CheckNewGene - CrxGameData +0x28198's bits)
