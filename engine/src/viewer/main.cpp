@@ -5522,6 +5522,7 @@ struct Viewer {
         float openAt = -1, fade = 1;    // (BoxOpen: its _a01 from then, held; DeleteBox: 0.1 less each update)
     };
     std::vector<AreaNpc> areaNpcs;
+    bool cr3CampWasOpen = false;
     ViewFigure boxGet;                  // (fe101get01: the light from an opened box - Fld2Box +0x170)
     bool boxGetTried = false;
     // a box opened by its script (Fld2Box::Open: _a01 rewound, not looped; SE 0x251; fe101get01 over
@@ -6315,6 +6316,10 @@ struct Viewer {
         }
         for (AreaNpc& npc : areaNpcs)
             if (npc.box) stepAreaBox(npc, dt);
+        // (Fld2Main::SM_Camp 5: the camp closed, the area script's evt001 - the story's steps that
+        // wait on the camp: s101_d02_00606_set, a gift merged)
+        if (cr3CampWasOpen && cr3Camp.stage == 0 && !scripted) runAreaFunction("evt001");
+        cr3CampWasOpen = cr3Camp.stage != 0;
         if (cr3FieldIdle() && !cr3BattleRequest.active) countEncounter();
         if (cr3SavePending && cr3FieldIdle() && !cr3BattleRequest.active) cr3SavePending = false, writeCr3Save();
     }
@@ -14782,7 +14787,9 @@ struct Viewer {
             if (c > 0) out.push_back(c);
         return out;
     }
-    bool cr3CampButtonOn(int id) const { return id != 2 || (!game.flag(21) && vs.screen == 0); } // (Gene Swap: off in VS - CampTopMenu's 7)
+    // (Gene Swap - CampcomBtnMenu::SetVisibleGeneChangeButton: once flag 41 is set, and in the VS mode
+    // or once a gift has been merged, flag 21)
+    bool cr3CampButtonOn(int id) const { return id != 2 || (game.flag(41) && (vs.screen != 0 || game.flag(21))); }
     std::vector<float> cardUVs;
     float cardUV(int series, int k) {
         if (cardUVs.empty()) {
@@ -16722,6 +16729,7 @@ struct Viewer {
             if (!f || !game.cr3Db) return;
             const std::vector<int> gifts = cr3FusionGifts(*f);
             if (game.cr3Db->mergeGift(game, f->integer("_id"), gifts) == cr3::kDbOk) {
+                game.setFlag(21, true); // (CompleteMergeGift: a gift merged - the story waits on it, s101_d02_00606_set)
                 audio.playSe("com_034", false);
                 std::string text = menuAnnounce(0xfb);
                 if (const size_t at = text.find("%s"); at != std::string::npos) text.replace(at, 2, cr3NameOf("gene_name.mbe", "GeneName", f->integer("gene_id")));
