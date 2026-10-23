@@ -1187,6 +1187,25 @@ captures. Not in yet: Options (CR3's options screen), Emperor Mode and other spe
 play, the result screen's gene card and EXP, drops, a lost battle's game over, the approach /
 return of melee attacks, effects (eff### figures), voices, the list's icons and scrolling.
 
+### The battle's announcements (CR3)
+
+BtlAnnounceUI puts one line at a time in InterfaceMain's BattleAnnouncementMenu - a OneHelpMenu
+(btHelpMenu at btHelpPosition's call, white text), up for its seconds (below 0: until the next),
+then closed. What CR3-U shows of them:
+
+- Each action's (BtlDirection::openAnnounce, 1 s - 1.5 for a few directions): the command's name
+  (command_name.mbe), an item's own if one was used; "{source}" the actor's name, "{assistant}" the
+  partner's. The plain attacks (commands 1, 2) have none.
+- The start (BtlSysStateStart::phaseStart): the first strike or surprise attack, 2.5 s (Random
+  encounters, above).
+- Escape (phaseEscapeStart): `AnnounceBattle` 4, the question, held, with the button list's two -
+  BtlInterfaceSystem::EntrySelect: buttons 10 (OK) and 11 (Cancel) on panels 006, 007. Cancel - or
+  the back key, com_004 - goes back to the get-set; OK escapes (BtlSysState::escape) - 5 for a
+  second and away, else 6 for a second and the monsters' turn.
+
+Not yet: the status effects' (OpenStatusEffect), the assists' (OpenAssist), Analyze's HP
+(OpenHpAndMaxHp), the drops (AddDrop), the field effects' (AddById), stolen gold.
+
 ## Parameter tables (`data\*.mbe`, EXPA)
 
 `MbParameterManager::structParam`: `EXPA`, u32 table count; per table a u32 name length, the name

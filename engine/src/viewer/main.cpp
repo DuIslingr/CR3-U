@@ -6225,7 +6225,7 @@ struct Viewer {
     cr3::Cr3BattleCamera cr3BattleCam, cr3BattleOwnCam; // (Cam_bt; a camera figure of its own: Cam_human_getset ...)
     // BtlSysStateStart's battle-in and get-set; BtlSysStateSelect's command and target selection;
     // BtlSysStateAction's actions; the end (won: Battle_Victory_Base, then on; lost)
-    enum class Cr3BattleStage { In, GetSet, Menu, Command, List, Target, Action, Won, Result, Lost };
+    enum class Cr3BattleStage { In, GetSet, Menu, Command, List, Target, Escape, Action, Won, Result, Lost };
     // its script (BtlScriptSystem: battle_NNNN run through the event system - Battle_Boot_Base as
     // it boots, Battle_Start_Base once the get-set camera holds: the tutorials)
     std::unique_ptr<cr3::EventRuntime> cr3BattleEvents;
@@ -6385,6 +6385,15 @@ struct Viewer {
         std::string text;
         float at = 0, seconds = 0;
     } cr3Announce;
+    // an announcement up (BtlAnnounceUI: its seconds, below 0 until the next), the last one going
+    void setCr3Announce(const std::string& text, float seconds) {
+        cr3Announce.text = text, cr3Announce.at = cr3BattleClock, cr3Announce.seconds = seconds < 0 ? 1e9f : seconds;
+    }
+    // (a name's "{source}" - BtlDamageChunk::OpenAnnounce - and "{assistant}": the actor, the
+    // partner)
+    std::string cr3FighterName(const cr3::Cr3Fighter& f) {
+        return f.player ? cr3NameOf("char_name.mbe", "CharName", f.id) : cr3NameOf("mon_name.mbe", "MonsterName", f.id);
+    }
     void rollCr3StartMode() {
         cr3StartMode = 0, cr3Announce = Cr3Announce();
         const int first = game.next.battleFirstStrike[0], surprise = game.next.battleFirstStrike[1];
@@ -6399,10 +6408,9 @@ struct Viewer {
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
             if (f.player) leader = leader < 0 ? f.id : leader, ++players;
         const int id = cr3StartMode == 2 ? 3 : players == 1 ? 2 : 1;
-        cr3Announce.text = announceText("AnnounceBattle", id); // (OpenName: its "{source}" the name)
-        if (const size_t at = cr3Announce.text.find("{source}"); at != std::string::npos)
-            cr3Announce.text.replace(at, 8, cr3NameOf("char_name.mbe", "CharName", leader));
-        cr3Announce.at = 0, cr3Announce.seconds = 2.5f;
+        std::string text = announceText("AnnounceBattle", id); // (OpenName: its "{source}" the name)
+        if (const size_t at = text.find("{source}"); at != std::string::npos) text.replace(at, 8, cr3NameOf("char_name.mbe", "CharName", leader));
+        setCr3Announce(text, 2.5f);
         SDL_Log("battle: %s", cr3StartMode == 1 ? "the party strikes first" : "a surprise attack");
     }
     // the announcement (BattleAnnouncementMenu: a OneHelpMenu - btHelpMenu at btHelpPosition's call,
@@ -6533,13 +6541,17 @@ struct Viewer {
             } else
                 beginCr3Turn();
         } else if (cr3BattleStage == Cr3BattleStage::Menu || cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target ||
-                   cr3BattleStage == Cr3BattleStage::List) {
-            // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive)
+                   cr3BattleStage == Cr3BattleStage::List || (cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk)) {
+            // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive; "escape" then
+            // "yes" / "no")
             if (!inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
                 const std::string tok = inputScript.front();
                 if (cr3BattleStage == Cr3BattleStage::Command && (tok == "attack" || tok == "guard")) {
                     inputScript.pop_front();
                     chooseCr3Command(tok == "attack" ? 0 : 3);
+                } else if (cr3BattleStage == Cr3BattleStage::Escape && (tok == "yes" || tok == "no")) {
+                    inputScript.pop_front();
+                    chooseCr3Escape(tok == "yes" ? 0 : 1);
                 } else if (cr3BattleStage == Cr3BattleStage::Menu && (tok == "battle" || tok == "escape")) {
                     inputScript.pop_front();
                     chooseCr3GetSet(tok == "battle" ? 0 : 1);
@@ -6560,6 +6572,8 @@ struct Viewer {
                     chooseCr3Target(std::atoi(tok.c_str() + 1));
                 }
             }
+        } else if (cr3BattleStage == Cr3BattleStage::Escape) {
+            stepCr3Escape();
         } else if (cr3BattleStage == Cr3BattleStage::Action) {
             if (!scripted) stepCr3Action(); // (a battle script's direction - Battle_Direction_End's cut-in - first)
         } else if (cr3BattleStage == Cr3BattleStage::Won && vs.screen == 6) { // (VS: the score up - a tap, or --input vs:next, goes on)
@@ -6690,8 +6704,9 @@ struct Viewer {
     // Battle, Escape - not where the coupling's +0x44 bit 1 forbids it -, Options; SE bt_001 the
     // first time)
     bool cr3GetSetSeen = false;
+    std::map<int, int> cr3TurnItems; // (the items chosen this turn, by fighter: their names announced)
     void beginCr3Turn() {
-        cr3Choices.clear();
+        cr3Choices.clear(), cr3TurnItems.clear();
         cr3Chooser = -1;
         cr3BattleStage = Cr3BattleStage::Menu, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
         playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0);
@@ -6712,23 +6727,46 @@ struct Viewer {
             int partyLevel = 1, monsterLevel = 1;
             for (const cr3::Cr3Fighter& f : cr3Rules.fighters) (f.player ? partyLevel : monsterLevel) = std::max(f.player ? partyLevel : monsterLevel, f.level);
             const int diff = partyLevel - monsterLevel;
-            const int threshold = diff < 0 ? 0xf0 : diff >= 20 ? 0xfc : 0xf4;
-            if (int(SDL_rand(256)) < threshold) {
+            cr3EscapeThreshold = diff < 0 ? 0xf0 : diff >= 20 ? 0xfc : 0xf4;
+            // (phaseEscapeStart: AnnounceBattle 4 - the question - held, the button list's two -
+            // EntrySelect: buttons 10 and 11, yes and no)
+            cr3EscapeAsk = true;
+            cr3BattleStage = Cr3BattleStage::Escape, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+            setCr3Announce(announceText("AnnounceBattle", 4), -1);
+        }
+    }
+    bool cr3Escaped = false, cr3EscapeWorks = false, cr3EscapeAsk = false;
+    int cr3EscapeThreshold = 0;
+    // phaseEscapeSelect: no - the get-set again (phase 6); yes - BtlSysState::escape: 5 for a second
+    // and away (phaseEscapeSuccess), else 6 for a second and the monsters' turn (phaseEscapeFailure)
+    void chooseCr3Escape(int b) {
+        if (!cr3EscapeAsk) return;
+        cr3EscapeAsk = false;
+        cr3Announce = Cr3Announce(); // (BtlAnnounceUI::Close)
+        if (b != 0) return beginCr3Turn();
+        audio.playSe(0x153, false);
+        cr3EscapeWorks = int(SDL_rand(256)) < cr3EscapeThreshold;
+        cr3StageStart = cr3BattleClock;
+        setCr3Announce(announceText("AnnounceBattle", cr3EscapeWorks ? 5 : 6), 1.0f);
+    }
+    void stepCr3Escape() {
+        if (cr3EscapeAsk) return;
+        if (cr3BattleClock - cr3StageStart >= 1.0f) {
+            if (cr3EscapeWorks) {
                 SDL_Log("battle %d: escaped", cr3Battle.coupling);
                 cr3Escaped = true;
                 endCr3Battle();
-            } else {
-                SDL_Log("battle %d: the escape failed", cr3Battle.coupling);
-                cr3Choices.clear();
-                cr3Actions = cr3Rules.turn(cr3Choices);
-                cr3CountRecords();
-                cr3ActionAt = 0;
-                cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
-                startCr3Action();
+                return;
             }
+            SDL_Log("battle %d: the escape failed", cr3Battle.coupling);
+            cr3Choices.clear();
+            cr3Actions = cr3Rules.turn(cr3Choices);
+            cr3CountRecords();
+            cr3ActionAt = 0;
+            cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
+            startCr3Action();
         }
     }
-    bool cr3Escaped = false;
     // the list (Gene: BtlStatusList::OpenCommandList - the gene's commands; Item: BtlItemListUI -
     // the items held, each its Item row's command): a row each, its cost, usable or not
     struct Cr3ListRow {
@@ -6834,7 +6872,7 @@ struct Viewer {
         if (alive.empty() || cr3Chooser < 0) return;
         audio.playSe(0x153, false);
         const int target = alive[size_t(std::clamp(n, 0, int(alive.size()) - 1))];
-        if (cr3ChosenItem) game.cr3Items[cr3ChosenItem] = std::max(game.cr3Items[cr3ChosenItem] - 1, 0);
+        if (cr3ChosenItem) game.cr3Items[cr3ChosenItem] = std::max(game.cr3Items[cr3ChosenItem] - 1, 0), cr3TurnItems[cr3Chooser] = cr3ChosenItem;
         cr3Choices.push_back({cr3Chooser, cr3ChosenCommand >= 0 ? cr3ChosenCommand : cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, target});
         nextCr3Chooser();
     }
@@ -6857,6 +6895,18 @@ struct Viewer {
         const cr3::Cr3Fighter& s = cr3Rules.fighters[size_t(a.source)];
         const size_t su = size_t(s.unit);
         const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
+        if (a.command >= 0) { // (BtlDirection::openAnnounce: the command's name - an item's, used - for a second)
+            const auto item = cr3TurnItems.find(a.source);
+            std::string text = item != cr3TurnItems.end() ? cr3ItemText(item->second, false) : cr3NameOf("command_name.mbe", "CommandName", a.command);
+            if (const size_t at = text.find("{source}"); at != std::string::npos) text.replace(at, 8, cr3FighterName(s));
+            if (const size_t at = text.find("{assistant}"); at != std::string::npos)
+                for (const cr3::Cr3Fighter& o : cr3Rules.fighters)
+                    if (o.player == s.player && &o != &s) {
+                        text.replace(at, 11, cr3FighterName(o));
+                        break;
+                    }
+            if (!text.empty()) setCr3Announce(text, 1.0f);
+        }
         if (a.command < 0) { // (Guard: bg01; -2 unable to act - a kind 31 effect -: a moment)
             if (a.command == -1) setCr3Motion(su, "bg01", false);
             cr3ActionPlay.end = a.command == -1 ? 1.0f : 0.5f;
@@ -7007,6 +7057,7 @@ struct Viewer {
     bool cr3BattleKey(SDL_Keycode k) {
         if (cr3BattleEvents && cr3BattleEvents->running()) return false;
         const int n = cr3BattleStage == Cr3BattleStage::Menu ? 3 : cr3BattleStage == Cr3BattleStage::Command ? 4
+                    : cr3BattleStage == Cr3BattleStage::Escape ? (cr3EscapeAsk ? 2 : 0)
                     : cr3BattleStage == Cr3BattleStage::List ? std::max(int(cr3List.size()), 1)
                     : cr3BattleStage == Cr3BattleStage::Target ? int(cr3LivingMonsters().size()) : 0;
         if (n == 0) return false;
@@ -7014,9 +7065,13 @@ struct Viewer {
         else if (k == SDLK_DOWN) cr3Focus = (cr3Focus + 1) % n;
         else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
             if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(cr3Focus);
+            else if (cr3BattleStage == Cr3BattleStage::Escape) chooseCr3Escape(cr3Focus);
             else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(cr3Focus);
             else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
             else chooseCr3Target(cr3Focus);
+        } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Escape) { // (GetHardReturnTap: com_004, back)
+            audio.playSe("com_004", false);
+            chooseCr3Escape(1);
         } else if (k == SDLK_BACKSPACE && (cr3BattleStage == Cr3BattleStage::Target || cr3BattleStage == Cr3BattleStage::List)) {
             cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
         } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Command && cr3Choices.empty()) {
@@ -7027,7 +7082,7 @@ struct Viewer {
     // a click (fx, fy: the screen's fractions) on a button
     bool cr3BattleClick(float fx, float fy) {
         if (cr3BattleStage != Cr3BattleStage::Menu && cr3BattleStage != Cr3BattleStage::Command && cr3BattleStage != Cr3BattleStage::Target &&
-            cr3BattleStage != Cr3BattleStage::List)
+            cr3BattleStage != Cr3BattleStage::List && !(cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk))
             return false;
         if (cr3BattleEvents && cr3BattleEvents->running()) return false;
         const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
@@ -7035,6 +7090,7 @@ struct Viewer {
         for (const Cr3Tap& t : cr3Taps)
             if (ux >= std::min(t.x0, t.x1) && ux <= std::max(t.x0, t.x1) && uy >= std::min(t.y0, t.y1) && uy <= std::max(t.y0, t.y1)) {
                 if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(t.id);
+                else if (cr3BattleStage == Cr3BattleStage::Escape) chooseCr3Escape(t.id);
                 else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(t.id);
                 else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(t.id);
                 else chooseCr3Target(t.id);
@@ -7065,6 +7121,7 @@ struct Viewer {
         if (cr3BattleStage == Cr3BattleStage::Result && cr3BattleClock - cr3StageStart > 1.0f) return endCr3Battle();
         if (cr3BattleStage == Cr3BattleStage::In) cr3Cam.start = cr3BattleClock - cr3Cam.end; // (phaseBattleIn: a tap ends it)
         else if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(cr3Focus);
+        else if (cr3BattleStage == Cr3BattleStage::Escape) chooseCr3Escape(cr3Focus);
         else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(cr3Focus);
         else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
         else if (cr3BattleStage == Cr3BattleStage::Target) chooseCr3Target(cr3Focus);
@@ -19543,7 +19600,8 @@ struct Viewer {
         }
         cr3Taps.clear();
         const bool waiting = !(cr3BattleEvents && cr3BattleEvents->running());
-        if ((cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Menu) && waiting) {
+        const bool asking = cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk;
+        if ((cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Menu || asking) && waiting) {
             // the command buttons (comBtnMenu, its io animator as it opens; four at panels 004..007 -
             // comBtnMenu::SetParamNumber 5 - each comBtnPanel with comBtnBg_fr00 (its slot's frame),
             // comBtnIcon_fr00 and comBtnText_fr00 (the button's), comBtnR; the focused one's text
@@ -19552,18 +19610,18 @@ struct Viewer {
             if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
                 UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", cr3BattleClock - cr3MenuStart, x, y, view);
                 // (the get-set's three on panels 005..007: 0 Battle, 2 Escape, 3 Options;
-                // the commands' four on 004..007)
+                // the commands' four on 004..007; the escape's question two on 006..007: 10, 11)
                 const bool getSet = cr3BattleStage == Cr3BattleStage::Menu;
-                const int count = getSet ? 3 : 4, first = getSet ? 5 : 4;
+                const int count = asking ? 2 : getSet ? 3 : 4, first = asking ? 6 : getSet ? 5 : 4;
                 static constexpr int kGetSet[3] = {0, 2, 3};
                 for (int b = 0; b < count; ++b) {
                     float px, py;
                     if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(first + b), px, py)) continue;
-                    const int id = getSet ? kGetSet[b] : kCr3Buttons[b];
+                    const int id = asking ? 10 + b : getSet ? kGetSet[b] : kCr3Buttons[b];
                     // (Escape where forbidden; Options: not in yet; a command its status effects
                     // forbid - BtlStatus::OpenMenuInterface: comBtn::SelectableSet(false), its parts'
                     // diffuse (0.549, 0.549, 0.655))
-                    const bool off = getSet ? (b == 1 && !cr3EscapeAllowed()) || b == 2 : !cr3Rules.menuEnabled(cr3Chooser, b);
+                    const bool off = asking ? false : getSet ? (b == 1 && !cr3EscapeAllowed()) || b == 2 : !cr3Rules.menuEnabled(cr3Chooser, b);
                     for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
                         UiFig& u = uiFig(part);
                         u.fig.tint[0] = u.fig.tint[1] = off ? 0.549f : 1.0f, u.fig.tint[2] = off ? 0.655f : 1.0f;
