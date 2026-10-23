@@ -103,6 +103,12 @@ A link's 0x8000 (the parent field's top bit) marks scale compensation - the pare
 undone for the child's rotation (Maya's segment scale compensate); without it a child inherits its
 parent's scale. CR2-U had it the other way, unseen until CR3's effects: `ee101aura01` hangs its
 globe on children of a 0.183-scaled root, small in the priestess's hands only this way round.
+The code agrees: MVGL::Draw::Figure::Pose takes a figure with animations (its blend tree's leaves,
++0x1e2) through edgeAnimLocalJointsToWorldJoints, which divides by the parent's local scale where
+the flag is SET (and the parent isn't a root); one without goes through
+edgeAnimLocalJointsToWorldMatrices3x4, which does it where the flag is CLEAR (roots too, by the
+root transform's scale). Every skeleton with a joint under a scaled parent - 595 here, 70 in CR2 -
+has animations, so Skeleton::world reads it the animated way (CR2-U now too).
 
 ## Render states
 
