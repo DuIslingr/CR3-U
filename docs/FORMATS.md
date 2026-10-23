@@ -279,7 +279,8 @@ Fld2TaskEncount, in a dungeon's areas (`dDDAA`):
   event flag is set (or -1), weighed above 0 in this area. (`ace_coupling.mbe`, the ace couplings
   met past dungeon 1, below.)
 - SM_Main: the player's X/Z distance walked adds up; each 1.7 is a step; every `steps` (over
-  CrxGetEncounterUp, the genes' encounter skill - 1 in CR3-U - at least 1) Pickout rolls rand() %
+  CrxGetEncounterUp - the party's first three's worn genes' skills' kind 0x7c constants, the
+  highest, 1 at least: skill 207's 2 -, at least 1) Pickout rolls rand() %
   100 <= the chance: a battle, the coupling by weight (rand() % the weights' sum, the first whose
   running sum reaches it); else the chance + 5. The chance is the area's again on each entry
   (SetInterval). Not counted while the encounters are off - the field's `feBtnEncount`, the
@@ -303,8 +304,9 @@ Fld2TaskEncount, in a dungeon's areas (`dDDAA`):
   rows: couplings 501..509, 513..515 by bands of 30 levels, 5% each, and again at 100% once flag
   1511 is set.
 - The first strikes (BtlSystem::Init, the boot param's +0x1c / +0x20): rand() % 100 under the
-  party's chance (+ its skills' best GetFirstStrikeChanceCorrection - not in CR3-U yet) is start
-  mode 1, else under the enemy's (+ GetSurppriseAttackChanceCorrection) mode 2. BtlSysStateStart's
+  party's chance + the best unit's skill kind 0x5e constant (GetFirstStrikeChanceCorrection: each
+  unit's highest; skill 205, +50) is start mode 1, else under the enemy's + the lowest unit's kind
+  0x5f sum (GetSurppriseAttackChanceCorrection; skill 206, -100) mode 2. BtlSysStateStart's
   phaseStart moves the break gauge +-500 and announces it - `message\AnnounceBattle.dat` 1 (2 for a
   party of one), its `{source}` the leader's name, or 3 - for 2.5 s in the battle's OneHelpMenu
   line (BattleAnnouncementMenu: btHelpMenu). phaseFirstStrike: mode 1 clears the monsters' actions
@@ -1189,11 +1191,13 @@ return of melee attacks, effects (eff### figures), voices, the list's icons and 
 
 ### The result's EXP (CR3)
 
-The battle's EXP (each monster's mon_para EXP + (level - 1) x its growth; x the skills' and
-items' factors - BtlResult::GetExperienceFactor, GetExprienceCorrection: not in CR3-U) goes into
+The battle's EXP (each monster's mon_para EXP + (level - 1) x its growth; x (1 + every unit's
+skill kind 0x6c constants / 100) - GetExprienceCorrection, skill 201's 10 -, the money likewise by
+0x6d - 202 -; the items' and scripts' factors - BtlResult::GetExperienceFactor, Battle.
+SetExperienceFactor - not in CR3-U) goes into
 the genes (BattleResultMenu::Update - CrxGene::AddTemporaryExp, SaveExp): each party member's worn
 gene, in party order - the first three slots' standing members the whole of it, the rest and the
-fallen half. The gene's level is the highest its EXP reaches (MbGeneInfo::GetLevel); at its top
+fallen half - learning its new commands and skills as it levels (gene_command_skill). The gene's level is the highest its EXP reaches (MbGeneInfo::GetLevel); at its top
 its EXP is held at that level's. A level up plays com_018. Each card (SetCharaCardData): the
 character's icon at frame (character - 1), the gene's level, its bar at (1 - CrxGene::GetExpRate)
 x 100 / 30 s - the share of the level done. (EffectGeneUp's card and gene model want the panel's

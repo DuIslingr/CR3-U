@@ -5753,8 +5753,8 @@ struct Viewer {
                 areaEnc.couplings.push_back({weight, r.i(1), r.i(2), int16_t(r.i(7)), int16_t(uint32_t(r.i(7)) >> 16)});
                 areaEnc.total += weight;
             }
-        SDL_Log("area %s: encounters every %d steps from %d%%, %zu couplings (and %zu aces) on field %d", name.c_str(), areaEnc.steps, areaEnc.rate,
-                areaEnc.couplings.size(), areaEnc.aces.size(), areaEnc.field);
+        SDL_Log("area %s: encounters every %d steps from %d%%, %zu couplings (and %zu aces) on field %d", name.c_str(),
+                std::max(areaEnc.steps / encounterUp(), 1), areaEnc.rate, areaEnc.couplings.size(), areaEnc.aces.size(), areaEnc.field);
     }
     // the coupling met (Pickout / ForceEncount: rand() % the weights' sum, the first whose running
     // sum reaches it) - its index in areaEnc.couplings; -1 none
@@ -5818,6 +5818,20 @@ struct Viewer {
         startEncounter(areaEnc.couplings[size_t(c)]);
         return true;
     }
+    // CrxGetEncounterUp: the party's first three's worn genes - their skills' kind 124 (0x7c)
+    // constants, the highest; 1 at least (the steps between rolls divided by it)
+    int encounterUp() {
+        if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, nullptr))) return 1;
+        cr3Rules.useTables(cr3BattleTables);
+        int up = 1;
+        for (int slot = 0; slot < 3; ++slot) {
+            const int gi = game.wornGene(game.cr3Party[slot]);
+            if (game.cr3Party[slot] <= 0 || gi < 0) continue;
+            for (const auto& sl : game.cr3Genes[size_t(gi)].slots)
+                if (sl[0] == 1 && sl[1] > 0) up = std::max(up, cr3Rules.skillKindMax(sl[1], 0x7c));
+        }
+        return up;
+    }
     // SM_Main: each 1.7 walked across a step; at every steps' (over the genes' EncounterUp) a roll
     // under the chance meets a battle, else the chance up 5. Not while they're off (the field's
     // button, the scripts' SetEncountEnable), flag 1040 or 4105 set, unless 1037 says count anyway
@@ -5837,7 +5851,7 @@ struct Viewer {
         areaEnc.walked += moved;
         if (areaEnc.walked < 1.7f) return;
         areaEnc.walked = 0;
-        if (++areaEnc.counted < std::max(areaEnc.steps, 1)) return;
+        if (++areaEnc.counted < std::max(areaEnc.steps / encounterUp(), 1)) return;
         areaEnc.counted = 0;
         if (int(encountRng.next() % 100) <= areaEnc.rate) { // (Pickout: an ace first - not in dungeon 1 -, else the area's)
             if (const int a = areaEnc.dungeon != 1 ? drawAce() : -1; a >= 0) return startAceEncounter(areaEnc.aces[size_t(a)]);
@@ -6463,8 +6477,16 @@ struct Viewer {
     void rollCr3StartMode() {
         cr3StartMode = 0, cr3Announce = Cr3Announce();
         const int first = game.next.battleFirstStrike[0], surprise = game.next.battleFirstStrike[1];
-        if (first != 0 && int(SDL_rand(100)) < first) cr3StartMode = 1;
-        else if (surprise != 0 && int(SDL_rand(100)) < surprise) cr3StartMode = 2;
+        int firstBy = 0, surpriseBy = 0; // (the best unit's kind 0x5e - its highest -, the least's 0x5f sum)
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
+            for (int c : cr3Rules.skillConstants(f, 0x5e)) firstBy = std::max(firstBy, c);
+            int sum = 0;
+            for (int c : cr3Rules.skillConstants(f, 0x5f)) sum += c;
+            surpriseBy = std::min(surpriseBy, sum);
+        }
+        if (first != 0 || surprise != 0) SDL_Log("battle: first strike %d%% (%+d), surprise %d%% (%+d)", first + firstBy, firstBy, surprise + surpriseBy, surpriseBy);
+        if (first != 0 && int(SDL_rand(100)) < first + firstBy) cr3StartMode = 1;
+        else if (surprise != 0 && int(SDL_rand(100)) < surprise + surpriseBy) cr3StartMode = 2;
         if (const char* m = SDL_getenv("CR3_START_MODE")) cr3StartMode = std::atoi(m);
         if (cr3StartMode != 1 && cr3StartMode != 2) return void(cr3StartMode = 0);
         cr3Rules.addBreak(cr3StartMode == 1 ? 500 : -500);
@@ -7138,9 +7160,8 @@ struct Viewer {
             if (info) {
                 cr3::Cr3Gene& g = game.cr3Genes[size_t(gi)];
                 const int before = game.cr3Db->geneLevel(g);
-                g.exp += gain;
+                game.cr3Db->addGeneExp(g, gain); // (held at its top; its new commands and skills learnt - SaveCommandSkill)
                 card.level = game.cr3Db->geneLevel(g);
-                if (card.level >= info->maxLevel) g.exp = game.cr3Db->geneExp(g.master, card.level);
                 const int at = game.cr3Db->geneExp(g.master, card.level), next = game.cr3Db->geneExp(g.master, card.level + 1);
                 card.progress = card.level >= info->maxLevel || next <= at ? 0.0f : float(g.exp - at) / float(next - at);
                 card.up = card.level > before;
@@ -7160,6 +7181,14 @@ struct Viewer {
             cr3ResultExp += r.i(14) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) & 0xffff));
             cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16));
         }
+        // (BtlInterfaceSystem::EntryResult: x (1 + every unit's skills' kind 0x6c constants / 100) - the
+        // money's 0x6d)
+        float expBy = 1, moneyBy = 1;
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
+            for (int c : cr3Rules.skillConstants(f, 0x6c)) expBy += float(c) / 100;
+            for (int c : cr3Rules.skillConstants(f, 0x6d)) moneyBy += float(c) / 100;
+        }
+        cr3ResultExp = int(expBy * float(cr3ResultExp)), cr3ResultMoney = int(moneyBy * float(cr3ResultMoney));
         game.cr3Money += cr3ResultMoney;
         giveCr3GeneExp();
         for (const auto& [fi, item] : cr3Drops) // (VAcquireDrop: the drops into the bag)
@@ -20125,7 +20154,7 @@ int main(int argc, char** argv) {
     bool titleScreen = false; // (--title: the game's title screen first)
     std::vector<std::pair<int, int>> itemArg;
     std::vector<int> cr3PartyArg;
-    std::vector<std::array<int, 3>> cr3GeneArgs; // (--cr3-gene ch:gene[:exp]: worn, tests)
+    std::vector<std::array<int, 4>> cr3GeneArgs; // (--cr3-gene ch:gene[:exp[:skill]]: worn - its slots learnt, a skill added in slot 7 -, tests)
     std::vector<std::array<int, 3>> sheetArg; // (--cr3-sheet sheet:entry[:new] - entry -1 its prize)
     std::vector<std::tuple<int, int, int>> equipArg;
     int chargeArg = -1, difficultyArg = -1, membersArg[2] = {-2, -2}, ozArg = -1, gaugeArg = 0;
@@ -20228,8 +20257,8 @@ int main(int argc, char** argv) {
             ++i;
         }
         else if (a == "--cr3-gene" && next) {
-            std::array<int, 3> g{0, 0, 0};
-            std::sscanf(next, "%d:%d:%d", &g[0], &g[1], &g[2]);
+            std::array<int, 4> g{0, 0, 0, 0};
+            std::sscanf(next, "%d:%d:%d:%d", &g[0], &g[1], &g[2], &g[3]);
             cr3GeneArgs.push_back(g);
             ++i;
         }
@@ -20539,8 +20568,10 @@ int main(int argc, char** argv) {
     for (const auto& [id, level] : sopiaArg)
         if (id >= 0 && id < 32) v.game.sopiaLevel[id] = static_cast<signed char>(level);
     for (size_t k = 0; k < cr3PartyArg.size() && k < 5; ++k) v.game.cr3Party[k] = cr3PartyArg[k];
-    for (const auto& [ch, gene, exp] : cr3GeneArgs) {
+    for (const auto& [ch, gene, exp, skill] : cr3GeneArgs) {
         v.game.cr3Genes.emplace_back(gene, exp);
+        if (v.game.cr3Db) v.game.cr3Db->initGene(v.game.cr3Genes.back());
+        if (skill > 0) v.game.cr3Genes.back().slots[6][0] = 1, v.game.cr3Genes.back().slots[6][1] = skill;
         v.game.cr3GeneOf[ch] = v.game.geneUid(v.game.cr3Genes.back());
     }
     for (const auto& [sh, e, fresh] : sheetArg) {

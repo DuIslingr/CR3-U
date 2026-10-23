@@ -201,6 +201,27 @@ int Cr3BattleRules::skillConstant(const Cr3Fighter& f, int kind) const {
     return sum;
 }
 
+std::vector<int> Cr3BattleRules::skillConstants(const Cr3Fighter& f, int kind) const {
+    std::vector<int> out;
+    MbeFile::Row r;
+    if (tables_)
+        for (int id : f.skills)
+            if (tables_->skill.find("Skill", id, kSkill, r) && r.i(8) == 0) {
+                if (r.i(12) == kind) out.push_back(r.i(13));
+                if (r.i(14) == kind) out.push_back(r.i(15));
+            }
+    return out;
+}
+
+int Cr3BattleRules::skillKindMax(int skill, int kind) const {
+    MbeFile::Row r;
+    if (!tables_ || !tables_->skill.find("Skill", skill, kSkill, r)) return 0;
+    int best = 0;
+    if (r.i(12) == kind) best = std::max(best, r.i(13));
+    if (r.i(14) == kind) best = std::max(best, r.i(15));
+    return best;
+}
+
 int Cr3BattleRules::mpCost(const Cr3Fighter& f, const Cr3Command& c) const {
     // (MbCommandInfo::GetMpCost: 0 the value; 1 / 2 its percentage of the max MP, at least 1; 3 x
     // the weapon's consumption - CrxWeapon::GetConsumptionFactor, Weapon +0x44 / 100 -, at least 1;

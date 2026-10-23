@@ -171,6 +171,9 @@ public:
     // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the skills
     // without a condition, their effects without the gauge's advantage)
     int skillConstant(const Cr3Fighter& f, int kind) const;
+    std::vector<int> skillConstants(const Cr3Fighter& f, int kind) const; // (BtlSkillVisitor: each of the kind's constants)
+    int skillKindMax(int skill, int kind) const;
+    void useTables(const Cr3BattleTables& t) { tables_ = &t; } // (the tables alone - no battle set up) // (a skill's own effects of the kind: the highest; 0 none)
     int outcome() const; // 0 going on, 1 won, 2 lost
     // status effects (BtlStatusEffectList): given (a script's, or a command's that landed), removed;
     // whether one of a kind is on; a kind's multiplier (the effects' constants / 100, multiplied)
