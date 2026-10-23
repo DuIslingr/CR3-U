@@ -20,10 +20,13 @@ Not affiliated with or endorsed by Square Enix or Media.Vision.
 Start `cr3view` with your copy in place and the game's title comes up; a tap starts a new game -
 or, with a save, carries on from it. What works today:
 
-- **The story's start**: the title (its camera reel and logo), the prologue's events and the
-  scenes after them as the reference playthrough shows them - message windows, cut-ins, voices
+- **The story's start**: the title (its camera reel and logo), a new game through the prologue
+  and into the first chapter - its battles, the scenes after them and the town's meals (talking
+  with the party by their balloons) - as the reference playthrough shows them: message windows,
+  cut-ins, voices
 - **Towns and dungeons** (CR3's `Fld2` field): walking by keys, pad, mouse or touch, the follow
-  camera, doors, event boxes and people, the area scripts, map names, the field's buttons; **random
+  camera, doors, the ways between a town's areas, event boxes and people, the area scripts, map
+  names, the field's buttons; **random
   encounters** with first strikes, surprise attacks and ace monsters; **saving** with the field's
   Save button and where the game saves by itself - entering areas, after battles (one save, in
   the profile folder)

@@ -278,6 +278,34 @@ a battle (BattleSession::SM_Sync), and at the scripts' Cr3System.Sync / Sync2 / 
 title - at those points, once the area's script is done and the field idle; a tap on the title
 resumes it, else starts a new game. `cr3view` with nothing asked for opens the title (the release's launch).
 
+### A new game, the ways between areas, SetPopPoint2 (CR3)
+
+A new game starts where TitleMain puts Cr3FieldData (0x700000000: t01, area 7 - t0108); its
+`evt000` sets the story's first flags (s000_t01_00101_set) and calls the prologue. A vista handing
+over by name alone (BranchAfterVista: SetVistaEvent's function) runs in the area script its name
+says (s000_t01_00103_evt: t01). A town's areas join by area-change volumes: ragdoll_ac_<pop point>
+in `<area>p`, its trigger body (a mesh) of that name in `<area>p.phys` (Fld2AreaChange::Create);
+walked into, the field changes to the pop point's area with the player on its joint
+(Fld2AreaChange::CollisionEventF, Fld2Main::SM_ChangeArea). Cr3System.SetPopPoint2 keeps a pop
+point without reserving a change (Fld2SetPopPoint2); the field's next entry takes it first -
+SM_Init (a vista's end with SetComeFromVistaToField: the prologue's t0201_p3), SM_ChangeArea (over
+a volume's own point) - and clears it.
+
+### Meals (CR3)
+
+LunchEvent.SetFuncName / SetMapName (utils::SetLunchFuncName: the vista's function and map, and
+Cr3ScriptWork 0xf) reserve a meal: the vista or field script ending goes on into LunchMain. Its map
+is loaded and its function run (LoadScript: the script by the function's name); the scene stays
+once it is over. LunchEvent.Setup gives each of the scene's models a LunchBalloon (feFlag_fr00,
+hidden); SetBalloon(model, shown, marked) shows it - frame 1 marked, 0 not -, SetBalloonFinish
+makes it the meal's end (frame 2), SetBalloonOffset moves it. A balloon stands at its model's
+locator (ev_<model>) at the scene's start plus the offset (EvtScene::GetLocatorPos(model, 0)),
+through the scene figure's own camera (GetContaindCamera) onto the screen (Cr3UtilSetBalloonPos).
+While no talk runs, a tap within 0.55 of the point half a unit above a shown one (ProcessBalloonTouch:
+the squared distance under 0.3, after three touches) runs `<function less _evt>_<model>`
+(s001_t02_00301_c106) on the scene as it is; the meal's scripts keep its stages (Cr3Work 14 ..).
+LunchEvent.Shutdown, the script over and the fade done: on as after a vista (BranchAfterVista).
+
 ### Random encounters (CR3)
 
 Fld2TaskEncount, in a dungeon's areas (`dDDAA`):
