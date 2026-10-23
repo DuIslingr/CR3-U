@@ -196,10 +196,13 @@ Japanese, looked in before `images` - 314 of the interface's, the title's "Tap t
 
 Fld2, not CR2's painted FldMap: every area is 3D. Fld2TaskMap::CreateArea(n) takes its name from
 a table of 12-byte names in the executable (`t0101` first: 41 towns, then `d0101` at 41 ...; 463
-in all, 0x5e.. and 0x153.. the random floors) and builds `<area>c` (not drawn: its lights, its
+in all, 0x5e.. and 0x153.. the random floors) and builds `<area>c` (not drawn: its
 joints - `defaultPos` where the player starts - and `<area>c.phys`, the walls and floors; bodies
 named `...camhit` are the camera's alone), `<area>f` (the field, its animation looped), `<area>s`
 (0.01 above it) and `<area>m1` (if there is one) - drawn f, s, m1 (OnDraw's passes 6-8, 8, 10).
+The lights are `<area>f`'s (Fld2TaskMap::EntryLight: the f model's figure - a random floor's, the
+piece named so -; Fld2CameraBase::SetLight's shadow light falls back to `<area>c`'s): `<area>c`
+has none in the village, and an area that kept the scene before's would be fogged in its colour.
 
 The player (Fld2TaskPlayer::CreatePlayer): a Fld2CharaNameTbl model - `j001`..`j005` (the heroes:
 body `j<NNN>b01` + head, motions `j<NNN>b01_<motion>`) or `c101` (`c101_<motion>`) - in the towns
@@ -223,6 +226,21 @@ above that point and never nearer than 2 across; the view pitched 0.3 rad (at le
 and turned by the player's own turning; moving 30..150 degrees across the view, it swings round
 behind the player at (1 - angle / 180) x 1.5 x 60 degrees a second (GomRotate); a tap swings it
 behind over 0.3 s (GomBehind).
+
+Fld2TaskCamera::SetupCamera picks the camera by the map table's int after the name: 0 rail (23
+maps: the village, Sky Front), 1 Gom, 2 ortho, 3 look-down (28), 4 script, 5 toy.
+`data\fieldcamerald.mbe`'s FieldCameraLD rows (index, the dungeon - a town tNN's N - 1 -, the
+area from 1, x, y, z) give an offset: the look-down camera (Fld2CameraLookDown) has its eye at the
+player plus that and looks at him 1.2 up, each followed at 4 a second once 0.3 off, never turned;
+the rail camera (Fld2CameraRail) looks at the player plus it ((0, 1.2, 0) in the village). Its eye
+runs on `<area>_cam`'s paths: each `cameraN` and `cameraN_aim` joint sampled at every 30th of a
+second of the animation (its frames its length x 30, less 0.1), a group a path pair. Each 30th
+(SearchBestPath2) the aim path's two neighbouring points nearest the look-at point (their
+distances summed) and the nearest point between them give a frame, and the eye is the camera
+path there (RailAction), eased 2.5 frames a step when that would move it more than 1. It starts on
+the group with the aim point nearest the player (StartCameraGroup); walking into a
+`cam_boxAA_BB` box (0.05 of its joint's scale each way) changes to group AA, blended over 0.3 s
+from where the eye was (CallbackCollisionEvent).
 
 PHYS (`.phys`) in the 64-bit builds: the counts as before (bodies, shapes, surface names at 8),
 then u64 offsets from 0x18 - bodies (0x38, right after the header; 0x4c bytes each as before),

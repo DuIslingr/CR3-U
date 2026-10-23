@@ -5514,23 +5514,184 @@ struct Viewer {
     static constexpr const char* kLookDownMaps[] = {"t0102", "t0104", "t0105", "t0110", "t0111", "t0113", "t0114", "t0115", "t0116", "t0117",
                                                    "t0118", "t0119", "t0120", "t0203", "t0204", "t0207", "t0208", "t0210", "t0211", "t0402",
                                                    "d0711", "d1312", "d1501", "d1502", "d1506", "d1507", "d1508", "d1509"};
-    void setupAreaCamera(const std::string& name) {
-        areaCamera.setLookDown(false);
-        if (std::find_if(std::begin(kLookDownMaps), std::end(kLookDownMaps), [&](const char* m) { return name == m; }) == std::end(kLookDownMaps)) return;
-        if (name[0] != 't') return; // (a dungeon's own number: not known yet)
+    // Fld2CameraRail (type 0: the village, Sky Front - 23 maps): <area>_cam's camera groups - each
+    // cameraN and cameraN_aim joint sampled at every frame of its animation (SetupCamera: frames
+    // its length x 30 less 0.1) -, its cam_boxAA_BB boxes (0.05 of the joint's scale each way, the
+    // player's sphere entering one: group AA - CallbackCollisionEvent, a 0.3 s blend from where the
+    // eye was), the look-at point the player plus the area's FieldCameraLD offset. Each update
+    // (SearchBestPath2) the aim path's pair of points nearest it (their two distances summed) and
+    // the nearest point between them give a frame; the eye is the camera path there (RailAction),
+    // eased 2.5 frames an update when that would jump it more than 1. The group to begin with is
+    // the one whose aim point is nearest the player (StartCameraGroup)
+    static constexpr const char* kRailMaps[] = {"t0101", "t0106", "t0107", "t0108", "t0112", "t0121", "t0122", "t0201",
+                                               "t0202", "t0205", "t0206", "t0209", "t0301", "t0302", "t0303", "t0401",
+                                               "t0501", "t0502", "d1503", "d1504", "d1510", "d1511", "d1512"};
+    struct Cr3RailCam {
+        bool on = false, started = false;
+        std::vector<std::vector<cr3::Vec3>> aim, cam;
+        struct Box {
+            cr3::Mat34 world;
+            int group = 0;
+            bool in = false;
+        };
+        std::vector<Box> boxes;
+        int group = 0;
+        float best = 0, shown = 0, blend = 0, tick = 0;
+        bool easing = false, switching = false;
+        cr3::Vec3 from{}, eye{};
+        std::array<float, 3> offset{};
+    } rail;
+    std::array<float, 3> fieldCameraLD(const std::string& name, bool& found) {
+        found = false;
+        if (name[0] != 't') return {};
         const int dungeon = std::atoi(name.substr(1, 2).c_str()) - 1, areaNo = std::atoi(name.substr(3, 2).c_str());
         std::vector<uint8_t> d;
         cr3::MbeFile f;
-        if (!archive.read("data\\fieldcamerald.mbe", d) || !f.parse(d)) return;
+        if (!archive.read("data\\fieldcamerald.mbe", d) || !f.parse(d)) return {};
         const cr3::MbeFile::Table* t = f.table("FieldCameraLD");
-        if (!t) return;
+        if (!t) return {};
         for (size_t r = 0; r < t->rows.size(); ++r) { // (GetFieldCameraPositionLD: the first of the dungeon and area)
             cr3::MbeFile::Row row;
             if (!f.row(*t, r, "iiifff", row) || row.i(1) != dungeon || row.i(2) != areaNo) continue;
-            areaCamera.setLookDown(true, {row.f(3), row.f(4), row.f(5)});
-            SDL_Log("area %s: the look-down camera, (%.1f %.1f %.1f)", name.c_str(), row.f(3), row.f(4), row.f(5));
+            found = true;
+            return {row.f(3), row.f(4), row.f(5)};
+        }
+        return {};
+    }
+    bool setupRail(const std::string& name) {
+        rail = Cr3RailCam();
+        std::vector<uint8_t> d;
+        cr3::Skeleton sk;
+        cr3::Animation an;
+        if (!archive.read(name + "_cam.skel", d) || !cr3::parseSkeleton(d, sk) || !archive.read(name + "_cam.anim", d) || !an.parse(d)) return false;
+        std::vector<std::string> names;
+        if (archive.read(name + "_cam.name", d)) names = cr3::parseJointNames(d);
+        const int frames = int(float(int(an.duration() * 30.0f)) - 0.1f);
+        std::vector<std::pair<int, int>> groups; // (aim joint, camera joint)
+        for (size_t j = 0; j < names.size(); ++j)
+            if (names[j].size() > 4 && names[j].compare(names[j].size() - 4, 4, "_aim") == 0) {
+                const auto c = std::find(names.begin(), names.end(), names[j].substr(0, names[j].size() - 4));
+                if (c != names.end()) groups.push_back({int(j), int(c - names.begin())});
+            }
+        if (groups.empty() || frames < 2) return false;
+        rail.aim.assign(groups.size(), {}), rail.cam.assign(groups.size(), {});
+        for (int i = 0; i < frames; ++i) {
+            const std::vector<cr3::Mat34> w = sk.world(an.poseAbsolute(sk.basePose, std::min(float(i) / 30.0f * an.sampleRate(), float(an.frames() - 1))));
+            for (size_t g = 0; g < groups.size(); ++g) {
+                const cr3::Mat34& a = w[size_t(groups[g].first)];
+                const cr3::Mat34& c = w[size_t(groups[g].second)];
+                rail.aim[g].push_back({a.m[3], a.m[7], a.m[11]}), rail.cam[g].push_back({c.m[3], c.m[7], c.m[11]});
+            }
+        }
+        const std::vector<cr3::Mat34> w0 = sk.world(an.poseAbsolute(sk.basePose, 0));
+        for (size_t j = 0; j < names.size() && j < w0.size(); ++j)
+            if (names[j].compare(0, 7, "cam_box") == 0 && names[j].size() >= 9) {
+                Cr3RailCam::Box b;
+                b.world = w0[j], b.group = std::atoi(names[j].substr(7, 2).c_str()) - 1;
+                rail.boxes.push_back(b);
+            }
+        bool found = false;
+        rail.offset = fieldCameraLD(name, found);
+        rail.on = true;
+        SDL_Log("area %s: the rail camera, %zu groups of %d frames, %zu boxes, offset (%.1f %.1f %.1f)", name.c_str(), groups.size(), frames,
+                rail.boxes.size(), rail.offset[0], rail.offset[1], rail.offset[2]);
+        return true;
+    }
+    static float railLen(const cr3::Vec3& a, const cr3::Vec3& b) { return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])); }
+    cr3::Vec3 railCamAt(float f) const {
+        const std::vector<cr3::Vec3>& p = rail.cam[size_t(rail.group)];
+        const int i = std::clamp(int(f), 0, int(p.size()) - 1), j = std::min(i + 1, int(p.size()) - 1);
+        const float t = std::fmod(std::max(f, 0.0f), 1.0f);
+        return {p[size_t(i)][0] + (p[size_t(j)][0] - p[size_t(i)][0]) * t, p[size_t(i)][1] + (p[size_t(j)][1] - p[size_t(i)][1]) * t,
+                p[size_t(i)][2] + (p[size_t(j)][2] - p[size_t(i)][2]) * t};
+    }
+    void railSearch(const cr3::Vec3& target) { // (SearchBestPath2)
+        const std::vector<cr3::Vec3>& p = rail.aim[size_t(rail.group)];
+        float bestSum = 65535;
+        int k = -1;
+        for (int i = 0; i + 1 < int(p.size()); ++i) {
+            const float sum = railLen(target, p[size_t(i)]) + railLen(target, p[size_t(i) + 1]);
+            if (sum < bestSum) bestSum = sum, k = i;
+        }
+        if (k > 0) { // (NearestPointSegment: the fraction along it)
+            const cr3::Vec3 &a = p[size_t(k)], &b = p[size_t(k) + 1];
+            const float ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+            const float l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+            const float t = l2 > 1e-9f ? std::clamp(((target[0] - a[0]) * ab[0] + (target[1] - a[1]) * ab[1] + (target[2] - a[2]) * ab[2]) / l2, 0.0f, 1.0f) : 0.0f;
+            rail.best = float(k) + t;
+        }
+    }
+    void railReset(const cr3::Vec3& feet) { // (Reset: StartCameraGroup, the eye at once)
+        float nearest = 1e30f;
+        for (size_t g = 0; g < rail.aim.size(); ++g)
+            for (size_t i = 0; i < rail.aim[g].size(); ++i)
+                if (const float l = railLen(feet, rail.aim[g][i]); l < nearest) nearest = l, rail.group = int(g), rail.best = float(i);
+        const cr3::Vec3 target{feet[0] + rail.offset[0], feet[1] + rail.offset[1], feet[2] + rail.offset[2]};
+        railSearch(target);
+        rail.shown = rail.best, rail.easing = rail.switching = false, rail.blend = 0, rail.started = true;
+        rail.eye = railCamAt(rail.best);
+        for (Cr3RailCam::Box& b : rail.boxes) b.in = false;
+        areaCamera.eye = rail.eye, areaCamera.at = target;
+    }
+    bool railBoxHolds(const cr3::Mat34& w, const cr3::Vec3& p) const {
+        const float d[3] = {p[0] - w.m[3], p[1] - w.m[7], p[2] - w.m[11]};
+        for (int a = 0; a < 3; ++a) {
+            const float ax[3] = {w.m[a], w.m[4 + a], w.m[8 + a]};
+            const float len = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+            if (len < 1e-6f) return false;
+            if (std::fabs((d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]) / len) > len * 0.05f + 0.2f) return false;
+        }
+        return true;
+    }
+    void railStep(const cr3::Vec3& feet, const cr3::Vec3& centre, float dt) {
+        if (!rail.started) return railReset(feet);
+        for (Cr3RailCam::Box& b : rail.boxes) { // (CallbackCollisionEvent: entering one)
+            const bool in = railBoxHolds(b.world, centre);
+            if (in && !b.in && b.group >= 0 && b.group < int(rail.aim.size()) && b.group != rail.group)
+                rail.switching = rail.easing = true, rail.from = rail.eye, rail.blend = 0, rail.group = b.group;
+            b.in = in;
+        }
+        const cr3::Vec3 target{feet[0] + rail.offset[0], feet[1] + rail.offset[1], feet[2] + rail.offset[2]};
+        rail.tick += dt;
+        for (; rail.tick >= 1.0f / 30; rail.tick -= 1.0f / 30) { // (RailAction, an update each 30th)
+            railSearch(target);
+            if (rail.switching && rail.easing) {
+                rail.blend += 1.0f / 30;
+                if (rail.blend > 0.3f) {
+                    rail.blend = 0, rail.switching = rail.easing = false;
+                    continue;
+                }
+                rail.shown = rail.best;
+                const cr3::Vec3 to = railCamAt(rail.best);
+                const float k = rail.blend / 0.3f;
+                for (int c = 0; c < 3; ++c) rail.eye[c] = to[c] * k + rail.from[c] * (1 - k);
+                continue;
+            }
+            if (!rail.switching && rail.easing) {
+                if (rail.shown < rail.best) rail.shown = std::min(rail.shown + 2.5f, rail.best);
+                else if (rail.shown > rail.best) rail.shown = std::max(rail.shown - 2.5f, rail.best);
+                if (std::fabs(rail.best - rail.shown) < 2.5f) rail.easing = false;
+            } else if (!rail.easing) {
+                const cr3::Vec3 next = railCamAt(rail.best);
+                if (railLen(next, rail.eye) <= 1.0f) rail.shown = rail.best;
+                else rail.easing = true;
+            }
+            rail.eye = railCamAt(rail.shown);
+        }
+        areaCamera.eye = rail.eye, areaCamera.at = target;
+    }
+    void setupAreaCamera(const std::string& name) {
+        areaCamera.setLookDown(false), areaCamera.setExternal(false), rail = Cr3RailCam();
+        if (std::find_if(std::begin(kRailMaps), std::end(kRailMaps), [&](const char* m) { return name == m; }) != std::end(kRailMaps) && setupRail(name)) {
+            areaCamera.setExternal(true);
             return;
         }
+        if (std::find_if(std::begin(kLookDownMaps), std::end(kLookDownMaps), [&](const char* m) { return name == m; }) == std::end(kLookDownMaps)) return;
+        bool found = false; // (towns alone: a dungeon's own number not known yet)
+        const std::array<float, 3> offset = fieldCameraLD(name, found);
+        if (!found) return;
+        areaCamera.setLookDown(true, offset);
+        SDL_Log("area %s: the look-down camera, (%.1f %.1f %.1f)", name.c_str(), offset[0], offset[1], offset[2]);
     }
     // the area's people (Fld2NPC): data\field_<town>.mbe's Field rows for this area - the area +0,
     // the quest +0x10 (-1: any; GetFieldParamByName takes those first), the gimmick +0x18
@@ -5653,7 +5814,10 @@ struct Viewer {
             f.absolute = true; // (CrxSimpleModel: its own animation, looped)
             areaFigures.push_back(std::move(f));
         }
-        if (loadLights(name + "c")) SDL_Log("lights: %sc", name.c_str());
+        // the lights: Fld2TaskMap::EntryLight's, the <map>f model's figure (Fld2CameraBase::SetLight: else <map>c)
+        if (loadLights(name + "f")) SDL_Log("lights: %sf", name.c_str());
+        else if (loadLights(name + "c")) SDL_Log("lights: %sc", name.c_str());
+        else lighting = cr3::SceneLighting();
         initEventDrawing(); // (the area's script's windows and fades)
         // the player: Fld2TaskPlayer::CreatePlayer (Fld2CharaNameTbl's model; a hero's body b01)
         areaPlayerArgName = player;
@@ -5677,7 +5841,7 @@ struct Viewer {
         setAreaMotion(cr3::Cr3Motion::Idle);
         const cr3::Vec3 p = areaWalker->position();
         setupAreaCamera(name);
-        areaCamera.reset({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw);
+        areaCamera.reset({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw), rail.started = false;
         areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, false, 0, &area.cameraWalls, &area.walls);
         areaMode = true, areaClock = 0;
         // (Cr3System.GetDungeonNum / GetAreaNum: the dungeon - a town 0 - and the area from 0)
@@ -5738,7 +5902,7 @@ struct Viewer {
             areaWalker->setPosition({savedPos[0], savedPos[1], savedPos[2]});
             areaYaw = savedYaw;
             const cr3::Vec3 q = areaWalker->position();
-            areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
+            areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw), rail.started = false;
             for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g); // (no box set off by standing in it)
         }
         savedArea.clear();
@@ -5819,7 +5983,7 @@ struct Viewer {
                     for (int k = 0; k < 30; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
                     areaYaw = std::atan2(w[j].m[2], w[j].m[10]);
                     const cr3::Vec3 q = areaWalker->position();
-                    areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
+                    areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw), rail.started = false;
                 }
         }
         for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g);
@@ -6270,7 +6434,7 @@ struct Viewer {
                     for (int k = 0; k < 60; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
                     areaYaw = std::atan2(-dx, -dz);
                     const cr3::Vec3 q = areaWalker->position();
-                    areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
+                    areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw), rail.started = false;
                     SDL_Log("area %s: near %s at (%.2f %.2f %.2f)", area.name.c_str(), want.c_str(), q[0], q[1], q[2]);
                 }
         }
@@ -6310,6 +6474,7 @@ struct Viewer {
         setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
         const cr3::Vec3 p = areaWalker->position();
         areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, moving, dt, &area.cameraWalls, &area.walls);
+        if (rail.on) railStep({p[0], p[1] - areaWalker->radius, p[2]}, p, dt);
         // the gimmicks: an event box walked into sets off its function; a check object near
         areaCheckNear = -1;
         for (size_t k = 0; k < areaGimmicks.size(); ++k) {

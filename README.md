@@ -25,11 +25,11 @@ or, with a save, carries on from it. What works today:
   village's meals (talking with the party by their balloons) and the town - as the reference
   playthrough shows them: message windows, cut-ins, voices
 - **Towns and dungeons** (CR3's `Fld2` field): walking by keys, pad, mouse or touch, the follow
-  camera, doors, the ways between a town's areas, the town map, the townspeople (standing and
-  talked to), event boxes, the area scripts, map names, the field's buttons; **random
-  encounters** with first strikes, surprise attacks and ace monsters; **saving** with the field's
-  Save button and where the game saves by itself - entering areas, after battles (one save, in
-  the profile folder)
+  camera (and the village's rail and the houses' look-down ones), doors, the ways between a town's
+  areas, the town map, the townspeople (standing and talked to), event boxes, the area scripts, map
+  names, the field's buttons; **random encounters** with first strikes, surprise attacks and ace
+  monsters; **saving** with the field's Save button and where the game saves by itself - entering
+  areas, after battles (one save, in the profile folder)
 - **Battles**: the glass break, the get-set menu, commands, genes and items, the break gauge,
   criticals, downs and combos, status effects, hit effects, the battle scripts, announcements,
   escape, the result - EXP into the worn genes, money, monster drops - and the continue and game over

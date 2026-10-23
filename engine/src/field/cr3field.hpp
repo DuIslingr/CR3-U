@@ -45,6 +45,8 @@ public:
     // 1.2 up; each followed at 4 a second once 0.3 or more off (a still zone), no turning
     void setLookDown(bool on, const std::array<float, 3>& offset = {}) { lookDown_ = on, ldOffset_ = offset; }
     bool lookDown() const { return lookDown_; }
+    // another camera sets eye and at itself (Fld2CameraRail): reset, step and turn leave them
+    void setExternal(bool on) { external_ = on; }
     std::array<float, 3> eye{}, at{};
     float fovY = 45, zNear = 0.1f, zFar = 5000; // (MVGL::Draw::Camera's 45 degrees; Fld2CameraGom::Initialize's)
     float yaw = 0, pitch = 0.3f;
@@ -53,7 +55,7 @@ private:
     std::array<float, 3> spring_{}; // (the point the spring holds: +0x20)
     float speed_ = 0;
     bool swinging_ = false;
-    bool lookDown_ = false;
+    bool lookDown_ = false, external_ = false;
     std::array<float, 3> ldOffset_{};
 };
 

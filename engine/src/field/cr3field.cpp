@@ -58,6 +58,7 @@ bool Cr3Area::load(const MvglArchive& a, const std::string& area, std::string* e
 }
 
 void Cr3GomCamera::reset(const V3& player, float playerYaw) {
+    if (external_) return;
     if (lookDown_) { // (Fld2CameraLookDown::Reset: at once where they go)
         eye = player + V3{ldOffset_[0], ldOffset_[1], ldOffset_[2]}, at = player + V3{0, 1.2f, 0};
         return;
@@ -71,12 +72,13 @@ void Cr3GomCamera::reset(const V3& player, float playerYaw) {
 }
 
 void Cr3GomCamera::turn(float dyaw, float dpitch) {
-    if (lookDown_) return;
+    if (lookDown_ || external_) return;
     yaw += dyaw;
     pitch = std::clamp(pitch + dpitch, 0.05f, 1.3f);
 }
 
 void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls, const CollisionWorld* walls) {
+    if (external_) return playerAlpha = 1, void();
     if (lookDown_) { // (Fld2CameraLookDown::Update)
         auto follow = [dt](V3& at, const V3& want) {
             const V3 d = want - at;
