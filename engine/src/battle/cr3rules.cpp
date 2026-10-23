@@ -18,7 +18,7 @@ constexpr const char* kAccessory = "iiiiiiiiiiiiiiiiii";         // 12 HP (+0x30
 constexpr const char* kGene = "iiiiiiiiiiiiiiiiiiiiiii";         // 13 HP (+0x34), 14 MP, 15 atk | def, 16 spd | luck, 17 .. 20 their growth
 constexpr const char* kGuestGene = "iiiiiiiiiiiiiiiiiii";        // id, gene, level, then (type, id) x 8
 constexpr const char* kStatusEffect = "iiiiiiiiiiiiiiiiiiiiii"; // id, .., 5 / 6 turns (+0x14 / +0x18), 12 / 13 chance (+0x30 / +0x34; with the advantage), 14 .. 21 four (kind, constant)
-constexpr const char* kBattleBreak = "ffii_ip_ip_ip_ipiiiiiiii_ip";  // 12 .. 19 the break bonuses (+0x50: with the advantage base, critical, down, kill; +0x60 without), 20 / 21 the status effects monsters resist (+0x70 / +0x78)
+constexpr const char* kBattleBreak = "ffii_ip_ip_ip_ipiiiiiiii_ipip"; // 12 .. 19 the break bonuses (+0x50: with the advantage base, critical, down, kill; +0x60 without), 20 / 21 the status effects monsters resist (+0x70 / +0x78), 22 / 23 the cooperation scales (+0x80 / +0x88, floats)
 constexpr const char* kSkill = "iiiiiiiiiiiiiiiiiiiii";          // 8 its condition (+0x20), 12 / 13 and 14 / 15 its effects (kind, constant)
 constexpr const char* kCommand = "iiiiiiffiii_ip_ip_ip_ip_ip_ip_ipiiiiiiiiiiiiiii_pi"; // 5 power, 6 multiplier, 8 packed (attacks, hits, break), 27 spread (+0xa8), 32 flags, 33 formula (+0xc0)
 constexpr const char* kFormula = "iiii";  // id, action, damage, chain
@@ -111,6 +111,10 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     if (const MbeFile::Table* tb = t.battle.table("Battle"); tb && t.battle.row(*tb, 0, kBattleBreak, bt)) {
         for (size_t k = 0; k < 4; ++k) breakWith_[k] = bt.i(12 + k), breakWithout_[k] = bt.i(16 + k);
         for (int k = 0; k < bt.i(20) && k < 6; ++k) resistIds_.push_back(bt.element(21, size_t(k)));
+        for (int k = 0; k < bt.i(22) && k < 4; ++k) {
+            const int32_t bits = bt.element(23, size_t(k));
+            std::memcpy(&coopScale_[size_t(k)], &bits, 4);
+        }
     }
     for (size_t k = 0; k < b.units.size(); ++k) {
         const Cr3BattleUnit& u = b.units[k];
@@ -412,6 +416,7 @@ int Cr3BattleRules::damage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Co
     d *= float(s.geneLevel) / 20.0f + 1.0f; // ("Level": VGetGeneLevel)
     d *= c.multiplier > 0 ? c.multiplier : 1.0f;
     d *= effectMultiplier(t, 34); // ("Status Effect": the target's kind 34 - Guard's status effect 2, x 0.5)
+    d *= coopNow_;                // (x MbBattleInfo::GetCooperationScale: a cooperation's units)
     int out = int(d);
     // (calculatePhysicalDamage / calculateMagicDamage: x the attacker's kind 54 / 55 multipliers)
     out = int(float(out) * effectMultiplier(s, magic ? 55 : 54));
@@ -428,13 +433,21 @@ int Cr3BattleRules::heal(const Cr3Fighter& s, const Cr3Command& c) {
     return std::max(int(ratio * float(c.power) * (float(s.geneLevel) / 20.0f + 1.0f)), 1);
 }
 
+bool Cr3BattleRules::targetable(int i) const {
+    if (i < 0 || size_t(i) >= fighters.size()) return false;
+    const Cr3Fighter& f = fighters[size_t(i)];
+    return !f.dead() && !hasKind(f, 32) && !hasKind(f, 72);
+}
+
 int Cr3BattleRules::livingTarget(bool player, int preferred) {
-    if (preferred >= 0 && size_t(preferred) < fighters.size() && !fighters[size_t(preferred)].dead() &&
-        fighters[size_t(preferred)].player == player)
+    if (preferred >= 0 && size_t(preferred) < fighters.size() && targetable(preferred) && fighters[size_t(preferred)].player == player)
         return preferred;
     std::vector<int> alive;
     for (size_t k = 0; k < fighters.size(); ++k)
-        if (fighters[k].player == player && !fighters[k].dead()) alive.push_back(int(k));
+        if (fighters[k].player == player && targetable(int(k))) alive.push_back(int(k));
+    if (alive.empty()) // (none to take: a living one all the same)
+        for (size_t k = 0; k < fighters.size(); ++k)
+            if (fighters[k].player == player && !fighters[k].dead()) alive.push_back(int(k));
     if (alive.empty()) return -1;
     return alive[size_t(random() * float(alive.size())) % alive.size()];
 }
@@ -468,6 +481,10 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     for (size_t k = 0; k < fighters.size() && !wait; ++k) {
         const Cr3Fighter& f = fighters[k];
         if (f.player || f.dead()) continue;
+        if (const auto sc = scripted.find(int(k)); sc != scripted.end() && !sc->second.empty()) { // (its script's, in its own's place)
+            for (int id : sc->second) monsters.push_back({int(k), id, -1, 0});
+            continue;
+        }
         int cmd = f.attackCommand;
         int total = 0;
         for (const auto& [id, ratio] : f.commands) total += ratio;
@@ -482,6 +499,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         monsters.push_back({int(k), cmd, -1, 0});
     }
     order.insert(advantage(false) ? order.begin() : order.end(), monsters.begin(), monsters.end());
+    scripted.clear();
     int lastSide = -1; // (BtlCommandManager::Clear: none yet this turn)
     bool lastHadChance = false, lastContinued = false;
     std::vector<int> lastTargets;
@@ -491,8 +509,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         if (s.dead()) continue;
         Cr3Action a;
         a.source = src, a.command = cmd;
-        // (MbStatusEffectInfo::IsNoAction: a kind 31 effect - stunned, asleep - and it does nothing)
-        if (hasKind(s, 31)) {
+        // (MbStatusEffectInfo::IsNoAction: a kind 31 effect - stunned, asleep - and it does nothing;
+        // a skill's command plays all the same)
+        if (hasKind(s, 31) && !fromSkill) {
             a.command = -2, a.gaugeAfter = gauge;
             out.push_back(a);
             continue;
@@ -521,9 +540,36 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         Cr3Command own; // (hits below 0: VGetWeaponHitNum - a character's weapon's, a monster's attack command's)
         if (c.hitsOwn) c.hits = s.player ? std::max(s.weaponHits, 1) : command(s.attackCommand, own) ? own.hits : 1;
         c.hits *= c.repeat;
+        // (calculateCooperation: a command allowing it - +0xbc bit 7 -, not a skill's, its unit free of
+        // kind 47 for a gene's; a random byte under 154 with the gauge's advantage, else 77, + its
+        // skills' kind 80 (GetCooperationCorrection) - then GetCooperation: each later command of
+        // its side's the same, on the same target for one enemy, its unit able, joins - taken from
+        // the list)
+        if ((c.flags & 0x80) && !fromSkill && !((c.flags & 1) && hasKind(s, 47))) {
+            const int chance = (advantage(s.player) ? 154 : 77) + skillConstant(s, 80);
+            if (int(random() * 256.0f) < chance)
+                for (size_t k = at + 1; k < order.size();) {
+                    const std::array<int, 4> o = order[k];
+                    const Cr3Fighter& p = fighters[size_t(o[0])];
+                    if (p.player == s.player && !p.dead() && !hasKind(p, 31) && !hasKind(p, 47) && o[3] == 0 && o[1] == cmd &&
+                        (c.target != 3 || o[2] == tgt)) {
+                        a.partners.push_back(o[0]);
+                        order.erase(order.begin() + long(k));
+                    } else {
+                        ++k;
+                    }
+                }
+        }
+        coopNow_ = coopScale_[std::min(a.partners.size() + 1, coopScale_.size() - 1)];
         a.mpCost = std::min(mpCost(s, c), s.mp);
         s.mp -= a.mpCost, s.hp = std::max(s.hp - c.hpCost, 1);
         if (s.player) partyMp += a.mpCost;
+        for (int pi : a.partners) {
+            Cr3Fighter& p = fighters[size_t(pi)];
+            const int m = std::min(mpCost(p, c), p.mp);
+            p.mp -= m;
+            if (p.player) partyMp += m;
+        }
         const bool ally = c.ally();
         bool anyCrit = false, anyDown = false;
         std::vector<int> targets;
@@ -535,7 +581,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         const bool ownOne = c.target == 1 || c.target == 12 || (c.target == 8 && ally);
         if (c.all)
             for (size_t k = 0; k < fighters.size(); ++k) {
-                if ((c.target == 5 || fighters[k].player == (ownSide ? s.player : !s.player)) && !fighters[k].dead() &&
+                if ((c.target == 5 || fighters[k].player == (ownSide ? s.player : !s.player)) && targetable(int(k)) &&
                     (c.target != 13 || int(k) != src))
                     targets.push_back(int(k));
             }
@@ -568,28 +614,32 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                 // (every hit plays, past the target's death - the reference's 1089 on a 400 HP
                 // Heterocera; the gauge's state is the action's own: its points land after it)
                 lastTargets.push_back(ti);
-                for (int h = 0; h < c.hits; ++h) {
-                    if (!hits(s, t, c)) { // (a miss: no damage, no points)
-                        hit.hits.push_back(0), hit.flags.push_back(4);
-                        continue;
+                std::vector<int> who{src}; // (a cooperation's units in turn, each its hits)
+                who.insert(who.end(), a.partners.begin(), a.partners.end());
+                for (int wi : who)
+                    for (int wh = 0; wh < c.hits; ++wh) {
+                        const Cr3Fighter& u = fighters[size_t(wi)];
+                        if (!hits(u, t, c)) { // (a miss: no damage, no points)
+                            hit.hits.push_back(0), hit.flags.push_back(4);
+                            continue;
+                        }
+                        landed = true;
+                        bool crit = false, down = false;
+                        lastContinued |= t.comboChance;
+                        const int d = damage(u, t, c, &crit, &down);
+                        hit.hits.push_back(d);
+                        hit.flags.push_back(uint8_t((crit ? 1 : 0) | (down ? 2 : 0)));
+                        // (BtlBasicStatus::TakeDamage: no lower than the least HP its effects allow -
+                        // kind 53 a number, 121 a percentage of the max: an endure; a skill's added
+                        // command past it - the spider's finisher)
+                        const int least = fromSkill ? 0 : std::max(effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)));
+                        const int before = t.hp;
+                        t.hp = std::max(t.hp - d, t.hp > 0 ? std::min(least, t.hp) : 0);
+                        if (s.player && !t.player) partyDamage = std::min(partyDamage + d, 9999999L), killed += before > 0 && t.hp <= 0;
+                        if (down) t.comboChance = true, ++t.combo; // (BtlBasicStatus::TakeDamage, addComboNum)
+                        anyCrit |= crit, anyDown |= down;
+                        if (down && std::find(downed.begin(), downed.end(), ti) == downed.end()) downed.push_back(ti);
                     }
-                    landed = true;
-                    bool crit = false, down = false;
-                    lastContinued |= t.comboChance;
-                    const int d = damage(s, t, c, &crit, &down);
-                    hit.hits.push_back(d);
-                    hit.flags.push_back(uint8_t((crit ? 1 : 0) | (down ? 2 : 0)));
-                    // (BtlBasicStatus::TakeDamage: no lower than the least HP its effects allow -
-                    // kind 53 a number, 121 a percentage of the max: an endure; a skill's added
-                    // command past it - the spider's finisher)
-                    const int least = fromSkill ? 0 : std::max(effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)));
-                    const int before = t.hp;
-                    t.hp = std::max(t.hp - d, t.hp > 0 ? std::min(least, t.hp) : 0);
-                    if (s.player && !t.player) partyDamage = std::min(partyDamage + d, 9999999L), killed += before > 0 && t.hp <= 0;
-                    if (down) t.comboChance = true, ++t.combo; // (BtlBasicStatus::TakeDamage, addComboNum)
-                    anyCrit |= crit, anyDown |= down;
-                    if (down && std::find(downed.begin(), downed.end(), ti) == downed.end()) downed.push_back(ti);
-                }
             }
             // its status effects, where it landed and the target lives (IsStatusEffectHit)
             if (landed && !t.dead())
@@ -661,10 +711,31 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     order.insert(order.begin() + long(at) + 1, {int(k), added, -1, 1});
                 }
             }
+        // (BtlDamageTarget::TriggerAfterDamageToCalculation - trigger 7, a hit landed on it: a
+        // target's skills whose condition holds - 3 its HP at or under the constant's percentage,
+        // IsHpPercentLessEqual -, once; kind 97's command interrupts, next - AddInterruptCommand -,
+        // kind 100's follows it - AddCommand: battle_0005's 1109 and its 1756 at 60%)
+        if (tables_)
+            for (const Cr3Hit& th : a.targets) {
+                const Cr3Fighter& t = fighters[size_t(th.target)];
+                bool hurt = false;
+                for (size_t h = 0; h < th.hits.size(); ++h) hurt |= th.hits[h] > 0 && !(th.flags[h] & 4);
+                if (t.dead() || !hurt) continue;
+                size_t next = at + 1;
+                for (int id : t.skills) {
+                    MbeFile::Row r;
+                    if (!tables_->skill.find("Skill", id, kSkill, r) || r.i(7) != 7 || r.i(8) != 3 || usedSkills_.count({th.target, id})) continue;
+                    if (float(t.hp) * 100.0f > float(r.i(9)) * float(t.maxHp)) continue;
+                    usedSkills_.insert({th.target, id});
+                    for (int e = 0; e < 2; ++e)
+                        if (r.i(12 + 2 * e) == 97 || r.i(12 + 2 * e) == 100)
+                            order.insert(order.begin() + long(next++), {th.target, r.i(13 + 2 * e), -1, 1});
+                }
+            }
         // (delayCommandByDown: a downed unit's command still to come goes to the back)
         for (int d : downed)
             for (size_t k = at + 1; k < order.size(); ++k)
-                if (order[k][0] == d) {
+                if (order[k][0] == d && order[k][3] == 0) { // (a skill's - an interrupt - stays)
                     const auto moved = order[k];
                     order.erase(order.begin() + long(k));
                     order.push_back(moved);

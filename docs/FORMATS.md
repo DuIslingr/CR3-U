@@ -1321,6 +1321,37 @@ effects aren't drawn), StopAuto (no auto battle), OpenUI / CloseUI, AddFieldObje
 and forces the win after turn 5; the ace battles (503, 506, 509, 515) triple EXP and money when
 all three fall; battle 3's defeat plays its event and ends.
 
+### Monster scripts, triggered skills and cooperations (CR3)
+
+Before a turn is worked out (BtlStatusList::CallMonsterScript) each living monster's
+`Battle_Monster_NNNN` runs where its script has one, BattleArgument.GetSource the monster:
+BattleCommand.Add(unit, actions, command) (BtlStatusList::AddCommand) gives it that command this
+turn in place of its own pick (battle_0005's 1109 holds with 1507 while someone has status 43).
+After a direction, BattleArgument is its action: GetSource, GetCommand, WasDown, WasCooperated
+(BtlDamageChunk::IsCooperation). BattleStatus.GetIdByStatusEffect is the first unit with one.
+BattleCommand.SetId (commands of no unit's after the turn's end - battle_0005's 72) is not played.
+
+A unit with a kind 31 status effect (held, asleep) gets no command menu
+(BtlStatusList::InitializeMenu); one with a kind 32 effect (IsNonTarget) or kind 72
+(HasProhibitedTarget, unless the command removes it) can't be a target.
+
+A skill's trigger (skill_para Skill +0x1c) and condition (+0x20, its constant +0x24 - BtlSkill::Trigger):
+trigger 7 is after a hit lands on the unit (BtlDamageTarget::TriggerAfterDamageToCalculation),
+condition 3 its HP at or under the constant's percentage (IsHpPercentLessEqual); its effects kind
+97 (AddInterruptCommand: the command next) and 100 (AddCommand: after it) - played even if the
+unit is downed or can't act. Battle 5's 1109 has skill 425: at 60% its 1756, whose direction's end
+turns on flag 5002 and the cooperation tutorial.
+
+A cooperation (BtlCommandManager::calculateCooperation): a command with +0xbc bit 7 (gene
+commands 241 ..), not a skill's, its unit free of kind 47 for a gene's (bit 0); a random byte
+under 154 with the gauge's advantage, else 77, + the unit's skills' kind 80 (battle_0005's turn
+end gives the party 431: +256). Then BtlCommandList::GetCooperation takes in every later command of
+the side's that is the same command (on the same target where it takes one enemy), its unit
+able: one action, each unit's hits in it, each damage x battle.mbe Battle +0x80 / +0x88's scale
+by the units in it (0, 1, 3, 5). Battle 5 is won by one (Battle_Direction_End: flag 5002 and
+WasCooperated - its scene, 25 EXP, 60 money, ForceVictory); its party needs two members wearing
+genes with a command in common (the gene swap tutorial's), else its turn end's hint scene.
+
 ### The continue (CR3)
 
 A defeat (phaseDefeatEventStart: the result 1, Battle_Defeat_Base), where the coupling allows it

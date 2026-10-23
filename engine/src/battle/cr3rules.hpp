@@ -40,7 +40,12 @@
 // effects' triggers, end timings and stacks.
 //
 // A turn (BtlCommandManager::Calculate: a command list per side, in order): the party's chosen
-// commands, then each living monster's; a dead target's attack goes to another living one.
+// commands, then each living monster's; a dead target's attack goes to another living one. A
+// cooperation (calculateCooperation): a command that allows it (+0xbc bit 7), with a chance -
+// a random byte under 154 with the gauge's advantage, else 77, + the unit's skills' kind 80 -
+// takes in every later command of its side's that is the same (on the same target where it takes
+// one enemy): one action, each unit's hits in it, each damage x battle.mbe's scale for the units
+// in it (1, 3, 5).
 
 #include <array>
 #include <cstdint>
@@ -59,7 +64,8 @@ struct Cr3Command {
     bool hitsOwn = false; // (+0x21 below 0: the unit's own)
     int repeat = 1;       // (+0x20: its attacks, each of its hits - Rakshasa Lotus 3 x the weapon's 1)
     int breakPoint = -1;  // (+0x22, s16: its break points a hit - below 0 none; with flag bit 1 the unit's weapon's instead)
-    uint32_t flags = 0;   // (+0xbc: bit 1 the weapon's break, 2 always hits, 3 its status effects always land, 4 can be critical, 5 always critical, 6 always downs)
+    uint32_t flags = 0;   // (+0xbc: bit 0 a gene's, 1 the weapon's break, 2 always hits, 3 its status effects always land, 4 can be critical, 5 always critical, 6 always downs,
+                          //  7 can be cooperated in)
     float hitRate = 1;    // (+0x1c: x the hit chance)
     std::vector<int> effects; // (+0x40 / +0x48: the status effects it gives - Guard's 2)
     int effectsAnnounce = -1; // (+0xe8: AnnounceBattle's line when it gives one target several)
@@ -124,6 +130,8 @@ struct Cr3Action {
     std::vector<Cr3Hit> targets;                // every target's (one but for an all)
     int mpCost = 0;
     int gaugeAfter = 0;                         // the break gauge after it
+    std::vector<int> partners;                  // (a cooperation's others - BtlDamageChunk::AddCooperation -, their hits among the targets')
+    bool cooperated() const { return !partners.empty(); } // (BtlDamageChunk::IsCooperation)
 };
 
 class Cr3BattleRules {
@@ -166,6 +174,12 @@ public:
     // (the party's first strike - BtlStatusList::ClearRatioToEnemy: the monsters' actions this turn
     // none - the next turn() the party's alone)
     bool monstersWait = false;
+    // (Battle_Monster_NNNN's BattleCommand.Add - BtlStatusList::AddCommand: a command for a monster
+    // this turn, in place of its own pick), by fighter; the next turn() takes them
+    std::map<int, std::vector<int>> scripted;
+    // (BtlStatus::IsNonTarget: a kind 32 status effect; BtlStatusEffectList::HasProhibitedTarget: a
+    // kind 72 one - held, hidden)
+    bool targetable(int fighter) const;
     int heal(const Cr3Fighter& source, const Cr3Command& c); // (calculateHpHeal)
     int mpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetMpCost)
     // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the skills
@@ -204,6 +218,8 @@ private:
     std::array<int, 4> breakWith_{0, 25, 25, 50}, breakWithout_{100, 50, 50, 100}; // (battle.mbe Battle +0x50 / +0x60: base, critical, down, kill)
     std::vector<int> resistIds_;
     std::set<std::pair<int, int>> usedSkills_; // (fighter, skill: the added commands fired)
+    std::array<float, 4> coopScale_{0, 1, 3, 5}; // (battle.mbe Battle +0x80 / +0x88: MbBattleInfo::GetCooperationScale, by the units in it)
+    float coopNow_ = 1;                          // (the action's: calculateBasicDamage's x scale)
     int livingTarget(bool player, int preferred);
 };
 

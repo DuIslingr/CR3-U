@@ -6672,7 +6672,9 @@ struct Viewer {
     std::unique_ptr<cr3::EventRuntime> cr3BattleEvents;
     float cr3BattleEventClock = 0;
     bool cr3BattleStarted = false; // (Battle_Start_Base called)
-    bool runCr3BattleScript(const char* fn) {
+    // (BattleArgument: the action a direction's end is about, the unit a monster's script is for)
+    int cr3ArgAction = -1, cr3ArgSource = -1;
+    bool runCr3BattleScript(const char* fn, bool quiet = false) {
         cr3BattleEvents = std::make_unique<cr3::EventRuntime>(archive, game);
         cr3BattleEvents->language = optionLanguage, cr3BattleEvents->autoPage = pageSeconds, cr3BattleEvents->askYesNo = true;
         // (BattleStatus: the battle's units by an id - CR3-U's the fighter's index -; their status
@@ -6708,6 +6710,29 @@ struct Viewer {
             vm.setNative("Battle", "GetBreakPoint", [this](cr3::NativeCall& c) { c.result(cr3GaugeShown); });
             vm.setNative("Battle", "GetFiledId", [this](cr3::NativeCall& c) { c.result(cr3BattleFieldId); });
             vm.setNative("Battle", "AddFieldStatusEffect", [this](cr3::NativeCall& c) { cr3FieldEffects.push_back(c.integer(0)); });
+            // (BattleArgument - BtlScript::BattleArgument: the source set, the damage chunk's command,
+            // whether it downed - WasDown -, was a cooperation - IsCooperation)
+            auto argAction = [this]() -> const cr3::Cr3Action* {
+                return cr3ArgAction >= 0 && size_t(cr3ArgAction) < cr3Actions.size() ? &cr3Actions[size_t(cr3ArgAction)] : nullptr;
+            };
+            vm.setNative("BattleArgument", "GetSource", [this](cr3::NativeCall& c) { c.result(cr3ArgSource); });
+            vm.setNative("BattleArgument", "GetCommand", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a ? a->command : -1); });
+            vm.setNative("BattleArgument", "WasCooperated", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a && a->cooperated()); });
+            vm.setNative("BattleArgument", "WasDown", [argAction](cr3::NativeCall& c) {
+                bool down = false;
+                if (const auto* a = argAction())
+                    for (const cr3::Cr3Hit& th : a->targets)
+                        for (uint8_t fl : th.flags) down |= (fl & 2) != 0;
+                c.result(down);
+            });
+            // (BattleCommand.Add(unit, actions, command) - BtlStatusList::AddCommand: its command this
+            // turn; SetId - commands of no unit's after the turn's end: not played yet)
+            vm.setNative("BattleCommand", "Add", [this](cr3::NativeCall& c) {
+                if (c.integer(0, -1) >= 0) cr3Rules.scripted[c.integer(0)].push_back(c.integer(2));
+            });
+            vm.setNative("BattleCommand", "SetId", [this](cr3::NativeCall& c) {
+                SDL_Log("battle %d: script command %d (not played)", cr3Battle.coupling, c.integer(0));
+            });
             vm.setNative("BattleStatus", "GetIdByPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(true, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByNonPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(false, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByCharId", [this](cr3::NativeCall& c) {
@@ -6723,6 +6748,12 @@ struct Viewer {
             vm.setNative("BattleStatus", "GiveStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.giveEffect(c.integer(0, -1), c.integer(1)); });
             vm.setNative("BattleStatus", "RemovesStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.removeEffect(c.integer(0, -1), c.integer(1)); });
             vm.setNative("BattleStatus", "HaveStatusEffect", [this](cr3::NativeCall& c) { c.result(cr3Rules.hasEffect(c.integer(0, -1), c.integer(1))); });
+            vm.setNative("BattleStatus", "GetIdByStatusEffect", [this](cr3::NativeCall& c) { // (the first unit with it; -1 none)
+                int id = -1;
+                for (size_t k = 0; k < cr3Rules.fighters.size() && id < 0; ++k)
+                    if (cr3Rules.hasEffect(int(k), c.integer(0))) id = int(k);
+                c.result(id);
+            });
             vm.setNative("BattleStatus", "GetStatusEffectTurn", [this](cr3::NativeCall& c) {
                 int turns = 0;
                 if (c.integer(0, -1) >= 0 && size_t(c.integer(0, -1)) < cr3Rules.fighters.size())
@@ -6745,7 +6776,7 @@ struct Viewer {
         };
         cr3BattleEventClock = 0;
         if (!cr3BattleEvents->start(cr3Battle.script(), fn)) {
-            SDL_Log("battle script %s: %s", fn, cr3BattleEvents->error().c_str());
+            if (!quiet) SDL_Log("battle script %s: %s", fn, cr3BattleEvents->error().c_str());
             return false;
         }
         SDL_Log("battle script %s:%s", cr3Battle.script().c_str(), fn);
@@ -7178,6 +7209,10 @@ struct Viewer {
         cr3PartyRules();
         cr3Rules.partyMpLeft = game.cr3Mp; // (the MP the last battle left)
         if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
+        for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
+            const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
+            SDL_Log("battle %d: fighter %zu - %s %d, level %d, HP %d", coupling, k, f.player ? "character" : "monster", f.id, f.level, f.maxHp);
+        }
         cr3HpShown.clear();
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp);
         applyVsBattleStart(); // (VS: the lifeline items, the wildcards)
@@ -7603,6 +7638,11 @@ struct Viewer {
                 cr3List.push_back(row);
             }
         }
+        {
+            std::string ids;
+            for (const Cr3ListRow& row : cr3List) ids += " " + std::to_string(row.command) + (row.usable ? "" : "(-)");
+            SDL_Log("battle %.2f s: fighter %d's %s:%s", cr3BattleClock, cr3Chooser, items ? "items" : "genes", ids.c_str());
+        }
         cr3BattleStage = Cr3BattleStage::List, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
     }
     void chooseCr3ListRow(int k) {
@@ -7621,8 +7661,9 @@ struct Viewer {
         }
     }
     void nextCr3Chooser() {
+        // (BtlStatusList::InitializeMenu: a unit with a kind 31 status effect - held, asleep - has none)
         for (size_t f = size_t(cr3Chooser + 1); f < cr3Rules.fighters.size(); ++f)
-            if (cr3Rules.fighters[f].player && !cr3Rules.fighters[f].dead()) {
+            if (cr3Rules.fighters[f].player && !cr3Rules.fighters[f].dead() && !cr3Rules.hasKind(cr3Rules.fighters[f], 31)) {
                 cr3Chooser = int(f);
                 cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
                 SDL_Log("battle %.2f s: fighter %zu chooses", cr3BattleClock, f);
@@ -7630,7 +7671,19 @@ struct Viewer {
                 playCr3Camera("Cam_bt_command_PC_00", 26.6667f, true, unitPoint(k, "DummyCP", 1.2f), cr3Battle.units[k].yaw, -1.0f / 3.0f);
                 return;
             }
-        // (all chosen: BtlSysStateSelect::phaseCalculate - the turn worked out, then played)
+        // (all chosen: BtlSysStateSelect::phaseCalculate - BtlStatusList::CallMonsterScript, each
+        // living monster's Battle_Monster_NNNN where its script has one - its BattleCommand.Add in
+        // place of its own pick -, then the turn worked out and played)
+        for (size_t f = 0; f < cr3Rules.fighters.size(); ++f) {
+            const cr3::Cr3Fighter& m = cr3Rules.fighters[f];
+            if (m.player || m.dead()) continue;
+            char fn[32];
+            std::snprintf(fn, sizeof fn, "Battle_Monster_%04d", m.id);
+            cr3ArgSource = int(f), cr3ArgAction = -1;
+            if (runCr3BattleScript(fn, true))
+                for (int k = 0; k < 600 && cr3BattleEvents->running(); ++k) cr3BattleEvents->tick();
+        }
+        cr3ArgSource = -1;
         cr3Actions = cr3Rules.turn(cr3Choices);
         cr3CountRecords();
         cr3ActionAt = 0;
@@ -7653,7 +7706,7 @@ struct Viewer {
     std::vector<int> cr3LivingMonsters() const {
         std::vector<int> out;
         for (size_t f = 0; f < cr3Rules.fighters.size(); ++f)
-            if (!cr3Rules.fighters[f].player && !cr3Rules.fighters[f].dead()) out.push_back(int(f));
+            if (!cr3Rules.fighters[f].player && cr3Rules.targetable(int(f))) out.push_back(int(f));
         return out;
     }
     void chooseCr3Target(int n) {
@@ -7706,6 +7759,8 @@ struct Viewer {
         std::string motion = cr3MotionOf(c.motion);
         if (motion.empty() || motion == "bb01") motion = "bs01"; // (a shot's: BtlShotDirection plays 0xf)
         setCr3Motion(su, motion, false);
+        for (int pi : a.partners) setCr3Motion(size_t(cr3Rules.fighters[size_t(pi)].unit), motion, false); // (a cooperation's others: the same)
+        if (a.cooperated()) SDL_Log("battle %.2f s: a cooperation of %zu", cr3BattleClock, a.partners.size() + 1);
         const ViewFigure& f = cr3BattleUnits[su].body;
         const float length = f.animLoaded && cr3BattleUnits[su].motion == motion ? f.anim.duration() : 1.2f;
         cr3ActionPlay.hitAt = std::max(length * 0.45f, 0.3f);
@@ -7782,7 +7837,9 @@ struct Viewer {
             cr3GaugeShown = a.gaugeAfter;
             ++cr3ActionAt;
             // (BtlSysStateAction: the battle's script after each direction - battle_0002's cut-in
-            // once the spider endures at 1 HP - and the next action after it)
+            // once the spider endures at 1 HP - and the next action after it; BattleArgument its
+            // action - CallDirectionEnd: SetSource, SetDamageChunk)
+            cr3ArgAction = int(cr3ActionAt) - 1, cr3ArgSource = cr3Actions[cr3ActionAt - 1].source;
             if (runCr3BattleScript("Battle_Direction_End_Base") && cr3BattleEvents && cr3BattleEvents->running()) {
                 cr3ActionStart = cr3BattleClock, cr3ActionPlay = Cr3ActionPlay(), cr3ActionPlay.end = 0, cr3ActionPlay.hitsShown = 1 << 20;
                 cr3PendingStart = true;
