@@ -897,7 +897,9 @@ The dungeons' list (`spListBtn`: WorldSelectListMenu, Update 3) - each open dung
 WorldSelectListLItem (`comListImgPanel`) behind DummyAddListItem's blank at each end: rows 1.24 apart
 (+0xc0) from `comListMenu`'s `call_comListPanel`, the focused one second - the one before it at the
 panel's place, the one after it 0.124 lower (+0xc4), three in view (+0xc8) - 0.25 to the left, 1.1 x
-and bright (SetSelectFlag: the others' parts and name 0.5). A row: its picture (`comListImg_fr00`
+and bright (SetSelectFlag: the others' parts and name 0.5). Above them `call_comListCategoryPanel`'s
+comListCategoryPanel (Pose: CBg / CIcon / Ctext at its calls) at frame 0x11, Dungeons; the town
+map's list (TwonMoveMenu) the same rows under frame 0x0f, Destinations. A row: its picture (`comListImg_fr00`
 frame n + 1; from 14 on `sp_list_02`'s, frame n - 13), its ticket (`comListTicket_fr00` frame 1 with
 `comListNumC_num00`: the sheet's entries won, a slash - `comNum00_fr00` frame 34 - and its count, two
 places each, digit d frame 10 + d, a leading zero blank; frame 0 once all are won), `comListHit` with

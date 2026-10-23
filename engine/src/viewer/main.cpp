@@ -15266,7 +15266,7 @@ struct Viewer {
                 r.fresh = !r.hit && game.flag(kTownNew[pt]);
                 rows.push_back(r);
             }
-            drawCr3PlaceRows(rows, town.row, town.since, kTapTownRow, w, h, view);
+            drawCr3PlaceRows(rows, town.row, town.since, kTapTownRow, 0x0f, w, h, view);
         }
         UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
         if (town.stage != 4 && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) { // (ComBackButton)
@@ -17759,13 +17759,21 @@ struct Viewer {
             worldSheet(pt, r.total, r.won);
             rows.push_back(r);
         }
-        drawCr3PlaceRows(rows, ws.listRow, ws.since, kTapWorldRow, w, h, view);
+        drawCr3PlaceRows(rows, ws.listRow, ws.since, kTapWorldRow, 0x11, w, h, view);
     }
-    void drawCr3PlaceRows(const std::vector<Cr3PlaceRow>& rows, int f, float since, int tapBase, int w, int h, const Mat4& view) {
+    // (category: the comListCategoryPanel's frame - 0x0f the town map's, 0x11 the world's list)
+    void drawCr3PlaceRows(const std::vector<Cr3PlaceRow>& rows, int f, float since, int tapBase, int category, int w, int h, const Mat4& view) {
         float x, y, lx, ly, cx, cy, ax, ay, bx, by, tx, ty;
         UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", since, 0, 0, view);
         if (!cr3UiCall(lp, "call_comListMenu", x, y, w, h)) return;
         UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+        if (cr3UiCall(menu, "call_comListCategoryPanel", lx, ly)) {
+            UiFig& cat = cr3UiPut("comlistcategorypanel", "", 0, lx, ly, view);
+            const float frame = float(category) / 30;
+            if (cr3UiCall(cat, "call_comListCBg_fr00", cx, cy)) cr3UiPut("comlistcbg_fr00", "", frame, cx, cy, view);
+            if (cr3UiCall(cat, "call_comListCIcon_fr00", cx, cy)) cr3UiPut("comlistcicon_fr00", "", frame, cx, cy, view);
+            if (cr3UiCall(cat, "call_comListCtext_fr00", cx, cy)) cr3UiPut("comlistctext_fr00", "", frame, cx, cy, view);
+        }
         if (!cr3UiCall(menu, "call_comListPanel", lx, ly)) return;
         const int n = int(rows.size());
         drawCr3ListBar(menu, false, f, n, 1, view);
