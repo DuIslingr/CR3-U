@@ -1187,6 +1187,18 @@ captures. Not in yet: Options (CR3's options screen), Emperor Mode and other spe
 play, the result screen's gene card and EXP, drops, a lost battle's game over, the approach /
 return of melee attacks, effects (eff### figures), voices, the list's icons and scrolling.
 
+### The result's EXP (CR3)
+
+The battle's EXP (each monster's mon_para EXP + (level - 1) x its growth; x the skills' and
+items' factors - BtlResult::GetExperienceFactor, GetExprienceCorrection: not in CR3-U) goes into
+the genes (BattleResultMenu::Update - CrxGene::AddTemporaryExp, SaveExp): each party member's worn
+gene, in party order - the first three slots' standing members the whole of it, the rest and the
+fallen half. The gene's level is the highest its EXP reaches (MbGeneInfo::GetLevel); at its top
+its EXP is held at that level's. A level up plays com_018. Each card (SetCharaCardData): the
+character's icon at frame (character - 1), the gene's level, its bar at (1 - CrxGene::GetExpRate)
+x 100 / 30 s - the share of the level done. (EffectGeneUp's card and gene model want the panel's
+call_btRsltCharaCard / call_btRsltUpEffe, which btRsltCharaPanel doesn't have.)
+
 ### The battle's announcements (CR3)
 
 BtlAnnounceUI puts one line at a time in InterfaceMain's BattleAnnouncementMenu - a OneHelpMenu

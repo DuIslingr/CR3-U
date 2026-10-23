@@ -7110,6 +7110,47 @@ struct Viewer {
     // the result (BattleResultV2Menu: the EXP and money - the monsters' MbMonsterInfo::GetExp /
     // GetMoney at their levels: +0x3c / +0x40 + (level - 1) x the s16 at +0x44 / +0x46)
     int cr3ResultExp = 0, cr3ResultMoney = 0;
+    // the EXP into the genes (BattleResultMenu::Update, CrxGene::AddTemporaryExp / SaveExp): each
+    // party member's worn gene - the first three slots' standing ones the whole, the rest (and the
+    // fallen) half; its level from its EXP (MbGeneInfo::GetLevel), at its top the EXP held there; a
+    // level up com_018 and EffectGeneUp. The cards: the gene's level, its bar the level's share
+    // done (1 - CrxGene::GetExpRate)
+    struct Cr3ResultCard {
+        int ch = 0, level = 0;
+        float progress = 0;
+        bool up = false; // (com_018 at the result)
+    };
+    std::vector<Cr3ResultCard> cr3ResultCards;
+    void giveCr3GeneExp() {
+        cr3ResultCards.clear();
+        bool anyUp = false;
+        for (int slot = 0; slot < 5; ++slot) {
+            const int ch = game.cr3Party[slot];
+            if (ch <= 0) continue;
+            bool standing = false;
+            for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
+                if (f.player && f.id == ch) standing = !f.dead();
+            const int gain = slot < 3 && standing ? cr3ResultExp : cr3ResultExp / 2;
+            Cr3ResultCard card;
+            card.ch = ch;
+            const int gi = game.wornGene(ch);
+            const cr3::Cr3OfflineDb::GeneInfo* info = gi >= 0 && game.cr3Db ? game.cr3Db->geneInfo(game.cr3Genes[size_t(gi)].master) : nullptr;
+            if (info) {
+                cr3::Cr3Gene& g = game.cr3Genes[size_t(gi)];
+                const int before = game.cr3Db->geneLevel(g);
+                g.exp += gain;
+                card.level = game.cr3Db->geneLevel(g);
+                if (card.level >= info->maxLevel) g.exp = game.cr3Db->geneExp(g.master, card.level);
+                const int at = game.cr3Db->geneExp(g.master, card.level), next = game.cr3Db->geneExp(g.master, card.level + 1);
+                card.progress = card.level >= info->maxLevel || next <= at ? 0.0f : float(g.exp - at) / float(next - at);
+                card.up = card.level > before;
+                anyUp |= card.up;
+                SDL_Log("battle %d: character %d's gene %d +%d EXP - level %d%s", cr3Battle.coupling, ch, g.master, gain, card.level, card.up ? " (up)" : "");
+            }
+            cr3ResultCards.push_back(card);
+        }
+        if (anyUp) audio.playSe("com_018", false);
+    }
     void enterCr3Result() {
         cr3ResultExp = cr3ResultMoney = 0;
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
@@ -7120,6 +7161,7 @@ struct Viewer {
             cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16));
         }
         game.cr3Money += cr3ResultMoney;
+        giveCr3GeneExp();
         for (const auto& [fi, item] : cr3Drops) // (VAcquireDrop: the drops into the bag)
             if (item > 0) game.cr3Items[item] = std::clamp(game.cr3Items[item] + 1, 0, 99), SDL_Log("battle %d: item %d into the bag", cr3Battle.coupling, item);
         if (game.next.battleMusicAfter >= 0) audio.stopBgm(20); // (phaseResult: FadeBgm, a second)
@@ -19573,16 +19615,18 @@ struct Viewer {
         if (cr3UiCall(pos, "call_btRsltCharaMenu", x, y, w, h)) {
             UiFig& cm = cr3UiPut("btrsltcharamenu", "btrsltcharamenu_in", t, x, y, view);
             int slot = 0;
-            for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
+            for (const Cr3ResultCard& rc : cr3ResultCards) {
                 float px, py;
-                if (!f.player || !cr3UiCall(cm, "call_btRsltCharaPanel_00" + std::to_string(++slot), px, py)) continue;
+                if (!cr3UiCall(cm, "call_btRsltCharaPanel_00" + std::to_string(++slot), px, py)) continue;
                 UiFig& card = cr3UiPut("btrsltcharapanel", "btrsltcharapanel_in", t, px, py, view);
                 float cx, cy;
                 dev->clearDepth(); // (over the card's shadow)
-                if (cr3UiCall(card, "call_btRsltCharaIcon_fr00", cx, cy)) cr3UiPut("btrsltcharaicon_fr00", "", 0, cx, cy, view);
-                // (the level's progress - its bar posed at its percent / 30 s, as the status's -: CR3-U
-                // keeps no EXP yet, so none)
-                if (cr3UiCall(card, "call_btRsltLv_per", cx, cy)) cr3UiPut("btrsltlv_per", "", 0, cx, cy, view);
+                // (SetCharaCardData: the icon's frame the character's - 1, the bar its share done x 100 / 30 s)
+                if (cr3UiCall(card, "call_btRsltCharaIcon_fr00", cx, cy)) cr3UiPut("btrsltcharaicon_fr00", "", float(rc.ch - 1) / 30, cx, cy, view);
+                if (cr3UiCall(card, "call_btRsltLv_per", cx, cy)) cr3UiPut("btrsltlv_per", "", rc.progress * 100 / 30, cx, cy, view);
+                // (a level up: EffectGeneUp's btRsltCharaCard and the gene's card, at the panel's
+                // call_btRsltCharaCard / call_btRsltUpEffe - joints the panel doesn't have: not drawn)
+                const cr3::Cr3Fighter f = [&] { cr3::Cr3Fighter x; x.level = rc.level; return x; }();
                 // the level: btRsltLvPanel_num00's three places, btRsltLvNum_fr00 frame a digit
                 // (leading places blank)
                 if (cr3UiCall(card, "call_btRsltLvPanel_num00", cx, cy)) {
@@ -20081,6 +20125,7 @@ int main(int argc, char** argv) {
     bool titleScreen = false; // (--title: the game's title screen first)
     std::vector<std::pair<int, int>> itemArg;
     std::vector<int> cr3PartyArg;
+    std::vector<std::array<int, 3>> cr3GeneArgs; // (--cr3-gene ch:gene[:exp]: worn, tests)
     std::vector<std::array<int, 3>> sheetArg; // (--cr3-sheet sheet:entry[:new] - entry -1 its prize)
     std::vector<std::tuple<int, int, int>> equipArg;
     int chargeArg = -1, difficultyArg = -1, membersArg[2] = {-2, -2}, ozArg = -1, gaugeArg = 0;
@@ -20180,6 +20225,12 @@ int main(int argc, char** argv) {
             int p[5] = {};
             std::sscanf(next, "%d,%d,%d,%d,%d", &p[0], &p[1], &p[2], &p[3], &p[4]);
             cr3PartyArg.assign(std::begin(p), std::end(p));
+            ++i;
+        }
+        else if (a == "--cr3-gene" && next) {
+            std::array<int, 3> g{0, 0, 0};
+            std::sscanf(next, "%d:%d:%d", &g[0], &g[1], &g[2]);
+            cr3GeneArgs.push_back(g);
             ++i;
         }
         else if (a == "--vista" && next) vista = next, ++i;
@@ -20488,6 +20539,10 @@ int main(int argc, char** argv) {
     for (const auto& [id, level] : sopiaArg)
         if (id >= 0 && id < 32) v.game.sopiaLevel[id] = static_cast<signed char>(level);
     for (size_t k = 0; k < cr3PartyArg.size() && k < 5; ++k) v.game.cr3Party[k] = cr3PartyArg[k];
+    for (const auto& [ch, gene, exp] : cr3GeneArgs) {
+        v.game.cr3Genes.emplace_back(gene, exp);
+        v.game.cr3GeneOf[ch] = v.game.geneUid(v.game.cr3Genes.back());
+    }
     for (const auto& [sh, e, fresh] : sheetArg) {
         if (!v.game.cr3Db || sh < 0 || size_t(sh) >= v.game.cr3Db->itemSheets().size()) continue;
         const cr3::Cr3ItemSheet& sheet = v.game.cr3Db->itemSheets()[size_t(sh)];
