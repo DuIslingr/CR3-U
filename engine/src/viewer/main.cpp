@@ -5518,8 +5518,36 @@ struct Viewer {
         ViewFigure body, head;
         cr3::Mat34 place;
         float phase = 0;
+        bool box = false;               // (a Fld2Box: f0000box00 ..)
+        float openAt = -1, fade = 1;    // (BoxOpen: its _a01 from then, held; DeleteBox: 0.1 less each update)
     };
     std::vector<AreaNpc> areaNpcs;
+    ViewFigure boxGet;                  // (fe101get01: the light from an opened box - Fld2Box +0x170)
+    bool boxGetTried = false;
+    // a box opened by its script (Fld2Box::Open: _a01 rewound, not looped; SE 0x251; fe101get01 over
+    // it) and let go (Update: 0.1 less alpha each update, then gone)
+    void stepAreaBox(AreaNpc& npc, float dt) {
+        const auto it = game.fieldBoxes.find(npc.name);
+        const int state = it == game.fieldBoxes.end() ? 0 : it->second;
+        if (state >= 1 && npc.openAt < 0) {
+            npc.openAt = areaClock;
+            const std::string want = npc.model + "_a01.anim";
+            const auto at = std::find(npc.body.anims.begin(), npc.body.anims.end(), want);
+            if (at != npc.body.anims.end()) {
+                const float keep = time;
+                loadAnim(npc.body, size_t(at - npc.body.anims.begin()));
+                time = keep;
+            }
+            audio.playSe(0x251, false);
+            if (!boxGetTried) {
+                boxGetTried = true;
+                std::string err;
+                if (!loadFigure("fe101get01.geom", boxGet, &err)) SDL_Log("box: fe101get01: %s", err.c_str());
+            }
+            SDL_Log("area %s: %s opened", area.name.c_str(), npc.name.c_str());
+        }
+        if (state == 2 && npc.fade > 0) npc.fade = std::max(npc.fade - 3.0f * dt, 0.0f); // (0.1 an update, 30 a second)
+    }
     void loadAreaNpcs(const std::string& name, const std::vector<std::string>& joints, const std::vector<cr3::Mat34>& world) {
         std::vector<uint8_t> d;
         cr3::MbeFile f;
@@ -5532,6 +5560,9 @@ struct Viewer {
             if (!f.row(*t, r, "iiiiiipp", row) || row.i(0) != areaNo || row.i(4) != -1) continue;
             const std::string gimmick = row.s(6), model = row.s(7);
             if (model.size() < 4 || gimmick.compare(0, 8, "ragdoll_") != 0) continue;
+            // (a treasure or gift box only where its dungeon's draw gave it something - Fld2Box::Create:
+            // GetTBoxData - the draws come with a level from the world select: not yet)
+            if (gimmick.compare(0, 12, "ragdoll_tbox") == 0 || gimmick.compare(0, 12, "ragdoll_gbox") == 0) continue;
             AreaNpc npc;
             npc.name = gimmick.substr(8), npc.model = model;
             const auto it = std::find(joints.begin(), joints.end(), npc.name);
@@ -5564,6 +5595,7 @@ struct Viewer {
                 loadAnim(fig, size_t(at - fig.anims.begin()));
                 time = keep;
             }
+            npc.box = gimmick.compare(0, 12, "ragdoll_kbox") == 0;
             npc.phase = float(areaNpcs.size()) * 0.37f;
             areaNpcs.push_back(std::move(npc));
         }
@@ -5585,7 +5617,7 @@ struct Viewer {
         areaFigures.clear();
         for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head);
         areaNpcs.clear();
-        game.gimmickShown.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
+        game.gimmickShown.clear(), game.fieldBoxes.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
         for (const std::string& n : area.figures) {
             ViewFigure f;
             if (!loadFigure(n + ".geom", f, &err)) {
@@ -5637,6 +5669,7 @@ struct Viewer {
                 const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
                 for (size_t j = 0; j < names.size() && j < w.size(); ++j)
                     if (names[j].compare(0, 11, "ragdoll_evt") == 0 || names[j].compare(0, 12, "ragdoll_cobj") == 0 ||
+                        names[j].compare(0, 12, "ragdoll_kbox") == 0 || // (a key box: Fld2Box kind 2 - its function, SetScript)
                         (names[j].size() > 9 && names[j].compare(0, 8, "ragdoll_") == 0 && std::strchr("cjm", names[j][8]) &&
                          std::isdigit(static_cast<unsigned char>(names[j][9]))))
                         // (event boxes, check objects, and the people: ragdoll_c<id>_<nn> - c115_00 -, the
@@ -6196,6 +6229,24 @@ struct Viewer {
             else if (std::sscanf(want.c_str(), "%f/%f/%f/%f", &a, &b, &c, &d) == 4) areaDragStart(a, b), areaDragMove(c, d);
             SDL_Log("area %s: drag %s", area.name.c_str(), want.c_str());
         }
+        // (--input near:<gimmick>: tests - the player stood 1.5 from it on its side, facing it)
+        if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 5, "near:") == 0) {
+            const std::string want = inputScript.front().substr(5);
+            inputScript.pop_front();
+            for (const AreaGimmick& g : areaGimmicks)
+                if (g.function == want) {
+                    const cr3::Vec3 p = areaWalker->position();
+                    float dx = p[0] - g.world.m[3], dz = p[2] - g.world.m[11];
+                    const float l = std::max(std::hypot(dx, dz), 1e-3f);
+                    dx /= l, dz /= l;
+                    areaWalker->setPosition({g.world.m[3] + dx * 1.5f, g.world.m[7] + 0.5f, g.world.m[11] + dz * 1.5f});
+                    for (int k = 0; k < 60; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
+                    areaYaw = std::atan2(-dx, -dz);
+                    const cr3::Vec3 q = areaWalker->position();
+                    areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
+                    SDL_Log("area %s: near %s at (%.2f %.2f %.2f)", area.name.c_str(), want.c_str(), q[0], q[1], q[2]);
+                }
+        }
         // (--input box:<event box>: tests - the player put in that box, set off as if walked in)
         if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 4, "box:") == 0) {
             const std::string want = inputScript.front().substr(4);
@@ -6263,6 +6314,8 @@ struct Viewer {
             forceEncounter();
             return;
         }
+        for (AreaNpc& npc : areaNpcs)
+            if (npc.box) stepAreaBox(npc, dt);
         if (cr3FieldIdle() && !cr3BattleRequest.active) countEncounter();
         if (cr3SavePending && cr3FieldIdle() && !cr3BattleRequest.active) cr3SavePending = false, writeCr3Save();
     }
@@ -6296,8 +6349,22 @@ struct Viewer {
             pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(areaClock, f.anim.duration()) : 0.0f, false);
             drawFigure(f, vp.data());
         }
-        for (AreaNpc& npc : areaNpcs) { // (Fld2NPC::Draw)
+        for (AreaNpc& npc : areaNpcs) { // (Fld2NPC::Draw, Fld2Box::Draw)
             if (!game.gimmickVisible(npc.name)) continue;
+            if (npc.box) {
+                if (npc.fade <= 0) continue;
+                ViewFigure& f = npc.body;
+                f.place = npc.place;
+                f.tint[3] = npc.fade;
+                pose(f, npc.openAt >= 0 ? areaClock - npc.openAt : 0.0f, false);
+                drawFigure(f, vp.data());
+                if (npc.openAt >= 0 && boxGet.animLoaded && areaClock - npc.openAt < boxGet.anim.duration()) { // (+0x170: 0.1 up)
+                    boxGet.place = npc.place, boxGet.place.m[7] += 0.1f;
+                    pose(boxGet, areaClock - npc.openAt, false);
+                    drawFigure(boxGet, vp.data());
+                }
+                continue;
+            }
             for (ViewFigure* fp : {&npc.body, &npc.head}) {
                 if (fp->meshes.empty()) continue;
                 fp->place = npc.place;

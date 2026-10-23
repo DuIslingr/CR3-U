@@ -156,6 +156,9 @@ struct GameState {
     // the field's gimmicks shown or hidden (Cr3GimmickData.Disp - Fld2SetGimmickVisible: the scripts'
     // ModelDisp_Field; an area's people, its objects) by name ("c111_00"); none listed: shown
     std::map<std::string, bool> gimmickShown;
+    // the field's boxes opened (Cr3GimmickData.BoxOpen - Fld2OpenTreasureBox: 1) and then let go
+    // (DeleteBox - Fld2DeleteTrasureBox: 2, faded out), by name ("kbox_00") - not saved
+    std::map<std::string, int> fieldBoxes;
     bool gimmickVisible(const std::string& name) const {
         const auto it = gimmickShown.find(name);
         return it == gimmickShown.end() || it->second;

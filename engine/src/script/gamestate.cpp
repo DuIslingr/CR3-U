@@ -316,6 +316,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SetPopPoint2", [&state](NativeCall& c) { state.popPoint2 = c.string(0); });
     vm.setNative("Cr3System", "ReserveTownMove", [&next](NativeCall&) { next.townMove = true; });
     vm.setNative("Cr3GimmickData", "Disp", [&state](NativeCall& c) { state.gimmickShown[c.string(0)] = c.boolean(1); });
+    vm.setNative("Cr3GimmickData", "BoxOpen", [&state](NativeCall& c) { state.fieldBoxes[c.string(0)] = std::max(state.fieldBoxes[c.string(0)], 1); });
+    vm.setNative("Cr3GimmickData", "DeleteBox", [&state](NativeCall& c) {
+        if (state.fieldBoxes[c.string(0)] >= 1) state.fieldBoxes[c.string(0)] = 2; // (Fld2Box::Update: an opened one fades)
+    });
     vm.setNative("Cr3System", "SetComeFromBattleToField", [&next](NativeCall&) { next.fieldMode = 1; });
     vm.setNative("Cr3System", "ReserveWorldSelect", [&next](NativeCall&) { next.worldSelect = true; }); // (FldUtilReserveWorldSelect)
     vm.setNative("Cr3System", "ReserveShop", [&next](NativeCall&) { next.shop = true; });
