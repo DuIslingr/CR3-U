@@ -6496,6 +6496,144 @@ struct Viewer {
         audio.playSe("com_013", false);
         SDL_Log("battle %.2f s: fighter %d drops item %d", cr3BattleClock, fi, full);
     }
+    // the continue (BtlSysStateAction, after the defeat script, where the coupling allows it -
+    // ContinueMenu: btCtnPositon, its OneHelpMenu - AnnounceMenuName 0xbe -, btCtnBtnMenu's two
+    // contBtns at call_btCtnBtnPanel_001 / 002 - give up (background 8, icon and text 12), continue
+    // for a jem (background 1, 13, its price btCtnbuyNum_fr00 frame 0) -, btCtnJemCoinMenu with the
+    // jems held (item 400006 - CreateContinueMenu's count -, btCtnNumJ_num00's two btCtnNum_fr00).
+    // Give up asks AnnounceBattle 0x2a, a jem 0x2b (none: AnnounceMenuName 0x132's alert, "{jem}"
+    // the count held); yes to it pays one (PaymentJem) and phaseContinue: the party revived whole, HP
+    // and MP - command 59, all of the player's side, 100 -, the gauge even, the battle's music, the
+    // next turn. The menu's buttons close while it asks.
+    // Music 0x2f while it's up)
+    struct Cr3Continue {
+        int stage = 0; // 1 the menu, 2 asked to give up, 3 asked to pay, 4 told there's no jem
+        float since = 0;
+        int focus = 0;
+        bool decided = false;
+    } cr3Ctn;
+    static constexpr int kCtnGiveUp = 900, kCtnJem = 901, kCtnYes = 902, kCtnNo = 903, kCtnOk = 904;
+    static constexpr int kJemItem = 400006;
+    int cr3Jems() const {
+        const auto it = game.cr3Items.find(kJemItem);
+        return it == game.cr3Items.end() ? 0 : std::max(it->second, 0);
+    }
+    void openCr3Continue() {
+        cr3Ctn = Cr3Continue(), cr3Ctn.stage = 1, cr3Ctn.since = cr3BattleClock;
+        audio.playBgm(0x2f, 0);
+        SDL_Log("battle %d: continue? (%d jems)", cr3Battle.coupling, cr3Jems());
+    }
+    void stepCr3Continue() {
+        // (--input ctn:giveup / jem / yes / no / ok: tests - the battle's leftover choices dropped)
+        while (!inputScript.empty() && (inputScript.front() == "attack" || inputScript.front() == "guard" || inputScript.front() == "battle" ||
+                                        (inputScript.front().size() > 1 && inputScript.front()[0] == 't' && std::isdigit(static_cast<unsigned char>(inputScript.front()[1])))))
+            inputScript.pop_front();
+        if (!inputScript.empty() && inputScript.front().compare(0, 4, "ctn:") == 0 && cr3BattleClock - cr3Ctn.since > 0.6f) {
+            static const std::map<std::string, int> kCtn = {{"giveup", kCtnGiveUp}, {"jem", kCtnJem}, {"yes", kCtnYes}, {"no", kCtnNo}, {"ok", kCtnOk}};
+            const auto it = kCtn.find(inputScript.front().substr(4));
+            inputScript.pop_front();
+            if (it != kCtn.end()) chooseCr3Continue(it->second);
+        }
+    }
+    void chooseCr3Continue(int id) {
+        const int stage = cr3Ctn.stage;
+        if (stage == 1 && id == kCtnGiveUp) {
+            audio.playSe("com_003", false);
+            cr3Ctn.stage = 2, cr3Ctn.since = cr3BattleClock;
+        } else if (stage == 1 && id == kCtnJem) {
+            audio.playSe("com_003", false);
+            cr3Ctn.stage = cr3Jems() < 1 ? 4 : 3, cr3Ctn.since = cr3BattleClock;
+        } else if ((stage == 2 || stage == 3) && id == kCtnNo) {
+            audio.playSe("com_004", false);
+            cr3Ctn.stage = 1, cr3Ctn.since = cr3BattleClock;
+        } else if (stage == 4 && id == kCtnOk) {
+            cr3Ctn.stage = 1, cr3Ctn.since = cr3BattleClock;
+        } else if (stage == 2 && id == kCtnYes) { // (given up: the defeat - BtlGameOverUI isn't in; on as lost)
+            audio.playSe("com_003", false);
+            cr3Ctn.stage = 0, cr3Ctn.decided = true;
+            SDL_Log("battle %d: given up", cr3Battle.coupling);
+            cr3StageStart = cr3BattleClock - 2.5f;
+        } else if (stage == 3 && id == kCtnYes) {
+            audio.playSe("com_003", false);
+            game.cr3Items[kJemItem] = cr3Jems() - 1;
+            cr3Ctn.stage = 0, cr3Ctn.decided = true;
+            continueCr3Battle();
+        }
+    }
+    void continueCr3Battle() {
+        for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
+            cr3::Cr3Fighter& f = cr3Rules.fighters[k];
+            if (!f.player) continue;
+            if (f.dead()) f.effects.clear();
+            f.hp = f.maxHp, f.mp = f.maxMp; // (AnnounceBattle 0x2b: HP and MP whole)
+            cr3HpShown[k] = f.hp;
+            setCr3Motion(size_t(f.unit), "bb01", true);
+        }
+        cr3Rules.gauge = 0, cr3GaugeShown = 0; // (BtlBreakGaugeUI::Even)
+        cr3BattleLost = false;
+        if (game.next.battleMusic >= 0) audio.playBgm(game.next.battleMusic, 0);
+        SDL_Log("battle %d: continued (%d jems left)", cr3Battle.coupling, cr3Jems());
+        beginCr3Turn();
+    }
+    void drawCr3Continue(int w, int h) {
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        cr3CtnTaps.clear();
+        const float t = cr3BattleClock - cr3Ctn.since, a = std::min(t / 0.1333f, 1.0f); // (SetFade 0.1333)
+        UiFig& pos = cr3UiPut("btctnpositon", "", 0, 0, 0, view);
+        float x, y, cx, cy;
+        if (cr3UiCall(pos, "call_btHelpMenu_fit8", x, y, w, h)) {
+            UiFig& help = cr3UiPut("bthelpmenu", "", 0, x, y, view, a);
+            if (cr3UiCall(help, "typeM_L01", cx, cy)) {
+                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                drawUiText(menuAnnounce(0xbe), 26, (cx + 0.075f) / 10, (cy - 0.15f) / 10, w, h, true, a);
+            }
+        }
+        if (cr3UiCall(pos, "call_btCtnJemCoinMenu_fit4", x, y, w, h)) {
+            UiFig& jm = cr3UiPut("btctnjemcoinmenu", "", 0, x, y, view, a);
+            if (cr3UiCall(jm, "call_btCtnNumJ_num00", cx, cy)) {
+                UiFig& nj = cr3UiPut("btctnnumj_num00", "", 0, cx, cy, view, a);
+                const int n = std::min(cr3Jems(), 99);
+                for (int d = 0; d < 2; ++d) {
+                    float dx, dy;
+                    if ((d == 0 && n < 10) || !cr3UiCall(nj, "call_btCtnNum_fr00_00" + std::to_string(d + 1), dx, dy)) continue;
+                    cr3UiPut("btctnnum_fr00", "", float(d == 0 ? n / 10 : n % 10) / 30, dx, dy, view, a);
+                }
+            }
+        }
+        if (cr3Ctn.stage == 1 && cr3UiCall(pos, "call_btCtnBtnMenu_fit6", x, y, w, h)) { // (closed while asking - InterfaceCloseAnimeSet)
+            UiFig& menu = cr3UiPut("btctnbtnmenu", "btctnbtnmenu_in", t, x, y, view);
+            for (int b = 0; b < 2; ++b) {
+                float px, py;
+                if (!cr3UiCall(menu, "call_btCtnBtnPanel_00" + std::to_string(b + 1), px, py)) continue;
+                const bool off = b == 1 && cr3Jems() < 1; // (SelectableSet(false): none held)
+                cr3UiTint[0] = cr3UiTint[1] = off ? 0.549f : 1.0f, cr3UiTint[2] = off ? 0.655f : 1.0f; // (cr3UiPut's tint)
+                UiFig& panel = cr3UiPut("btctnbtnpanel", "", 0, px, py, view);
+                const int id = b == 0 ? 12 : 13;
+                if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b == 0 ? 8 : 1) / 30, cx, cy, view);
+                if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
+                if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy))
+                    cr3UiPut(b == cr3Ctn.focus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
+                if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
+                if (b == 1 && cr3UiCall(panel, "call_btCtnbuyNum_fr00", cx, cy)) cr3UiPut("btctnbuynum_fr00", "", 0, cx, cy, view);
+                float ax, ay, bx, by;
+                if (cr3Ctn.stage == 1 && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by))
+                    cr3CtnTaps.push_back({ax, ay, bx, by, b == 0 ? kCtnGiveUp : kCtnJem});
+            }
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1.0f;
+        }
+        const float since = cr3BattleClock - cr3Ctn.since;
+        if (cr3Ctn.stage == 2 || cr3Ctn.stage == 3)
+            drawCr3Asked(announceText("AnnounceBattle", cr3Ctn.stage == 2 ? 0x2a : 0x2b), since, 0, true, kCtnYes, kCtnNo, w, h, view, &cr3CtnTaps);
+        else if (cr3Ctn.stage == 4) {
+            std::string text = menuAnnounce(0x132);
+            if (const size_t at = text.find("{jem}"); at != std::string::npos) text.replace(at, 5, std::to_string(cr3Jems())); // (the count held)
+            drawCr3Told(text, since, kCtnOk, w, h, view, &cr3CtnTaps);
+        }
+    }
     void rollCr3StartMode() {
         cr3StartMode = 0, cr3Announce = Cr3Announce();
         const int first = game.next.battleFirstStrike[0], surprise = game.next.battleFirstStrike[1];
@@ -6538,7 +6676,7 @@ struct Viewer {
         }
     }
     bool startCr3Battle(int coupling, int fieldId) {
-        cr3BattleLost = false, cr3Drops.clear(); // (BtlSystem::Init: s_ResultParam -1)
+        cr3BattleLost = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(); // (BtlSystem::Init: s_ResultParam -1)
         cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
         cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
         std::string err;
@@ -6724,6 +6862,10 @@ struct Viewer {
                 cr3ForcedEnd = -1, cr3BattleLost = false;
                 SDL_Log("battle %d: ended by its script", cr3Battle.coupling);
                 endCr3Battle();
+            } else if (!scripted && cr3Ctn.stage == 0 && !cr3Ctn.decided && (cr3Battle.couplingFlags & 0x20) && vs.screen != 5) {
+                openCr3Continue(); // (MbCouplingInfo::CanContinue: mon_cop +0x44 bit 5)
+            } else if (cr3Ctn.stage != 0) {
+                stepCr3Continue();
             } else if (!scripted && cr3BattleClock - cr3StageStart > 2.5f) {
                 if (vs.screen == 5) vsBattleOver(false); // (VS: the tournament lost, no game over)
                 else endCr3Battle();
@@ -7151,7 +7293,7 @@ struct Viewer {
             cr3BattleStage = Cr3BattleStage::Lost, cr3StageStart = cr3BattleClock;
             cr3BattleLost = true; // (phaseDefeatEventStart: the result 1, Battle_Defeat_Base)
             runCr3BattleScript("Battle_Defeat_Base");
-            SDL_Log("battle %d: lost (no continue screen yet: on to the field's evt002)", cr3Battle.coupling);
+            SDL_Log("battle %d: lost", cr3Battle.coupling);
         } else {
             // (the turn's end: the status effects' HP changes - poison, regeneration - and their
             // turns)
@@ -7282,6 +7424,14 @@ struct Viewer {
     }
     // a click (fx, fy: the screen's fractions) on a button
     bool cr3BattleClick(float fx, float fy) {
+        if (cr3Ctn.stage != 0) { // (the continue's buttons, its question's)
+            const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+            const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+            for (auto it = cr3CtnTaps.rbegin(); it != cr3CtnTaps.rend(); ++it)
+                if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1))
+                    return chooseCr3Continue(it->id), true;
+            return true;
+        }
         if (cr3BattleStage != Cr3BattleStage::Menu && cr3BattleStage != Cr3BattleStage::Command && cr3BattleStage != Cr3BattleStage::Target &&
             cr3BattleStage != Cr3BattleStage::List && !(cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk))
             return false;
@@ -13039,10 +13189,7 @@ struct Viewer {
                     if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(4 + b), px, py)) continue;
                     const int id = ids[size_t(b)];
                     const bool off = !geneLabButtonOn(id);
-                    for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
-                        UiFig& u = uiFig(part);
-                        u.fig.tint[0] = u.fig.tint[1] = off ? 0.549f : 1.0f, u.fig.tint[2] = off ? 0.655f : 1.0f;
-                    }
+                    cr3UiTint[0] = cr3UiTint[1] = off ? 0.549f : 1.0f, cr3UiTint[2] = off ? 0.655f : 1.0f; // (cr3UiPut's tint)
                     UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
                     float cx, cy;
                     if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
@@ -13053,9 +13200,8 @@ struct Viewer {
                     float ax, ay, bx, by;
                     if (!off && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, id});
                 }
-                for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
-                    UiFig& u = uiFig(part);
-                    u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = 1.0f;
+                {
+                    cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1.0f;
                 }
             }
         }
@@ -14116,6 +14262,7 @@ struct Viewer {
     } cr3Camp;
     static constexpr int kCampButtons[7] = {0, 1, 2, 5, 4, 3, 6};
     std::vector<Cr3GeneLabTap> cr3CampTaps;
+    std::vector<Cr3GeneLabTap> cr3CtnTaps; // (the battle's continue: its buttons, its question's)
     bool cr3FieldIdle() {
         return areaMode && !eventMode && !battleMode && !cr3BattleMode && vs.screen == 0 && areaEvents && !areaEvents->running() && !areaEvents->geneLab().open &&
                !titleMenu.stage && shop.stage == 0 && world.stage == 0 && party.stage == 0 && !mapOpen && !saveStage;
@@ -19828,10 +19975,7 @@ struct Viewer {
                     // forbid - BtlStatus::OpenMenuInterface: comBtn::SelectableSet(false), its parts'
                     // diffuse (0.549, 0.549, 0.655))
                     const bool off = asking ? false : getSet ? (b == 1 && !cr3EscapeAllowed()) || b == 2 : !cr3Rules.menuEnabled(cr3Chooser, b);
-                    for (const char* part : {"combtnpanel", "combtnbg_fr00", "combtnicon_fr00", "combtnr", "combtntext_fr00", "combtntexttap_fr00"}) {
-                        UiFig& u = uiFig(part);
-                        u.fig.tint[0] = u.fig.tint[1] = off ? 0.549f : 1.0f, u.fig.tint[2] = off ? 0.655f : 1.0f;
-                    }
+                    cr3UiTint[0] = cr3UiTint[1] = off ? 0.549f : 1.0f, cr3UiTint[2] = off ? 0.655f : 1.0f; // (cr3UiPut's tint)
                     UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
                     float cx, cy;
                     if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
@@ -19842,6 +19986,7 @@ struct Viewer {
                     float ax, ay, bx, by;
                     if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, b});
                 }
+                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1.0f;
             }
         } else if (cr3BattleStage == Cr3BattleStage::Target && waiting) {
             // the targets (btTgtMenu, btTgtMenu_in; a btTgtPanel each at call_btTgtPanel_001..: the
@@ -20019,6 +20164,7 @@ struct Viewer {
             }
         }
         drawCr3BattleHud(screenW, screenH);
+        if (cr3BattleMode && cr3Ctn.stage != 0) drawCr3Continue(screenW, screenH);
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)
@@ -20213,6 +20359,7 @@ int main(int argc, char** argv) {
     bool titleScreen = false; // (--title: the game's title screen first)
     std::vector<std::pair<int, int>> itemArg;
     std::vector<int> cr3PartyArg;
+    std::vector<std::pair<int, int>> cr3ItemArgs; // (--cr3-item id:count - an item's full id -, tests)
     std::vector<std::array<int, 4>> cr3GeneArgs; // (--cr3-gene ch:gene[:exp[:skill]]: worn - its slots learnt, a skill added in slot 7 -, tests)
     std::vector<std::array<int, 3>> sheetArg; // (--cr3-sheet sheet:entry[:new] - entry -1 its prize)
     std::vector<std::tuple<int, int, int>> equipArg;
@@ -20313,6 +20460,12 @@ int main(int argc, char** argv) {
             int p[5] = {};
             std::sscanf(next, "%d,%d,%d,%d,%d", &p[0], &p[1], &p[2], &p[3], &p[4]);
             cr3PartyArg.assign(std::begin(p), std::end(p));
+            ++i;
+        }
+        else if (a == "--cr3-item" && next) {
+            int id = 0, n = 1;
+            std::sscanf(next, "%d:%d", &id, &n);
+            cr3ItemArgs.push_back({id, n});
             ++i;
         }
         else if (a == "--cr3-gene" && next) {
@@ -20627,6 +20780,7 @@ int main(int argc, char** argv) {
     for (const auto& [id, level] : sopiaArg)
         if (id >= 0 && id < 32) v.game.sopiaLevel[id] = static_cast<signed char>(level);
     for (size_t k = 0; k < cr3PartyArg.size() && k < 5; ++k) v.game.cr3Party[k] = cr3PartyArg[k];
+    for (const auto& [id, n] : cr3ItemArgs) v.game.cr3Items[id] = n;
     for (const auto& [ch, gene, exp, skill] : cr3GeneArgs) {
         v.game.cr3Genes.emplace_back(gene, exp);
         if (v.game.cr3Db) v.game.cr3Db->initGene(v.game.cr3Genes.back());

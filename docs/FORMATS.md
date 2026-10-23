@@ -1223,6 +1223,22 @@ effects aren't drawn), StopAuto (no auto battle), OpenUI / CloseUI, AddFieldObje
 and forces the win after turn 5; the ace battles (503, 506, 509, 515) triple EXP and money when
 all three fall; battle 3's defeat plays its event and ends.
 
+### The continue (CR3)
+
+A defeat (phaseDefeatEventStart: the result 1, Battle_Defeat_Base), where the coupling allows it
+(MbCouplingInfo::CanContinue: mon_cop +0x44 bit 5) and no script ended the battle, opens
+BtlContinueUI - ContinueMenu, music 0x2f: btCtnPositon's call_btHelpMenu_fit8 the OneHelpMenu
+(AnnounceMenuName 0xbe), call_btCtnJemCoinMenu_fit4 btCtnJemCoinMenu with the continue gems held -
+item 400006, the count CreateContinueMenu passes (param 4), btCtnNumJ_num00's two btCtnNum_fr00 -,
+call_btCtnBtnMenu_fit6 btCtnBtnMenu (_in) with two contBtns (btCtnBtnPanel at
+call_btCtnBtnPanel_001 / 002): give up - comBtnBg frame 8, icon and text 12 - and revive - 1, 13,
+its price btCtnbuyNum_fr00 frame 0 -, the latter dimmed with no gems (param 6, SelectableSet).
+Give up asks `AnnounceBattle` 0x2a; revive asks 0x2b, or with none AnnounceMenuName 0x132's alert
+("{jem}" the count). The buttons close while it asks. Yes to giving up: the defeat goes on
+(BtlGameOverUI isn't in CR3-U: on to the field's `evt002`). Yes to reviving: one gem paid
+(PaymentJem) and phaseContinue - command 59 (all the player's side, formula 18, 100: HP and MP
+whole), the gauge even (BtlBreakGaugeUI::Even), the battle's music again, the next turn.
+
 ### The battle's announcements (CR3)
 
 BtlAnnounceUI puts one line at a time in InterfaceMain's BattleAnnouncementMenu - a OneHelpMenu
