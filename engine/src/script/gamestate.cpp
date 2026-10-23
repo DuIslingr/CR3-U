@@ -316,6 +316,19 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SetPopPoint2", [&state](NativeCall& c) { state.popPoint2 = c.string(0); });
     vm.setNative("Cr3System", "ReserveTownMove", [&next](NativeCall&) { next.townMove = true; });
     vm.setNative("Cr3GimmickData", "Disp", [&state](NativeCall& c) { state.gimmickShown[c.string(0)] = c.boolean(1); });
+    for (const bool loop : {true, false})
+        vm.setNative("Cr3FieldMapEffectResident", loop ? "EffectResidentPlay" : "EffectResidentPlayOnce", [&state, loop](NativeCall& c) {
+            GameState::FieldEffect e;
+            e.model = c.string(0), e.target = c.string(1), e.loop = loop;
+            for (int k = 0; k < 3; ++k) e.scale[size_t(k)] = c.number(2 + k, 1), e.offset[size_t(k)] = c.number(5 + k, 0);
+            state.fieldEffects.push_back(e);
+        });
+    vm.setNative("Cr3FieldMapEffectResident", "EffectResidentOut", [&state](NativeCall& c) {
+        const std::string target = c.string(0);
+        state.fieldEffects.erase(std::remove_if(state.fieldEffects.begin(), state.fieldEffects.end(),
+                                                [&](const GameState::FieldEffect& e) { return e.target == target; }),
+                                 state.fieldEffects.end());
+    });
     vm.setNative("Cr3GimmickData", "BoxOpen", [&state](NativeCall& c) { state.fieldBoxes[c.string(0)] = std::max(state.fieldBoxes[c.string(0)], 1); });
     vm.setNative("Cr3GimmickData", "DeleteBox", [&state](NativeCall& c) {
         if (state.fieldBoxes[c.string(0)] >= 1) state.fieldBoxes[c.string(0)] = 2; // (Fld2Box::Update: an opened one fades)

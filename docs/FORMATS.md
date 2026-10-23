@@ -354,6 +354,18 @@ idles on Fld2NPCAnimeNameTbl[0], fn01. Cr3GimmickData.Disp(name, shown) - the sc
 ModelDisp_Field, Fld2SetGimmickVisible - hides or shows one. The party's j<id>_00 and the
 monsters' m<id>_<nn> are talked to like the c<id>_<nn> people (their functions named so).
 
+### The field's effects: the story's markers (CR3)
+
+Cr3FieldMapEffectResident.EffectResidentPlay / EffectResidentPlayOnce(model, target, sx, sy, sz,
+ox, oy, oz) (Fld2DispEffect / Fld2DispEffectOnce - Fld2TaskGimmick::CreateEffect, Fld2Effect::Create):
+the model as a CrxSimpleModel, looped or played once, at the target's place
+(Fld2TaskGimmick::GetPositionFromFigure - the joint of that name in `<area>p`: a gimmick, a person,
+a pop point; "player" the player's) + the offset, scaled. EffectResidentOut(target) (Fld2HideEffect -
+DeleteEffect) takes away the target's. The scripts' SetFlagMark(name) puts `fe007poin02` (an
+orange arrow) over the person the story goes on with (its offset by name - 1.2 up for most),
+SetFlagMarkField a pop point's `fe007poin01` (blue), ClearFlagMark takes them away as one is
+talked to. CR3-U logs each (`area t0104: effect fe007poin02 on c111_01`).
+
 ### Random encounters (CR3)
 
 Fld2TaskEncount, in a dungeon's areas (`dDDAA`):

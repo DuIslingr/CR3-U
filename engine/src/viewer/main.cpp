@@ -5693,6 +5693,68 @@ struct Viewer {
         areaCamera.setLookDown(true, offset);
         SDL_Log("area %s: the look-down camera, (%.1f %.1f %.1f)", name.c_str(), offset[0], offset[1], offset[2]);
     }
+    // the field's effects (GameState::fieldEffects - Fld2Effect: its model, a CrxSimpleModel, at its
+    // target's place - Fld2TaskGimmick::GetPositionFromFigure, the gimmick's joint; "player" the
+    // player's - + the offset, scaled; its animation looped, or once and then gone)
+    std::map<std::string, ViewFigure> fieldEffectFigs;
+    bool fieldTargetAt(const std::string& name, cr3::Vec3& out) {
+        if (name == "player" && areaWalker) {
+            out = areaWalker->position(), out[1] -= areaWalker->radius;
+            return true;
+        }
+        for (const AreaGimmick& g : areaGimmicks)
+            if (g.function == name) return out = {g.world.m[3], g.world.m[7], g.world.m[11]}, true;
+        for (const AreaNpc& npc : areaNpcs)
+            if (npc.name == name) return out = {npc.place.m[3], npc.place.m[7], npc.place.m[11]}, true;
+        if (areaJointsOf != area.name) { // (any other joint of <area>p's: a pop point - t0102_p1)
+            areaJointsOf = area.name, areaJoints.clear();
+            std::vector<uint8_t> d;
+            cr3::Skeleton sk;
+            if (archive.read(area.name + "p.skel", d) && cr3::parseSkeleton(d, sk) && archive.read(area.name + "p.name", d)) {
+                const std::vector<std::string> names = cr3::parseJointNames(d);
+                const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
+                for (size_t j = 0; j < names.size() && j < w.size(); ++j) areaJoints[names[j]] = {w[j].m[3], w[j].m[7], w[j].m[11]};
+            }
+        }
+        const auto it = areaJoints.find(name);
+        return it != areaJoints.end() && (out = it->second, true);
+    }
+    std::map<std::string, cr3::Vec3> areaJoints;
+    std::string areaJointsOf;
+    void stepFieldEffects(float dt) {
+        for (cr3::GameState::FieldEffect& e : game.fieldEffects) {
+            if (e.age == 0) SDL_Log("area %s: effect %s on %s", area.name.c_str(), e.model.c_str(), e.target.c_str());
+            e.age += dt;
+        }
+        game.fieldEffects.erase(std::remove_if(game.fieldEffects.begin(), game.fieldEffects.end(),
+                                               [this](const cr3::GameState::FieldEffect& e) {
+                                                   const auto it = fieldEffectFigs.find(e.model);
+                                                   const float d = it != fieldEffectFigs.end() && it->second.animLoaded ? it->second.anim.duration() : 1.0f;
+                                                   return !e.loop && e.age > d;
+                                               }),
+                                game.fieldEffects.end());
+    }
+    void drawFieldEffects(const float* vp) {
+        for (const cr3::GameState::FieldEffect& e : game.fieldEffects) {
+            cr3::Vec3 at;
+            if (!fieldTargetAt(e.target, at)) continue;
+            auto it = fieldEffectFigs.find(e.model);
+            if (it == fieldEffectFigs.end()) {
+                ViewFigure f;
+                std::string err;
+                if (!loadFigure(e.model + ".geom", f, &err)) SDL_Log("effect %s: %s", e.model.c_str(), err.c_str());
+                f.absolute = true;
+                it = fieldEffectFigs.emplace(e.model, std::move(f)).first;
+            }
+            ViewFigure& f = it->second;
+            if (f.meshes.empty()) continue;
+            f.place = cr3::Mat34();
+            for (int k = 0; k < 3; ++k) f.place.m[k * 5] = e.scale[size_t(k)], f.place.m[3 + 4 * k] = at[size_t(k)] + e.offset[size_t(k)];
+            const float d = f.animLoaded ? f.anim.duration() : 0.0f;
+            pose(f, d > 0 ? (e.loop ? std::fmod(e.age, d) : std::min(e.age, d)) : 0.0f, false);
+            drawFigure(f, vp);
+        }
+    }
     // the area's people (Fld2NPC): data\field_<town>.mbe's Field rows for this area - the area +0,
     // the quest +0x10 (-1: any; GetFieldParamByName takes those first), the gimmick +0x18
     // (ragdoll_c121_00), the model +0x20 (c121b: c121 with its b textures - CrxModel::
@@ -5805,6 +5867,7 @@ struct Viewer {
         for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head);
         areaNpcs.clear();
         game.gimmickShown.clear(), game.fieldBoxes.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
+        game.fieldEffects.clear();
         for (const std::string& n : area.figures) {
             ViewFigure f;
             if (!loadFigure(n + ".geom", f, &err)) {
@@ -6231,6 +6294,7 @@ struct Viewer {
     // (SM_Run 4.8, SM_Walk 1.2 a second, as far as it's pushed), the camera's Q / E and R / V
     void updateArea(float dt, float sx, float sy, bool run) {
         areaClock += dt, areaMotionAge += dt;
+        stepFieldEffects(dt);
         if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
             const bool wasRunning = areaEvents->running();
             areaEventClock = std::min(areaEventClock + dt, 0.25f);
@@ -6544,6 +6608,7 @@ struct Viewer {
             pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(areaClock, f.anim.duration()) : 0.0f, false);
             drawFigure(f, vp.data());
         }
+        drawFieldEffects(vp.data());
         for (AreaNpc& npc : areaNpcs) { // (Fld2NPC::Draw, Fld2Box::Draw)
             if (!game.gimmickVisible(npc.name)) continue;
             if (npc.box) {
@@ -15153,7 +15218,9 @@ struct Viewer {
     void townMoveShow() {
         town.stage = 2;
         townListOpen(0);
-        SDL_Log("town map: %zu places", town.rows.size());
+        std::string maps;
+        for (int id : town.rows) maps += std::string(" ") + (game.flag(2401) && !game.flag(2500) ? kTownMapAlt : kTownMap)[id + 1];
+        SDL_Log("town map: %zu places:%s", town.rows.size(), maps.c_str());
     }
     void townAsk(int id, bool fromList) {
         town.asked = id, town.fromList = fromList;
