@@ -6254,8 +6254,7 @@ struct Viewer {
             for (const AreaGimmick& g : areaGimmicks)
                 if (g.function == want) {
                     if (g.shaped) areaWalker->setPosition({g.boxAt[0] + (g.boxLo[0] + g.boxHi[0]) / 2, g.boxAt[1] + (g.boxLo[1] + g.boxHi[1]) / 2, g.boxAt[2] + (g.boxLo[2] + g.boxHi[2]) / 2});
-                    else areaWalker->setPosition({g.world.m[3], g.world.m[7] - 1.0f, g.world.m[11]});
-                    for (int k = 0; k < 30 && !g.shaped; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step(); // (an area change's: held in it - it may hang past a floor's edge)
+                    else areaWalker->setPosition({g.world.m[3], g.world.m[7], g.world.m[11]}); // (held in it - a drop may miss a small one, or a floor's edge)
                     SDL_Log("area %s: put in %s", area.name.c_str(), want.c_str());
                 }
         }
@@ -8131,6 +8130,7 @@ struct Viewer {
         if (event && !event->mapAnimPaused) vistaMapTime += dt;
         eventClock = std::min(eventClock + dt, 0.25f);
         for (; eventClock >= cr3::EventRuntime::kTick && eventMode; eventClock -= cr3::EventRuntime::kTick) stepEvent();
+        if (eventMode) stepScriptCollect(dt); // (a scene's CollectListDisp - s101_d02_00601's gift - as the field's)
     }
 
     // the models where the scene has them, playing what the script chose (ChangeAnimator: their
@@ -17398,6 +17398,8 @@ struct Viewer {
         if (!cl.open || !cl.scripted) return;
         if (!want) return void(cl.open = false);
         stepCollectList(dt);
+        if (!inputScript.empty() && inputScript.front() == "collect:close" && cl.phase == 0 && cl.since > 1.0f) // (--input: closed, for tests)
+            inputScript.pop_front(), chooseCollectList(-1);
         if (cl.phase == 1 && (cl.closing += dt) >= 0.1666667f) {
             cl.open = false;
             ev->collectListEnd();
