@@ -1216,7 +1216,10 @@ attack's turn too), GetNumberOfKilledNonPlayer, AddExperience / AddMoney (BtlRes
 SetExperienceFactor / SetMoneyFactor (+0x28 / +0x2c, multiplied), ForceVictory / ForceEnd
 (s_ResultParam 0 won / 3 over - CR3-U checks them after the direction, or while choosing; a defeat
 script's ForceEnd ends a story's lost battle as over, not lost), HasAdvantageToPlayer / ToEnemy and
-GetBreakPoint (the gauge as shown), AddBreakPoint, GetFiledId. Battle 9 grants 100 EXP and 200 ML
+GetBreakPoint (the gauge as shown), AddBreakPoint, GetFiledId, AddFieldStatusEffect (battle_0000's
+boot: fields 23 / 24 effect 45, 25 / 26 effect 46 - BtlSysStateStart::phaseStart gives them every
+unit for good, but one with a skill of kind 0x6a). Not in: SetFieldVisualEffect (the battle's
+effects aren't drawn), StopAuto (no auto battle), OpenUI / CloseUI, AddFieldObject. Battle 9 grants 100 EXP and 200 ML
 and forces the win after turn 5; the ace battles (503, 506, 509, 515) triple EXP and money when
 all three fall; battle 3's defeat plays its event and ends.
 

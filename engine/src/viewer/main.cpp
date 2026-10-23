@@ -6280,6 +6280,7 @@ struct Viewer {
             vm.setNative("Battle", "AddBreakPoint", [this](cr3::NativeCall& c) { cr3Rules.addBreak(c.integer(0)), cr3GaugeShown = cr3Rules.gauge; });
             vm.setNative("Battle", "GetBreakPoint", [this](cr3::NativeCall& c) { c.result(cr3GaugeShown); });
             vm.setNative("Battle", "GetFiledId", [this](cr3::NativeCall& c) { c.result(cr3BattleFieldId); });
+            vm.setNative("Battle", "AddFieldStatusEffect", [this](cr3::NativeCall& c) { cr3FieldEffects.push_back(c.integer(0)); });
             vm.setNative("BattleStatus", "GetIdByPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(true, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByNonPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(false, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByCharId", [this](cr3::NativeCall& c) {
@@ -6538,7 +6539,7 @@ struct Viewer {
     }
     bool startCr3Battle(int coupling, int fieldId) {
         cr3BattleLost = false, cr3Drops.clear(); // (BtlSystem::Init: s_ResultParam -1)
-        cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId; // (BtlResult's: 0, +4 / +8 none, factors 1)
+        cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
         cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
         std::string err;
         if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, &err))) {
@@ -6604,6 +6605,13 @@ struct Viewer {
         initEventDrawing(); // (its script's windows: the tutorials)
         if (runCr3BattleScript("Battle_Boot_Base")) // (BtlSysStateStart::phaseBoot: CallBoot, to its end)
             for (int k = 0; k < 600 && cr3BattleEvents->running(); ++k) cr3BattleEvents->tick();
+        // (BtlSysStateStart::phaseStart - GiveFieldStatusEffect: the field's effects on every unit, for
+        // good; none on one with a skill of kind 0x6a)
+        for (size_t k = 0; k < cr3Rules.fighters.size() && !cr3FieldEffects.empty(); ++k) {
+            if (!cr3Rules.skillConstants(cr3Rules.fighters[k], 0x6a).empty()) continue;
+            for (int e : cr3FieldEffects) cr3Rules.giveEffect(int(k), e, true);
+        }
+        if (!cr3FieldEffects.empty()) SDL_Log("battle %d: %zu field status effects", coupling, cr3FieldEffects.size());
         playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0); // (PlayBattleIn)
         cr3BattleMode = true;
         dev->resetHistory();
@@ -7324,6 +7332,7 @@ struct Viewer {
     // (SetBattleToVista), else the field it came from (Fld2Main::SM_FirstEvent: evt000, evt002 if lost)
     bool cr3BattleLost = false;
     int cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = -1;
+    std::vector<int> cr3FieldEffects; // (BtlFieldEffectManager: the boot script's AddFieldStatusEffect)
     int cr3ResultAdd[2] = {0, 0}, cr3ResultFactor[2] = {1, 1}; // (the scripts' EXP / money added, and factors)
     void endCr3Battle() {
         cr3BattleMode = false;

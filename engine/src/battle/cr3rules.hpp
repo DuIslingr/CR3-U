@@ -178,7 +178,7 @@ public:
     // status effects (BtlStatusEffectList): given (a script's, or a command's that landed), removed;
     // whether one of a kind is on; a kind's multiplier (the effects' constants / 100, multiplied)
     // and sum; the stats as they stand (CrxCharacter's x kinds 36 / 38 / 40 / 42)
-    void giveEffect(int fighter, int id);
+    void giveEffect(int fighter, int id, bool lasting = false); // (lasting: no end - a field's)
     void removeEffect(int fighter, int id);
     bool hasEffect(int fighter, int id) const;
     bool hasKind(const Cr3Fighter& f, int kind) const;

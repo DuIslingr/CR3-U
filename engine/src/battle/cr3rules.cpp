@@ -243,7 +243,7 @@ bool Cr3BattleRules::hasEffect(int fi, int id) const {
     return false;
 }
 
-void Cr3BattleRules::giveEffect(int fi, int id) {
+void Cr3BattleRules::giveEffect(int fi, int id, bool lasting) {
     // (BtlStatusEffectList::Add: its turns from its range - StatusEffect +0x14 .. +0x18, -1 until
     // removed; one already on is renewed)
     if (!tables_ || fi < 0 || size_t(fi) >= fighters.size()) return;
@@ -251,6 +251,7 @@ void Cr3BattleRules::giveEffect(int fi, int id) {
     if (!tables_->skill.find("StatusEffect", id, kStatusEffect, r)) return;
     int turns = r.i(5);
     if (turns >= 0 && r.i(6) > turns) turns += int(random() * float(r.i(6) - turns + 1));
+    if (lasting) turns = -1; // (TakeStatusEffectToCalculation(id, -1): the field's, for good)
     Cr3Fighter& f = fighters[size_t(fi)];
     for (auto& [e, t] : f.effects)
         if (e == id) {
