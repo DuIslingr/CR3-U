@@ -6506,6 +6506,32 @@ struct Viewer {
     // and MP - command 59, all of the player's side, 100 -, the gauge even, the battle's music, the
     // next turn. The menu's buttons close while it asks.
     // Music 0x2f while it's up)
+    // the game over (GameOverMenu: btGameOverMenu at btGameOverPositon's call_btGameOverMenu_fit0,
+    // its own animation to its end - "GAME OVER" letter by letter -, then BtlSysStateAction's
+    // FadeOut(0.5) and the field)
+    float cr3GameOverAt = -1;
+    float cr3GameOverLength() {
+        UiFig& u = uiFig("btgameovermenu");
+        return u.fig.animLoaded ? u.fig.anim.duration() : 3.0f;
+    }
+    void drawCr3GameOver(int w, int h) {
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        const float t = cr3BattleClock - cr3GameOverAt;
+        UiFig& pos = cr3UiPut("btgameoverpositon", "", 0, 0, 0, view);
+        float x, y;
+        if (cr3UiCall(pos, "call_btGameOverMenu_fit0", x, y, w, h)) cr3UiPut("btgameovermenu", "", std::min(t, cr3GameOverLength()), x, y, view);
+        const float fade = std::clamp((t - cr3GameOverLength()) / 0.5f, 0.0f, 1.0f); // (FadeOut 0.5)
+        if (fade > 0) {
+            static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+            const Mat4 id = cr3::mat4Identity();
+            const float black[4] = {0, 0, 0, fade};
+            dev->drawQuad(white, kScreen, id.data(), black);
+        }
+    }
     struct Cr3Continue {
         int stage = 0; // 1 the menu, 2 asked to give up, 3 asked to pay, 4 told there's no jem
         float since = 0;
@@ -6676,7 +6702,7 @@ struct Viewer {
         }
     }
     bool startCr3Battle(int coupling, int fieldId) {
-        cr3BattleLost = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(); // (BtlSystem::Init: s_ResultParam -1)
+        cr3BattleLost = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1; // (BtlSystem::Init: s_ResultParam -1)
         cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
         cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
         std::string err;
@@ -6868,7 +6894,11 @@ struct Viewer {
                 stepCr3Continue();
             } else if (!scripted && cr3BattleClock - cr3StageStart > 2.5f) {
                 if (vs.screen == 5) vsBattleOver(false); // (VS: the tournament lost, no game over)
-                else endCr3Battle();
+                else if (cr3GameOverAt < 0) { // (BtlGameOverUI: GameOverMenu, then a half-second fade and out)
+                    cr3GameOverAt = cr3BattleClock;
+                    SDL_Log("battle %d: game over (%.2f s)", cr3Battle.coupling, cr3BattleClock);
+                } else if (cr3BattleClock - cr3GameOverAt >= cr3GameOverLength() + 0.5f)
+                    endCr3Battle();
             }
         }
         // the units' motions: one played out goes back to the stance (a fall's held)
@@ -20165,6 +20195,7 @@ struct Viewer {
         }
         drawCr3BattleHud(screenW, screenH);
         if (cr3BattleMode && cr3Ctn.stage != 0) drawCr3Continue(screenW, screenH);
+        if (cr3BattleMode && cr3GameOverAt >= 0) drawCr3GameOver(screenW, screenH);
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)

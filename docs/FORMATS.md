@@ -1234,8 +1234,10 @@ call_btCtnBtnMenu_fit6 btCtnBtnMenu (_in) with two contBtns (btCtnBtnPanel at
 call_btCtnBtnPanel_001 / 002): give up - comBtnBg frame 8, icon and text 12 - and revive - 1, 13,
 its price btCtnbuyNum_fr00 frame 0 -, the latter dimmed with no gems (param 6, SelectableSet).
 Give up asks `AnnounceBattle` 0x2a; revive asks 0x2b, or with none AnnounceMenuName 0x132's alert
-("{jem}" the count). The buttons close while it asks. Yes to giving up: the defeat goes on
-(BtlGameOverUI isn't in CR3-U: on to the field's `evt002`). Yes to reviving: one gem paid
+("{jem}" the count). The buttons close while it asks. Yes to giving up - or a defeat that can't
+continue - is the game over (BtlGameOverUI, GameOverMenu: btGameOverMenu at btGameOverPositon's
+call_btGameOverMenu_fit0, its own animation to its end; then FadeOut(0.5) and the field's
+`evt002`). Yes to reviving: one gem paid
 (PaymentJem) and phaseContinue - command 59 (all the player's side, formula 18, 100: HP and MP
 whole), the gauge even (BtlBreakGaugeUI::Even), the battle's music again, the next turn.
 
