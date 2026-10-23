@@ -40,6 +40,11 @@ public:
               const CollisionWorld* walls = nullptr);
     float playerAlpha = 1; // (the camera within 1 of the target across: the player drawn at 0.3)
     void turn(float yawRadians, float pitchRadians); // (the player's own turning of it)
+    // Fld2CameraLookDown (an area's camera type 3 - the executable's map table -: houses, the Space
+    // Port): the eye at the player plus the area's offset (FieldCameraLD), looking at the player
+    // 1.2 up; each followed at 4 a second once 0.3 or more off (a still zone), no turning
+    void setLookDown(bool on, const std::array<float, 3>& offset = {}) { lookDown_ = on, ldOffset_ = offset; }
+    bool lookDown() const { return lookDown_; }
     std::array<float, 3> eye{}, at{};
     float fovY = 45, zNear = 0.1f, zFar = 5000; // (MVGL::Draw::Camera's 45 degrees; Fld2CameraGom::Initialize's)
     float yaw = 0, pitch = 0.3f;
@@ -48,6 +53,8 @@ private:
     std::array<float, 3> spring_{}; // (the point the spring holds: +0x20)
     float speed_ = 0;
     bool swinging_ = false;
+    bool lookDown_ = false;
+    std::array<float, 3> ldOffset_{};
 };
 
 // Fld2AnimeNameTbl: the player's motions

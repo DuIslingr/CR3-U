@@ -5507,6 +5507,31 @@ struct Viewer {
         std::array<float, 4> boxTurn{0, 0, 0, 1};
     };
     std::vector<AreaGimmick> areaGimmicks;
+    // the area's camera (Fld2TaskCamera::SetupCamera by the map table's type - the executable's
+    // 12-byte records from "t0101": 0 rail, 1 Gom, 2 ortho, 3 look-down, 4 script, 5 toy): the
+    // look-down one's offset by FieldCameraLD (data\fieldcamerald.mbe: the dungeon - a town's tNN
+    // N - 1 -, the area from 1, the offset) - the rest Gom for now
+    static constexpr const char* kLookDownMaps[] = {"t0102", "t0104", "t0105", "t0110", "t0111", "t0113", "t0114", "t0115", "t0116", "t0117",
+                                                   "t0118", "t0119", "t0120", "t0203", "t0204", "t0207", "t0208", "t0210", "t0211", "t0402",
+                                                   "d0711", "d1312", "d1501", "d1502", "d1506", "d1507", "d1508", "d1509"};
+    void setupAreaCamera(const std::string& name) {
+        areaCamera.setLookDown(false);
+        if (std::find_if(std::begin(kLookDownMaps), std::end(kLookDownMaps), [&](const char* m) { return name == m; }) == std::end(kLookDownMaps)) return;
+        if (name[0] != 't') return; // (a dungeon's own number: not known yet)
+        const int dungeon = std::atoi(name.substr(1, 2).c_str()) - 1, areaNo = std::atoi(name.substr(3, 2).c_str());
+        std::vector<uint8_t> d;
+        cr3::MbeFile f;
+        if (!archive.read("data\\fieldcamerald.mbe", d) || !f.parse(d)) return;
+        const cr3::MbeFile::Table* t = f.table("FieldCameraLD");
+        if (!t) return;
+        for (size_t r = 0; r < t->rows.size(); ++r) { // (GetFieldCameraPositionLD: the first of the dungeon and area)
+            cr3::MbeFile::Row row;
+            if (!f.row(*t, r, "iiifff", row) || row.i(1) != dungeon || row.i(2) != areaNo) continue;
+            areaCamera.setLookDown(true, {row.f(3), row.f(4), row.f(5)});
+            SDL_Log("area %s: the look-down camera, (%.1f %.1f %.1f)", name.c_str(), row.f(3), row.f(4), row.f(5));
+            return;
+        }
+    }
     // the area's people (Fld2NPC): data\field_<town>.mbe's Field rows for this area - the area +0,
     // the quest +0x10 (-1: any; GetFieldParamByName takes those first), the gimmick +0x18
     // (ragdoll_c121_00), the model +0x20 (c121b: c121 with its b textures - CrxModel::
@@ -5651,6 +5676,7 @@ struct Viewer {
         areaMotionSet = false;
         setAreaMotion(cr3::Cr3Motion::Idle);
         const cr3::Vec3 p = areaWalker->position();
+        setupAreaCamera(name);
         areaCamera.reset({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw);
         areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, false, 0, &area.cameraWalls, &area.walls);
         areaMode = true, areaClock = 0;
@@ -11211,7 +11237,9 @@ struct Viewer {
         float x, y;
         UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
         if (!cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) return;
-        UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", t, x, y, view, a);
+        // (comBtnMenu posed for its buttons' places; its two arc lines not shown - the reference's
+        // yes / no have none, its battle commands do)
+        UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", t, x, y, view, 0);
         for (int b = 0; b < 2; ++b) {
             float px, py, cx, cy;
             if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(5 + b), px, py)) continue;
@@ -14307,7 +14335,7 @@ struct Viewer {
         }
         UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
         if (!cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) return;
-        UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", t, x, y, view);
+        UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", t, x, y, view, 0); // (YNChoiceButton: no arc lines - as the reference)
         for (int b = 0; b < 2; ++b) {
             float px, py, cx, cy;
             if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(5 + b), px, py)) continue;
@@ -15490,6 +15518,7 @@ struct Viewer {
             for (auto it = game.cr3GeneOf.begin(); it != game.cr3GeneOf.end();)
                 it = it->second == uid ? game.cr3GeneOf.erase(it) : std::next(it);
             game.cr3GeneOf[cr3Camp.chara] = uid;
+            if (vs.screen == 0 && cr3Camp.chara == 1) game.setFlag(22, true); // (FutterMenu::Update: the hero's gene swapped - the story waits on it)
             audio.playSe("com_003", false);
             SDL_Log("camp: %d wears gene %d", cr3Camp.chara, gene.master);
             cr3Camp.stage = 2, cr3Camp.since = 0;

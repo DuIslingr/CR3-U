@@ -58,6 +58,10 @@ bool Cr3Area::load(const MvglArchive& a, const std::string& area, std::string* e
 }
 
 void Cr3GomCamera::reset(const V3& player, float playerYaw) {
+    if (lookDown_) { // (Fld2CameraLookDown::Reset: at once where they go)
+        eye = player + V3{ldOffset_[0], ldOffset_[1], ldOffset_[2]}, at = player + V3{0, 1.2f, 0};
+        return;
+    }
     // (SetupCamera: the spring's point a unit behind the player, at the target's height)
     const V3 t = targetOf(player);
     spring_ = t - V3{std::sin(playerYaw), 0, std::cos(playerYaw)};
@@ -67,11 +71,23 @@ void Cr3GomCamera::reset(const V3& player, float playerYaw) {
 }
 
 void Cr3GomCamera::turn(float dyaw, float dpitch) {
+    if (lookDown_) return;
     yaw += dyaw;
     pitch = std::clamp(pitch + dpitch, 0.05f, 1.3f);
 }
 
 void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls, const CollisionWorld* walls) {
+    if (lookDown_) { // (Fld2CameraLookDown::Update)
+        auto follow = [dt](V3& at, const V3& want) {
+            const V3 d = want - at;
+            const float l = len(d);
+            if (l >= 0.3f) at = at + d * (std::min(4.0f * dt, l) / l);
+        };
+        follow(eye, player + V3{ldOffset_[0], ldOffset_[1], ldOffset_[2]});
+        follow(at, player + V3{0, 1.2f, 0});
+        playerAlpha = 1;
+        return;
+    }
     const V3 t = targetOf(player);
     const float frames = dt * 60; // (its rates are a 1/60 s step's)
     // GomAction: the spring to 3 away along where it is, accelerating 0.005 a step and braking to stop there
