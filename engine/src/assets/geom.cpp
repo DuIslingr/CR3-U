@@ -37,6 +37,7 @@ float halfToFloat(uint16_t h) {
 } // namespace
 
 void GeomMesh::resolveJoints(float scale) {
+    if (rows) return;
     if (!joints.empty()) {
         if (scale != 1.0f)
             for (uint8_t& j : joints) j = uint8_t(std::clamp(long(std::lround(j * scale)), 0L, 255L));

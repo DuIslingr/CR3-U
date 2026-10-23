@@ -37,6 +37,7 @@ add_library(cr3core STATIC
     src/assets/maptable.cpp
     src/assets/release.cpp
     src/assets/hd_texture.cpp
+    src/assets/gltf_figure.cpp
     src/assets/text.cpp
     src/assets/language.cpp
     src/field/fieldmap.cpp
@@ -68,6 +69,7 @@ add_library(cr3core STATIC
     src/audio/cr3sound.cpp
     third_party/stb/stb_vorbis.c
     third_party/stb/stb_image.c
+    third_party/gltf_libs.c
 )
 # The iPad's music (AAC in CAF): FAAD2 - the system's when pkg-config finds it, else the copy in
 # third_party/faad2 (FAAD2 2.11.1's libfaad, CR1:U's). CR3_BUNDLED_FAAD2=ON forces the bundled one.
@@ -143,6 +145,10 @@ endif()
 set_source_files_properties(third_party/stb/stb_vorbis.c PROPERTIES COMPILE_OPTIONS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
 # stb_image (public domain, vendored - 2.30, JPEG and PNG only): a gene card's page's pictures
 set_source_files_properties(third_party/stb/stb_image.c PROPERTIES COMPILE_OPTIONS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
+# cgltf 1.13 (MIT) and stb_image_write 1.16 (public domain / MIT), vendored: the model bridge's glTF
+# reading and the exports' PNGs (assets/gltf_figure.cpp)
+set_source_files_properties(third_party/gltf_libs.c PROPERTIES COMPILE_OPTIONS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
+target_include_directories(cr3core SYSTEM PRIVATE third_party)
 target_include_directories(cr3core PRIVATE third_party/stb)
 target_include_directories(cr3core PUBLIC src)
 target_include_directories(cr3core PRIVATE third_party/hevag) # (the HE-VAG filter table: vgmstream's, ISC)

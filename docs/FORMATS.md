@@ -2151,6 +2151,29 @@ the initial value to the next set's. `tools/anim.py check`: in all three release
 is as its sizes say, every driven rotation is unit length, and all 10742..12340 boundaries are
 continuous to 1e-8 (the Vita splits its animations into more frame sets).
 
+## Replacement models (glTF)
+
+The model bridge (`assets/gltf_figure.cpp`, CR2-U's). `cr3view --export-models [dir]` writes each
+figure as glTF 2.0 (`.glb`, to `models/export/`; `--no-animations` without the animations): the
+joints (`node_<i>_<name>` from `<figure>.name`) as TRS - their glTF locals the skeleton's worlds
+undone by the parent's, so the scale compensation folds in (a sheared joint keeps only its TRS); the
+meshes in their bind space as stored, skinned with the file's inverse binds, the palette's rows
+turned back into joints (rigid meshes: palette[0], weight 1); normals, tangents, both UV sets and
+the colours; materials `cr_mat_<i>_<name>` with the colour picture and the normal map
+(`tex_<image>`), the blend (0xa4) / alpha test (0xa1, 0xa0) / culling (0xa6) states as glTF's; the
+figure's animations sampled at their own rate.
+
+`models/hd/<figure>.glb` / `.gltf` (`CR3_HD_MODELS` elsewhere) replaces the figure's meshes in
+`loadFigure`, as in CR2-U: joints by name, each vertex taken into the figure's bind space by its
+joints' (world x inverse bind)^-1 x the file's (none when the file's is the figure's or its
+export's), rigid meshes on their node's joint; missing normals and tangents worked out; meshes of
+more than 85 joints split, the triangles as a list (`GeomMesh::list`, 16-bit `strip` indices - up to
+65535 vertices a mesh), `rows` keeping resolveJoints off. A material named `cr_mat_<i>` is material
+i; one with a picture not named after the figure's own gets a copy of it with that picture, served
+by `decode` under `gltf\<figure>\<n>`. `cr3tool gltfcheck <release> <figure|all> [file.glb]`: all
+2599 figures (356 with meshes) land exactly on the originals in the base pose and their first four
+animations.
+
 ## Text (`message\*.dat`)
 
 From `EvtTextData` and `EvtWindowMessage::ReadPage`; `tools/msg.py check`: all 874 files in the
