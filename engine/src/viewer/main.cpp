@@ -2547,10 +2547,10 @@ struct Viewer {
         }
         if (!inputScript.empty() && inputScript.front().compare(0, 6, "lunch:") == 0 && lunchIdle()) { // (--input lunch:<model> / lunch:any: its balloon tapped)
             std::string want = inputScript.front().substr(6);
-            if (want == "any") // (the marked one, else the meal's end, else another)
+            if (want == "any") // (the marked one, else the meal's end, else another - then waiting for it to take taps)
                 for (int frame : {1, 2, 0})
                     for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons)
-                        if (want == "any" && b.shown && b.delay <= 0 && b.frame == frame) want = b.model;
+                        if (want == "any" && b.shown && b.frame == frame) want = b.model;
             for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons)
                 if (b.model == want && b.shown && b.delay <= 0) {
                     inputScript.pop_front();
@@ -6304,7 +6304,10 @@ struct Viewer {
         game.next.fieldMode = -1;
         if (!areaEvents->start(name.substr(0, 3), entry) && (entry == "evt000" || !areaEvents->start(name.substr(0, 3), "evt000")))
             SDL_Log("area %s: %s - %s", name.c_str(), entry.c_str(), areaEvents->error().c_str());
-        else SDL_Log("area %s: %s running, %zu gimmicks", name.c_str(), entry.c_str(), areaGimmicks.size());
+        else {
+            SDL_Log("area %s: %s running, %zu gimmicks", name.c_str(), entry.c_str(), areaGimmicks.size());
+            areaScriptOver = !areaEvents->running(); // (over without a wait: what it reserved still goes next)
+        }
         setupAreaEncounters(name);
         cr3SavePending = cr3SavePending || cr3Playing; // (Fld2Main::SM_Init / SM_ChangeArea: DBSystem::Sync)
         const cr3::Vec3 at = areaWalker->position();
@@ -6621,6 +6624,8 @@ struct Viewer {
 
     // one frame: the stick in the camera's frame (FldPlayer::CalcPlayerMoveDir), a run or a walk
     // (SM_Run 4.8, SM_Walk 1.2 a second, as far as it's pushed), the camera's Q / E and R / V
+    float areaScriptRun = 0;     // (seconds the area's script has run)
+    bool areaScriptOver = false; // (the area's evt000 over as it started - its BranchAfterEvent still to come)
     void updateArea(float dt, float sx, float sy, bool run) {
         areaClock += dt, areaMotionAge += dt;
         stepFieldEffects(dt);
@@ -6632,7 +6637,11 @@ struct Viewer {
                     SDL_Log("area script: %s", areaEvents->error().c_str());
                     break;
                 }
-            if (wasRunning && !areaEvents->running()) {
+            areaScriptRun = areaEvents->running() ? areaScriptRun + dt : 0;
+            if (areaScriptRun >= 60 && areaScriptRun - dt < 60) // (a minute in: a script that waits on what never comes)
+                SDL_Log("area script: still running after a minute, in %s", areaEvents->where().c_str());
+            if ((wasRunning || areaScriptOver) && !areaEvents->running()) {
+                areaScriptOver = false;
                 SDL_Log("area script: ended at frame %d", areaEvents->frame());
                 afterAreaScript();
                 if (eventMode || !areaMode) return;
@@ -8666,6 +8675,7 @@ struct Viewer {
         const std::string base = lunchFunction.size() > 4 && lunchFunction.compare(lunchFunction.size() - 4, 4, "_evt") == 0
                                      ? lunchFunction.substr(0, lunchFunction.size() - 4) : lunchFunction;
         SDL_Log("lunch: %s", (base + "_" + model).c_str());
+        lunchWaitLogged = false;
         if (!event->call(base + "_" + model)) SDL_Log("lunch: %s", event->error().c_str());
     }
     bool lunchClick(float fx, float fy) {
@@ -8706,7 +8716,13 @@ struct Viewer {
         if (!event->running() && !eventEnded && lunchActive && !event->lunch().shutdown) { // (LunchMain 200: the balloons' taps)
             for (cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons)
                 if (b.shown && b.delay > 0) --b.delay;
-            if (!lunchWaitLogged) lunchWaitLogged = true, SDL_Log("lunch: the balloons, at frame %d", event->frame());
+            if (!lunchWaitLogged) {
+                lunchWaitLogged = true;
+                std::string shown;
+                for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons)
+                    if (b.shown) shown += " " + b.model + (b.frame == 1 ? " (marked)" : b.frame == 2 ? " (the end)" : "");
+                SDL_Log("lunch: the balloons, at frame %d:%s", event->frame(), shown.c_str());
+            }
             syncEventFigures(*event);
             return;
         }

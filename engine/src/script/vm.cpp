@@ -408,6 +408,14 @@ bool ScriptVM::call(const std::string& function, const std::vector<int>& args) {
     return ok;
 }
 
+std::string ScriptVM::where() const {
+    std::string out;
+    SQStackInfos si;
+    for (SQInteger level = 0; vm_ && SQ_SUCCEEDED(sq_stackinfos(vm_, level, &si)) && level < 8; ++level)
+        out += (level ? " < " : "") + std::string(si.funcname ? si.funcname : "?") + (si.line > 0 ? " line " + std::to_string(si.line) : "");
+    return out;
+}
+
 bool ScriptVM::waiting() const { return sq_getvmstate(vm_) == SQ_VMSTATE_SUSPENDED; }
 
 bool ScriptVM::resume() {

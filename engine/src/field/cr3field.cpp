@@ -24,7 +24,9 @@ V3 targetOf(const V3& player) { return {player[0], player[1] + 1.2f, player[2]};
 bool Cr3Area::load(const MvglArchive& a, const std::string& area, std::string* error) {
     *this = Cr3Area();
     name = area;
-    const std::string c = area + "c";
+    // (Fld2TaskMap::CreateArea's <area>c; CreateArea2D's - the e00 maps, an ortho camera's - <area>
+    // itself: its defaultPos, its walls)
+    const std::string c = a.contains(area + "c.skel") ? area + "c" : area;
     std::vector<uint8_t> d;
     Skeleton sk;
     if (!a.read(c + ".skel", d) || !parseSkeleton(d, sk)) {

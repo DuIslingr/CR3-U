@@ -647,6 +647,7 @@ bool EventRuntime::call(const std::string& function) {
 }
 
 bool EventRuntime::running() const { return vm_ && vm_->waiting(); }
+std::string EventRuntime::where() const { return vm_ ? vm_->where() : std::string(); }
 
 bool EventRuntime::tick() { return update(vm_.get()); }
 

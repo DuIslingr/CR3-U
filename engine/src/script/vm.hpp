@@ -64,6 +64,8 @@ public:
     // (false: an error)
     bool waiting() const;
     bool resume();
+    // where a waiting call is: its functions, innermost first ("WaitFrame < evt000 line 12")
+    std::string where() const;
     bool hasFunction(const std::string& function) const;
     // the root table's script functions (after runMain: the script's own, by name)
     std::vector<std::string> rootFunctions() const;

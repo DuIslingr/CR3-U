@@ -60,6 +60,7 @@ public:
     // one update; false: the script failed
     bool tick();
     bool running() const;     // the script hasn't ended
+    std::string where() const; // (ScriptVM::where)
 
     // The same natives for another script (a field's: its events use the scene, the windows, the
     // fades too), and one update for it - the scene, its wait counted down (and it resumed), the
