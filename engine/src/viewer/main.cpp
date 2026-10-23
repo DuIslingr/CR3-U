@@ -6046,7 +6046,7 @@ struct Viewer {
         }
         // (--input drag:<x0>/<y0>/<x1>/<y1> - a finger touched at the first screen fraction, moved to
         // the second, held - and drag:end, let go: tests)
-        if (!scripted && !inputScript.empty() && inputScript.front().compare(0, 5, "drag:") == 0) {
+        if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 5, "drag:") == 0) { // (live: a call: just before may have started one)
             const std::string want = inputScript.front().substr(5);
             inputScript.pop_front();
             float a = 0.5f, b = 0.5f, c = 0.5f, d = 0.5f;
@@ -6055,7 +6055,7 @@ struct Viewer {
             SDL_Log("area %s: drag %s", area.name.c_str(), want.c_str());
         }
         // (--input box:<event box>: tests - the player put in that box, set off as if walked in)
-        if (!scripted && !inputScript.empty() && inputScript.front().compare(0, 4, "box:") == 0) {
+        if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 4, "box:") == 0) {
             const std::string want = inputScript.front().substr(4);
             inputScript.pop_front();
             for (const AreaGimmick& g : areaGimmicks)
@@ -7699,9 +7699,11 @@ struct Viewer {
         event->autoPage = pageSeconds, event->askYesNo = true;
         event->language = optionLanguage; // (the release's language's slot: the Vita's Japanese is 0)
         // CR3: an area script's event, "<script>:<function>" (t01:s000_t01_00101_evt)
+        // - a bare one (the next vista's: BranchAfterVista) in the script eventScriptOf finds
         const size_t colon = function.find(':');
-        eventScript = colon != std::string::npos ? function.substr(0, colon) : std::string();
-        if (colon != std::string::npos ? !event->start(function.substr(0, colon), function.substr(colon + 1)) : !event->start(function)) {
+        eventScript = colon != std::string::npos ? function.substr(0, colon) : eventScriptOf(function);
+        const std::string fn = colon != std::string::npos ? function.substr(colon + 1) : function;
+        if (!eventScript.empty() ? !event->start(eventScript, fn) : !event->start(fn)) {
             SDL_Log("event %s: %s", function.c_str(), event->error().c_str());
             return false;
         }
@@ -7724,7 +7726,7 @@ struct Viewer {
             eventEnded = true;
             SDL_Log("event ended at frame %d (%.2f s)%s", event->frame(), event->frame() * cr3::EventRuntime::kTick,
                     event->battle() >= 0 ? (": battle " + std::to_string(event->battle())).c_str() : "");
-            if (playMode) {
+            if (playMode && eventScript.empty()) {
                 branchAfterVista();
                 return;
             }
@@ -7756,6 +7758,7 @@ struct Viewer {
                 if (!loadArea(a, "")) SDL_Log("area %s: not entered", a.c_str());
                 return;
             }
+            if (playMode) branchAfterVista(); // (the rest: the credits, a ChangeArea's place)
         }
         if (event->messageShown() != messageLogged) {
             messageLogged = event->messageShown();
@@ -8641,7 +8644,11 @@ struct Viewer {
             cr3Playing = true;
             if (!cr3SavedArea().empty() && loadCr3Save()) return; // (TitleMain: the save loaded, its field)
             SDL_Log("title: a new game");
-            startEvent("t01:s000_t01_00101_evt", "null", pageSeconds);
+            // (TitleMain::Init: Cr3FieldData 0x700000000 - town 0, area 7: the field t0108, whose evt000
+            // finds flag 2001 clear there - s000_t01_00101_set: flags 33, 702, 2001, 7, 8, 12 - and
+            // calls the prologue's first vista)
+            playMode = true;
+            if (!loadArea("t0108", "")) startEvent("t01:s000_t01_00101_evt", "null", pageSeconds);
         }
     }
 
