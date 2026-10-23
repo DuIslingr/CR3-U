@@ -164,6 +164,14 @@ struct SoundHooks {
     std::function<void(int fadeFrames)> stopAllSe;
     std::function<int(int clip)> playVoice;
     std::function<void(int fadeFrames)> stopAllVoices;
+    // (CR3's, by name - utils::Sound*: the effects and voices named, the music its number's
+    // track m<NN> looping or once; fades in the game's frames, 30 a second)
+    std::function<void(int track, int fadeFrames, bool loop)> playBgmOnce;
+    std::function<int(const std::string& name, bool loop, int fadeInFrames)> playSeNamed;
+    std::function<void(const std::string& name, int fadeFrames)> stopSeNamed;
+    std::function<int(const std::string& name)> playVoiceNamed;
+    std::function<bool(const std::string& name)> playingNamed;
+    std::function<int()> bgmNo;
 };
 SoundHooks& soundHooks();
 

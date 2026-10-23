@@ -5573,12 +5573,14 @@ struct Viewer {
             for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g); // (no box set off by standing in it)
         }
         savedArea.clear();
-        // (FldMain::Init's mode: back from a battle evt100 - SetComeFromBattleToField -, else evt000)
-        const std::string entry = game.next.fieldMode == 1 ? "evt100" : "evt000";
+        // (Fld2Main::SM_FirstEvent: evt000 - evt002 back from a battle lost, Cr3FieldData's come-from 1
+        // - SetComeFromBattleToField, Fld2SaveData(1) - with BtlSystem::s_ResultParam 1)
+        const std::string entry = game.next.fieldMode == 1 && cr3BattleLost ? "evt002" : "evt000";
         game.next.fieldMode = -1;
         if (!areaEvents->start(name.substr(0, 3), entry) && (entry == "evt000" || !areaEvents->start(name.substr(0, 3), "evt000")))
             SDL_Log("area %s: %s - %s", name.c_str(), entry.c_str(), areaEvents->error().c_str());
         else SDL_Log("area %s: %s running, %zu gimmicks", name.c_str(), entry.c_str(), areaGimmicks.size());
+        setupAreaEncounters(name);
         const cr3::Vec3 at = areaWalker->position();
         SDL_Log("area %s: %zu figures, player %s at %s (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
                 restored ? "where it left" : "defaultPos", at[0], at[1], at[2]);
@@ -5674,6 +5676,131 @@ struct Viewer {
             SDL_Log("area %s: battle %d on field %d", area.name.c_str(), id, fieldId);
             requestCr3Battle(id, fieldId);
         }
+    }
+
+    // the random encounters (Fld2TaskEncount): the area's row of enc.mbe - its battle field, music,
+    // steps between rolls and the chance to start with - and the couplings of mon_enc.mbe that
+    // can be met in it (Setup: the dungeon's, within the level's band, their event flag set, and
+    // weighed for this area above 0)
+    struct AreaEncounters {
+        struct Coupling {
+            int weight = 0, index = 0, id = 0, playerFirst = 0, enemyFirst = 0;
+        };
+        std::vector<Coupling> couplings;
+        int total = 0, field = -1, bgm = -1, steps = 0, rate = 0, counted = 0;
+        float walked = 0, last[2] = {0, 0};
+        bool lastSet = false;
+    } areaEnc;
+    cr3::Rand48 encountRng;
+    // (the difficulty, DAT_014bde04 - Cr3System.SetDungeonLevel, else the world select's level)
+    int encountDifficulty() const {
+        if (areaEvents && areaEvents->dungeonLevel > 0) return areaEvents->dungeonLevel;
+        return game.selectLevel >= 0 ? game.selectLevel + 1 : 0;
+    }
+    void setupAreaEncounters(const std::string& name) {
+        areaEnc = AreaEncounters();
+        static bool seeded = false; // (rand(): seeded by the clock - CR3_BATTLE_SEED for tests)
+        if (!seeded) {
+            const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
+            encountRng.seed(fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) : uint32_t(SDL_GetTicks()));
+            seeded = true;
+        }
+        if (name.size() < 5 || name[0] != 'd') return;
+        static cr3::MbeFile enc, mon;
+        if (!enc.table("Encounter")) {
+            std::vector<uint8_t> d;
+            if (archive.read("data\\enc.mbe", d)) enc.parse(d);
+            if (archive.read("data\\mon_enc.mbe", d)) mon.parse(d);
+        }
+        const int dungeon = std::atoi(name.substr(1, 2).c_str()), areaNo = std::atoi(name.substr(3, 2).c_str());
+        cr3::MbeFile::Row r;
+        bool found = false;
+        if (const cr3::MbeFile::Table* t = enc.table("Encounter"))
+            for (size_t k = 0; k < t->rows.size() && !found; ++k)
+                if (enc.row(*t, k, "iii", r) && r.i(0) == dungeon && int8_t(r.i(1)) == areaNo) { // (u32 dungeon; chars area, field, steps, chance; u32 music)
+                    const uint32_t b = uint32_t(r.i(1));
+                    areaEnc.field = int8_t(b >> 8), areaEnc.steps = int8_t(b >> 16), areaEnc.rate = int8_t(b >> 24), areaEnc.bgm = r.i(2);
+                    found = true;
+                }
+        if (!found) return;
+        const int d = std::max(encountDifficulty(), 1), band = (d - 1) * 10 + 1;
+        if (const cr3::MbeFile::Table* t = mon.table("MonsterEncounter"))
+            for (size_t k = 0; k < t->rows.size(); ++k) {
+                // (ints: dungeon, index, coupling, base level, max level, -, event flag; shorts: the
+                // first strikes, the player's and the enemy's; then a char weight for each area)
+                if (!mon.row(*t, k, "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r) || r.i(0) != dungeon) continue;
+                if (r.i(3) > band || (r.i(4) != -1 && band > r.i(4))) continue;
+                if (r.i(6) != -1 && !game.flag(r.i(6))) continue;
+                if (areaNo < 1 || areaNo > 100) continue;
+                const int weight = int8_t(uint32_t(r.i(8 + (areaNo - 1) / 4)) >> ((areaNo - 1) % 4 * 8));
+                if (weight <= 0) continue;
+                areaEnc.couplings.push_back({weight, r.i(1), r.i(2), int16_t(r.i(7)), int16_t(uint32_t(r.i(7)) >> 16)});
+                areaEnc.total += weight;
+            }
+        SDL_Log("area %s: encounters every %d steps from %d%%, %zu couplings on field %d", name.c_str(), areaEnc.steps, areaEnc.rate,
+                areaEnc.couplings.size(), areaEnc.field);
+    }
+    // the coupling met (Pickout / ForceEncount: rand() % the weights' sum, the first whose running
+    // sum reaches it); -1 none
+    int pickEncounter() {
+        if (areaEnc.couplings.empty()) return -1;
+        const int r = areaEnc.total > 0 ? int(encountRng.next() % uint32_t(areaEnc.total)) : 0;
+        int sum = 0;
+        for (const AreaEncounters::Coupling& c : areaEnc.couplings)
+            if ((sum += c.weight) >= r) return c.id;
+        return areaEnc.couplings.back().id;
+    }
+    // a battle met (SetupBattle): the monsters' level from the party's (CalcAveLevel - every
+    // character the team level) and the difficulty's band (CalcEnemyLevel), the field kept to come
+    // back to
+    void startEncounter(int coupling) {
+        const int d = encountDifficulty();
+        const uint32_t u = encountRng.next();
+        int level = std::max(game.cr3TeamLevel, 1) + int(u & 7) - 5;
+        if (d >= 11) level = d * 10 - int(u % 10);
+        else if (d > 0) level = std::clamp(level, d * 10 - 9, d * 10);
+        level = std::max(level, 1);
+        cr3::GameState::Next& n = game.next;
+        n.battleLevel = level, n.battleMusic = areaEnc.bgm, n.battleMusicAfter = 32, n.battleNext = 1;
+        savedArea = area.name;
+        const cr3::Vec3 p = areaWalker->position();
+        savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
+        SDL_Log("area %s: encounter - coupling %d on field %d at level %d", area.name.c_str(), coupling, areaEnc.field, level);
+        audio.stopBgm(20); // (SetupBattle: the field's music out over a second)
+        requestCr3Battle(coupling, areaEnc.field);
+    }
+    // ForceBattleIn (the field's Battle button): a coupling met at once, the chance not asked
+    bool forceEncounter() {
+        const int c = pickEncounter();
+        if (c < 0 || !areaWalker) return false;
+        startEncounter(c);
+        return true;
+    }
+    // SM_Main: each 1.7 walked across a step; at every steps' (over the genes' EncounterUp) a roll
+    // under the chance meets a battle, else the chance up 5. Not while they're off (the field's
+    // button, the scripts' SetEncountEnable), flag 1040 or 4105 set, unless 1037 says count anyway
+    void countEncounter() {
+        // (the distance from the last place counted, taken 0.05 at a time: the controller's
+        // shiver against a corner - 0.01 there and back each frame - not walked)
+        const cr3::Vec3 p = areaWalker->position();
+        const float dx = p[0] - areaEnc.last[0], dz = p[2] - areaEnc.last[1], moved = std::sqrt(dx * dx + dz * dz);
+        if (!areaEnc.lastSet || moved < 0.05f) {
+            if (!areaEnc.lastSet) areaEnc.last[0] = p[0], areaEnc.last[1] = p[2], areaEnc.lastSet = true;
+            return;
+        }
+        areaEnc.last[0] = p[0], areaEnc.last[1] = p[2];
+        if (areaEnc.rate == 0 || areaEnc.couplings.empty()) return;
+        const bool on = game.encountEnable && !encountersOff && !game.flag(0x410) && !game.flag(4105);
+        if (!on && !game.flag(0x40d)) return;
+        areaEnc.walked += moved;
+        if (areaEnc.walked < 1.7f) return;
+        areaEnc.walked = 0;
+        if (++areaEnc.counted < std::max(areaEnc.steps, 1)) return;
+        areaEnc.counted = 0;
+        if (int(encountRng.next() % 100) <= areaEnc.rate) {
+            if (const int c = pickEncounter(); c >= 0) return startEncounter(c);
+        }
+        areaEnc.rate += 5;
     }
 
     // one frame: the stick in the camera's frame (FldPlayer::CalcPlayerMoveDir), a run or a walk
@@ -5918,6 +6045,13 @@ struct Viewer {
             }
             g.inside = in;
         }
+        // (--input encount:force - the field's Battle button in a dungeon -: tests)
+        if (!scripted && !inputScript.empty() && inputScript.front() == "encount:force") {
+            inputScript.pop_front();
+            forceEncounter();
+            return;
+        }
+        if (cr3FieldIdle() && !cr3BattleRequest.active) countEncounter();
     }
 
     void drawArea(int w, int h) {
@@ -6170,6 +6304,7 @@ struct Viewer {
         }
         if (!startCr3Battle(cr3BattleRequest.coupling, cr3BattleRequest.field)) return;
         eventMode = areaMode = false;
+        if (game.next.battleMusic >= 0) audio.playBgm(game.next.battleMusic, 0); // (BtlSystem's start: the boot's music)
         if (caught) {
             int hw = 0, hh = 0;
             glassSize(hw, hh);
@@ -6197,6 +6332,7 @@ struct Viewer {
     }
 
     bool startCr3Battle(int coupling, int fieldId) {
+        cr3BattleLost = false; // (BtlSystem::Init: s_ResultParam -1)
         std::string err;
         if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, &err))) {
             SDL_Log("battle: %s", err.c_str());
@@ -6717,6 +6853,7 @@ struct Viewer {
                 }
         if (outcome == 1) { // (BtlSysStateAction::phaseVictoryEventStart: Battle_Victory_Base)
             cr3BattleStage = Cr3BattleStage::Won, cr3StageStart = cr3BattleClock;
+            if (game.next.battleMusicAfter >= 0) audio.playBgm(game.next.battleMusicAfter, 0); // (phaseVictoryIn: PlayResultBgm)
             runCr3BattleScript("Battle_Victory_Base");
             for (size_t k = 0; k < cr3Battle.units.size(); ++k)
                 if (cr3Battle.units[k].player) {
@@ -6726,7 +6863,8 @@ struct Viewer {
             SDL_Log("battle %d: won", cr3Battle.coupling);
         } else if (outcome == 2) {
             cr3BattleStage = Cr3BattleStage::Lost, cr3StageStart = cr3BattleClock;
-            SDL_Log("battle %d: lost (no game over yet: on as if won)", cr3Battle.coupling);
+            cr3BattleLost = true; // (phaseDefeatEventStart: the result 1)
+            SDL_Log("battle %d: lost (no continue screen yet: on to the field's evt002)", cr3Battle.coupling);
         } else {
             // (the turn's end: the status effects' HP changes - poison, regeneration - and their
             // turns)
@@ -6762,6 +6900,7 @@ struct Viewer {
             cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16));
         }
         game.cr3Money += cr3ResultMoney;
+        if (game.next.battleMusicAfter >= 0) audio.stopBgm(20); // (phaseResult: FadeBgm, a second)
         cr3BattleStage = Cr3BattleStage::Result, cr3StageStart = cr3BattleClock;
         SDL_Log("battle %d: result - %d EXP, %d money", cr3Battle.coupling, cr3ResultExp, cr3ResultMoney);
     }
@@ -6834,7 +6973,8 @@ struct Viewer {
     }
 
     // the battle over (won): where SetBattleNext sent it - the vista SetVistaFuncName2 named
-    // (SetBattleToVista), else the field it came from (SetComeFromBattleToField: evt100)
+    // (SetBattleToVista), else the field it came from (Fld2Main::SM_FirstEvent: evt000, evt002 if lost)
+    bool cr3BattleLost = false;
     void endCr3Battle() {
         cr3BattleMode = false;
         cr3::GameState::Next& n = game.next;
@@ -13913,8 +14053,9 @@ struct Viewer {
                 audio.playSe("com_002", false);
             } else if (id == 104)
                 openCr3Camp();
-            else if (id == 103) // (feBtnBattle: the VS mode)
-                openVs();
+            else if (id == 103) { // (feBtnBattle: ForceBattleIn in a dungeon; the VS mode in a town)
+                if (!forceEncounter()) openVs();
+            }
             else if (id == 105) // (feBtnMypage: My Page)
                 openMyPage();
             else if (id == 102) {

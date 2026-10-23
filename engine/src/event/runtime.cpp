@@ -524,12 +524,18 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtSkip", "ButtonCreate", [this](NativeCall&) { skipButton_ = true; });
     vm.setNative("EvtSkip", "ButtonDelete", [this](NativeCall&) { skipButton_ = false; });
     vm.setNative("EvtSkip", "ButtonSetVisible", [this](NativeCall& c) { skipButton_ = c.boolean(0); });
-    // the sound (Cr3Sound -> Cr3UtilSound*: soundHooks, the player's; none set - silence, GetState
-    // -2): PlayBGM(track, fade frames), StopBGM(frames), ReleaseBGM, GetState(0 the music, 1 the
-    // effects), PlaySE(clip) / PlaySE_Repeat(clip: looping, its slot), StopSE(slot, frames),
-    // StopSEAll(frames), PlayVoice(clip), StopVoiceAll(frames)
+    // the sound (Cr3Sound -> utils::Sound*: soundHooks, the player's; none set - silence, GetState
+    // -2): CR3's by name - PlaySE(name) / PlaySE_Repeat(name: looping) / PlaySE_Fade(name, frames
+    // up, loop), StopSE(name, frames), StopSEAll(frames), PlayVoice(name), StopVoiceAll(frames),
+    // IsPlaying(name) -, PlayBGM(track, fade frames: m<NN>, looping) / PlayOnceBGM (once),
+    // StopBGM(frames), ReleaseBGM, GetPlayBgmNo, GetState(0 the music, 2 a voice: 2 on, else 1). The
+    // numbered forms (CR2-U's banks) where no named hook is set
     vm.setNative("Cr3Sound", "PlayBGM", [](NativeCall& c) {
-        if (soundHooks().playBgm) soundHooks().playBgm(c.integer(0), c.integer(1));
+        if (soundHooks().playBgmOnce) soundHooks().playBgmOnce(c.integer(0), c.integer(1), true);
+        else if (soundHooks().playBgm) soundHooks().playBgm(c.integer(0), c.integer(1));
+    });
+    vm.setNative("Cr3Sound", "PlayOnceBGM", [](NativeCall& c) {
+        if (soundHooks().playBgmOnce) soundHooks().playBgmOnce(c.integer(0), c.integer(1), false);
     });
     vm.setNative("Cr3Sound", "StopBGM", [](NativeCall& c) {
         if (soundHooks().stopBgm) soundHooks().stopBgm(c.integer(0));
@@ -537,19 +543,30 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("Cr3Sound", "ReleaseBGM", [](NativeCall&) {
         if (soundHooks().releaseBgm) soundHooks().releaseBgm();
     });
+    vm.setNative("Cr3Sound", "GetPlayBgmNo", [](NativeCall& c) { c.result(soundHooks().bgmNo ? soundHooks().bgmNo() : -1); });
     vm.setNative("Cr3Sound", "GetState", [](NativeCall& c) { c.result(soundHooks().state ? soundHooks().state(c.integer(0)) : -2); });
-    vm.setNative("Cr3Sound", "PlaySE", [](NativeCall& c) { c.result(soundHooks().playSe ? soundHooks().playSe(c.integer(0), false) : -1); });
-    vm.setNative("Cr3Sound", "PlaySE_Repeat", [](NativeCall& c) { c.result(soundHooks().playSe ? soundHooks().playSe(c.integer(0), true) : -1); });
+    const auto playSe = [](NativeCall& c, bool loop, int fade) {
+        if (soundHooks().playSeNamed) c.result(soundHooks().playSeNamed(c.string(0), loop, fade));
+        else c.result(soundHooks().playSe ? soundHooks().playSe(c.integer(0), loop) : -1);
+    };
+    vm.setNative("Cr3Sound", "PlaySE", [playSe](NativeCall& c) { playSe(c, false, 0); });
+    vm.setNative("Cr3Sound", "PlaySE_Repeat", [playSe](NativeCall& c) { playSe(c, true, 0); });
+    vm.setNative("Cr3Sound", "PlaySE_Fade", [playSe](NativeCall& c) { playSe(c, c.boolean(2), c.integer(1)); });
     vm.setNative("Cr3Sound", "StopSE", [](NativeCall& c) {
-        if (soundHooks().stopSe) soundHooks().stopSe(c.integer(0, -1), c.integer(1));
+        if (soundHooks().stopSeNamed) soundHooks().stopSeNamed(c.string(0), c.integer(1));
+        else if (soundHooks().stopSe) soundHooks().stopSe(c.integer(0, -1), c.integer(1));
     });
     vm.setNative("Cr3Sound", "StopSEAll", [](NativeCall& c) {
         if (soundHooks().stopAllSe) soundHooks().stopAllSe(c.integer(0));
     });
-    vm.setNative("Cr3Sound", "PlayVoice", [](NativeCall& c) { c.result(soundHooks().playVoice ? soundHooks().playVoice(c.integer(0)) : -1); });
+    vm.setNative("Cr3Sound", "PlayVoice", [](NativeCall& c) {
+        if (soundHooks().playVoiceNamed) c.result(soundHooks().playVoiceNamed(c.string(0)));
+        else c.result(soundHooks().playVoice ? soundHooks().playVoice(c.integer(0)) : -1);
+    });
     vm.setNative("Cr3Sound", "StopVoiceAll", [](NativeCall& c) {
         if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(c.integer(0));
     });
+    vm.setNative("Cr3Sound", "IsPlaying", [](NativeCall& c) { c.result(soundHooks().playingNamed && soundHooks().playingNamed(c.string(0))); });
 }
 
 void EventRuntime::reset() {

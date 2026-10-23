@@ -264,6 +264,36 @@ earlier, the vista `s000_d01_00401_evt`'s (d0102f) BattleIn2 of coupling 1 - see
 `cr3view --area <area> [--player <model>]` walks one (WASD / the stick, Shift a walk; Q / E turn
 the camera, R / V tilt it); `--walk x,y,s --run s` for captures.
 
+### Random encounters (CR3)
+
+Fld2TaskEncount, in a dungeon's areas (`dDDAA`):
+
+- `data\enc.mbe` "Encounter", 12-byte rows: u32 the dungeon (d01 = 1; MbGetEncounterInfo takes
+  Fld2TaskMap::GetDungeonNo - 4, the towns t01..t05 being 0..4), then chars the area (1-based,
+  the name's last two digits), the battle field (battle_field.mbe), the steps between rolls and the
+  chance to start with (%), then u32 the music (`m<NN>`). Dungeon 1's chance is 0: no encounters.
+- `data\mon_enc.mbe` "MonsterEncounter", 132-byte rows: ints the dungeon, an index, the coupling,
+  its base level, its max level (-1 none), -1, an event flag (-1 none); shorts the player's and the
+  enemy's first-strike chances (10, 5); then 100 signed chars, a weight per area (area - 1).
+  Setup keeps the dungeon's couplings whose level band holds (difficulty - 1) x 10 + 1, whose
+  event flag is set (or -1), weighed above 0 in this area. (`ace_coupling.mbe`, the ace couplings
+  met past dungeon 1, isn't in CR3-U yet.)
+- SM_Main: the player's X/Z distance walked adds up; each 1.7 is a step; every `steps` (over
+  CrxGetEncounterUp, the genes' encounter skill - 1 in CR3-U - at least 1) Pickout rolls rand() %
+  100 <= the chance: a battle, the coupling by weight (rand() % the weights' sum, the first whose
+  running sum reaches it); else the chance + 5. The chance is the area's again on each entry
+  (SetInterval). Not counted while the encounters are off - the field's `feBtnEncount`, the
+  scripts' SetEncountEnable -, flag 1040 or 4105 set, unless flag 1037 says count anyway. (CR3-U
+  counts the place 0.05 at a time, so the walker's shiver in a corner isn't walking.)
+- SetupBattle: the monsters' level from CalcAveLevel (the party's - every character at the team
+  level) + (rand & 7) - 5, held to [d x 10 - 9, d x 10] for a difficulty d of 1..10 (d >= 11:
+  d x 10 - rand % 10), at least 1; d is Cr3System.SetDungeonLevel's (DAT_014bde04) - CR3-U takes
+  the world select's level + 1 where no script set it. The field's music stops over a second, the
+  boot param gets the field, the coupling, the level, the music (and 32, the music after), and
+  Fld2SaveData(1) marks the field as left for a battle.
+- The field's `feBtnBattle` (ForceBattleIn) meets one at once, the chance not asked (ForceEncount);
+  in a town, where there's none, CR3-U keeps it the VS mode.
+
 ## Interface (CR3)
 
 The menus (CRXPartsBase) are laid out in a 960 x 640 space at 100 pixels a unit - ten times CR2's
@@ -886,8 +916,10 @@ The battle reservation: `Cr3System.BattleIn(coupling, field, level, music)` /
 map, bgm` but pass map second) become the BtlBootParam - +0 .. +8 the party (utils::SetParty's
 slots: char_para ids), +0x10 the battle field, +0x14 the coupling, +0x18 the monsters' level, +0x1c
 the music. `SetBattleNext(14)` with `SetVistaFuncName2` / `SetVistaMapName` (the scripts'
-`SetBattleToVista`) sends the battle on to a vista; else back to the field, whose `evt100` runs
-(SetComeFromBattleToField). The ship's: `s000_d01_00401_evt` -> coupling 1 on field 44 at level 3
+`SetBattleToVista`) sends the battle on to a vista; else back to the field, where
+Fld2Main::SM_FirstEvent runs `evt000` as on any entry - `evt002` instead when the field was left for
+the battle (Cr3FieldData's come-from 1: SetComeFromBattleToField, or an encounter's Fld2SaveData(1))
+and the battle was lost (BtlSystem::s_ResultParam 1; won 0). CR3 never calls `evt100` itself. The ship's: `s000_d01_00401_evt` -> coupling 1 on field 44 at level 3
 -> `s000_d01_00601_evt`.
 
 BtlSystem::Init makes the units: the party (createParty: the characters' models - a party
@@ -1355,6 +1387,17 @@ Android's asset packs, the Vita's `bgm/`, `se/`, `voice/*/`). `audio/cr3sound.hp
   `s250_t01_00301002`, `s271_t01_00101009`) have no ATRAC9 config in their WAVE entry (1 or 3);
   their streams are the same mono 48 kHz ~72 kbit/s as the other 5,871 (config `fe 70 05 f0`), and
   decode with it to the Android voices' lengths.
+- What plays them (utils::Sound*, the scripts' `Cr3Sound`): effects and voices by name - PlaySE,
+  PlaySE_Repeat (looping), PlaySE_Fade(name, frames, loop) (up from silence), StopSE(name, frames),
+  StopSEAll, PlayVoice, StopVoiceAll, IsPlaying(name); the music by number, `m%02d` - PlayBGM(n,
+  frames) looping, PlayOnceBGM once, StopBGM(frames), GetPlayBgmNo. Fades in the game's frames, 30
+  a second. GetState(0) is 2 while the music plays, else 1 (GetState(2): a voice) - the scripts'
+  PlayBGM wrapper plays on 1 and releases first on 2. The engine's own numbered effects
+  (CrxSound::PlaySE(int)) index `crx_se_name_table`: the 1,033 effect names, sorted - the same
+  order as the files'.
+- A battle (BtlSystem::Init) plays its boot param's music; the victory (phaseVictoryIn) the music
+  after (32 unless BattleIn2 said), faded out over a second at the result (phaseResult). The
+  field's music is the area script's (`PlayDungeonBGM` from `evt000`, run again on the way back).
 
 ---
 

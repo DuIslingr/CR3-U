@@ -27,8 +27,10 @@ public:
     // CR3's sound (audio/cr3sound.hpp, `sound` must outlive this): its music, effects and voices
     // by name - the device opened as open()'s
     bool openCr3(const Cr3Sound& sound, bool device, std::string* error = nullptr);
-    void playBgm(const std::string& name, int fadeFrames);
-    int playSe(const std::string& name, bool loop);
+    void playBgm(const std::string& name, int fadeFrames, bool loop = true);
+    int playSe(const std::string& name, bool loop, int fadeInFrames = 0);
+    void stopSe(const std::string& name, int fadeFrames); // (every slot playing it)
+    bool playingNamed(const std::string& name) const;  // (an effect or a voice)
     int playVoice(const std::string& name);
     void close();
     // every frame: the music's stream topped up, fades on by `dt`, finished clips freed
@@ -57,6 +59,7 @@ private:
         int rate = SoundData::kRate, channels = 1;
         bool loop = false, active = false, voice = false;
         int clip = -1;
+        std::string name; // (CR3's: the effect's or voice's)
         float fade = 1, fadeStep = 0; // (a stop's fade: its gain falling by fadeStep a second)
     };
     void startClip(Voice& v, SoundData::Bank bank, int clip, bool loop);
