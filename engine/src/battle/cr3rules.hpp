@@ -161,6 +161,9 @@ public:
     bool gaugeStarted = false;
     bool advantage(bool player) const { return player ? gauge > 0 : gauge < 0; }
     void addBreak(int points);
+    // (the party's first strike - BtlStatusList::ClearRatioToEnemy: the monsters' actions this turn
+    // none - the next turn() the party's alone)
+    bool monstersWait = false;
     int heal(const Cr3Fighter& source, const Cr3Command& c); // (calculateHpHeal)
     int mpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetMpCost)
     // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the skills

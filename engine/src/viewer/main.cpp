@@ -5687,6 +5687,14 @@ struct Viewer {
             int weight = 0, index = 0, id = 0, playerFirst = 0, enemyFirst = 0;
         };
         std::vector<Coupling> couplings;
+        // (ace_coupling.mbe AceCoupling, 56-byte rows: ints the id, -, -, the coupling, its level by
+        // CalcEnemyLevel (else the next int's), the level, its level-up step and cap (none used), the
+        // band's base and max levels, an event flag (-1 none), -, the chance %; shorts the first strikes)
+        struct Ace {
+            int coupling = 0, calcLevel = 0, level = 0, base = 0, max = -1, flag = -1, chance = 0, playerFirst = 0, enemyFirst = 0;
+        };
+        std::vector<Ace> aces;
+        int dungeon = 0;
         int total = 0, field = -1, bgm = -1, steps = 0, rate = 0, counted = 0;
         float walked = 0, last[2] = {0, 0};
         bool lastSet = false;
@@ -5706,13 +5714,21 @@ struct Viewer {
             seeded = true;
         }
         if (name.size() < 5 || name[0] != 'd') return;
-        static cr3::MbeFile enc, mon;
+        static cr3::MbeFile enc, mon, ace;
         if (!enc.table("Encounter")) {
             std::vector<uint8_t> d;
             if (archive.read("data\\enc.mbe", d)) enc.parse(d);
             if (archive.read("data\\mon_enc.mbe", d)) mon.parse(d);
+            if (archive.read("data\\ace_coupling.mbe", d)) ace.parse(d);
         }
         const int dungeon = std::atoi(name.substr(1, 2).c_str()), areaNo = std::atoi(name.substr(3, 2).c_str());
+        areaEnc.dungeon = dungeon;
+        if (const cr3::MbeFile::Table* t = ace.table("AceCoupling")) // (CreateAceCoupling: afresh on each area)
+            for (size_t k = 0; k < t->rows.size(); ++k) {
+                cr3::MbeFile::Row r;
+                if (!ace.row(*t, k, "iiiiiiiiiiiiii", r) || r.i(3) <= 0) continue;
+                areaEnc.aces.push_back({r.i(3), r.i(4) & 0xff, r.i(5), r.i(8), r.i(9), r.i(10), r.i(12), int16_t(r.i(13)), int16_t(uint32_t(r.i(13)) >> 16)});
+            }
         cr3::MbeFile::Row r;
         bool found = false;
         if (const cr3::MbeFile::Table* t = enc.table("Encounter"))
@@ -5737,31 +5753,57 @@ struct Viewer {
                 areaEnc.couplings.push_back({weight, r.i(1), r.i(2), int16_t(r.i(7)), int16_t(uint32_t(r.i(7)) >> 16)});
                 areaEnc.total += weight;
             }
-        SDL_Log("area %s: encounters every %d steps from %d%%, %zu couplings on field %d", name.c_str(), areaEnc.steps, areaEnc.rate,
-                areaEnc.couplings.size(), areaEnc.field);
+        SDL_Log("area %s: encounters every %d steps from %d%%, %zu couplings (and %zu aces) on field %d", name.c_str(), areaEnc.steps, areaEnc.rate,
+                areaEnc.couplings.size(), areaEnc.aces.size(), areaEnc.field);
     }
     // the coupling met (Pickout / ForceEncount: rand() % the weights' sum, the first whose running
-    // sum reaches it); -1 none
+    // sum reaches it) - its index in areaEnc.couplings; -1 none
     int pickEncounter() {
         if (areaEnc.couplings.empty()) return -1;
         const int r = areaEnc.total > 0 ? int(encountRng.next() % uint32_t(areaEnc.total)) : 0;
         int sum = 0;
-        for (const AreaEncounters::Coupling& c : areaEnc.couplings)
-            if ((sum += c.weight) >= r) return c.id;
-        return areaEnc.couplings.back().id;
+        for (size_t k = 0; k < areaEnc.couplings.size(); ++k)
+            if ((sum += areaEnc.couplings[k].weight) >= r) return int(k);
+        return int(areaEnc.couplings.size()) - 1;
     }
-    // a battle met (SetupBattle): the monsters' level from the party's (CalcAveLevel - every
-    // character the team level) and the difficulty's band (CalcEnemyLevel), the field kept to come
-    // back to
-    void startEncounter(int coupling) {
+    // DrawingAceCoupling: the aces the difficulty's band holds, their event flag set, each passing
+    // its own chance - one of them at random; -1 none
+    int drawAce() {
+        const int band = (std::max(encountDifficulty(), 1) - 1) * 10 + 1;
+        std::vector<int> drawn;
+        for (size_t k = 0; k < areaEnc.aces.size(); ++k) {
+            const AreaEncounters::Ace& a = areaEnc.aces[k];
+            if (a.base > band || (a.max != -1 && band > a.max) || (a.flag != -1 && !game.flag(a.flag))) continue;
+            if (int(encountRng.next() % 100) < a.chance) drawn.push_back(int(k));
+        }
+        return drawn.empty() ? -1 : drawn[encountRng.next() % uint32_t(drawn.size())];
+    }
+    // the monsters' level (CalcEnemyLevel): the party's (CalcAveLevel - every character the team
+    // level) + (rand & 7) - 5, held to the difficulty's band
+    int encounterLevel() {
         const int d = encountDifficulty();
         const uint32_t u = encountRng.next();
         int level = std::max(game.cr3TeamLevel, 1) + int(u & 7) - 5;
         if (d >= 11) level = d * 10 - int(u % 10);
         else if (d > 0) level = std::clamp(level, d * 10 - 9, d * 10);
-        level = std::max(level, 1);
+        return std::max(level, 1);
+    }
+    // SetupAceBattle: its coupling, its level (CalcEnemyLevel's, or its own), its first strikes
+    void startAceEncounter(const AreaEncounters::Ace& a) {
+        AreaEncounters::Coupling c;
+        c.id = a.coupling, c.playerFirst = a.playerFirst, c.enemyFirst = a.enemyFirst;
+        SDL_Log("area %s: an ace", area.name.c_str());
+        startEncounter(c, a.calcLevel ? encounterLevel() : std::max(a.level, 1));
+    }
+    // a battle met (SetupBattle): the monsters' level from the party's (CalcAveLevel - every
+    // character the team level) and the difficulty's band (CalcEnemyLevel), the field kept to come
+    // back to
+    void startEncounter(const AreaEncounters::Coupling& met, int level = -1) {
+        const int coupling = met.id;
+        if (level < 0) level = encounterLevel();
         cr3::GameState::Next& n = game.next;
         n.battleLevel = level, n.battleMusic = areaEnc.bgm, n.battleMusicAfter = 32, n.battleNext = 1;
+        n.battleFirstStrike[0] = met.playerFirst, n.battleFirstStrike[1] = met.enemyFirst;
         savedArea = area.name;
         const cr3::Vec3 p = areaWalker->position();
         savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
@@ -5773,7 +5815,7 @@ struct Viewer {
     bool forceEncounter() {
         const int c = pickEncounter();
         if (c < 0 || !areaWalker) return false;
-        startEncounter(c);
+        startEncounter(areaEnc.couplings[size_t(c)]);
         return true;
     }
     // SM_Main: each 1.7 walked across a step; at every steps' (over the genes' EncounterUp) a roll
@@ -5797,8 +5839,9 @@ struct Viewer {
         areaEnc.walked = 0;
         if (++areaEnc.counted < std::max(areaEnc.steps, 1)) return;
         areaEnc.counted = 0;
-        if (int(encountRng.next() % 100) <= areaEnc.rate) {
-            if (const int c = pickEncounter(); c >= 0) return startEncounter(c);
+        if (int(encountRng.next() % 100) <= areaEnc.rate) { // (Pickout: an ace first - not in dungeon 1 -, else the area's)
+            if (const int a = areaEnc.dungeon != 1 ? drawAce() : -1; a >= 0) return startAceEncounter(areaEnc.aces[size_t(a)]);
+            if (const int c = pickEncounter(); c >= 0) return startEncounter(areaEnc.couplings[size_t(c)]);
         }
         areaEnc.rate += 5;
     }
@@ -6331,6 +6374,51 @@ struct Viewer {
         }
     }
 
+    // BtlSystem::Init's start mode: the party's first strike (1) when rand() % 100 is under the boot
+    // param's chance, else the enemy's surprise attack (2) under its own (the skills' corrections -
+    // GetFirstStrikeChanceCorrection / GetSurppriseAttackChanceCorrection - not in yet); then
+    // BtlSysStateStart::phaseStart: the break gauge +-500 and the announcement (AnnounceBattle 1 -
+    // 2 a party of one - the leader's name for its {source}; 3 the surprise) for 2.5 s. CR3_START_MODE sets it:
+    // tests
+    int cr3StartMode = 0;
+    struct Cr3Announce {
+        std::string text;
+        float at = 0, seconds = 0;
+    } cr3Announce;
+    void rollCr3StartMode() {
+        cr3StartMode = 0, cr3Announce = Cr3Announce();
+        const int first = game.next.battleFirstStrike[0], surprise = game.next.battleFirstStrike[1];
+        if (first != 0 && int(SDL_rand(100)) < first) cr3StartMode = 1;
+        else if (surprise != 0 && int(SDL_rand(100)) < surprise) cr3StartMode = 2;
+        if (const char* m = SDL_getenv("CR3_START_MODE")) cr3StartMode = std::atoi(m);
+        if (cr3StartMode != 1 && cr3StartMode != 2) return void(cr3StartMode = 0);
+        cr3Rules.addBreak(cr3StartMode == 1 ? 500 : -500);
+        cr3GaugeShown = cr3Rules.gauge;
+        cr3Rules.monstersWait = cr3StartMode == 1;
+        int players = 0, leader = -1;
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
+            if (f.player) leader = leader < 0 ? f.id : leader, ++players;
+        const int id = cr3StartMode == 2 ? 3 : players == 1 ? 2 : 1;
+        cr3Announce.text = announceText("AnnounceBattle", id); // (OpenName: its "{source}" the name)
+        if (const size_t at = cr3Announce.text.find("{source}"); at != std::string::npos)
+            cr3Announce.text.replace(at, 8, cr3NameOf("char_name.mbe", "CharName", leader));
+        cr3Announce.at = 0, cr3Announce.seconds = 2.5f;
+        SDL_Log("battle: %s", cr3StartMode == 1 ? "the party strikes first" : "a surprise attack");
+    }
+    // the announcement (BattleAnnouncementMenu: a OneHelpMenu - btHelpMenu at btHelpPosition's call,
+    // white text; ReOpen fading in over a sixth of a second, Close out over as long)
+    void drawCr3Announce(const Mat4& view, int w, int h) {
+        const float t = cr3BattleClock - cr3Announce.at;
+        const float a = std::clamp(std::min(t, cr3Announce.seconds - t) * 6.0f, 0.0f, 1.0f);
+        UiFig& hp = cr3UiPut("bthelpposition", "", 0, 0, 0, view);
+        float hx, hy, tx, ty;
+        if (!cr3UiCall(hp, "call_btHelpMenu", hx, hy, w, h)) return;
+        UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view, a);
+        if (cr3UiCall(help, "typeM_L01", tx, ty)) {
+            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+            drawUiText(cr3Announce.text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, a);
+        }
+    }
     bool startCr3Battle(int coupling, int fieldId) {
         cr3BattleLost = false; // (BtlSystem::Init: s_ResultParam -1)
         std::string err;
@@ -6383,6 +6471,7 @@ struct Viewer {
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp);
         applyVsBattleStart(); // (VS: the lifeline items, the wildcards)
         cr3GaugeShown = 0;
+        rollCr3StartMode();
         cr3AnimCommon.clear();
         if (const cr3::MbeFile::Table* t = cr3BattleTables.model.table("AnimCommon"))
             for (size_t r = 0; r < t->rows.size(); ++r) {
@@ -6433,7 +6522,16 @@ struct Viewer {
             cr3BattleStarted = true; // (phaseBattleIn: PlayGetSet, then CallStart)
             runCr3BattleScript("Battle_Start_Base");
         } else if (cr3BattleStage == Cr3BattleStage::GetSet && !scripted && camT >= cr3Cam.end + 0.5f && !vs.wildOpen) { // (VS: a wildcard first)
-            beginCr3Turn();
+            if (cr3StartMode == 2) { // (phaseFirstStrike: a surprise attack - phaseCalculate at once, the party's commands none)
+                cr3StartMode = 0;
+                cr3Choices.clear();
+                cr3Actions = cr3Rules.turn(cr3Choices);
+                cr3CountRecords();
+                cr3ActionAt = 0;
+                cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
+                startCr3Action();
+            } else
+                beginCr3Turn();
         } else if (cr3BattleStage == Cr3BattleStage::Menu || cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target ||
                    cr3BattleStage == Cr3BattleStage::List) {
             // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive)
@@ -19375,12 +19473,14 @@ struct Viewer {
         if (cr3BattleStage == Cr3BattleStage::Result) return drawCr3Result(w, h);
         if (vs.screen == 6) return drawVsScore(w, h);
         if (vs.wildOpen) return drawVsWildCards(w, h);
-        if (!hud && cr3Popups.empty()) return;
+        const bool announcing = !cr3Announce.text.empty() && cr3BattleClock < cr3Announce.at + cr3Announce.seconds;
+        if (!hud && cr3Popups.empty() && !announcing) return;
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
         const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
         cr3::SceneLighting none;
         dev->setLighting(none);
+        if (announcing) drawCr3Announce(view, w, h);
         float x, y;
         if (hud) {
             // the party's status (btStMenu: btStPanel each - the portrait bt_chaIcon_j<char>, the HP and

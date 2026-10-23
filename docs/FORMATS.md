@@ -277,7 +277,7 @@ Fld2TaskEncount, in a dungeon's areas (`dDDAA`):
   enemy's first-strike chances (10, 5); then 100 signed chars, a weight per area (area - 1).
   Setup keeps the dungeon's couplings whose level band holds (difficulty - 1) x 10 + 1, whose
   event flag is set (or -1), weighed above 0 in this area. (`ace_coupling.mbe`, the ace couplings
-  met past dungeon 1, isn't in CR3-U yet.)
+  met past dungeon 1, below.)
 - SM_Main: the player's X/Z distance walked adds up; each 1.7 is a step; every `steps` (over
   CrxGetEncounterUp, the genes' encounter skill - 1 in CR3-U - at least 1) Pickout rolls rand() %
   100 <= the chance: a battle, the coupling by weight (rand() % the weights' sum, the first whose
@@ -293,6 +293,24 @@ Fld2TaskEncount, in a dungeon's areas (`dDDAA`):
   Fld2SaveData(1) marks the field as left for a battle.
 - The field's `feBtnBattle` (ForceBattleIn) meets one at once, the chance not asked (ForceEncount);
   in a town, where there's none, CR3-U keeps it the VS mode.
+- Aces (`data\ace_coupling.mbe` "AceCoupling", 56-byte rows: ints the id, -, -, the coupling, its
+  level by CalcEnemyLevel (else the next int, its own), the level, a level-up step and cap
+  (AceCouplingLevelUp - never called), the band's base and max levels, an event flag (-1 none), -,
+  the chance %; shorts the first strikes). CreateAceCoupling sets them afresh on every area;
+  Pickout, a roll met outside dungeon 1, first draws them (DrawingAceCoupling): each the band holds,
+  its flag set, passing rand() % 100 < its chance, then one of those at random - SetupAceBattle,
+  else the area's coupling. ForceEncount draws too but always ends on the area's coupling. The 24
+  rows: couplings 501..509, 513..515 by bands of 30 levels, 5% each, and again at 100% once flag
+  1511 is set.
+- The first strikes (BtlSystem::Init, the boot param's +0x1c / +0x20): rand() % 100 under the
+  party's chance (+ its skills' best GetFirstStrikeChanceCorrection - not in CR3-U yet) is start
+  mode 1, else under the enemy's (+ GetSurppriseAttackChanceCorrection) mode 2. BtlSysStateStart's
+  phaseStart moves the break gauge +-500 and announces it - `message\AnnounceBattle.dat` 1 (2 for a
+  party of one), its `{source}` the leader's name, or 3 - for 2.5 s in the battle's OneHelpMenu
+  line (BattleAnnouncementMenu: btHelpMenu). phaseFirstStrike: mode 1 clears the monsters' actions
+  for the turn (BtlStatusList::ClearRatioToEnemy - +0x1dc, a unit's actions a turn), so the party's
+  first turn is its own; mode 2 goes straight to phaseCalculate, the party's commands none. A
+  script's battle has no chances.
 
 ## Interface (CR3)
 

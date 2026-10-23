@@ -202,6 +202,9 @@ struct GameState {
         // +0x18 the monsters' level, +0x1c the music; the scripts' wrappers name them cup, map,
         // lv, bgm (passing map second))
         int battleField = -1, battleLevel = 1, battleMusic = -1, battleMusicAfter = 32;
+        // (an encounter's: BtlBootParam +0x1c, +0x20 - the party's first-strike chance, the enemy's
+        // surprise attack's, %; a script's battle none)
+        int battleFirstStrike[2] = {0, 0};
         // (after it: SetBattleNext - FldUtil's DAT_0141e2e0: 1 the field, 14 the vista
         // SetVistaFuncName2 named - its function kept without a vista reserved now, Cr3ScriptWork 0x11)
         int battleNext = 1;

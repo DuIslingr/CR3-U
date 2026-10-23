@@ -440,7 +440,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     std::vector<std::array<int, 4>> order, monsters; // (fighter, command, target, 1: a skill's added command)
     for (const auto& c : choices)
         if (c[0] >= 0 && size_t(c[0]) < fighters.size() && fighters[size_t(c[0])].player) order.push_back({c[0], c[1], c[2], 0});
-    for (size_t k = 0; k < fighters.size(); ++k) {
+    const bool wait = monstersWait;
+    monstersWait = false;
+    for (size_t k = 0; k < fighters.size() && !wait; ++k) {
         const Cr3Fighter& f = fighters[k];
         if (f.player || f.dead()) continue;
         int cmd = f.attackCommand;
