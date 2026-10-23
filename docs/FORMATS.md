@@ -680,7 +680,7 @@ points (libcrx's tables: World_Flag_Tbl 1050 .. 1064 open, Hit_Flag_Tbl 1080 .. 
 StarNameTable 2 .. 11, 13, 14, 15, 1, 99 - star01's `star01_D<n>`, through the planet's turn,
 facing the camera, nearest last; the last at `spBtnPositon`'s `call_spIconMenu`): `spPointMenu`, its
 ring (`spPointOff`, `spPointOn` the chosen's: their own animations looped), `spIconMenu` there with
-`spIcon_fr00` (the point + 1), `spCheckBtn` (the gift: the dungeon's collection, to come) and
+`spIcon_fr00` (the point + 1), `spCheckBtn` (the gift: the dungeon's collection, below) and
 `comListHit` ("NEXT"). At first the yaw turned until the first hit point faces the camera mid-screen
 (GetDRotation). A point tapped: turned to its pitch and yaw (DAT_00f6af14 / aed8) a third a frame, its
 name at `spMapName`, the levels listed (CreateListMenu: World_Level_Icon_Tbl's icon, 0x15 + n - the
@@ -691,8 +691,45 @@ WarpTask (EnterDungeon, SpacePortJump / ppJump). Back from the planet: the same 
 `quest_cancel` without flag 1398), or - from the Space Port - its menu again. Dragged: the yaw a 460th
 of the screen's 960 each, the pitch too (a quarter past -0.785 / 0.523), spun on by an 800th, 0.95 a
 frame. `cr3view --input call:ReserveWorldSelectMenu,world:point<n>,world:level<n>,world:yes` (also
-`world:no / back`). Not in: the dungeons' list (`spListBtn`, WorldSelectListMenu) and the gift's
-collection (CollectListMain).
+`world:no / back / list / row<n> / gift<n> / help<kind x 10 + slot> / close`; `--cr3-sheet
+sheet:entry[:1]` marks an item sheet's entry won - and new).
+
+The dungeons' list (`spListBtn`: WorldSelectListMenu, Update 3) - each open dungeon a
+WorldSelectListLItem (`comListImgPanel`) behind DummyAddListItem's blank at each end: rows 1.24 apart
+(+0xc0) from `comListMenu`'s `call_comListPanel`, the focused one second - the one before it at the
+panel's place, the one after it 0.124 lower (+0xc4), three in view (+0xc8) - 0.25 to the left, 1.1 x
+and bright (SetSelectFlag: the others' parts and name 0.5). A row: its picture (`comListImg_fr00`
+frame n + 1; from 14 on `sp_list_02`'s, frame n - 13), its ticket (`comListTicket_fr00` frame 1 with
+`comListNumC_num00`: the sheet's entries won, a slash - `comNum00_fr00` frame 34 - and its count, two
+places each, digit d frame 10 + d, a leading zero blank; frame 0 once all are won), `comListHit` with
+its hit flag and the dungeon's name (size 29) at `typeM_L00`. Its item sheet is the dungeon's place
+in the table (DAT_0141dae8 + n x 0x150). The planet turns to the focused dungeon, its ring on; the
+map name hidden. A tap on the focused row: its levels - back (or no when asked) returns to the list,
+its focus kept (Update 0xb / 0xc: 0x490 clear); on the next or the one before: scrolled to it
+(com_002). Its back: the planet (SetReturnWorldMap).
+
+The collection (CollectListMain / CollectListMenu): from the gift, Cr3FadeOut 5 frames with the
+header hidden, half a second, CreateCollectListMain(World_Dungeon_Tbl[point]) - its sheet
+DAT_00f63ad4[n - 2] where 0x1dfff has the bit (else n; past the sheets 0), its board
+`cltList_d<DAT_00f63f98[sheet]>` on `mpListBg_id00`'s first material. `mpListPositon` slides down from
+7 over a sixth of a second, `mpListMenu` at its `call_mpListMenu_fit0` playing its own animation (the
+board in), `mpListBgPanel` there with the board, the badge and the close button. The sheet's entries
+in order, each kind to its own places (their panels only anchors - never drawn): an item (below
+100000, or 4xxxxx) at `call_mpListItemPanel_00n` (`comListIcon` - item_para's icon), a gift (6xxxxx)
+at `call_mpListGiftPanel_00n` (`mpListGiftIcon`), a gene at `call_mpListGenePanel_00n` (its card at
+`call_cradModel`, 0.01 nearer, 2.5 x, turned -15 degrees: CollectPanel::SetCardModel) and, once the
+whole sheet is won (+0x140), its prize at `call_mpListGiftCmpPanel` (2.9 x). Only those won show,
+fading in over 0.133 s (CollectPanel::Step); none held: dimmed (0.549, 0.549, 0.655 - a card half
+lit); more than one: `mpListNumPlate` with `mpListNum_fr00` tens and ones. Those new (the entry's
++0x34 - cleared as the screen opens) a second later with `mpListNew` (its own animation, 0.02 nearer;
+its material's alpha 0 in the file - SetAlpha sets it outright) and `mpListGetBgPanel_io` behind until
+then; `mpListGetEffe` only for those a dungeon just added (CheckAddItem's list - none from here).
+`mpListCollected` (`_in`, then `_loop`) with those won (`mpListColNumL_fr00` tens and ones) of the
+sheet's count (`mpListColNumS_fr00`) - or, all won, `mpListCmpMenu`. A panel tapped: its name over it
+(HelpSet: `mpListHelp`, size 22 at `typeM_C00`). The close button (`tapAreaCP01` / `AP01`) or back:
+Cr3FadeOut 10 frames, a second, Cr3FadeIn, the planet. Not in: the prize's first showing
+(`mpListCglMenu` and the gene's window: +0x148) and the screen after a dungeon (CR3InterfaceEvent's
+SetCollectList* natives).
 
 ### My Page (CR3)
 

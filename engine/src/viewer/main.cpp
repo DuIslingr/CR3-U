@@ -5691,15 +5691,21 @@ struct Viewer {
         // left / right / told, port:row<n> / cat<n>, for tests)
         stepSpacePort(dt);
         stepWorldSelect(dt);
-        // (--input world:point<n> / level<n> / yes / no / back, for tests)
+        // (--input world:point<n> / level<n> / list / row<n> / gift<n> / help<kind x 10 + slot> / close / yes / no / back, for tests)
         if (areaEvents && areaEvents->worldSelect().open && !inputScript.empty() && inputScript.front().compare(0, 6, "world:") == 0 &&
-            worldSel.clock > 1.0f && worldSel.since > 0.5f && uiClock >= inputNext) {
+            worldSel.clock > 1.0f && worldSel.since > 0.5f && uiClock >= inputNext &&
+            (worldSel.stage != 5 || (collectList.open && collectList.phase == 0 && collectList.since > 0.5f))) {
             const std::string want = inputScript.front().substr(6);
             inputScript.pop_front();
             inputNext = uiClock + 0.5f;
             if (want == "yes") chooseWorldSelect(*areaEvents, kTapWorldYes);
             else if (want == "no") chooseWorldSelect(*areaEvents, kTapWorldNo);
             else if (want == "back") chooseWorldSelect(*areaEvents, -1);
+            else if (want == "list") chooseWorldSelect(*areaEvents, kTapWorldList);
+            else if (want == "close") chooseWorldSelect(*areaEvents, kTapCollectClose);
+            else if (want.compare(0, 4, "gift") == 0) chooseWorldSelect(*areaEvents, kTapWorldGift + std::atoi(want.c_str() + 4));
+            else if (want.compare(0, 4, "help") == 0) chooseWorldSelect(*areaEvents, kTapCollect + std::atoi(want.c_str() + 4));
+            else if (want.compare(0, 3, "row") == 0) chooseWorldSelect(*areaEvents, kTapWorldRow + std::atoi(want.c_str() + 3));
             else if (want.compare(0, 5, "point") == 0) chooseWorldSelect(*areaEvents, kTapWorldPoint + std::atoi(want.c_str() + 5));
             else if (want.compare(0, 5, "level") == 0) chooseWorldSelect(*areaEvents, kTapWorldLevel + std::atoi(want.c_str() + 5));
         }
@@ -12011,6 +12017,7 @@ struct Viewer {
     // a list's focused row (comListItem::SetSelectFlag): it and all on it 1.1 x, its name white -
     // set for the row's drawing by a Cr3FocusRow
     float cr3UiScale = 1;
+    float cr3UiZ = 0; // (a part raised toward the camera: over a card)
     float cr3UiTint[3] = {1, 1, 1}; // (SetMaterialDiffuseColor over the part: a category button not in focus)
     bool cr3UiFocus = false;
     // (an item not enabled - AddListItem's bool: a battle row not usable, a quest whose item isn't
@@ -12033,7 +12040,7 @@ struct Viewer {
         UiFig& u = uiFig(name);
         u.fig.place = cr3::Mat34();
         u.fig.place.m[0] = u.fig.place.m[5] = u.fig.place.m[10] = cr3UiScale;
-        u.fig.place.m[3] = x, u.fig.place.m[7] = y;
+        u.fig.place.m[3] = x, u.fig.place.m[7] = y, u.fig.place.m[11] = cr3UiZ;
         poseUi(u, anim.empty() ? name : anim, t, loop);
         u.fig.tint[0] = cr3UiTint[0], u.fig.tint[1] = cr3UiTint[1], u.fig.tint[2] = cr3UiTint[2];
         u.fig.tint[3] = alpha;
@@ -12254,12 +12261,16 @@ struct Viewer {
     // and element (card_att_<kind>) on those materials, star_1 .. star_<stars> lit and the rest
     // at a tenth (SetStarBrightness), the sheen card_eff_<grade, 2 at most> over it, looping -
     // at (x, y, z), `scale` x; dimmed to half where it can't be chosen (SetSelectabile false)
-    void drawCr3Card(int master, float x, float y, float z, float scale, const Mat4& view, float alpha = 1, bool selectable = true) {
+    void drawCr3Card(int master, float x, float y, float z, float scale, const Mat4& view, float alpha = 1, bool selectable = true, float roll = 0) {
         const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(master) : nullptr;
         if (!gi) return;
         UiFig& u = uiFig("card_default");
         u.fig.place = cr3::Mat34();
         u.fig.place.m[0] = u.fig.place.m[5] = u.fig.place.m[10] = scale;
+        if (roll != 0) { // (turned about its face's normal - CardModel::SetRotation)
+            const float c = std::cos(roll) * scale, sn = std::sin(roll) * scale;
+            u.fig.place.m[0] = c, u.fig.place.m[1] = -sn, u.fig.place.m[4] = sn, u.fig.place.m[5] = c;
+        }
         u.fig.place.m[3] = x, u.fig.place.m[7] = y, u.fig.place.m[11] = z;
         poseUi(u, "card_default", 0);
         char name[32];
@@ -15266,9 +15277,10 @@ struct Viewer {
     // yes: Cr3FadeOut 30 frames, two seconds, GetSelectDungeonNum the point + 1, GetSelectDungeon
     // Level the level, CheckQuestReturn 3 - the town's WarpTask; no or back: the planet again. Back
     // from the planet: the same with no dungeon (-1) - or, from the Space Port's Explore, the Space
-    // Port again. Dragged: turned a 460th of the screen's 960 each, spun on after a release
+    // Port again. Dragged: turned a 460th of the screen's 960 each, spun on after a release. The
+    // list button: the dungeons' list (drawWorldList); the gift: its collection (drawCr3CollectList)
     struct Cr3WorldSelect {
-        int stage = 0;        // 0 the planet, 1 the levels, 2 asked, 3 leaving
+        int stage = 0;        // 0 the planet, 1 the levels, 2 asked, 3 leaving, 4 the dungeons' list, 5 a collection
         float since = 0, clock = 0, tick = 0;
         float yaw = 0, cloudYaw = 0, spin = 0, zoom = 1, shift = 0, starsYaw = 0, pitch = 0;
         int point = -1;       // (the point chosen)
@@ -15277,14 +15289,29 @@ struct Viewer {
         int level = -1;       // (the level chosen)
         bool chosen = false;  // (3: a dungeon chosen, else back)
         bool wasOpen = false, dragging = false;
+        std::vector<int> listPoints; // (4: the open dungeons)
+        int listRow = 0;      // (4: the list's focus)
+        bool fromList = false; // (the levels reached from the list - back to it; 0x490 clear)
     } worldSel;
     std::vector<Cr3GeneLabTap> worldTaps;
+    // A dungeon's collection (CollectListMain / CollectListMenu): its item sheet's entries on the
+    // dungeon's board, as drawCr3CollectList shows them
+    struct Cr3CollectList {
+        bool open = false;
+        int sheet = 0;              // (its item sheet)
+        int phase = 0;              // 0 shown (sliding in, the new ones after a second), 1 closing
+        float since = 0, closing = 0;
+        std::vector<bool> fresh;    // (the entries new on opening: their New mark, their get effect)
+        int help = -1;              // (the panel tapped: its name over it)
+    } collectList;
+    std::vector<Cr3GeneLabTap> collectTaps;
+    static constexpr int kTapCollectClose = 799, kTapCollect = 800; // (+ kind x 10 + its slot: 0 item, 1 gift, 2 gene, 3 the prize)
     static constexpr int kWorldPoints = 15;
     static constexpr int kWorldStar[kWorldPoints] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 1, 99};
     static constexpr float kWorldPitch[kWorldPoints] = {-0.3f, -0.3f, -0.6f, 0.4f, 0.5f, 0.3f, -0.2f, -0.1f, 0.2f, -0.1f, 0.5f, 1.1f, 1.2f, 0.9f, 0.0f};
     static constexpr float kWorldYaw[kWorldPoints] = {-2.165f, 2.222f, 0.607f, -2.252f, -1.852f, -2.841f, -0.414f, -1.637f, 0.458f, 1.193f, -0.177f, -0.177f, -1.99f, 2.648f, 0.0f};
     static constexpr int kWorldLevelIcon[kWorldPoints] = {200, 200, 200, 201, 201, 201, 202, 202, 202, 202, 203, 203, 203, 203, 203};
-    static constexpr int kTapWorldYes = 701, kTapWorldNo = 702, kTapWorldPoint = 710, kTapWorldLevel = 730, kTapWorldGift = 760;
+    static constexpr int kTapWorldYes = 701, kTapWorldNo = 702, kTapWorldList = 703, kTapWorldPoint = 710, kTapWorldLevel = 730, kTapWorldGift = 760, kTapWorldRow = 790;
     bool worldOpen(int k) const { return game.flag(1050 + k); }
     std::string worldName(int k) { return menuAnnounce(k == 3 && game.flag(6004) ? 0xfa : 0xe9 + k); } // (DAT_014cfbde bit 4)
     struct Cr3WorldView {
@@ -15459,12 +15486,15 @@ struct Viewer {
                     if (cr3UiCall(*u, "tapAreaS01", ax, ay) && cr3UiCall(*u, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldPoint + mk.point});
             }
         }
-        // the list button (spBtnMenu's spListBtn - its list to come), the dungeon's name
+        // the list button (spBtnMenu's spListBtn), the dungeon's name
         if (planet && cr3UiCall(btnPos, "call_spBtnMenu", x, y)) {
             UiFig& bm = cr3UiPut("spbtnmenu", "", 0, x, y, view);
-            if (cr3UiCall(bm, "call_spListBtn", cx, cy)) cr3UiPut("splistbtn", "", 0, cx, cy, view);
+            if (cr3UiCall(bm, "call_spListBtn", cx, cy)) {
+                UiFig& lb = cr3UiPut("splistbtn", "", 0, cx, cy, view);
+                if (cr3UiCall(lb, "tapAreaS01", ax, ay) && cr3UiCall(lb, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldList});
+            }
         }
-        if (!planet && ws.point >= 0 && cr3UiCall(btnPos, "call_spMapName", x, y)) {
+        if (!planet && ws.stage != 4 && ws.stage != 5 && ws.point >= 0 && cr3UiCall(btnPos, "call_spMapName", x, y)) { // (Update 3: hidden by the list)
             UiFig& nm = cr3UiPut("spmapname", "", 0, x, y, view);
             float tx, ty;
             if (cr3UiCall(nm, "typeM_L01", tx, ty) || cr3UiCall(nm, "typeS_L01", tx, ty)) {
@@ -15495,14 +15525,15 @@ struct Viewer {
                 }
             }
         }
+        if (ws.stage == 4) drawWorldList(w, h, view);
         // the back button
         UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
-        if (ws.stage <= 1 && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+        if ((ws.stage <= 1 || ws.stage == 4) && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
             UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
             if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
             if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, -1});
         }
-        drawCr3Header(ws.clock, 0x15, menuAnnounce(ws.stage == 0 ? 0x128 : ws.stage == 1 ? 0x129 : 0x12a), w, h, view);
+        if (ws.stage != 5) drawCr3Header(ws.clock, 0x15, menuAnnounce(ws.stage == 0 || ws.stage == 4 ? 0x128 : ws.stage == 1 ? 0x129 : 0x12a), w, h, view); // (0xd: SetViewHeaderMenu false)
         if (ws.stage == 2) {
             std::string ask = menuAnnounce(0xa4); // (SetSystemMessage: the dungeon's, the level's - Cr3UtilSPrint twice)
             for (const std::string& part : {worldName(ws.point), menuAnnounce(0x15 + ws.level)})
@@ -15510,8 +15541,288 @@ struct Viewer {
             cr3CampTaps.clear();
             drawCr3Asked(ask, ws.since, 0, true, kTapWorldYes, kTapWorldNo, w, h, view);
         }
+        if (ws.stage == 5) {
+            cr3CampTaps.clear();
+            if (collectList.open) drawCr3CollectList(w, h, view);
+        }
         worldTaps.swap(cr3CampTaps);
         cr3CampTaps.swap(keep);
+    }
+    // The collection (CollectListMenu, from the world select's gift - Update 0xd: Cr3FadeOut 5
+    // frames, the header hidden, half a second, CreateCollectListMain(World_Dungeon_Tbl[point]) -
+    // its sheet DAT_00f63ad4[n - 2], its board cltList_d<DAT_00f63f98[sheet]>). mpListPositon slid
+    // down from 7 over a sixth of a second; mpListMenu at its call_mpListMenu_fit0, its
+    // mpListBgPanel with mpListBg_id00 (the board) and the close button. The sheet's entries in
+    // order, each kind to its own places (CollectListMain::Update 1 - their panels are anchors, not
+    // drawn): an item (below 100000 or 4xxxxx) at call_mpListItemPanel_001 .. - comListIcon its
+    // icon -, a gift (6xxxxx) at call_mpListGiftPanel_00n - mpListGiftIcon -, a gene at
+    // call_mpListGenePanel_00n - its card, 2.5 x turned 15 degrees (CollectPanel::SetCardModel) - and
+    // the whole sheet's prize, once won, at call_mpListGiftCmpPanel (2.9 x); only those won,
+    // fading in over 0.133 s (Step), dimmed - (0.549, 0.549, 0.655), a card half lit - with none
+    // held, a number plate (mpListNumPlate, mpListNum_fr00 tens and ones) with more than one. Those
+    // new since (the entry's +0x34) a second later (Update 3: their mark cleared, com_026), each
+    // with mpListNew (mpListGetEffe only for those a dungeon just added - none from the world select),
+    // mpListGetBgPanel's io behind them till then. mpListCollected
+    // (in, then its loop) with those won (mpListColNumL) of the sheet's (mpListColNumS) - or, all
+    // won, mpListCmpMenu. A panel tapped: its name over it (HelpSet: mpListHelp, size 22 at
+    // typeM_C00); the close button (or back): Cr3FadeOut 10 frames, a second, Cr3FadeIn - the planet
+    void drawCr3CollectList(int w, int h, const Mat4& view) {
+        Cr3CollectList& cl = collectList;
+        if (!game.cr3Db || cl.sheet < 0 || size_t(cl.sheet) >= game.cr3Db->itemSheets().size()) return;
+        const cr3::Cr3ItemSheet& sheet = game.cr3Db->itemSheets()[size_t(cl.sheet)];
+        const auto pit = game.cr3Sheets.find(sheet.id);
+        const cr3::Cr3SheetProgress* prog = pit == game.cr3Sheets.end() ? nullptr : &pit->second;
+        const float t = cl.since;
+        const bool anyFresh = std::find(cl.fresh.begin(), cl.fresh.end(), true) != cl.fresh.end();
+        const float reveal = anyFresh ? 1.0f : 0.0f; // (Update 2: a second, then the new ones)
+        float x, y, cx, cy, ax, ay, bx, by;
+        // (a figure posed but not drawn: the panels, anchors)
+        auto at = [&](const std::string& name, const std::string& anim, float tt, float px, float py) -> UiFig& {
+            UiFig& u = uiFig(name);
+            u.fig.place = cr3::Mat34();
+            u.fig.place.m[3] = px, u.fig.place.m[7] = py;
+            poseUi(u, anim.empty() ? name : anim, tt);
+            return u;
+        };
+        const float slide = cl.phase == 0 ? 7.0f * std::max(0.0f, 1.0f - t / 0.1666667f) : 0.0f;
+        UiFig& pos = at("mplistpositon", "", 0, 0, slide);
+        if (!cr3UiCall(pos, "call_mpListMenu", x, y, w, h)) return;
+        UiFig& menu = at("mplistmenu", "", t, x, y); // (its own animation: the board in)
+        float px, py;
+        if (cr3UiCall(menu, "call_mpListBgPanel", px, py)) {
+            UiFig& bg = at("mplistbgpanel", "", 0, px, py);
+            if (cr3UiCall(bg, "call_mpListBg_id", cx, cy)) {
+                static constexpr int kBoard[14] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16}; // (DAT_00f63f98)
+                UiFig& board = uiFig("mplistbg_id00");
+                char name[24];
+                std::snprintf(name, sizeof name, "cltList_d%02d", kBoard[std::clamp(cl.sheet, 0, 13)]);
+                if (!board.materials.empty()) cr3UiMaterial(board, board.materials[0], name);
+                cr3UiPut("mplistbg_id00", "", 0, cx, cy, view);
+            }
+            cr3UiPut("mplistbgpanel", "", 0, px, py, view);
+        }
+        if (anyFresh && t < reveal + 0.5f && cr3UiCall(menu, "call_mpListGetBgPanel", cx, cy)) // (SetCollectListGetBackEffect)
+            cr3UiPut("mplistgetbgpanel", "mplistgetbgpanel_io", t, cx, cy, view);
+        // the entries
+        int won = 0, slot[3] = {0, 0, 0};
+        for (size_t k = 0; k <= sheet.entries.size(); ++k) {
+            const bool prize = k == sheet.entries.size();
+            int kind, id;
+            if (prize) {
+                if (!prog || prog->completed < 1) break;
+                kind = 3, id = sheet.result.item;
+            } else {
+                id = sheet.entries[k].item;
+                kind = sheet.entries[k].gene ? 2 : id < 100000 || (id >= 400000 && id < 500000) ? 0 : id >= 600000 && id < 700000 ? 1 : -1;
+                if (kind < 0) continue;
+            }
+            const int s = prize ? 0 : slot[kind]++;
+            const bool got = prize || (prog && k < prog->opened.size() && prog->opened[k] > 0);
+            if (!got) continue;
+            if (!prize) ++won;
+            const bool fresh = !prize && k < cl.fresh.size() && cl.fresh[k];
+            const float since = t - (fresh ? reveal : 0.0f);
+            if (since < 0) continue;
+            static const char* const kPanel[4][2] = {{"call_mpListItemPanel_00", "mplistitempanel"}, {"call_mpListGiftPanel_00", "mplistgiftpanel"},
+                                                     {"call_mpListGenePanel_00", "mplistgenepanel"}, {"call_mpListGiftCmpPanel", "mplistgenepanel"}};
+            const std::string call = prize ? std::string(kPanel[3][0]) : kPanel[kind][0] + std::to_string(s + 1);
+            if (!cr3UiCall(menu, call, px, py)) continue;
+            const std::string pn = kPanel[kind][1];
+            UiFig& panel = at(pn, pn + "_in", 10, px, py); // (its _in at its end)
+            const float alpha = std::min(since / 0.1333333f, 1.0f);
+            int held = 0;
+            if (kind >= 2) {
+                for (const cr3::Cr3Gene& g : game.cr3Genes) held += g.master == id; // (GetGeneSpecificNumber)
+            } else if (const auto it = game.cr3Items.find(id); it != game.cr3Items.end()) held = it->second; // (GetCampItemListItemNumbers)
+            if (held < 1) cr3UiTint[0] = cr3UiTint[1] = 0.549f, cr3UiTint[2] = 0.655f;
+            if (kind == 0 && cr3UiCall(panel, "call_comListIcon", cx, cy)) {
+                cr3::MbeFile::Row row;
+                const int icon = cr3ItemRow(id, row) ? row.i(3) : 1;
+                cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), icon), cx, cy, view, alpha);
+            } else if (kind == 1 && cr3UiCall(panel, "call_mpListGiftIcon", cx, cy)) {
+                cr3UiPut("mplistgifticon", "", 0, cx, cy, view, alpha);
+            } else if (kind >= 2 && cr3UiCall(panel, "call_cradModel", cx, cy)) {
+                drawCr3Card(id, cx, cy, 0.01f, kind == 3 ? 2.9f : 2.5f, view, alpha, held > 0, -0.2618f);
+            }
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+            float nx, ny;
+            if (held > 1 && cr3UiCall(panel, "call_mpListNumPlate", cx, cy)) { // (SetGetNumber)
+                const int n = std::min(held, 99);
+                UiFig& plate = cr3UiPut("mplistnumplate", "", 0, cx, cy, view, alpha);
+                if (n > 9 && cr3UiCall(plate, "call_mpListNum_fr00_001", nx, ny)) cr3UiPut("mplistnum_fr00", "", float(n / 10) / 30, nx, ny, view, alpha);
+                if (cr3UiCall(plate, "call_mpListNum_fr00_002", nx, ny)) cr3UiPut("mplistnum_fr00", "", float(n % 10) / 30, nx, ny, view, alpha);
+            }
+            cr3UiZ = 0.02f; // (Pose: the New mark and the help 0.02 nearer - over the card's 0.01)
+            if (fresh && cr3UiCall(panel, "call_mpListNew", cx, cy)) { // (SetPanelDataNew: ChangeAnime(0); mpListGetEffe only for those CheckAddItem lists - none from here)
+                // (its material's alpha 0 in the file: PartsBase::SetAlpha sets it outright - Step's fade)
+                UiFig& nw = at("mplistnew", "", since, cx, cy);
+                nw.fig.place.m[11] = cr3UiZ;
+                pose(nw.fig, std::fmod(since, std::max(nw.fig.animLoaded ? nw.fig.anim.duration() : 1.0f, 0.01f)), false);
+                for (ViewMesh& vm : nw.fig.meshes) {
+                    std::vector<float>& dc = vm.material.params[0x33];
+                    if (dc.size() < 4) dc.resize(4, 1.0f);
+                    dc[3] = alpha;
+                }
+                nw.fig.tint[0] = nw.fig.tint[1] = nw.fig.tint[2] = nw.fig.tint[3] = 1;
+                drawFigure(nw.fig, view.data());
+            }
+            const int tapId = kTapCollect + kind * 10 + s;
+            if (cl.help == tapId && cr3UiCall(panel, "call_mpListHelp", cx, cy)) {
+                UiFig& help = cr3UiPut("mplisthelp", "", 0, cx, cy, view);
+                float tx, ty;
+                const std::string text = kind >= 2 ? cr3NameOf("gene_name.mbe", "GeneName", id) : cr3ItemText(id, false);
+                if (cr3UiCall(help, "typeM_C00", tx, ty)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(text, 22, tx / 10, (ty - 0.11f) / 10, w, h, false, 1.0f);
+                }
+            }
+            cr3UiZ = 0;
+            if (cl.phase == 0 && cr3UiCall(panel, "tapAreaS00", ax, ay) && cr3UiCall(panel, "tapAreaE00", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, tapId});
+        }
+        // the count (SetComplateNumber) or complete, the close button - after the new ones
+        const float shown = anyFresh ? reveal + 1.0f : 0.5f;
+        if (t >= shown) {
+            const int total = int(sheet.entries.size());
+            if (won < total) {
+                UiFig& bg = uiFig("mplistbgpanel");
+                if (cr3UiCall(bg, "call_mpListCollected", cx, cy)) {
+                    const float ct = t - shown;
+                    UiFig& col = cr3UiPut("mplistcollected", ct < 0.5f ? "mplistcollected_in" : "mplistcollected_loop", ct < 0.5f ? ct : ct - 0.5f, cx, cy, view, 1, ct >= 0.5f);
+                    float nx, ny;
+                    if (won > 9 && cr3UiCall(col, "call_mpListColNumL_fr00_001", nx, ny)) cr3UiPut("mplistcolnuml_fr00", "", float(won / 10) / 30, nx, ny, view);
+                    if (cr3UiCall(col, "call_mpListColNumL_fr00_002", nx, ny)) cr3UiPut("mplistcolnuml_fr00", "", float(won % 10) / 30, nx, ny, view);
+                    if (total > 9 && cr3UiCall(col, "call_mpListColNumS_fr00_001", nx, ny)) cr3UiPut("mplistcolnums_fr00", "", float(total / 10) / 30, nx, ny, view);
+                    if (cr3UiCall(col, "call_mpListColNumS_fr00_002", nx, ny)) cr3UiPut("mplistcolnums_fr00", "", float(total % 10) / 30, nx, ny, view);
+                }
+            } else if (cr3UiCall(pos, "call_mpListCmpMenu", cx, cy, w, h)) {
+                const float ct = t - shown;
+                cr3UiPut("mplistcmpmenu", ct < 0.5f ? "mplistcmpmenu_in" : "mplistcmpmenu_loop", ct < 0.5f ? ct : ct - 0.5f, cx, cy, view, 1, ct >= 0.5f);
+            }
+            UiFig& bg = uiFig("mplistbgpanel");
+            if (cr3UiCall(bg, "call_mpListCloseBtn", cx, cy)) {
+                UiFig& close = cr3UiPut("mplistclosebtn", "", 0, cx, cy, view);
+                if (cl.phase == 0 && cr3UiCall(close, "tapAreaCP01", ax, ay) && cr3UiCall(close, "tapAreaAP01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapCollectClose});
+            }
+        }
+    }
+    // a dungeon point's collection: its sheet (CollectListMain::Update 0: World_Dungeon_Tbl's
+    // number n, DAT_00f63ad4[n - 2] where 0x1dfff has its bit, else n; past the sheets 0)
+    int worldCollectSheet(int point) const {
+        static constexpr int kDungeon[kWorldPoints] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 14, 16}; // (World_Dungeon_Tbl)
+        static constexpr int kSheet[17] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 13, 14, 15};
+        const int n = kDungeon[std::clamp(point, 0, kWorldPoints - 1)], u = n - 2;
+        int sheet = u >= 0 && u < 17 && ((0x1dfff >> u) & 1) ? kSheet[u] : n;
+        if (!game.cr3Db || size_t(sheet) >= game.cr3Db->itemSheets().size()) sheet = 0;
+        return sheet;
+    }
+    void openCollectList(int sheet) {
+        Cr3CollectList& cl = collectList;
+        cl = Cr3CollectList();
+        cl.open = true, cl.sheet = sheet;
+        if (game.cr3Db && size_t(sheet) < game.cr3Db->itemSheets().size()) {
+            const auto it = game.cr3Sheets.find(game.cr3Db->itemSheets()[size_t(sheet)].id);
+            if (it != game.cr3Sheets.end()) {
+                cl.fresh = it->second.mark;
+                for (size_t k = 0; k < it->second.mark.size(); ++k) it->second.mark[k] = false; // (Update 3: +0x34 cleared)
+            }
+        }
+        if (std::find(cl.fresh.begin(), cl.fresh.end(), true) != cl.fresh.end()) audio.playSe("com_026", false);
+        SDL_Log("collection: sheet %d", sheet);
+    }
+    void chooseCollectList(int id) {
+        Cr3CollectList& cl = collectList;
+        if (!cl.open || cl.phase != 0) return;
+        if (id == kTapCollectClose || id == -1) {
+            audio.playSe("com_004", false);
+            cl.phase = 1, cl.closing = 0;
+            if (areaEvents) areaEvents->menuFade(true, 10); // (0xd: Cr3FadeOut 10 frames)
+            return;
+        }
+        if (id >= kTapCollect) cl.help = cl.help == id ? -1 : id; // (HelpSet)
+    }
+    // a dungeon's item sheet (the k-th, as WorldSelectMenu reads them: DAT_0141dae8 + k * 0x150):
+    // its entries and those won
+    void worldSheet(int k, int& total, int& won) const {
+        total = won = 0;
+        if (!game.cr3Db || k < 0 || size_t(k) >= game.cr3Db->itemSheets().size()) return;
+        const cr3::Cr3ItemSheet& sheet = game.cr3Db->itemSheets()[size_t(k)];
+        total = int(sheet.entries.size());
+        const auto it = game.cr3Sheets.find(sheet.id);
+        if (it != game.cr3Sheets.end())
+            for (const int o : it->second.opened) won += o > 0;
+    }
+    // The dungeons' list (WorldSelectListMenu - Update 3: AddWorldSelectListItem for each open one;
+    // its rows WorldSelectListLItem's comListImgPanel): DummyAddListItem's blank at each end, the
+    // rows 1.24 apart (0xc0) from the menu's call_comListPanel, the focused one second - the one
+    // before it at the panel's place, one after it 0.124 lower (0xc4), three in view (0xc8) - 0.25
+    // to the left, 1.1 x and bright (SetSelectFlag; the others' parts and name 0.5). A row: the
+    // dungeon's picture (comListImg_fr00 frame n + 1 - from 14 on sp_list_02's, frame n - 13), its
+    // ticket (comListTicket_fr00: frame 1 - its numbers, comListNumC_num00: those won, a slash -
+    // comNum00_fr00 frame 34 - and the sheet's count, two places each, comNum00_fr00 frame 10 + d,
+    // a leading zero blank - or frame 0 once all won), comListHit with its hit flag and its name
+    // (size 29) at typeM_L00. A tap on the focused row: its levels (Update 6 - back to the list,
+    // its focus kept: 0xb); on the next or the one before: scrolled to it. Its back: the planet
+    // (SetReturnWorldMap). While it's open the planet turns to the focused dungeon, its point on
+    void drawWorldList(int w, int h, const Mat4& view) {
+        Cr3WorldSelect& ws = worldSel;
+        float x, y, lx, ly, cx, cy, ax, ay, bx, by, tx, ty;
+        UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", ws.since, 0, 0, view);
+        if (!cr3UiCall(lp, "call_comListMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+        if (!cr3UiCall(menu, "call_comListPanel", lx, ly)) return;
+        const int n = int(ws.listPoints.size()), f = ws.listRow;
+        drawCr3ListBar(menu, false, f, n, 1, view);
+        for (int r = std::max(f - 1, 0); r < n && r <= f + 1; ++r) {
+            const int pt = ws.listPoints[size_t(r)];
+            const bool on = r == f;
+            cr3UiScale = on ? 1.1f : 1.0f;
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = on ? 1.0f : 0.5f;
+            const float rx = lx - (on ? 0.25f : 0.0f), ry = ly + 1.24f * float(f - r - 1) - (r > f ? 0.124f : 0.0f);
+            UiFig& panel = cr3UiPut("comlistimgpanel", "", 0, rx, ry, view);
+            if (cr3UiCall(panel, "call_comListImg_fr", cx, cy)) {
+                UiFig& img = uiFig("comlistimg_fr00");
+                std::vector<cr3::Texture*> keepTex;
+                for (const ViewMesh& m : img.fig.meshes) keepTex.push_back(m.texture);
+                if (pt + 1 >= 14) cr3UiTexture(img, "sp_list_02");
+                cr3UiPut("comlistimg_fr00", "", float(pt + 1 >= 14 ? pt + 1 - 14 : pt + 1) / 30, cx, cy, view);
+                for (size_t m = 0; m < img.fig.meshes.size() && m < keepTex.size(); ++m) img.fig.meshes[m].texture = keepTex[m];
+            }
+            int total = 0, won = 0;
+            worldSheet(pt, total, won);
+            const bool all = total <= won;
+            if (cr3UiCall(panel, "call_comListTicket_fr", cx, cy)) {
+                UiFig& ticket = cr3UiPut("comlistticket_fr00", "", all ? 0.0f : 1.0f / 30, cx, cy, view);
+                float nx, ny;
+                if (!all && cr3UiCall(ticket, "call_comListNumC_num", nx, ny)) {
+                    UiFig& num = cr3UiPut("comlistnumc_num00", "", 0, nx, ny, view);
+                    const int slot[5] = {won / 10, won % 10, -1, total / 10, total % 10};
+                    for (int k = 0; k < 5; ++k) {
+                        float dx, dy;
+                        if ((k == 0 && won < 10) || (k == 3 && total < 10) || !cr3UiCall(num, "call_comListNum_fr00_00" + std::to_string(k + 1), dx, dy)) continue;
+                        cr3UiPut("comnum00_fr00", "", float(slot[k] < 0 ? 34 : 10 + slot[k]) / 30, dx, dy, view);
+                    }
+                }
+            }
+            if (game.flag(1080 + pt) && cr3UiCall(panel, "call_comListHit", cx, cy)) cr3UiPut("comlisthit", "", 0, cx, cy, view);
+            if (cr3UiCall(panel, "typeM_L00", tx, ty)) {
+                const float k = cr3UiScale;
+                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                drawUiText(worldName(pt), 29 * k, (tx + 0.075f * k) / 10, (ty - 0.15f * k) / 10, w, h, true, on ? 1.0f : 0.5f);
+            }
+            if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldRow + r});
+            cr3UiScale = 1;
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+        }
+    }
+    void worldListOpen(int focus) {
+        Cr3WorldSelect& ws = worldSel;
+        ws.listPoints.clear();
+        for (int pt = 0; pt < kWorldPoints; ++pt)
+            if (worldOpen(pt)) ws.listPoints.push_back(pt);
+        ws.listRow = std::clamp(focus, 0, std::max(int(ws.listPoints.size()) - 1, 0));
+        ws.point = ws.listPoints.empty() ? -1 : ws.listPoints[size_t(ws.listRow)];
+        ws.fromList = false;
+        ws.stage = 4, ws.since = 0;
     }
     // the levels a dungeon lists (the first, then those whose flag 1100 + n is set)
     std::vector<int> worldLevels() const {
@@ -15536,14 +15847,48 @@ struct Viewer {
                 audio.playSe("com_003", false);
                 ws.point = id - kTapWorldPoint;
                 ws.levels = worldLevels(), ws.row = 0;
+                ws.fromList = false;
                 ws.stage = 1, ws.since = 0;
                 SDL_Log("world select: %s", worldName(ws.point).c_str());
             }
-            return; // (the gift - its dungeon's collection - and the list to come)
+            if (id == kTapWorldList) {
+                audio.playSe("com_003", false);
+                worldListOpen(0);
+                SDL_Log("world select: the list (%zu)", ws.listPoints.size());
+            }
+            if (id >= kTapWorldGift && id < kTapWorldGift + kWorldPoints) { // (0xd: its collection)
+                audio.playSe("com_003", false);
+                ws.point = id - kTapWorldGift;
+                ws.stage = 5, ws.since = 0;
+                collectList.open = false;
+                if (areaEvents) areaEvents->menuFade(true, 5);
+            }
+            return;
+        }
+        if (ws.stage == 5) return chooseCollectList(id);
+        if (ws.stage == 4) {
+            if (id == -1) { // (Update 5: SetReturnWorldMap)
+                audio.playSe("com_004", false);
+                ws.point = -1, ws.stage = 0, ws.since = 0;
+                return;
+            }
+            if (id >= kTapWorldRow && id < kTapWorldRow + kWorldPoints) {
+                const int r = id - kTapWorldRow;
+                if (r >= int(ws.listPoints.size())) return;
+                ws.point = ws.listPoints[size_t(r)];
+                if (r != ws.listRow) return audio.playSe("com_002", false), (void)(ws.listRow = r);
+                audio.playSe("com_003", false);
+                ws.levels = worldLevels(), ws.row = 0;
+                ws.fromList = true;
+                ws.stage = 1, ws.since = 0;
+                SDL_Log("world select: %s (the list)", worldName(ws.point).c_str());
+            }
+            return;
         }
         if (ws.stage == 1) {
-            if (id == -1) { // (SetReturnWorldMap: the planet again)
+            if (id == -1) { // (SetReturnWorldMap: the planet again - from the list, Update 0xb: the list, its focus kept)
                 audio.playSe("com_004", false);
+                if (ws.fromList) return worldListOpen(ws.listRow);
                 ws.point = -1, ws.stage = 0, ws.since = 0;
                 return;
             }
@@ -15559,8 +15904,9 @@ struct Viewer {
         }
         if (ws.stage == 2) {
             if (id == kTapWorldYes) return audio.playSe("com_003", false), worldLeave(true);
-            if (id == kTapWorldNo || id == -1) { // (0xc: the list closed, the planet)
+            if (id == kTapWorldNo || id == -1) { // (0xc: the list closed, the planet - or the dungeons' list)
                 audio.playSe("com_004", false);
+                if (ws.fromList) return worldListOpen(ws.listRow);
                 ws.point = -1, ws.stage = 0, ws.since = 0;
             }
         }
@@ -15607,6 +15953,8 @@ struct Viewer {
                 worldAim(ws.row);
                 audio.playSe("com_002", false);
             } else if (enter && !open.empty()) chooseWorldSelect(*ev, kTapWorldPoint + (worldOpen(ws.row) ? ws.row : open[0]));
+            else if (key == SDLK_L) chooseWorldSelect(*ev, kTapWorldList);
+            else if (key == SDLK_G && !open.empty()) chooseWorldSelect(*ev, kTapWorldGift + (worldOpen(ws.row) ? ws.row : open[0]));
             else if (back) chooseWorldSelect(*ev, -1);
             return true;
         }
@@ -15614,6 +15962,17 @@ struct Viewer {
             const int n = int(ws.levels.size());
             if ((key == SDLK_UP || key == SDLK_DOWN) && n > 0) chooseWorldSelect(*ev, kTapWorldLevel + std::clamp(ws.row + (key == SDLK_DOWN ? 1 : -1), 0, n - 1));
             else if (enter && n > 0) chooseWorldSelect(*ev, kTapWorldLevel + ws.row);
+            else if (back) chooseWorldSelect(*ev, -1);
+            return true;
+        }
+        if (ws.stage == 5) {
+            if (enter || back) chooseCollectList(-1);
+            return true;
+        }
+        if (ws.stage == 4) {
+            const int n = int(ws.listPoints.size());
+            if ((key == SDLK_UP || key == SDLK_DOWN) && n > 0) chooseWorldSelect(*ev, kTapWorldRow + std::clamp(ws.listRow + (key == SDLK_DOWN ? 1 : -1), 0, n - 1));
+            else if (enter && n > 0) chooseWorldSelect(*ev, kTapWorldRow + ws.listRow);
             else if (back) chooseWorldSelect(*ev, -1);
             return true;
         }
@@ -15652,7 +16011,7 @@ struct Viewer {
                 if (ws.pitch < -0.785f) ws.pitch = (ws.pitch + 0.785f) * 0.5f - 0.785f;
                 if (ws.pitch > 0.5233334f) ws.pitch = (ws.pitch - 0.5233334f) * 0.5f + 0.5233334f;
             }
-            if (ws.stage == 1 && ws.point >= 0) { // (turned to the point, a third at a time)
+            if ((ws.stage == 1 || ws.stage == 4) && ws.point >= 0) { // (turned to the point, a third at a time - Update 4 / 7)
                 while (ws.yaw > 3.14f || ws.yaw < -3.14f) ws.yaw += ws.yaw >= 0 ? -6.28f : 6.28f;
                 const float dp = kWorldPitch[ws.point] - ws.pitch, dy = kWorldYaw[ws.point] - ws.yaw;
                 if (dp < -0.001f || dp > 0.001f) ws.pitch += dp / 3;
@@ -15660,6 +16019,20 @@ struct Viewer {
             }
             if (ws.stage == 0) ws.zoom = std::max(ws.zoom - 0.1f, 1.0f), ws.shift = std::max(ws.shift - 0.03f, 0.0f);
             else ws.zoom = std::min(ws.zoom + 0.1f, 1.1f), ws.shift = std::min(ws.shift + 0.03f, 0.15f);
+        }
+        if (ws.stage == 5) { // (0xf: half a second, then the collection; closed: a second, Cr3FadeIn, the planet)
+            Cr3CollectList& cl = collectList;
+            if (!cl.open && ws.since >= 0.5f) {
+                openCollectList(worldCollectSheet(ws.point));
+                ev->menuFade(false, 10);
+            } else if (cl.open) {
+                cl.since += dt;
+                if (cl.phase == 1 && (cl.closing += dt) >= 1.0f) {
+                    cl.open = false;
+                    ev->menuFade(false, 10);
+                    ws.point = -1, ws.stage = 0, ws.since = 0;
+                }
+            }
         }
         if (ws.stage == 3 && ws.since >= 2.0f) {
             game.selectDungeon = ws.chosen ? ws.point + 1 : -1, game.selectLevel = ws.chosen ? ws.level : -1;
@@ -18484,6 +18857,7 @@ int main(int argc, char** argv) {
     bool titleScreen = false; // (--title: the game's title screen first)
     std::vector<std::pair<int, int>> itemArg;
     std::vector<int> cr3PartyArg;
+    std::vector<std::array<int, 3>> sheetArg; // (--cr3-sheet sheet:entry[:new])
     std::vector<std::tuple<int, int, int>> equipArg;
     int chargeArg = -1, difficultyArg = -1, membersArg[2] = {-2, -2}, ozArg = -1, gaugeArg = 0;
     std::vector<std::string> workArgs;
@@ -18573,6 +18947,11 @@ int main(int argc, char** argv) {
             ++i;
         }
         else if (a == "--party" && next) std::sscanf(next, "%d,%d", &battleParty[0], &battleParty[1]), ++i;
+        else if (a == "--cr3-sheet" && next) { // (an item sheet's entry won - sheet:entry, :1 new too; tests)
+            int sh = 0, e = 0, fresh = 0;
+            if (std::sscanf(next, "%d:%d:%d", &sh, &e, &fresh) >= 2) sheetArg.push_back({sh, e, fresh});
+            ++i;
+        }
         else if (a == "--cr3-party" && next) { // (CR3's party: up to five char_para ids, tests)
             int p[5] = {};
             std::sscanf(next, "%d,%d,%d,%d,%d", &p[0], &p[1], &p[2], &p[3], &p[4]);
@@ -18885,6 +19264,14 @@ int main(int argc, char** argv) {
     for (const auto& [id, level] : sopiaArg)
         if (id >= 0 && id < 32) v.game.sopiaLevel[id] = static_cast<signed char>(level);
     for (size_t k = 0; k < cr3PartyArg.size() && k < 5; ++k) v.game.cr3Party[k] = cr3PartyArg[k];
+    for (const auto& [sh, e, fresh] : sheetArg) {
+        if (!v.game.cr3Db || sh < 0 || size_t(sh) >= v.game.cr3Db->itemSheets().size()) continue;
+        const cr3::Cr3ItemSheet& sheet = v.game.cr3Db->itemSheets()[size_t(sh)];
+        if (e < 0 || size_t(e) >= sheet.entries.size()) continue;
+        cr3::Cr3SheetProgress& pr = v.game.cr3Sheets[sheet.id];
+        pr.opened.resize(sheet.entries.size()), pr.mark.resize(sheet.entries.size());
+        pr.opened[size_t(e)] = std::max(pr.opened[size_t(e)], 1), pr.mark[size_t(e)] = fresh != 0;
+    }
     for (const auto& [id, n] : itemArg) {
         if (id > 0 && id < 300) v.game.itemCount[id] = static_cast<short>(n);
         if (id > 0) v.game.cr3Items[id] = n; // (CR3's: by the full id)
