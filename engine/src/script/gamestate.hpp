@@ -231,6 +231,7 @@ struct GameState {
         // (LunchEvent.SetFuncName / SetMapName - utils::SetLunchFuncName: the vista's function and
         // map, reserved as a lunch, Cr3ScriptWork 0xf - VistaMain::BranchAfterVista 0xf, LunchMain)
         bool lunch = false;
+        bool townMove = false; // (ReserveTownMove - Fld2ReserveTownMove: Cr3ScriptWork 0xe, Fld2Main::SM_TownMove)
     } next;
 };
 

@@ -5711,6 +5711,11 @@ struct Viewer {
     // first five letters, the player at that joint of its <map>p), a battle
     void afterAreaScript() {
         cr3::GameState::Next& n = game.next;
+        if (n.townMove) { // (Fld2GetTownMove: Fld2Main::SM_TownMove)
+            n.townMove = false;
+            openTownMove(false);
+            return;
+        }
         if (n.lunch && !n.vistaFunction.empty()) { // (Fld2Main: Cr3ScriptWork 0xf - LunchMain)
             const cr3::GameState::Next keep = n;
             n = cr3::GameState::Next();
@@ -5980,6 +5985,7 @@ struct Viewer {
         // left / right / told, port:row<n> / cat<n>, for tests)
         stepSpacePort(dt);
         stepWorldSelect(dt);
+        if (stepTownMove(dt)) return; // (the town map holds the field)
         stepScriptCollect(dt);
         stepShop(dt);
         // (--input shop:talk / buy / sell / back / yes / no / second<n> / row<n> / cat<n> / tab / up / down, for tests)
@@ -14624,7 +14630,7 @@ struct Viewer {
     std::vector<Cr3GeneLabTap> cr3CtnTaps; // (the battle's continue: its buttons, its question's)
     bool cr3FieldIdle() {
         return areaMode && !eventMode && !battleMode && !cr3BattleMode && vs.screen == 0 && areaEvents && !areaEvents->running() && !areaEvents->geneLab().open &&
-               !titleMenu.stage && shop.stage == 0 && world.stage == 0 && party.stage == 0 && !mapOpen && !saveStage;
+               !titleMenu.stage && shop.stage == 0 && world.stage == 0 && party.stage == 0 && !mapOpen && !saveStage && town.stage == 0;
     }
     std::vector<int> cr3PartyMembers() const {
         std::vector<int> out;
@@ -14646,6 +14652,332 @@ struct Viewer {
         const size_t i = size_t(std::max(series, 0)) * 6 + size_t(k);
         return i < cardUVs.size() ? cardUVs[i] : 0.0f;
     }
+    // The town map (TwonMoveMenu, interface 0x37 - Fld2Main::SM_TownMove): from the field's
+    // feBtnTown (Fld2TabMenu tab 8: SetDirectTownMove) or a script's ReserveTownMove (its
+    // SetPopPoint2 where a cancel goes). TownQuestClearNEXT runs first; then the town's painting
+    // (t0100plane on a 5.945 plane - 344.5 / 118 UI units each: 17.36 across -) under its places'
+    // points: each open place (its flag, 0xf6995c) a spPointMenu at its joint of t0100town00 (scaled
+    // 2.5929 across: x 3.8, y 10 times, by 890 / 1100), spPointOn on the focused one, spPointOff on
+    // the others, spIconMenu there with spIcon_fr00 (0xf69ab4) and comListHit (0xf69ae0 / 0xf69b0c).
+    // It opens on the list (Update 3: WorldSelectListMenu's rows - the places in 0xf69b38's order,
+    // pictures 0xf69b90 by place, names AnnounceMenuName 0x92 + n, the hit mark, New 0xf69b64); a
+    // row focused brings its point to (-3, 0), half the way each update. Back: the map alone
+    // (SetReturnTownMap: dragged about, its points and spListBtn tapped); back again leaves. A place
+    // chosen: the System window asks (0x9f with 0x91 + its id) - no: back where it was; yes: a
+    // 30-frame fade, two seconds, then its map (Fld2Main 4: 0xf3fb1c by id - Fld2TaskMap's
+    // indices, 0xf3fb4c with flag 2401 and not 2500 -, the monorail's (25) MonorailSound), the pop
+    // point cleared. Left: SetPopPoint2's point, else the field as it was.
+    static constexpr int kTownPoints = 11;
+    static constexpr int kTownFlag[kTownPoints] = {1043, 1044, 1042, 1041, 1047, 1045, 1046, 1048, 1067, 1068, 1069};
+    static constexpr int kTownIcon[kTownPoints] = {18, 18, 19, 20, 21, 22, 0, 0, 23, 24, 0};
+    static constexpr int kTownHit[kTownPoints] = {1073, 1074, 1072, 1071, 1077, 1075, 1076, 1078, 1097, 1098, 1099};
+    static constexpr int kTownHit2[kTownPoints] = {1173, 1174, 1172, 1171, 1177, 1175, 1176, 1178, 1179, 1180, 1299};
+    static constexpr int kTownNew[kTownPoints] = {1163, 1164, 1162, 1161, 1167, 1165, 1166, 1168, 1169, 1170, 1160};
+    static constexpr int kTownOrder[kTownPoints] = {2, 0, 1, 3, 4, 5, 6, 7, 8, 9, 10};
+    static constexpr int kTownImage[kTownPoints] = {20, 18, 19, 21, 22, 23, 24, 25, 26, 27, 0}; // (by the list's place)
+    static constexpr int kTownId[kTownPoints] = {1, 2, 3, 4, 5, 6, 100, 100, 9, 10, 11};
+    static constexpr const char* kTownJoint[kTownPoints] = {"town01_01", "town01_01", "town01_06", "town01_04", "town01_10", "town01_07",
+                                                            nullptr,     nullptr,     "town01_51", "town01_52", "town01_53"};
+    static constexpr const char* kTownMap[12] = {"", "t0101", "t0102", "t0106", "t0104", "t0110", "t0107", "t0108", "t0203", "d1606", "t0123", "e0007"};
+    static constexpr const char* kTownMapAlt[12] = {"", "t0121", "t0102", "t0106", "t0113", "t0117", "t0122", "t0108", "t0203", "d1606", "t0123", "e0007"};
+    static constexpr int kTapTownRow = 5100, kTapTownPoint = 5150, kTapTownList = 5170, kTapTownYes = 5171, kTapTownNo = 5172;
+    struct Cr3TownMove {
+        int stage = 0;           // 0 shut, 1 TownQuestClearNEXT running, 2 the list, 3 the map, 4 asked, 5 leaving
+        float since = 0, clock = 0, tick = 0;
+        std::vector<int> rows;   // (the list's places, in its order) and their pictures
+        std::vector<int> images;
+        int row = 0;
+        int asked = -1;          // (the id asked about, then chosen)
+        bool fromList = false;   // (asked from the list: back to it - 0x28c)
+        bool direct = false;     // (the field's button: a fade in on staying - 0xf9)
+        float scrollX = 0, scrollY = 0, aimX = 0, aimY = 0;
+        bool aiming = false, dragging = false;
+    } town;
+    std::vector<Cr3GeneLabTap> townTaps;
+    bool townOpen(int pt) const { return game.flag(kTownFlag[pt]); }
+    std::string townPlace(int id) { // (AnnounceMenuName 0x91 + id, utils::FilterMessage over it: the hero's house its {name})
+        const std::string s = menuAnnounce(0x91 + id);
+        return areaEvents ? areaEvents->filterMessage(s) : s;
+    }
+    bool townMerged() const { return game.flag(1043) && game.flag(1044); } // (0x28d: the first two one point)
+    int townPointOf(int id) const {
+        if (townMerged() && (id == 1 || id == 2)) return 1;
+        for (int pt = 0; pt < kTownPoints; ++pt)
+            if (kTownId[pt] == id) return pt;
+        return -1;
+    }
+    // a place's point on the painting, the scroll left out (UI units)
+    bool townPointAt(int pt, float& x, float& y) {
+        if (pt < 0 || !kTownJoint[pt]) return false;
+        UiFig& u = uiFig("t0100town00");
+        poseUi(u, "t0100town00", 0);
+        if (!uiJoint(u, kTownJoint[pt], x, y)) return false;
+        x *= 2.5929f * 3.8f * 890.0f / 1100.0f, y *= 10.0f * 890.0f / 1100.0f;
+        return true;
+    }
+    void townScrollClamp(float& x, float& y) const {
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float hw = float(screenW) / 2 / k, hh = float(screenH) / 2 / k;
+        const float mx = std::max(8.68f - hw, 0.0f);
+        x = std::clamp(x, -mx, mx), y = std::clamp(y, std::min(-(7.36f - hh), 0.0f), std::max(6.49f - hh, 0.0f));
+    }
+    void townAim(int id) { // (Update 4: the focused place's point to (-3, 0))
+        float x, y;
+        if (!townPointAt(townPointOf(id), x, y)) return;
+        town.aimX = -3 - x, town.aimY = -y, town.aiming = true;
+        townScrollClamp(town.aimX, town.aimY);
+    }
+    void openTownMove(bool direct) {
+        if (!areaEvents || town.stage) return;
+        town = Cr3TownMove();
+        town.direct = direct;
+        SDL_Log("town map: open%s", direct ? "" : " (a script's)");
+        if (areaEvents->start(area.name.substr(0, 3), "TownQuestClearNEXT")) town.stage = 1; // (SM_TownMove 0)
+        else townMoveShow();
+    }
+    void townListOpen(int focus) {
+        town.rows.clear(), town.images.clear();
+        for (int k = 0; k < kTownPoints; ++k)
+            if (townOpen(kTownOrder[k])) town.rows.push_back(kTownOrder[k]), town.images.push_back(kTownImage[k]);
+        town.row = std::clamp(focus, 0, std::max(int(town.rows.size()) - 1, 0));
+        town.stage = 2, town.since = 0;
+        if (!town.rows.empty()) townAim(town.rows[size_t(town.row)] + 1);
+    }
+    void townMoveShow() {
+        town.stage = 2;
+        townListOpen(0);
+        SDL_Log("town map: %zu places", town.rows.size());
+    }
+    void townAsk(int id, bool fromList) {
+        town.asked = id, town.fromList = fromList;
+        town.stage = 4, town.since = 0;
+        if (townPointOf(id) >= 0) townAim(id);
+        SDL_Log("town map: place %d asked", id);
+    }
+    void townLeave(int id) { // (Update 8: a 30-frame fade, then two seconds)
+        town.asked = id;
+        town.stage = 5, town.since = 0;
+        if (areaEvents) areaEvents->menuFade(true, 30);
+    }
+    void townFinish() {
+        const int id = town.asked;
+        const bool direct = town.direct;
+        town = Cr3TownMove();
+        if (id > 0 && id < 12) {
+            const char* const* maps = game.flag(2401) && !game.flag(2500) ? kTownMapAlt : kTownMap;
+            const std::string map = maps[id];
+            game.popPoint2.clear(); // (Fld2ClearPopPoint)
+            SDL_Log("town map: to %s", map.c_str());
+            if (map == "t0203") runAreaFunction("MonorailSound"); // (Fld2Main 4: index 25 - SetNextEvent("MonorailSound"))
+            else if (!loadArea(map, "")) SDL_Log("area %s: not entered", map.c_str());
+            return;
+        }
+        SDL_Log("town map: left");
+        if (!game.popPoint2.empty()) { // (Fld2Main 5: the pop point, if any)
+            const std::string pop = game.popPoint2;
+            enterPopPoint(pop);
+            return;
+        }
+        if (areaEvents) areaEvents->menuFade(false, direct ? 10 : 0);
+    }
+    void chooseTownMove(int id) {
+        if (town.stage == 2) {
+            if (id == -1) { // (Update 5: SetReturnTownMap - the map alone)
+                audio.playSe("com_004", false);
+                town.stage = 3, town.since = 0, town.aiming = false;
+                return;
+            }
+            if (id >= kTapTownRow && id < kTapTownRow + kTownPoints) {
+                const int r = id - kTapTownRow;
+                if (r >= int(town.rows.size())) return;
+                if (r != town.row) return audio.playSe("com_002", false), (void)(town.row = r), townAim(town.rows[size_t(r)] + 1);
+                audio.playSe("com_003", false);
+                townAsk(town.rows[size_t(r)] + 1, true);
+            }
+            return;
+        }
+        if (town.stage == 3) {
+            if (id == -1) return audio.playSe("com_004", false), townLeave(-1); // (the back button: 8 with none chosen)
+            if (id == kTapTownList) return audio.playSe("com_003", false), townListOpen(0); // (spListBtn: Update 3)
+            if (id >= kTapTownPoint && id < kTapTownPoint + kTownPoints) {
+                int pt = id - kTapTownPoint;
+                if (townMerged() && pt == 0) pt = 1;
+                audio.playSe("com_003", false);
+                if (kTownId[id - kTapTownPoint] < 100) townAsk(kTownId[id - kTapTownPoint], false);
+            }
+            return;
+        }
+        if (town.stage == 4) {
+            if (id == kTapTownYes) return audio.playSe("com_003", false), townLeave(town.asked);
+            if (id == kTapTownNo || id == -1) {
+                audio.playSe("com_004", false);
+                if (town.fromList) {
+                    int r = 0;
+                    for (size_t k = 0; k < town.rows.size(); ++k)
+                        if (town.rows[k] + 1 == town.asked) r = int(k);
+                    townListOpen(r);
+                } else town.stage = 3, town.since = 0, town.aiming = false;
+                town.asked = -1;
+            }
+        }
+    }
+    // (each frame: the scroll toward its aim, half the way at each of 30 updates a second; the
+    // script's end; --input town:row<n> / pt<n> / list / back / yes / no)
+    bool stepTownMove(float dt) {
+        if (!town.stage) return false;
+        town.clock += dt, town.since += dt, town.tick += dt;
+        if (town.stage == 1) {
+            if (areaEvents && !areaEvents->running()) townMoveShow();
+            return true;
+        }
+        for (; town.tick >= 1.0f / 30; town.tick -= 1.0f / 30)
+            if (town.aiming && !town.dragging) {
+                town.scrollX += (town.aimX - town.scrollX) / 2, town.scrollY += (town.aimY - town.scrollY) / 2;
+                if (std::fabs(town.aimX - town.scrollX) < 0.001f && std::fabs(town.aimY - town.scrollY) < 0.001f) town.aiming = false;
+            }
+        if (town.stage == 5) {
+            if (town.since >= 2.0f) townFinish();
+            return true;
+        }
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "town:") == 0 && town.since > 0.6f && uiClock >= inputNext) {
+            const std::string want = inputScript.front().substr(5);
+            inputScript.pop_front();
+            inputNext = uiClock + 0.5f;
+            if (want == "back") chooseTownMove(-1);
+            else if (want == "list") chooseTownMove(kTapTownList);
+            else if (want == "yes") chooseTownMove(kTapTownYes);
+            else if (want == "no") chooseTownMove(kTapTownNo);
+            else if (want.compare(0, 3, "row") == 0) {
+                const int r = std::atoi(want.c_str() + 3);
+                chooseTownMove(kTapTownRow + r);
+                if (town.stage == 2) chooseTownMove(kTapTownRow + r); // (focused, then chosen)
+            } else if (want.compare(0, 2, "pt") == 0) chooseTownMove(kTapTownPoint + std::atoi(want.c_str() + 2));
+        }
+        return true;
+    }
+    void drawCr3TownMove(int w, int h) {
+        townTaps.clear();
+        if (town.stage < 2) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        // the painting (CustomFigure +0x248: t0100plane)
+        if (cr3::Texture* t = texture("t0100plane")) {
+            const float half = 5.945f * 344.5f / 118.0f / 2, x0 = town.scrollX - half, x1 = town.scrollX + half, y0 = town.scrollY - half, y1 = town.scrollY + half;
+            const float v[24] = {x0, y0, 0, 0, x1, y0, 1, 0, x1, y1, 1, 1, x0, y0, 0, 0, x1, y1, 1, 1, x0, y1, 0, 1};
+            const Mat4 proj = uiProjection(w, h, 10);
+            const float rgba[4] = {1, 1, 1, 1};
+            dev->drawQuad(*t, v, proj.data(), rgba);
+            dev->clearDepth();
+        }
+        std::vector<Cr3GeneLabTap> keep;
+        keep.swap(cr3CampTaps);
+        float x, y, cx, cy, ax, ay, bx, by;
+        const bool map = town.stage == 3;
+        const int focus = town.stage == 2 && !town.rows.empty() ? townPointOf(town.rows[size_t(town.row)] + 1)
+                          : town.stage == 4                     ? townPointOf(town.asked)
+                                                                : -1;
+        for (int pt = 0; pt < kTownPoints; ++pt) { // (ProvisionalDraw)
+            if (!townOpen(pt) || (townMerged() && pt == 0) || !townPointAt(pt, x, y)) continue;
+            x += town.scrollX, y += town.scrollY;
+            UiFig& menu = cr3UiPut("sppointmenu", "", 0, x, y, view);
+            const bool on = pt == focus;
+            float rx = x, ry = y;
+            if (cr3UiCall(menu, on ? "call_spPointOn" : "call_spPointOff", cx, cy)) {
+                cr3UiPut(on ? "sppointon" : "sppointoff", "", uiClock, cx, cy, view, 1, true);
+                rx = cx, ry = cy;
+            }
+            UiFig& icon = cr3UiPut("spiconmenu", "", 0, rx, ry, view);
+            if (cr3UiCall(icon, "call_spIcon_fr", cx, cy)) cr3UiPut("spicon_fr00", "", float(kTownIcon[pt]) / 30, cx, cy, view);
+            if ((game.flag(kTownHit[pt]) || game.flag(kTownHit2[pt])) && cr3UiCall(icon, "call_comListHit", cx, cy)) cr3UiPut("comlisthit", "", 0, cx, cy, view);
+            if (map) { // (TouchGestureTap: the point's or its icon's)
+                if (cr3UiCall(menu, "tapAreaCP01", ax, ay) && cr3UiCall(menu, "tapAreaAP01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapTownPoint + pt});
+                if (cr3UiCall(icon, "tapAreaS01", ax, ay) && cr3UiCall(icon, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapTownPoint + pt});
+            }
+        }
+        UiFig& btnPos = cr3UiPut("spbtnpositon", "", 0, 0, 0, view);
+        if (map && cr3UiCall(btnPos, "call_spBtnMenu", x, y, w, h)) { // (spListBtn)
+            UiFig& bm = cr3UiPut("spbtnmenu", "", 0, x, y, view);
+            if (cr3UiCall(bm, "call_spListBtn", cx, cy)) {
+                UiFig& lb = cr3UiPut("splistbtn", "", 0, cx, cy, view);
+                if (cr3UiCall(lb, "tapAreaCP01", ax, ay) && cr3UiCall(lb, "tapAreaAP01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapTownList});
+            }
+        }
+        if (town.stage == 2) {
+            std::vector<Cr3PlaceRow> rows;
+            for (size_t k = 0; k < town.rows.size(); ++k) {
+                const int pt = town.rows[k];
+                Cr3PlaceRow r;
+                r.image = town.images[k], r.name = townPlace(pt + 1);
+                r.hit = game.flag(kTownHit[pt]) || game.flag(kTownHit2[pt]);
+                r.fresh = !r.hit && game.flag(kTownNew[pt]);
+                rows.push_back(r);
+            }
+            drawCr3PlaceRows(rows, town.row, town.since, kTapTownRow, w, h, view);
+        }
+        UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+        if (town.stage != 4 && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) { // (ComBackButton)
+            UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
+            if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, -1});
+        }
+        dev->clearDepth();
+        drawCr3Header(town.clock, 0x12, menuAnnounce(0xa5), w, h, view); // (HeaderMenu 0x42: 0x12, MnlCmp 0xa5)
+        if (town.stage == 4) {
+            std::string ask = menuAnnounce(0x9f); // (SetSystemMessage: Cr3UtilSPrint - the place for its %s)
+            if (const size_t at = ask.find("%s"); at != std::string::npos) ask.replace(at, 2, townPlace(town.asked));
+            cr3CampTaps.clear();
+            drawCr3Asked(ask, town.since, 0, true, kTapTownYes, kTapTownNo, w, h, view);
+        }
+        townTaps.swap(cr3CampTaps);
+        cr3CampTaps.swap(keep);
+    }
+    bool townMoveClick(float fx, float fy) {
+        if (town.stage < 2) return town.stage != 0;
+        if (town.stage == 5) return true;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = townTaps.rbegin(); it != townTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                chooseTownMove(it->id);
+                return true;
+            }
+        town.dragging = town.stage == 3; // (the map held: dragged about)
+        return true;
+    }
+    // a drag (TouchSimpleMove: in the screen's 960 x 640, the plane 344.5 a unit - 118 to a UI unit)
+    bool townMoveDrag(float dx, float dy) {
+        if (town.stage != 3 || !town.dragging) return false;
+        town.scrollX += dx / 118, town.scrollY -= dy / 118;
+        townScrollClamp(town.scrollX, town.scrollY);
+        return true;
+    }
+    bool townMoveKey(SDL_Keycode key) {
+        if (town.stage < 2) return town.stage != 0;
+        if (town.stage == 5) return true;
+        const bool enter = key == SDLK_RETURN || key == SDLK_SPACE, back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
+        if (town.stage == 2) {
+            const int n = int(town.rows.size());
+            if ((key == SDLK_UP || key == SDLK_DOWN) && n > 0) chooseTownMove(kTapTownRow + std::clamp(town.row + (key == SDLK_DOWN ? 1 : -1), 0, n - 1));
+            else if (enter && n > 0) chooseTownMove(kTapTownRow + town.row);
+            else if (back) chooseTownMove(-1);
+        } else if (town.stage == 3) {
+            const float step = 0.5f;
+            if (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_UP || key == SDLK_DOWN) {
+                town.scrollX += key == SDLK_LEFT ? step : key == SDLK_RIGHT ? -step : 0;
+                town.scrollY += key == SDLK_DOWN ? step : key == SDLK_UP ? -step : 0;
+                townScrollClamp(town.scrollX, town.scrollY);
+            } else if (key == SDLK_L || enter) chooseTownMove(kTapTownList);
+            else if (back) chooseTownMove(-1);
+        } else if (town.stage == 4) {
+            if (enter || key == SDLK_Y) chooseTownMove(kTapTownYes);
+            else if (back || key == SDLK_N) chooseTownMove(kTapTownNo);
+        }
+        return true;
+    }
     void drawCr3Field(int w, int h) {
         cr3CampTaps.clear();
         if (cr3Camp.stage == 0 && !cr3FieldIdle()) return;
@@ -14661,7 +14993,11 @@ struct Viewer {
     void drawCr3FieldButtons(int w, int h, const Mat4& view) {
         float x, y;
         UiFig& pos = cr3UiPut("febtnposition", "", 0, 0, 0, view);
-        if (!game.flag(1001) && cr3UiCall(pos, "call_feBtnTown", x, y, w, h)) cr3UiPut("febtntown", "", 0, x, y, view);
+        if (!game.flag(1001) && cr3UiCall(pos, "call_feBtnTown", x, y, w, h)) {
+            UiFig& u = cr3UiPut("febtntown", "", 0, x, y, view);
+            float ax, ay, ex, ey;
+            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 108}); // (Fld2TabMenu tab 8)
+        }
         if (!cr3UiCall(pos, "call_feBtnMenu", x, y, w, h)) return;
         UiFig& menu = cr3UiPut("febtnmenu", "", 0, x, y, view);
         if (!cr3UiCall(menu, "call_feBtnPanel", x, y)) return;
@@ -14927,6 +15263,9 @@ struct Viewer {
                 encountersOff = !encountersOff;
                 audio.playSe("com_003", false);
                 SDL_Log("field: encounters %s", encountersOff ? "off" : "on");
+            } else if (id == 108) { // (feBtnTown: Fld2TabMenu tab 8 - in a town SetDirectTownMove; a dungeon's own window: not yet)
+                if (area.name.size() > 1 && area.name[0] == 't') audio.playSe(0x16d, false), openTownMove(true);
+                else SDL_Log("field: the dungeon's town button (not in yet)");
             } else if (id == 101) { // (feBtnSave: Fld2TabMenu::Save)
                 audio.playSe(0x16d, false);
                 writeCr3Save();
@@ -17049,31 +17388,49 @@ struct Viewer {
     // (size 29) at typeM_L00. A tap on the focused row: its levels (Update 6 - back to the list,
     // its focus kept: 0xb); on the next or the one before: scrolled to it. Its back: the planet
     // (SetReturnWorldMap). While it's open the planet turns to the focused dungeon, its point on
+    // a row of a WorldSelectListMenu (WorldSelectListLItem::InitializeL): its picture (comListImg_fr00
+    // frame `image` - from 14 on sp_list_02's), its ticket (`total` < 0: none), the hit and New marks, its name
+    struct Cr3PlaceRow {
+        int image = 0;
+        std::string name;
+        int won = 0, total = -1;
+        bool hit = false, fresh = false;
+    };
     void drawWorldList(int w, int h, const Mat4& view) {
         Cr3WorldSelect& ws = worldSel;
+        std::vector<Cr3PlaceRow> rows;
+        for (const int pt : ws.listPoints) {
+            Cr3PlaceRow r;
+            r.image = pt + 1, r.name = worldName(pt), r.hit = game.flag(1080 + pt);
+            worldSheet(pt, r.total, r.won);
+            rows.push_back(r);
+        }
+        drawCr3PlaceRows(rows, ws.listRow, ws.since, kTapWorldRow, w, h, view);
+    }
+    void drawCr3PlaceRows(const std::vector<Cr3PlaceRow>& rows, int f, float since, int tapBase, int w, int h, const Mat4& view) {
         float x, y, lx, ly, cx, cy, ax, ay, bx, by, tx, ty;
-        UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", ws.since, 0, 0, view);
+        UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", since, 0, 0, view);
         if (!cr3UiCall(lp, "call_comListMenu", x, y, w, h)) return;
         UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
         if (!cr3UiCall(menu, "call_comListPanel", lx, ly)) return;
-        const int n = int(ws.listPoints.size()), f = ws.listRow;
+        const int n = int(rows.size());
         drawCr3ListBar(menu, false, f, n, 1, view);
         // its OneHelpMenu (ReOpen with the list: btHelpMenu at btHelpPosition's call, fading in over
         // a sixth of a second - Step / Pose): the focused row's help, its name (SetListHelpText)
         if (f < n) {
-            const float a = std::min(ws.since * 6.0f, 1.0f);
+            const float a = std::min(since * 6.0f, 1.0f);
             UiFig& hp = cr3UiPut("bthelpposition", "", 0, 0, 0, view);
             float hx, hy, tx, ty;
             if (cr3UiCall(hp, "call_btHelpMenu", hx, hy, w, h)) {
                 UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view, a);
                 if (cr3UiCall(help, "typeM_L01", tx, ty)) {
                     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(worldName(ws.listPoints[size_t(f)]), 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+                    drawUiText(rows[size_t(f)].name, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
                 }
             }
         }
         for (int r = std::max(f - 1, 0); r < n && r <= f + 1; ++r) {
-            const int pt = ws.listPoints[size_t(r)];
+            const Cr3PlaceRow& row = rows[size_t(r)];
             const bool on = r == f;
             cr3UiScale = on ? 1.1f : 1.0f;
             cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = on ? 1.0f : 0.5f;
@@ -17083,14 +17440,13 @@ struct Viewer {
                 UiFig& img = uiFig("comlistimg_fr00");
                 std::vector<cr3::Texture*> keepTex;
                 for (const ViewMesh& m : img.fig.meshes) keepTex.push_back(m.texture);
-                if (pt + 1 >= 14) cr3UiTexture(img, "sp_list_02");
-                cr3UiPut("comlistimg_fr00", "", float(pt + 1 >= 14 ? pt + 1 - 14 : pt + 1) / 30, cx, cy, view);
+                if (row.image >= 14) cr3UiTexture(img, "sp_list_02");
+                cr3UiPut("comlistimg_fr00", "", float(row.image >= 14 ? row.image - 14 : row.image) / 30, cx, cy, view);
                 for (size_t m = 0; m < img.fig.meshes.size() && m < keepTex.size(); ++m) img.fig.meshes[m].texture = keepTex[m];
             }
-            int total = 0, won = 0;
-            worldSheet(pt, total, won);
+            const int total = row.total, won = row.won;
             const bool all = total <= won;
-            if (cr3UiCall(panel, "call_comListTicket_fr", cx, cy)) {
+            if (total >= 0 && cr3UiCall(panel, "call_comListTicket_fr", cx, cy)) {
                 UiFig& ticket = cr3UiPut("comlistticket_fr00", "", all ? 0.0f : 1.0f / 30, cx, cy, view);
                 float nx, ny;
                 if (!all && cr3UiCall(ticket, "call_comListNumC_num", nx, ny)) {
@@ -17103,13 +17459,14 @@ struct Viewer {
                     }
                 }
             }
-            if (game.flag(1080 + pt) && cr3UiCall(panel, "call_comListHit", cx, cy)) cr3UiPut("comlisthit", "", 0, cx, cy, view);
+            if (row.hit && cr3UiCall(panel, "call_comListHit", cx, cy)) cr3UiPut("comlisthit", "", 0, cx, cy, view);
+            if (row.fresh && cr3UiCall(panel, "call_comListNew", cx, cy)) cr3UiPut("comlistnew", "", 0, cx, cy, view);
             if (cr3UiCall(panel, "typeM_L00", tx, ty)) {
                 const float k = cr3UiScale;
                 dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                drawUiText(worldName(pt), 29 * k, (tx + 0.075f * k) / 10, (ty - 0.15f * k) / 10, w, h, true, on ? 1.0f : 0.5f);
+                drawUiText(row.name, 29 * k, (tx + 0.075f * k) / 10, (ty - 0.15f * k) / 10, w, h, true, on ? 1.0f : 0.5f);
             }
-            if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldRow + r});
+            if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, tapBase + r});
             cr3UiScale = 1;
             cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
         }
@@ -20646,6 +21003,7 @@ struct Viewer {
         if (ev == event.get()) drawLunchBalloons(screenW, screenH); // (a lunch's)
         drawCr3WorldSelect(*ev, screenW, screenH);
         if (ev == areaEvents.get()) drawCr3Field(screenW, screenH); // (the field's buttons, the camp)
+        if (ev == areaEvents.get()) drawCr3TownMove(screenW, screenH); // (the town map)
         if (ev == areaEvents.get()) drawAreaDrag(screenW, screenH);  // (the drag's controller)
         if (ev == areaEvents.get()) drawVs(screenW, screenH);      // (the VS mode's menus)
         drawCr3ScriptCollect(screenW, screenH);                     // (a script's collection)
@@ -21483,6 +21841,7 @@ int main(int argc, char** argv) {
                     if (v.spacePortKey(k)) continue; // (the Space Port's)
                     if (v.cr3ShopKey(k)) continue;   // (a CR3 shop's)
                     if (v.worldSelectKey(k)) continue; // (the world select's)
+                    if (v.townMoveKey(k)) continue;    // (the town map's)
                     if (v.vsKey(k)) continue;       // (the VS mode's)
                     if (v.cr3CampKey(k)) continue;  // (CR3's camp: C opens it)
                     if (k == SDLK_ESCAPE) running = false;
@@ -21619,6 +21978,7 @@ int main(int argc, char** argv) {
                     else if (v.spacePortClick(fx, fy)) {}
                     else if (v.cr3ShopClick(fx, fy)) {}
                     else if (v.worldSelectClick(fx, fy)) {}
+                    else if (v.townMoveClick(fx, fy)) {}
                     else if (v.vsClick(fx, fy)) {}
                     else if (v.cr3CampClick(fx, fy)) {}
                     else if (v.battleMode && v.choosing) v.battleClick(fx, fy);
@@ -21637,6 +21997,7 @@ int main(int argc, char** argv) {
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
                     v.areaDragEnd();
                     v.worldSel.dragging = false; // (the planet let go: spun on)
+                    v.town.dragging = false;    // (the town map let go)
                     dragging = false;
                     v.fastHeld = false;
                     if (v.fieldMode && v.keyLock.stage == 1) v.unlockPointer(0, 0, 2);
@@ -21665,6 +22026,11 @@ int main(int argc, char** argv) {
                              int ww = 1, wh = 1;
                              SDL_GetWindowSize(win, &ww, &wh);
                              return v.worldSelectDrag(e.motion.xrel * 960.0f / float(std::max(ww, 1)), e.motion.yrel * 640.0f / float(std::max(wh, 1)));
+                         }()) {
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && [&] { // (the town map dragged: in the screen's 960 x 640)
+                             int ww = 1, wh = 1;
+                             SDL_GetWindowSize(win, &ww, &wh);
+                             return v.townMoveDrag(e.motion.xrel * 960.0f / float(std::max(ww, 1)), e.motion.yrel * 640.0f / float(std::max(wh, 1)));
                          }()) {
                 } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && [&] { // (the camp's model turned and sized: in the screen's 960 x 640)
                              int ww = 1, wh = 1;
