@@ -5488,6 +5488,10 @@ struct Viewer {
         bool eventBox = false;
         cr3::Mat34 world;
         bool inside = false;
+        std::string areaChange; // (Fld2AreaChange - ragdoll_ac_<pop point>: walked into, that area at that point)
+        bool shaped = false;    // (its own body in <area>p.phys - Fld2AreaChange::Create's trigger: its shape's bounds)
+        cr3::Vec3 boxAt{}, boxLo{}, boxHi{};
+        std::array<float, 4> boxTurn{0, 0, 0, 1};
     };
     std::vector<AreaGimmick> areaGimmicks;
     int areaCheckNear = -1; // (the check object the player is within: a tap's)
@@ -5558,10 +5562,33 @@ struct Viewer {
                         (names[j].size() > 9 && names[j].compare(0, 9, "ragdoll_c") == 0 && std::isdigit(static_cast<unsigned char>(names[j][9]))))
                         // (event boxes, check objects, and the people: ragdoll_c<id>_<nn> - c115_00, its
                         // function named so, tapped like a check object)
-                        areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false});
+                        areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false, {}});
+                    else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
+                        areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
+                cr3::PhysScene phys; // (the area changes' boxes: their bodies, named as they are)
+                if (std::any_of(areaGimmicks.begin(), areaGimmicks.end(), [](const AreaGimmick& g) { return !g.areaChange.empty(); }) &&
+                    archive.read(name + "p.phys", d) && cr3::parsePhys(d, phys))
+                    for (AreaGimmick& g : areaGimmicks)
+                        for (const cr3::PhysBody& b : phys.bodies)
+                            if (!g.areaChange.empty() && b.name == g.function && b.shape < phys.shapes.size()) {
+                                const cr3::PhysShape& sh = phys.shapes[b.shape];
+                                if (sh.kind == cr3::PhysShape::Box) {
+                                    for (int a = 0; a < 3; ++a) g.boxLo[size_t(a)] = -sh.halfExtents[size_t(a)], g.boxHi[size_t(a)] = sh.halfExtents[size_t(a)];
+                                } else if (sh.kind == cr3::PhysShape::Mesh && !sh.vertices.empty()) {
+                                    g.boxLo = g.boxHi = sh.vertices[0];
+                                    for (const cr3::Vec3& v : sh.vertices)
+                                        for (int a = 0; a < 3; ++a)
+                                            g.boxLo[size_t(a)] = std::min(g.boxLo[size_t(a)], v[size_t(a)]), g.boxHi[size_t(a)] = std::max(g.boxHi[size_t(a)], v[size_t(a)]);
+                                } else continue;
+                                g.shaped = true, g.boxAt = b.position, g.boxTurn = b.rotation;
+                            }
                 for (const AreaGimmick& g : areaGimmicks) // (where: for --walk tests)
-                    SDL_Log("area %s: %s %s at (%.2f %.2f %.2f)", name.c_str(), g.eventBox ? "event box" : "check object", g.function.c_str(),
+                    SDL_Log("area %s: %s %s at (%.2f %.2f %.2f)", name.c_str(),
+                            !g.areaChange.empty() ? "area change" : g.eventBox ? "event box" : "check object", g.function.c_str(),
                             g.world.m[3], g.world.m[7], g.world.m[11]);
+                for (const AreaGimmick& g : areaGimmicks)
+                    if (g.shaped) SDL_Log("area %s: %s's bounds (%.2f %.2f %.2f) .. (%.2f %.2f %.2f) from (%.2f %.2f %.2f)", name.c_str(), g.function.c_str(), g.boxLo[0],
+                                          g.boxLo[1], g.boxLo[2], g.boxHi[0], g.boxHi[1], g.boxHi[2], g.boxAt[0], g.boxAt[1], g.boxAt[2]);
             }
         }
         // (standing where it was left for a vista, coming back to it)
@@ -5611,6 +5638,15 @@ struct Viewer {
     // sphere counted)
     bool gimmickHolds(const AreaGimmick& g) const {
         const cr3::Vec3 p = areaWalker->position();
+        if (g.shaped) { // (the player's sphere against its box, in the box's own axes)
+            const float d[3] = {p[0] - g.boxAt[0], p[1] - g.boxAt[1], p[2] - g.boxAt[2]};
+            const float qx = -g.boxTurn[0], qy = -g.boxTurn[1], qz = -g.boxTurn[2], qw = g.boxTurn[3];
+            const float tx = 2 * (qy * d[2] - qz * d[1]), ty = 2 * (qz * d[0] - qx * d[2]), tz = 2 * (qx * d[1] - qy * d[0]);
+            const float l[3] = {d[0] + qw * tx + (qy * tz - qz * ty), d[1] + qw * ty + (qz * tx - qx * tz), d[2] + qw * tz + (qx * ty - qy * tx)};
+            for (int a = 0; a < 3; ++a)
+                if (l[a] < g.boxLo[size_t(a)] - areaWalker->radius || l[a] > g.boxHi[size_t(a)] + areaWalker->radius) return false;
+            return true;
+        }
         const float d[3] = {p[0] - g.world.m[3], p[1] - g.world.m[7], p[2] - g.world.m[11]};
         for (int a = 0; a < 3; ++a) {
             const float ax[3] = {g.world.m[a], g.world.m[4 + a], g.world.m[8 + a]};
@@ -5619,6 +5655,33 @@ struct Viewer {
             const float along = (d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]) / len;
             if (std::fabs(along) > len * 0.05f + areaWalker->radius) return false;
         }
+        return true;
+    }
+
+    // another area entered at a pop point (Fld2Main::ChangeArea(pop point): its map's - t0202_p1's
+    // t0202 -, the player on the point's joint, turned its way)
+    bool enterPopPoint(const std::string& pop) {
+        if (pop.size() <= 5) return false;
+        const std::string map = pop.substr(0, 5);
+        game.popPoint2.clear(); // (Fld2ClearPopPoint)
+        SDL_Log("area %s: to %s at %s", area.name.c_str(), map.c_str(), pop.c_str());
+        if (!loadArea(map, areaPlayerArgName)) return false;
+        std::vector<uint8_t> d;
+        cr3::Skeleton sk;
+        if (archive.read(map + "p.skel", d) && cr3::parseSkeleton(d, sk)) {
+            std::vector<std::string> names;
+            if (archive.read(map + "p.name", d)) names = cr3::parseJointNames(d);
+            const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
+            for (size_t j = 0; j < names.size() && j < w.size(); ++j)
+                if (names[j] == pop) {
+                    areaWalker->setPosition({w[j].m[3], w[j].m[7] + areaWalker->radius, w[j].m[11]});
+                    for (int k = 0; k < 30; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
+                    areaYaw = std::atan2(w[j].m[2], w[j].m[10]);
+                    const cr3::Vec3 q = areaWalker->position();
+                    areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
+                }
+        }
+        for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g);
         return true;
     }
 
@@ -5647,26 +5710,9 @@ struct Viewer {
             return;
         }
         if (!n.popPoint.empty() && n.popPoint.size() > 5) {
-            const std::string pop = n.popPoint, map = pop.substr(0, 5);
+            const std::string pop = n.popPoint;
             n.popPoint.clear();
-            SDL_Log("area %s: to %s at %s", area.name.c_str(), map.c_str(), pop.c_str());
-            if (!loadArea(map, areaPlayerArgName)) return;
-            std::vector<uint8_t> d;
-            cr3::Skeleton sk;
-            if (archive.read(map + "p.skel", d) && cr3::parseSkeleton(d, sk)) {
-                std::vector<std::string> names;
-                if (archive.read(map + "p.name", d)) names = cr3::parseJointNames(d);
-                const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
-                for (size_t j = 0; j < names.size() && j < w.size(); ++j)
-                    if (names[j] == pop) {
-                        areaWalker->setPosition({w[j].m[3], w[j].m[7] + areaWalker->radius, w[j].m[11]});
-                        for (int k = 0; k < 30; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
-                        areaYaw = std::atan2(w[j].m[2], w[j].m[10]);
-                        const cr3::Vec3 q = areaWalker->position();
-                        areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw);
-                    }
-            }
-            for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g);
+            enterPopPoint(pop);
             return;
         }
         if (n.battle >= 0) { // (FldMain::BranchAfterEvent: the battle - the field kept to come back to)
@@ -6060,7 +6106,8 @@ struct Viewer {
             inputScript.pop_front();
             for (const AreaGimmick& g : areaGimmicks)
                 if (g.function == want) {
-                    areaWalker->setPosition({g.world.m[3], g.world.m[7] - 1.0f, g.world.m[11]});
+                    if (g.shaped) areaWalker->setPosition({g.boxAt[0] + (g.boxLo[0] + g.boxHi[0]) / 2, g.boxAt[1] + (g.boxLo[1] + g.boxHi[1]) / 2, g.boxAt[2] + (g.boxLo[2] + g.boxHi[2]) / 2});
+                    else areaWalker->setPosition({g.world.m[3], g.world.m[7] - 1.0f, g.world.m[11]});
                     for (int k = 0; k < 30; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
                     SDL_Log("area %s: put in %s", area.name.c_str(), want.c_str());
                 }
@@ -6095,6 +6142,15 @@ struct Viewer {
         for (size_t k = 0; k < areaGimmicks.size(); ++k) {
             AreaGimmick& g = areaGimmicks[k];
             const bool in = gimmickHolds(g);
+            if (!g.areaChange.empty()) { // (Fld2AreaChange::CollisionEventF: SetNextEvent, then SM_ChangeArea to its point - a SetPopPoint2's first)
+                if (in && !g.inside && !scripted) {
+                    const std::string pop = game.popPoint2.empty() ? g.areaChange : game.popPoint2;
+                    enterPopPoint(pop);
+                    return;
+                }
+                g.inside = in;
+                continue;
+            }
             if (g.eventBox && in && !g.inside && !scripted) runAreaFunction(g.function);
             // (a check object: near it across - Fld2TaskPlayer's gimmick ghost, a sphere of 1.0,
             // against its box; the walls keep the player from its own small one. An approximation)
@@ -7750,6 +7806,15 @@ struct Viewer {
             }
             // (CR3: SetVistaToField - Cr3System.SetComeFromVistaToField - back to the field it's in:
             // the area its map is of, d0101f's d0101)
+            // - or where SetPopPoint2 put it (Fld2Main::SM_Init: the pop point first)
+            if (game.next.fieldMode == 2 && !eventScript.empty() && !game.popPoint2.empty()) {
+                const std::string pop = game.popPoint2;
+                game.next = cr3::GameState::Next();
+                SDL_Log("event: back to the field, at %s", pop.c_str());
+                eventMode = false;
+                if (!enterPopPoint(pop)) SDL_Log("area %s: not entered", pop.c_str());
+                return;
+            }
             if (game.next.fieldMode == 2 && !eventScript.empty() && vistaMapName.size() == 6 && vistaMapName.back() == 'f') {
                 const std::string a = vistaMapName.substr(0, 5);
                 game.next = cr3::GameState::Next();

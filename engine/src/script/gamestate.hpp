@@ -149,6 +149,10 @@ struct GameState {
     float bgColor[3] = {0, 0, 0};
     // the area last entered (FldUtil's: GetDungeonNum - 0 the town - and GetAreaNum, from 0)
     int dungeon = 0, area = 0;
+    // where the field is next entered (Cr3System.SetPopPoint2 - Fld2SetPopPoint2: the pop point
+    // kept, no change reserved; Fld2Main::SM_Init / SM_ChangeArea take it - the prologue's end,
+    // t0201_p3) - not saved
+    std::string popPoint2;
     // the scripts' encounters switch (Cr3System.SetEncountEnable: cr3_field_data +0x30 - the tab's own is +0x31)
     bool encountEnable = true;
     TreasureBoxes boxes;
