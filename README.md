@@ -128,6 +128,12 @@ To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `C
 (`~/.local/share/DuIslingr/CR3-U/` on Linux; the same folders under `%APPDATA%\` on Windows and
 `~/Library/Application Support/` on macOS), not the game folder. All four ports (CR1:U, CRO-U, CR2-U, CR3-U) look for their copies the same way.
 
+## Field and battle speed
+
+Options, Display & Graphics: **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
+field (its scenes, talk and menus as they are) and the battles that many times as fast. Kept in
+settings.ini (`field_speed`, `battle_speed`); `--field-speed n` / `--battle-speed n` for one run.
+
 ## HD textures
 
 Upscaled textures you make yourself, from your own copy - waifu2x or Real-ESRGAN, drawn in place of

@@ -311,6 +311,8 @@ struct Viewer {
         bool hdSet = false;       // (settings.ini says which: else on when there are HD textures)
         bool hdModels = true;     // replacement models from models/hd (what loads next)
         bool padSwap = false;     // a controller's: × (south) confirms, ○ (east) goes back - else as the Vita
+        int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
+        int battleSpeed = 1;      // the battles, this many times as fast: 1, 2 .. 5
     } settings;
     bool settingsPersist = false;
     int rendererInUse = 0;        // (the device that started: the Renderer row's "next start")
@@ -343,6 +345,8 @@ struct Viewer {
             else if (k == "hd_textures") s.hdTextures = v != 0, s.hdSet = true;
             else if (k == "hd_models") s.hdModels = v != 0;
             else if (k == "pad_swap") s.padSwap = v != 0;
+            else if (k == "field_speed") s.fieldSpeed = std::clamp(v, 1, 5);
+            else if (k == "battle_speed") s.battleSpeed = std::clamp(v, 1, 5);
         }
         std::fclose(f);
     }
@@ -353,9 +357,9 @@ struct Viewer {
         const Settings& s = settings;
         std::fprintf(f, "# CR3-U: the options' Display & Graphics (the command line's flags go over these)\n"
                         "display=%d\nresolution=%d\nvsync=%d\nfps=%d\nrenderer=%d\nupscaler=%d\nquality=%d\nsharpness=%d\n"
-                        "msaa=%d\nanisotropy=%d\nsharp_textures=%d\nhd_textures=%d\nhd_models=%d\npad_swap=%d\n",
+                        "msaa=%d\nanisotropy=%d\nsharp_textures=%d\nhd_textures=%d\nhd_models=%d\npad_swap=%d\nfield_speed=%d\nbattle_speed=%d\n",
                      s.display, s.resolution, s.vsync ? 1 : 0, s.fps, s.renderer, s.upscaler, s.quality, s.sharpness, s.msaa,
-                     s.anisotropy, s.sharpTextures ? 1 : 0, s.hdTextures ? 1 : 0, s.hdModels ? 1 : 0, s.padSwap ? 1 : 0);
+                     s.anisotropy, s.sharpTextures ? 1 : 0, s.hdTextures ? 1 : 0, s.hdModels ? 1 : 0, s.padSwap ? 1 : 0, s.fieldSpeed, s.battleSpeed);
         std::fclose(f);
     }
     // The settings onto the device, the window and the textures (each only as it changes)
@@ -518,6 +522,11 @@ struct Viewer {
                                  : "None in " + modelsDir + " yet: cr3view --export-models, edit in Blender, save as models/hd/<figure>.glb",
                             true, [&s](int) { s.hdModels = !s.hdModels; }});
         }
+        auto speed = [](int x) { return x > 1 ? std::to_string(x) + "x" : std::string("Off"); };
+        rows.push_back({"Field Speed", speed(s.fieldSpeed), "Walking the field 2 .. 5 times as fast - its scenes, talk and menus as they are", true,
+                        [&s](int d) { s.fieldSpeed = (s.fieldSpeed - 1 + d + 5) % 5 + 1; }});
+        rows.push_back({"Battle Speed", speed(s.battleSpeed), "The battles 2 .. 5 times as fast", true,
+                        [&s](int d) { s.battleSpeed = (s.battleSpeed - 1 + d + 5) % 5 + 1; }});
         rows.push_back({"Swap \u25cb and \u00d7", onOff(s.padSwap),
                         s.padSwap ? "A controller's \u00d7 (the bottom button) confirms, \u25cb (the right one) goes back"
                                   : "A controller's \u25cb (the right button) confirms, \u00d7 (the bottom one) goes back - as on the Vita",
@@ -2559,8 +2568,11 @@ struct Viewer {
         if (credits.stage) return updateCredits(dt);
         if (titleMenu.stage) return updateTitle(dt);
         if (cr3Title.stage) return updateCr3Title(dt);
-        if (cr3BattleMode) return updateCr3Battle(dt);
-        if (areaMode && !eventMode) return updateArea(dt, sx, sy, run);
+        // (Battle Speed, Field Speed: the battles, and the field while the player walks it - nothing
+        // running or open over it -, that many times as fast)
+        if (cr3BattleMode) return updateCr3Battle(dt * float(optionsOpen || settingsOpen ? 1 : settings.battleSpeed));
+        if (areaMode && !eventMode)
+            return updateArea(dt * float(cr3FieldIdle() && cr3Camp.stage == 0 && !optionsOpen && !settingsOpen ? settings.fieldSpeed : 1), sx, sy, run);
         if (playMode && (fieldMode || eventMode || battleMode) && !paused) playSeconds += dt; // (the save's play time)
         if (battleMode) {
             battleClock += dt;
@@ -21736,6 +21748,7 @@ int main(int argc, char** argv) {
     float walkX = 0, walkY = 0, walkSeconds = 0; // --walk: the field's character runs first (captures)
     bool tapAfter = false, mute = false, forceAudio = false;
     int hdArg = -1;        // --hd-textures / --no-hd-textures (-1: the settings')
+    int speedArg[2] = {0, 0}; // --field-speed / --battle-speed n (0: the settings')
     std::string exportDir; // --export-textures [dir]: every image as <hash>.crraw, for tools/hd_textures.py (textures/export/ in the game folder without one)
     bool exportTextures = false;
     bool exportModels = false; // --export-models [dir]: every figure as <figure>.glb (models/export/ in the game folder without one)
@@ -21878,6 +21891,8 @@ int main(int argc, char** argv) {
         else if (a == "--mute") mute = true;
         else if (a == "--hd-textures") hdArg = 1;
         else if (a == "--no-hd-textures") hdArg = 0;
+        else if (a == "--field-speed" && next) speedArg[0] = std::clamp(std::atoi(next), 1, 5), ++i;
+        else if (a == "--battle-speed" && next) speedArg[1] = std::clamp(std::atoi(next), 1, 5), ++i;
         else if (a == "--export-textures") {
             exportTextures = true;
             if (next && next[0] != '-') exportDir = next, ++i;
@@ -22040,6 +22055,8 @@ int main(int argc, char** argv) {
         if (!v.modelsDir.empty() && v.modelsDir.back() != '/' && v.modelsDir.back() != '\\') v.modelsDir += '/';
         v.hdModels = v.settings.hdModels;
     }
+    if (speedArg[0]) v.settings.fieldSpeed = speedArg[0];
+    if (speedArg[1]) v.settings.battleSpeed = speedArg[1];
     if (exportModels) { // every figure as glTF (assets/gltf_figure.hpp): its skeleton, meshes, materials, pictures, animations
         std::string dir = exportModelsDir.empty() ? gameFolder + "models/export/" : exportModelsDir;
         if (dir.back() != '/' && dir.back() != '\\') dir += '/';
@@ -22432,6 +22449,10 @@ int main(int argc, char** argv) {
             v.pose();
             v.draw(w, h);
             dev->endFrame(false);
+        }
+        if (v.areaMode && v.areaWalker && walkSeconds > 0) {
+            const cr3::Vec3 p = v.areaWalker->position();
+            SDL_Log("after --walk: %s at (%.3f %.3f %.3f)", v.area.name.c_str(), p[0], p[1], p[2]);
         }
         if ((v.areaMode || v.cr3BattleMode) && tapAfter && !v.cr3Title.stage) { // (CR3's field or battle: --tap after --run, then 4 s on)
             v.tap();
