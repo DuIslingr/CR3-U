@@ -411,6 +411,8 @@ public:
         if (st.blend) {
             gl::Enable(GL_BLEND);
             gl::BlendFunc(kBlendSrc[st.blendSrc < 9 ? st.blendSrc : 4], kBlendDst[st.blendDst < 8 ? st.blendDst : 5]);
+            static const GLenum kOps[5] = {0x8006, 0x800a, 0x800b, 0x8007, 0x8008}; // (FUNC_ADD, _SUBTRACT, _REVERSE_SUBTRACT, MIN, MAX)
+            if (st.blendOp) gl::BlendEquation(kOps[st.blendOp < 5 ? st.blendOp : 0]);
         } else {
             gl::Disable(GL_BLEND);
         }
@@ -426,6 +428,7 @@ public:
         gl::BindVertexArray(mesh.vao);
         gl::DrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, nullptr);
         gl::DepthMask(GL_TRUE);
+        if (st.blend && st.blendOp) gl::BlendEquation(0x8006);
     }
 
     bool readPixels(std::vector<uint8_t>& rgba, int& w, int& h) override {

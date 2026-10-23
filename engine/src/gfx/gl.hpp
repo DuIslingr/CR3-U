@@ -21,6 +21,7 @@
     X(void, Enable, (GLenum cap)) \
     X(void, Disable, (GLenum cap)) \
     X(void, BlendFunc, (GLenum s, GLenum d)) \
+    X(void, BlendEquation, (GLenum mode)) \
     X(GLenum, GetError, (void)) \
     X(const GLubyte*, GetString, (GLenum name)) \
     X(void, PixelStorei, (GLenum pname, GLint param)) \

@@ -35,15 +35,26 @@ struct TextLine {
     int colour = 0;   // \#<digit>: 1 red, 2 (0, .8, 1), 3 green, 4 (1, .8, 0), 5 magenta, 6 white,
                       // 7 black; 0 (and else) white
 };
+// a pause in a page's typing (EvtWindowPage::NextBlock): \@ waits for a tap (EvtWindow::UpdatePage,
+// 0.1 s on), \w<n> n / 30 s (CR3's UpdatePage: its count against the time x 30) and goes on by
+// itself. (A page's end waits for a tap anyway - ReadPage adds a \@ to each but a \* one -, so its
+// own \@ there is left out.)
+struct TextStop {
+    int at = 0;   // the page's code points typed before it
+    int wait = 0; // \w's n; 0 \@ (a tap)
+};
 struct TextPage {
     std::vector<TextLine> lines;
+    std::vector<TextStop> stops;
 };
 struct ParsedMessage {
     std::vector<TextPage> pages;
     int speaker = -1; // the tag's index (0..143) in the game's table; -1 none
+    bool ends = false;   // \*: its last page ends it once typed, without a tap (and no cursor)
+    bool noSkip = false; // \m: no fast-forward (EvtWindow::ShowMessage: SetSkipButtonEnable, SetPageSkipEnable false)
 };
 
-// a message's pages (\f ends one, \n a line, \* the message), its speaker
+// a message's pages (\f ends one, \n a line, \* the message), their stops, its speaker
 ParsedMessage parseMessage(const std::string& text);
 
 // a colour number's RGB

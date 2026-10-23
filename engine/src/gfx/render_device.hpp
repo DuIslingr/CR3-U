@@ -49,6 +49,9 @@ struct DrawState {
     // 5 ONE_MINUS_SRC_ALPHA, 6 DST_ALPHA, 7 ONE_MINUS_DST_ALPHA, 8 SRC_ALPHA_SATURATE; destination
     // the same with 2 SRC_COLOR, 3 ONE_MINUS_SRC_COLOR (blendCode() maps GL enums)
     uint8_t blendSrc = 4, blendDst = 5;
+    // blend_equation (render state 0xa3; CR2's 0x7b): 0 ADD, 1 SUBTRACT, 2 REVERSE_SUBTRACT (the
+    // battle effects' dark parts: the frame minus them), 3 MIN, 4 MAX
+    uint8_t blendOp = 0;
     uint8_t cull = 0;                   // 0 none, 1 front, 2 back
     bool depthTest = true, depthWrite = true;
     Sampling sampling; // the texture's

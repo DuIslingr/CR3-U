@@ -40,6 +40,12 @@ any entry, GameMain::SM_Startup's utils::SetDefaultName / SetDefaultTeamName set
 empty. ShowInputDialog(kind) starts its dialog with the current value (0 name, 1 team, 3 pet, else
 food). The other `{...}` (`{target}`, `{gold}`, `{item_cnt}`, ...) are the menus' own.
 
+The window's commands as CR3's EvtWindowPage / EvtWindow::UpdatePage read them (CR2's, but for
+`\w`'s unit): `\w<n>` pauses the typing n/30 s (its count against the time x 30) and goes on by
+itself, `\@` pauses till a tap (ReadPage adds one to each page's end, so a page always waits - but
+for `\*`'s), `\*` ends the message once its last page is typed, without a tap or cursor, `\m` turns
+fast-forward off for it. Across the 2,823 files: 1,770 `\*`, 1,294 `\@`, 42 `\w` (35 .. 100).
+
 ### The fan translation
 
 The Chaos Rings III Translation Project's patch (`rePatch/PCSG00500/CR3/resources`) replaces whole
@@ -106,7 +112,11 @@ blend_equation, 0xa4 blend_enable, 0xa5 cull_face, 0xa6 cull_face_enable, 0xa7 d
 depth_mask, 0xa9 depth_test_enable, ... 0xb0 stencil_test_enable (the names' table at 0x111f424 in
 `libcrx.so`, 0x5c bytes an entry; the parameters' at 0x111fa40, 0x38 bytes, ColorSampler 0x32 as
 before). The Vita's figures (geom version 0x50) keep CR2's numbering, 0x78..; read, they are moved
-up by 0x28 to the one numbering.
+up by 0x28 to the one numbering. blend_equation is applied (GL's glBlendEquation, Vulkan's blend op
+in the pipeline key): 271 materials of 166 effects - `be001hit..`, `be201hit..`, `ee002warp..`, the
+awakenings' and others, 110 battle, 49 event, 7 field ones - blend REVERSE_SUBTRACT (0x800b), their
+dark parts taken off the frame. None of the 4,842 models uses polygon offset, a colour mask or the
+stencil (0xaa .. 0xb0).
 
 ## Event scenes
 
@@ -198,6 +208,14 @@ always j001 (areas below 41). Motions (Fld2AnimeNameTbl): `fn01` idle, `ff01` ru
 (SM_Walk / SM_Run): the stick's direction in the camera's frame at 1.2 (walk) or 4.8 (run) a
 second as far as it's pushed, a sphere of 0.2 (CreateGhost; Fld2CharaCtrl::Setup 0.1 the step,
 SetMaxSlope 45 degrees).
+
+Walking by touch (Fld2TaskTouch, Fld2TaskPlayer::CalcPlayerMoveDir): the finger's offset from where
+it touched, as fractions of the screen's width and height (x 0.01), its length under 0.0002
+standing, under 0.0005 walking, else running - 2% and 5% of the screen -, turned by the camera; let
+go without having moved, a tap. Fld2Controller shows it once the finger moves or after half a
+second: `feConMove01` where it touched, `feConMove03` at the finger (128 of the 960 at most - its
+view 200 pixels a unit), `feConMove02` halfway. `cr3view --input drag:<x0>/<y0>/<x1>/<y1>` (screen
+fractions), `drag:end`.
 
 The camera (Fld2CameraGom, MVGL's default 45 degrees, near 0.1, far 5000): it looks at the player
 1.2 up; a spring holds it 3 away (accelerating 0.005 a 1/60 s step, braking to stop there), 0.5
@@ -687,10 +705,18 @@ categories that have rows as buttons over it, the focused row's help the header'
 focused row again: an Item - how many (CampItemNumberSelect's reels; at most what's affordable and
 99 held - none: 0x233 told; `camItemPrice_num00` the price for them, `camItemStock_num00` the count
 held) - or equipment, one; asked 0x248 ({itemname}, {currency} 0x249 + the unit) / selling 0x210;
-yes: BuyGoods / SellItem, com_024, the list anew. `cr3view --input call:cobj_02,shop:buy,shop:second0,
-shop:row0,shop:up,shop:yes` (also `shop:talk / sell / back / no / tab / row<n> / cat<n>`). Not in: the
-equipment's status beside the list (CampEquipStatusMenu, the characters' footer, EquipOwnMenu) and
-"equip it now?" after buying (0x20e).
+yes: BuyGoods / SellItem, com_024, the list anew. Equipment bought (0x1a): asked 0x20e
+({itemname}) - not for character 5 while flag 1155 holds -, yes putting it on the list's character,
+the party's first (SetEquipParts: the slot the category - 3), com_003. `cr3view --input
+call:cobj_02,shop:buy,shop:second0,shop:row0,shop:up,shop:yes` (also `shop:talk / sell / back / no / tab
+/ row<n> / cat<n>`). Not in: the equipment's status beside the list (CampEquipStatusMenu, the
+characters' footer, EquipOwnMenu).
+
+The scripts' yes / no (EvtWindow.ShowYesNoButton - Cr3EvtWindowShowYesNoButton:
+SetYNChoiceTWindowParameter, YNChoiceButton - interface 0xe): the screen dimmed (a black figure at
+half the buttons' alpha), comBtnMenu at comBtnPosition's call with `comBtnMenu_io`, fading in over
+0.1 s, its panels from joint 10 on - Yes (10) and No (11), com_003 / com_004. (CR2's `choice_io`
+isn't in CR3's data: those buttons drew nothing.)
 
 ### The world select (CR3)
 

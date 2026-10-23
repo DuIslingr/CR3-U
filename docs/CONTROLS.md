@@ -43,3 +43,12 @@ the fast-forward. △ opens the field's tab - the port's own, as a controller ha
 touch releases have no cursor of the keyboard's either (the title's buttons and questions, the
 shop's first two menus, the party's), the keys and the controller now move a focus over the buttons
 in the game's own focused look. `CR3_PAD_SCRIPT` (tests) drives a virtual controller.
+
+## CR3's field by touch or the mouse
+
+CR3's field is walked by dragging, as the iPad's and Android's releases do (Fld2TaskPlayer::
+CalcPlayerMoveDir): press on the field and drag - the finger's offset from where it pressed, under
+2% of the screen standing, under 5% walking, further running, turned by the camera -, the
+controller (`feConMove01` .. `03`) showing once it moves or after half a second. Let go without
+having moved and it is a tap (a message's page, the check object at hand). The keys, the d-pad and
+the left stick walk as before.
