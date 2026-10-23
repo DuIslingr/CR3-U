@@ -315,6 +315,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SetPopPoint", [&next](NativeCall& c) { next.popPoint = c.string(0); }); // (FldUtilSetPopPoint)
     vm.setNative("Cr3System", "SetPopPoint2", [&state](NativeCall& c) { state.popPoint2 = c.string(0); });
     vm.setNative("Cr3System", "ReserveTownMove", [&next](NativeCall&) { next.townMove = true; });
+    vm.setNative("Cr3GimmickData", "Disp", [&state](NativeCall& c) { state.gimmickShown[c.string(0)] = c.boolean(1); });
     vm.setNative("Cr3System", "SetComeFromBattleToField", [&next](NativeCall&) { next.fieldMode = 1; });
     vm.setNative("Cr3System", "ReserveWorldSelect", [&next](NativeCall&) { next.worldSelect = true; }); // (FldUtilReserveWorldSelect)
     vm.setNative("Cr3System", "ReserveShop", [&next](NativeCall&) { next.shop = true; });

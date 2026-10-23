@@ -5507,6 +5507,68 @@ struct Viewer {
         std::array<float, 4> boxTurn{0, 0, 0, 1};
     };
     std::vector<AreaGimmick> areaGimmicks;
+    // the area's people (Fld2NPC): data\field_<town>.mbe's Field rows for this area - the area +0,
+    // the quest +0x10 (-1: any; GetFieldParamByName takes those first), the gimmick +0x18
+    // (ragdoll_c121_00), the model +0x20 (c121b: c121 with its b textures - CrxModel::
+    // ChangePartTextureVariation) - placed by the gimmick's own joint (c121_00: GetPosition /
+    // Rotation / ScaleFromFigure), its first motion looped (Fld2NPCAnimeNameTbl[0]: fn01), started
+    // apart; hidden by Cr3GimmickData.Disp
+    struct AreaNpc {
+        std::string name, model;
+        ViewFigure body, head;
+        cr3::Mat34 place;
+        float phase = 0;
+    };
+    std::vector<AreaNpc> areaNpcs;
+    void loadAreaNpcs(const std::string& name, const std::vector<std::string>& joints, const std::vector<cr3::Mat34>& world) {
+        std::vector<uint8_t> d;
+        cr3::MbeFile f;
+        if (!archive.read("data\\field_" + name.substr(0, 3) + ".mbe", d) || !f.parse(d)) return;
+        const cr3::MbeFile::Table* t = f.table("Field");
+        if (!t) return;
+        const int areaNo = std::atoi(name.substr(3, 2).c_str()) - 1;
+        for (size_t r = 0; r < t->rows.size(); ++r) {
+            cr3::MbeFile::Row row;
+            if (!f.row(*t, r, "iiiiiipp", row) || row.i(0) != areaNo || row.i(4) != -1) continue;
+            const std::string gimmick = row.s(6), model = row.s(7);
+            if (model.size() < 4 || gimmick.compare(0, 8, "ragdoll_") != 0) continue;
+            AreaNpc npc;
+            npc.name = gimmick.substr(8), npc.model = model;
+            const auto it = std::find(joints.begin(), joints.end(), npc.name);
+            if (it == joints.end() || size_t(it - joints.begin()) >= world.size()) continue;
+            npc.place = world[size_t(it - joints.begin())];
+            const bool whole = archive.contains(model + ".geom"); // (an object's: t0100sign00)
+            const std::string base = whole ? model : model.substr(0, 4);
+            std::string body = base, head;
+            if (!whole && !archive.contains(base + ".geom") && archive.contains(base + "b01.geom")) {
+                body = base[0] == 'j' ? cr3PartsBody(base) : base + "b01";
+                if (!archive.contains(body + ".geom")) body = base + "b01";
+                if (archive.contains(base + "h01.geom")) head = base + "h01";
+            }
+            std::string err;
+            figureVariant = !whole && model.size() > 4 ? model.substr(4, 1) : std::string();
+            const bool ok = loadFigure(body + ".geom", npc.body, &err);
+            if (ok && !head.empty()) loadFigure(head + ".geom", npc.head, &err);
+            figureVariant.clear();
+            if (!ok) {
+                SDL_Log("area %s: person %s (%s): %s", name.c_str(), npc.name.c_str(), model.c_str(), err.c_str());
+                continue;
+            }
+            for (ViewFigure* fp : {&npc.body, &npc.head}) { // (fn01, looped)
+                ViewFigure& fig = *fp;
+                if (fig.meshes.empty()) continue;
+                const std::string want = motionBase(fig.name.substr(0, fig.name.size() - 5)) + "_fn01.anim";
+                const auto at = std::find(fig.anims.begin(), fig.anims.end(), want);
+                if (at == fig.anims.end()) continue;
+                const float keep = time;
+                loadAnim(fig, size_t(at - fig.anims.begin()));
+                time = keep;
+            }
+            npc.phase = float(areaNpcs.size()) * 0.37f;
+            areaNpcs.push_back(std::move(npc));
+        }
+        if (!areaNpcs.empty()) SDL_Log("area %s: %zu people and objects", name.c_str(), areaNpcs.size());
+    }
     int areaCheckNear = -1; // (the check object the player is within: a tap's)
     // where the player was as the field was left for a vista (Fld2SaveData), to stand there again
     std::string savedArea;
@@ -5521,6 +5583,9 @@ struct Viewer {
         }
         for (ViewFigure& f : areaFigures) unload(f);
         areaFigures.clear();
+        for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head);
+        areaNpcs.clear();
+        game.gimmickShown.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
         for (const std::string& n : area.figures) {
             ViewFigure f;
             if (!loadFigure(n + ".geom", f, &err)) {
@@ -5580,6 +5645,7 @@ struct Viewer {
                         areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false, {}});
                     else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
                         areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
+                loadAreaNpcs(name, names, w);
                 cr3::PhysScene phys; // (the area changes' boxes: their bodies, named as they are)
                 if (std::any_of(areaGimmicks.begin(), areaGimmicks.end(), [](const AreaGimmick& g) { return !g.areaChange.empty(); }) &&
                     archive.read(name + "p.phys", d) && cr3::parsePhys(d, phys))
@@ -6184,7 +6250,7 @@ struct Viewer {
             if (g.eventBox && in && !g.inside && !scripted) runAreaFunction(g.function);
             // (a check object: near it across - Fld2TaskPlayer's gimmick ghost, a sphere of 1.0,
             // against its box; the walls keep the player from its own small one. An approximation)
-            if (!g.eventBox) {
+            if (!g.eventBox && game.gimmickVisible(g.function)) {
                 const float across = std::hypot(p[0] - g.world.m[3], p[2] - g.world.m[11]);
                 const float half = std::sqrt(g.world.m[0] * g.world.m[0] + g.world.m[4] * g.world.m[4] + g.world.m[8] * g.world.m[8]) * 0.05f;
                 if (across <= 1.0f + half + 0.3f && std::fabs(p[1] - g.world.m[7]) < 2.5f) areaCheckNear = int(k);
@@ -6229,6 +6295,15 @@ struct Viewer {
             if (k < area.figures.size() && area.figures[k] == area.name + "s") f.place.m[7] = 0.01f;
             pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(areaClock, f.anim.duration()) : 0.0f, false);
             drawFigure(f, vp.data());
+        }
+        for (AreaNpc& npc : areaNpcs) { // (Fld2NPC::Draw)
+            if (!game.gimmickVisible(npc.name)) continue;
+            for (ViewFigure* fp : {&npc.body, &npc.head}) {
+                if (fp->meshes.empty()) continue;
+                fp->place = npc.place;
+                pose(*fp, areaClock + npc.phase, true);
+                drawFigure(*fp, vp.data());
+            }
         }
         // the player: where it walks, facing its way
         for (ViewFigure* fp : {&areaPlayer, &areaPlayerHead}) {

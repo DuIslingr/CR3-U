@@ -153,6 +153,13 @@ struct GameState {
     // kept, no change reserved; Fld2Main::SM_Init / SM_ChangeArea take it - the prologue's end,
     // t0201_p3) - not saved
     std::string popPoint2;
+    // the field's gimmicks shown or hidden (Cr3GimmickData.Disp - Fld2SetGimmickVisible: the scripts'
+    // ModelDisp_Field; an area's people, its objects) by name ("c111_00"); none listed: shown
+    std::map<std::string, bool> gimmickShown;
+    bool gimmickVisible(const std::string& name) const {
+        const auto it = gimmickShown.find(name);
+        return it == gimmickShown.end() || it->second;
+    }
     // the scripts' encounters switch (Cr3System.SetEncountEnable: cr3_field_data +0x30 - the tab's own is +0x31)
     bool encountEnable = true;
     TreasureBoxes boxes;
