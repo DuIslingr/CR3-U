@@ -1203,8 +1203,20 @@ then closed. What CR3-U shows of them:
   the back key, com_004 - goes back to the get-set; OK escapes (BtlSysState::escape) - 5 for a
   second and away, else 6 for a second and the monsters' turn.
 
-Not yet: the status effects' (OpenStatusEffect), the assists' (OpenAssist), Analyze's HP
-(OpenHpAndMaxHp), the drops (AddDrop), the field effects' (AddById), stolen gold.
+- Status effects given (BtlDamageTargetList::openStatusEffectAnnounce, after the last hit): those
+  with lines - StatusEffect +0x74 / +0x76 for a monster target (one / several targets), +0x78 /
+  +0x7a for a character; -1 none. One effect on one target: its line, "{target}" the target's
+  name; several on one: the command's +0xe8 (Command column 41's low short), else 99 / 0x6a; the
+  same one on several targets: the several-targets line.
+
+Not yet: the assists' (OpenAssist), Analyze's HP (OpenHpAndMaxHp), the drops (AddDrop), the field
+effects' (AddById), stolen gold.
+
+The target kinds (Command +0x10, MbTargetType - BtlStatusList::collectDamageTarget*): 0 self, 1 a
+party member (the actor's side), 2 all of them, 3 an enemy, 4 all enemies, 5 everyone, 6 a random
+enemy, 7 another, 8 / 9 either side's one / all, 10 / 11 the player's one / all, 12 / 13 the other
+party members' one / all. A command whose CommandFomula is -1 does no damage - its status effects
+alone (the crabs' defence up, 312).
 
 ## Parameter tables (`data\*.mbe`, EXPA)
 

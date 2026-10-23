@@ -6394,6 +6394,44 @@ struct Viewer {
     std::string cr3FighterName(const cr3::Cr3Fighter& f) {
         return f.player ? cr3NameOf("char_name.mbe", "CharName", f.id) : cr3NameOf("mon_name.mbe", "MonsterName", f.id);
     }
+    // the status effects an action gave (BtlDamageTargetList::openStatusEffectAnnounce): those with
+    // lines (StatusEffect +0x74 / +0x78 - a monster's, a character's -, -1 none); one on one target its
+    // line, "{target}" the target; several on one the command's (+0xe8), else 99 (a monster) / 0x6a;
+    // one alike on several targets its +0x76 / +0x7a; else as several
+    void announceCr3Effects(const cr3::Cr3Action& a) {
+        auto lines = [&](int id, int& single, int& multi, bool player) {
+            cr3::MbeFile::Row r;
+            if (!cr3BattleTables.skill.find("StatusEffect", id, "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r)) return false;
+            const int s74 = int16_t(uint32_t(r.i(29)) & 0xffff), s76 = int16_t(uint32_t(r.i(29)) >> 16);
+            const int s78 = int16_t(uint32_t(r.i(30)) & 0xffff), s7a = int16_t(uint32_t(r.i(30)) >> 16);
+            if (s74 == -1 || s78 == -1) return false;
+            single = player ? s78 : s74, multi = player ? s7a : s76;
+            return true;
+        };
+        std::vector<std::pair<int, std::vector<std::pair<int, int>>>> got; // (target, its listed effects' (single, multi))
+        for (const cr3::Cr3Hit& th : a.targets) {
+            std::vector<std::pair<int, int>> listed;
+            for (int e : th.effectsGiven) {
+                int single = -1, multi = -1;
+                if (lines(e, single, multi, cr3Rules.fighters[size_t(th.target)].player)) listed.push_back({single, multi});
+            }
+            if (!listed.empty()) got.push_back({th.target, listed});
+        }
+        if (got.empty()) return;
+        const cr3::Cr3Fighter& first = cr3Rules.fighters[size_t(got[0].first)];
+        cr3::Cr3Command c;
+        cr3Rules.command(a.command, c);
+        const int several = c.effectsAnnounce > 0 ? c.effectsAnnounce : first.player ? 0x6a : 99;
+        int id = several;
+        if (got.size() == 1 && got[0].second.size() == 1) id = got[0].second[0].first;
+        else if (got.size() > 1 && std::all_of(got.begin(), got.end(), [&](const auto& g) { return g.second.size() == 1 && g.second[0] == got[0].second[0]; }))
+            id = got[0].second[0].second;
+        std::string text = announceText("AnnounceBattle", id);
+        for (const char* token : {"{target}", "{source}"}) // (AnnounceStatusEffect: the target's name)
+            if (const size_t at = text.find(token); at != std::string::npos) text.replace(at, std::strlen(token), cr3FighterName(first));
+        if (!text.empty()) setCr3Announce(text, 1.0f);
+        SDL_Log("battle %.2f s: status effects on %zu - line %d", cr3BattleClock, got.size(), id);
+    }
     void rollCr3StartMode() {
         cr3StartMode = 0, cr3Announce = Cr3Announce();
         const int first = game.next.battleFirstStrike[0], surprise = game.next.battleFirstStrike[1];
@@ -6976,6 +7014,11 @@ struct Viewer {
                 else setCr3Motion(tu, "bd01", false);
             }
             audio.playSe(0x164, false);
+            if (cr3ActionPlay.hitsShown == int(mostHits)) announceCr3Effects(a); // (after the last: BtlDamageTargetList's)
+        }
+        if (mostHits == 0 && cr3ActionPlay.hitsShown == 0 && t >= cr3ActionPlay.hitAt) { // (no hits - its effects alone)
+            cr3ActionPlay.hitsShown = 1;
+            announceCr3Effects(a);
         }
         if (t >= cr3ActionPlay.end) {
             for (const cr3::Cr3Hit& th : a.targets) cr3HpShown[size_t(th.target)] = th.hpAfter;

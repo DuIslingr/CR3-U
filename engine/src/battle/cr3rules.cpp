@@ -173,9 +173,10 @@ bool Cr3BattleRules::command(int id, Cr3Command& c) const {
     for (int k = 0; k < r.i(13) && k < 8; ++k)
         if (r.element(14, size_t(k)) > 0) c.effects.push_back(r.element(14, size_t(k))); // (+0x40 / +0x48)
     c.spread = r.i(27);
+    c.effectsAnnounce = int16_t(uint32_t(r.i(41)) & 0xffff);
     c.type = r.i(1);
     c.target = r.i(4);
-    c.all = c.target == 2 || c.target == 4 || c.target == 5 || c.target == 9 || c.target == 11;
+    c.all = c.target == 2 || c.target == 4 || c.target == 5 || c.target == 9 || c.target == 11 || c.target == 13;
     c.hpCost = r.i(28) == 0 ? r.i(29) : 0;
     c.mpKind = r.i(30);
     c.mpCost = (c.mpKind == 0 || c.mpKind == 3) ? std::max(r.i(31), 0) : 0;
@@ -504,14 +505,28 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         const bool ally = c.ally();
         bool anyCrit = false, anyDown = false;
         std::vector<int> targets;
-        // (the target kind's side: 2 / 11 all allies, 4 all enemies, 5 everyone, 9 either - a heal its own)
-        const bool ownSide = c.target == 2 || c.target == 11 || (c.target == 9 && ally);
+        // (the target kind's side - BtlStatusList::collectDamageTarget*, by MbTargetType: 0 self, 1 a
+        // party member, 2 all of them, 3 an enemy, 4 all enemies, 5 everyone, 6 a random enemy, 8 / 9
+        // either side's one / all - a heal its own -, 10 / 11 the player's, 12 / 13 the other party
+        // members' one / all)
+        const bool ownSide = c.target == 2 || c.target == 11 || c.target == 13 || (c.target == 9 && ally);
+        const bool ownOne = c.target == 1 || c.target == 12 || (c.target == 8 && ally);
         if (c.all)
             for (size_t k = 0; k < fighters.size(); ++k) {
-                if ((c.target == 5 || fighters[k].player == (ownSide ? s.player : !s.player)) && !fighters[k].dead()) targets.push_back(int(k));
+                if ((c.target == 5 || fighters[k].player == (ownSide ? s.player : !s.player)) && !fighters[k].dead() &&
+                    (c.target != 13 || int(k) != src))
+                    targets.push_back(int(k));
             }
         else if (c.target == 0) targets.push_back(src);
-        else if (ally) targets.push_back(tgt >= 0 && fighters[size_t(tgt)].player == s.player && !fighters[size_t(tgt)].dead() ? tgt : src);
+        else if (ally || ownOne) { // (the one chosen on its own side, else - a monster's - one at random; 12 never itself)
+            if (tgt >= 0 && fighters[size_t(tgt)].player == s.player && !fighters[size_t(tgt)].dead() && (c.target != 12 || tgt != src)) targets.push_back(tgt);
+            else {
+                std::vector<int> side;
+                for (size_t k = 0; k < fighters.size(); ++k)
+                    if (fighters[k].player == s.player && !fighters[k].dead() && (c.target != 12 || int(k) != src)) side.push_back(int(k));
+                if (!side.empty()) targets.push_back(side[size_t(random() * float(side.size())) % side.size()]);
+            }
+        }
         else if (int t = livingTarget(!s.player, tgt); t >= 0) targets.push_back(t);
         if (targets.empty()) break; // (no one left on the other side)
         std::vector<int> downed; // (its targets downed: their commands wait - delayCommandByDown)
@@ -520,7 +535,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             Cr3Hit hit;
             hit.target = ti;
             bool landed = false;
-            if (ally) {
+            if (c.damage < 0) { // (CommandFomula -1: no damage - its status effects alone)
+                landed = true;
+            } else if (ally) {
                 const int h = heal(s, c);
                 hit.hits.push_back(-h), hit.flags.push_back(0);
                 t.hp = std::min(t.hp + h, t.maxHp);
@@ -555,7 +572,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             // its status effects, where it landed and the target lives (IsStatusEffectHit)
             if (landed && !t.dead())
                 for (int e : c.effects)
-                    if (effectLands(s, t, c, e)) giveEffect(ti, e);
+                    if (effectLands(s, t, c, e)) giveEffect(ti, e), hit.effectsGiven.push_back(e);
             hit.hpAfter = t.hp, hit.killed = t.dead();
             a.targets.push_back(hit);
         }

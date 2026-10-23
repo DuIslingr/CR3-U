@@ -62,6 +62,7 @@ struct Cr3Command {
     uint32_t flags = 0;   // (+0xbc: bit 1 the weapon's break, 2 always hits, 3 its status effects always land, 4 can be critical, 5 always critical, 6 always downs)
     float hitRate = 1;    // (+0x1c: x the hit chance)
     std::vector<int> effects; // (+0x40 / +0x48: the status effects it gives - Guard's 2)
+    int effectsAnnounce = -1; // (+0xe8: AnnounceBattle's line when it gives one target several)
     int type = 0;         // (+0x04: 0 an attack, 1 a physical skill, 2 magic, 3 support, 4 special, 7 a guard)
     int damage = -1;      // (its CommandFomula row's damage: 1 physical, 2 magic, 5 an HP heal, ...)
     int target = 3;       // (+0x10: BtlStatusList's target kind - 0 itself, 1 an ally, 2 all allies, 3 an enemy,
@@ -69,7 +70,7 @@ struct Cr3Command {
     bool all = false;     // (target kind 2, 4, 5, 9 or 11: every one on that side)
     int mpCost = 0, hpCost = 0; // (+0xb8, +0xb0: the costs as listed - kinds 0 and 3; Cr3BattleRules::mpCost the real one)
     int mpKind = 0;             // (+0xb4: 0 the value, 1 / 2 a percentage of the max MP, 3 x the weapon's consumption)
-    bool ally() const { return damage == 5 || damage == 6 || damage == 7; } // (a heal: its own side)
+    bool ally() const { return damage == 5 || damage == 6 || damage == 7; } // (a heal: its own side; -1 no damage, its effects alone)
     bool usable() const { return damage == 1 || damage == 2 || ally(); }    // (what CR3-U can play)
     float multiplier = 1;
     int element = 0;    // (+0x24: its attack element - the Element table's row)
@@ -111,6 +112,7 @@ struct Cr3Hit {
     std::vector<int> hits; // each hit's damage (a heal's: below 0)
     std::vector<uint8_t> flags; // each hit's: bit 0 critical, bit 1 down, bit 2 a miss
     std::vector<int> gauge; // the break gauge after each hit
+    std::vector<int> effectsGiven; // the status effects it gave (StatusEffect ids)
     int hpAfter = 0;
     bool killed = false;
 };
