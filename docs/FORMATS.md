@@ -899,8 +899,8 @@ TriggerSkillToDirection gives it; KilledCheck in the field announces), deliverie
 SetBattleToVista may name a function no script has (q071_t01_00102_evt): VistaMain::LoadScript calls
 nothing, so the vista ends at its next step and goes on as any. Team level (Invoke 0) follows the
 collection book: the lines with a gene held (Invoke 1). Tests: `cr3tool db <release> quests` lists
-the quests; `--input auto` / `manual` fights the later battles alone (attack the first monster,
-take the result), `wander:<seconds>` runs the player round a small circle (the encounters' steps).
+the quests; `--input auto` / `auto:gene` / `manual` fights the later battles alone (attack the first monster
+- auto:gene its first gene command on a foe first, where one is usable -, take the result), `wander:<seconds>` runs the player round a small circle (the encounters' steps).
 A dungeon's town button
 (Fld2Main::SM_TownJump) runs the area script's `DungeonExit`. The detail's "{item_cnt}" is the
 goods held (GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock). Itemizing gift 600022 sets flag

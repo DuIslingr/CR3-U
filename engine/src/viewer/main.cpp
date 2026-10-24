@@ -7461,11 +7461,15 @@ struct Viewer {
     }
     // --input auto / manual (tests): the battles from then on fought alone - each command an
     // attack on the first monster alive, the result taken - where the input has no choice of its own
-    bool autoBattle = false;
+    bool autoBattle = false, autoGene = false;
+    int autoGeneSkip = -1; // (auto:gene - the chooser with no gene command to use this turn)
     float wanderLeft = 0, wanderTurn = 0; // (--input wander:<seconds>)
     void takeAutoBattleToken() {
-        while (!inputScript.empty() && (inputScript.front() == "auto" || inputScript.front() == "manual"))
-            autoBattle = inputScript.front() == "auto", inputScript.pop_front(), SDL_Log("battles: %s", autoBattle ? "auto" : "manual");
+        while (!inputScript.empty() && (inputScript.front() == "auto" || inputScript.front() == "auto:gene" || inputScript.front() == "manual")) {
+            autoBattle = inputScript.front() != "manual", autoGene = inputScript.front() == "auto:gene";
+            inputScript.pop_front();
+            SDL_Log("battles: %s", autoBattle ? (autoGene ? "auto, genes first" : "auto") : "manual");
+        }
     }
     static bool isCr3BattleToken(const std::string& t) {
         return t == "battle" || t == "escape" || t == "options" || t == "attack" || t == "guard" ||
@@ -7757,11 +7761,19 @@ struct Viewer {
             // "yes" / "no" - once the battle's script is over, as the menu waits: a turn end's scene)
             takeAutoBattleToken();
             const bool own = !inputScript.empty() && isCr3BattleToken(inputScript.front());
-            if (!scripted && autoBattle && !own && cr3BattleClock - cr3StageStart > 0.6f) { // (--input auto: attack the first monster alive)
-                if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(0);
-                else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(0);
+            if (!scripted && autoBattle && !own && cr3BattleClock - cr3StageStart > 0.6f) { // (--input auto: attack the first monster alive; auto:gene its first gene command on a foe first)
+                if (cr3BattleStage == Cr3BattleStage::Menu) autoGeneSkip = -1, chooseCr3GetSet(0);
+                else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(autoGene && autoGeneSkip != cr3Chooser ? 1 : 0);
                 else if (cr3BattleStage == Cr3BattleStage::Target) chooseCr3Target(0);
-                else if (cr3BattleStage == Cr3BattleStage::List) cr3BattleStage = Cr3BattleStage::Command;
+                else if (cr3BattleStage == Cr3BattleStage::List) {
+                    int pick = -1;
+                    for (size_t k = 0; k < cr3List.size() && pick < 0; ++k) {
+                        cr3::Cr3Command c;
+                        if (cr3List[k].usable && !cr3List[k].item && cr3Rules.command(cr3List[k].command, c) && !c.ally()) pick = int(k);
+                    }
+                    if (pick >= 0) chooseCr3ListRow(pick);
+                    else autoGeneSkip = cr3Chooser, cr3BattleStage = Cr3BattleStage::Command; // (none usable: an attack)
+                }
             } else if (!scripted && !inputScript.empty() && cr3BattleClock - cr3StageStart > 0.6f) {
                 const std::string tok = inputScript.front();
                 if (cr3BattleStage == Cr3BattleStage::Command && (tok == "attack" || tok == "guard")) {
