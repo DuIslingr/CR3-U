@@ -6267,6 +6267,8 @@ struct Viewer {
         bool rock = false;              // (Fld2Rock: ragdoll_krock_..)
         bool bombSwitch = false;        // (Fld2PhysicalSwitch: ragdoll_bswc_.. - a blast near turns it, its other model <model less 2>03)
         bool stepSwitch = false;        // (Fld2StepSwitch: ragdoll_fswc_.. - stood on, it goes down - its _n01 -, then its function)
+        bool eventMotion = false;       // (Cr3GimmickData.SetMotion: its own animation, from motionAt)
+        float motionAt = 0;
         int stepState = 0;              // 0 up, 1 going down, 2 down (done: once)
         float stepAt = 0;
         bool mover = false;             // (Fld2MovingObject: ragdoll_fmove_.. - SetMove plays <area>p's animation, it follows its ragdoll joint)
@@ -6388,6 +6390,92 @@ struct Viewer {
         }
         if (!areaNpcs.empty()) SDL_Log("area %s: %zu people and objects", name.c_str(), areaNpcs.size());
     }
+    // The area's own natives (Fld2's, over the 3D map):
+    // - Cr3FieldMapCamera.SetScriptCamera(eye xyz, target xyz, frames) (Fld2SetFieldScriptCamera,
+    //   Fld2CameraScript::SetupCamera / Update): the camera's eye and target moved in a straight line
+    //   from where they are to there over frames / 30 s (at once for 0); SetScriptCameraPosition /
+    //   Target (x, y, z, frames) the one, the other kept; ResetScriptCamera: the field's own again
+    // - Cr3System.StartQuake(width, from, to, frames) / StopQuake (utils::StartQuake -
+    //   QuakeControlTask): the picture shaken up and down (fieldQuake)
+    // - Cr3GimmickData.SetMotion(name, motion) (Fld2SetGimmickMotion): a person's animation by its
+    //   name (Fld2NPC::SetEventAnim), a block's or check object's <model>_<motion> (Fld2Block /
+    //   Fld2CheckObject::SetMotion) - looped from its start
+    // - Cr3GimmickData.SetMapScrollSpeed(material, u, v) (Fld2TaskMap::SetScrollSpeed): the map's
+    //   material's ScrollSpeedSet1 (0x55)
+    struct AreaScriptCam {
+        bool on = false;
+        std::array<float, 3> eye{}, at{}, toEye{}, toAt{};
+        float left = 0;
+    } areaScriptCam;
+    std::map<std::string, std::string> areaMotions; // (asked, not yet put on)
+    void areaScriptCamera(const std::array<float, 3>& eye, const std::array<float, 3>& at, float frames) {
+        if (!areaScriptCam.on) areaScriptCam.on = true, areaScriptCam.eye = areaCamera.eye, areaScriptCam.at = areaCamera.at;
+        areaScriptCam.toEye = eye, areaScriptCam.toAt = at, areaScriptCam.left = std::max(frames, 0.0f) / 30.0f;
+        if (areaScriptCam.left <= 0) areaScriptCam.eye = eye, areaScriptCam.at = at;
+    }
+    void stepAreaScriptCam(float dt) {
+        AreaScriptCam& c = areaScriptCam;
+        if (!c.on || c.left <= 0) return;
+        const float k = std::min(dt / c.left, 1.0f);
+        for (int a = 0; a < 3; ++a) c.eye[a] += (c.toEye[a] - c.eye[a]) * k, c.at[a] += (c.toAt[a] - c.at[a]) * k;
+        c.left -= dt;
+    }
+    void bindAreaNatives(cr3::ScriptVM& vm) {
+        vm.setNative("Cr3FieldMapCamera", "SetScriptCamera", [this](cr3::NativeCall& c) {
+            areaScriptCamera({float(c.number(0)), float(c.number(1)), float(c.number(2))}, {float(c.number(3)), float(c.number(4)), float(c.number(5))},
+                             float(c.number(6)));
+        });
+        vm.setNative("Cr3FieldMapCamera", "SetScriptCameraPosition", [this](cr3::NativeCall& c) {
+            areaScriptCamera({float(c.number(0)), float(c.number(1)), float(c.number(2))}, areaScriptCam.on ? areaScriptCam.toAt : areaCamera.at,
+                             float(c.number(3)));
+        });
+        vm.setNative("Cr3FieldMapCamera", "SetScriptCameraTarget", [this](cr3::NativeCall& c) {
+            areaScriptCamera(areaScriptCam.on ? areaScriptCam.toEye : areaCamera.eye, {float(c.number(0)), float(c.number(1)), float(c.number(2))},
+                             float(c.number(3)));
+        });
+        vm.setNative("Cr3FieldMapCamera", "ResetScriptCamera", [this](cr3::NativeCall&) { areaScriptCam = AreaScriptCam(); });
+        vm.setNative("Cr3System", "StartQuake", [this](cr3::NativeCall& c) {
+            fieldQuake.on = true, fieldQuake.width = float(c.number(0)), fieldQuake.from = float(c.number(1)), fieldQuake.to = float(c.number(2));
+            fieldQuake.seconds = std::max(float(c.number(3)), 1.0f) / 30.0f, fieldQuake.time = 0;
+        });
+        vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; });
+        vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { areaMotions[c.string(0)] = c.string(1); });
+        vm.setNative("Cr3GimmickData", "SetMapScrollSpeed", [this](cr3::NativeCall& c) {
+            const uint32_t hash = cr3::nameHash(c.string(0).c_str());
+            const std::vector<float> speed = {float(c.number(1)), float(c.number(2))};
+            int n = 0;
+            for (ViewFigure& f : areaFigures)
+                for (ViewMesh& vm : f.meshes)
+                    if (vm.baseMaterial.hash == hash) vm.baseMaterial.params[0x55] = speed, vm.material.params[0x55] = speed, ++n;
+            SDL_Log("area %s: %s scrolls (%.2f %.2f) on %d meshes", area.name.c_str(), c.string(0).c_str(), double(speed[0]), double(speed[1]), n);
+        });
+    }
+    // the motions asked for, put on their people and objects
+    void stepAreaMotions() {
+        for (const auto& [name, motion] : areaMotions) {
+            for (AreaNpc& npc : areaNpcs) {
+                if (npc.name != name) continue;
+                bool found = false;
+                for (ViewFigure* fp : {&npc.body, &npc.head}) {
+                    ViewFigure& f = *fp;
+                    if (f.meshes.empty()) continue;
+                    const std::string base = motionBase(f.name.substr(0, f.name.size() - 5));
+                    for (const std::string& want : {motion + ".anim", npc.model + "_" + motion + ".anim", base + "_" + motion + ".anim"}) {
+                        const auto at = std::find(f.anims.begin(), f.anims.end(), want);
+                        if (at == f.anims.end()) continue;
+                        const float keep = time;
+                        loadAnim(f, size_t(at - f.anims.begin()));
+                        time = keep;
+                        found = true;
+                        break;
+                    }
+                }
+                npc.motionAt = areaClock, npc.eventMotion = found;
+                SDL_Log("area %s: %s's motion %s%s", area.name.c_str(), name.c_str(), motion.c_str(), found ? "" : " (none)");
+            }
+        }
+        areaMotions.clear();
+    }
     int areaCheckNear = -1; // (the check object the player is within: a tap's)
     // where the player was as the field was left for a vista (Fld2SaveData), to stand there again
     std::string savedArea;
@@ -6462,6 +6550,8 @@ struct Viewer {
         game.area = std::atoi(name.substr(3, 2).c_str()) - 1;
         areaEvents = std::make_unique<cr3::EventRuntime>(archive, game);
         areaEvents->language = optionLanguage, areaEvents->autoPage = pageSeconds, areaEvents->askYesNo = true;
+        areaEvents->extraNatives = [this](cr3::ScriptVM& vm) { bindAreaNatives(vm); };
+        areaScriptCam = AreaScriptCam(), areaMotions.clear();
         areaEventClock = 0;
         areaGimmicks.clear(), areaCheckNear = -1;
         {
@@ -6869,6 +6959,8 @@ struct Viewer {
         takeAutoBattleToken();
         areaClock += dt, areaMotionAge += dt;
         stepFieldEffects(dt);
+        stepAreaScriptCam(dt);
+        stepAreaMotions();
         if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
             const bool wasRunning = areaEvents->running();
             areaEventClock = std::min(areaEventClock + dt, 0.25f);
@@ -7209,9 +7301,10 @@ struct Viewer {
     }
 
     void drawArea(int w, int h) {
-        // the camera: at its eye, looking at the player (its z axis back from the target)
-        const auto& e = areaCamera.eye;
-        const auto& t = areaCamera.at;
+        // the camera: at its eye, looking at the player (its z axis back from the target); the
+        // script's while it has one
+        const auto& e = areaScriptCam.on ? areaScriptCam.eye : areaCamera.eye;
+        const auto& t = areaScriptCam.on ? areaScriptCam.at : areaCamera.at;
         float z[3] = {e[0] - t[0], e[1] - t[1], e[2] - t[2]};
         const float zl = std::max(std::sqrt(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]), 1e-5f);
         for (float& c : z) c /= zl;
@@ -7280,7 +7373,7 @@ struct Viewer {
             for (ViewFigure* fp : {&npc.body, &npc.head}) {
                 if (fp->meshes.empty()) continue;
                 fp->place = npc.place;
-                pose(*fp, areaClock + npc.phase, true);
+                pose(*fp, npc.eventMotion ? areaClock - npc.motionAt : areaClock + npc.phase, true);
                 drawFigure(*fp, vp.data());
             }
         }
@@ -7427,6 +7520,11 @@ struct Viewer {
             vm.setNative("Battle", "GetBreakPoint", [this](cr3::NativeCall& c) { c.result(cr3GaugeShown); });
             vm.setNative("Battle", "GetFiledId", [this](cr3::NativeCall& c) { c.result(cr3BattleFieldId); });
             vm.setNative("Battle", "AddFieldStatusEffect", [this](cr3::NativeCall& c) { cr3FieldEffects.push_back(c.integer(0)); });
+            // (Cr3System.SetVistaFuncName in a battle - Fld2SetVistaFuncName: Cr3ScriptWork's reserve 3 -
+            // the vista after it: the final battle's stages, s484_t01_01501_evt at its ForceEnd)
+            vm.setNative("Cr3System", "SetVistaFuncName", [this](cr3::NativeCall& c) {
+                game.next.vistaFunction = c.string(0), game.next.vista = true, cr3BattleVista = true;
+            });
             vm.setNative("Battle", "SetFieldVisualEffect", [this](cr3::NativeCall& c) { // (BtlField::SetVisualEffect: fe201am10, the lab's rain)
                 const std::string model = c.string(0);
                 dropSpark(cr3BattleSpark), cr3BattleSpark.fx.reset(), cr3BattleSparkClock = cr3BattleClock;
@@ -7742,7 +7840,7 @@ struct Viewer {
     }
     // --input auto / manual (tests): the battles from then on fought alone - each command an
     // attack on the first monster alive, the result taken - where the input has no choice of its own
-    bool autoBattle = false, autoGene = false;
+    bool autoBattle = false, autoGene = false, testPartyUnhurt = false;
     int autoGeneSkip = -1; // (auto:gene - the chooser with no gene command to use this turn)
     float wanderLeft = 0, wanderTurn = 0; // (--input wander:<seconds>)
     float inputWait = 0;                  // (--input wait:<seconds>)
@@ -7752,6 +7850,9 @@ struct Viewer {
             inputScript.pop_front();
             SDL_Log("battles: %s", autoBattle ? (autoGene ? "auto, genes first" : "auto") : "manual");
         }
+        if (!inputScript.empty() && inputScript.front() == "guard:party") // (a test aid: the party takes no damage - every battle after)
+            inputScript.pop_front(), testPartyUnhurt = true, SDL_Log("battles: the party takes no damage (test)");
+        cr3Rules.partyUnhurt = testPartyUnhurt;
     }
     static bool isCr3BattleToken(const std::string& t) {
         return t == "battle" || t == "escape" || t == "options" || t == "attack" || t == "guard" ||
@@ -7916,6 +8017,7 @@ struct Viewer {
     bool startCr3Battle(int coupling, int fieldId) {
         cr3BattleLost = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1, cr3Fx.clear(); // (BtlSystem::Init: s_ResultParam -1)
         cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
+        cr3BattleVista = false;
         cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
         std::string err;
         if (!cr3BattleTablesLoaded && !(cr3BattleTablesLoaded = cr3BattleTables.load(archive, &err))) {
@@ -8400,6 +8502,14 @@ struct Viewer {
         cr3ListItems = items;
         const cr3::Cr3Fighter& f = cr3Rules.fighters[size_t(cr3Chooser)];
         if (!items) {
+            for (int id : cr3Rules.skillCommands(cr3Chooser)) { // (its skills' commands first: kind 127)
+                cr3::Cr3Command c;
+                if (!cr3Rules.command(id, c)) continue;
+                Cr3ListRow row;
+                row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = cr3Rules.mpCost(f, c);
+                row.usable = row.cost <= f.mp;
+                cr3List.push_back(row);
+            }
             for (int id : f.geneCommands) {
                 cr3::Cr3Command c;
                 if (!cr3Rules.command(id, c) || c.type < 1 || c.type > 4) continue;
@@ -8434,7 +8544,7 @@ struct Viewer {
         cr3ChosenCommand = row.command, cr3ChosenItem = row.item;
         cr3::Cr3Command c;
         cr3Rules.command(row.command, c);
-        if (c.all || c.ally()) { // (no target to choose: all of them, or the user - its own side's first)
+        if (c.all || c.ally() || c.target == 0) { // (no target to choose: all of them, or the user - its own side's first)
             if (row.item) game.cr3Items[row.item] = std::max(game.cr3Items[row.item] - 1, 0);
             cr3Choices.push_back({cr3Chooser, row.command, c.ally() ? cr3Chooser : -1});
             nextCr3Chooser();
@@ -8847,6 +8957,7 @@ struct Viewer {
     // (SetBattleToVista), else - and after a game over - the field it came from (Fld2Main::SM_FirstEvent:
     // evt000, evt002 if lost)
     bool cr3BattleLost = false;
+    bool cr3BattleVista = false; // (its script reserved a vista: SetVistaFuncName)
     int cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = -1;
     std::vector<int> cr3FieldEffects; // (BtlFieldEffectManager: the boot script's AddFieldStatusEffect)
     int cr3ResultAdd[2] = {0, 0}, cr3ResultFactor[2] = {1, 1}; // (the scripts' EXP / money added, and factors)
@@ -8856,7 +8967,7 @@ struct Viewer {
         const int next = n.battleNext;
         n.battleNext = 1;
         cr3BattleEvents.reset();
-        if (next == 14 && !n.vistaFunction.empty() && !cr3BattleLost) { // (a game over: the field's evt002 instead - EventBattleLose)
+        if ((next == 14 || cr3BattleVista) && !n.vistaFunction.empty() && !cr3BattleLost) { // (a game over: the field's evt002 instead - EventBattleLose)
             const std::string fn = n.vistaFunction, map = n.vistaMap.empty() ? "null" : n.vistaMap;
             n = cr3::GameState::Next();
             SDL_Log("battle: on to %s in %s", fn.c_str(), map.c_str());

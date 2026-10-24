@@ -1644,6 +1644,62 @@ ONE) or take their dark parts off (REVERSE_SUBTRACT). CR3-U plays the figure onc
 DummyDP01 with its sound; not yet the particles, the random turn, the effect scale, the bullets
 (+0x18 / +0x20: a shot's effects by hit) or the other directions' effects (casts, auras).
 
+### The final battle (CR3)
+
+Battle 69 (s484_t01_00101_evt's BattleIn(69, 1, 58, 50): monster 1798, HP 1,000,000) is won in
+the battle script, not by damage:
+
+- Battle_Boot gives the hero AddExtraSkill 473 and 476.
+- Skill 476 (no trigger) has kind 127 with the gauge's advantage: command 128 at the top of the
+  hero's command list (BtlStatus::OpenCommandList - BtlSkillVisitor(0x7f, HaveAdvantage)).
+- Skill 473 has trigger 10 (after the unit's own command - BtlDamageChunk::
+  TriggerAfterCommandToCalculation) and condition 19 (that command is the constant, 128). Its
+  effects are kind 97 (interrupt with command 130) without the advantage, and kind 126 (a
+  no-target interrupt - AddNoTargetInterruptCommand - with command 129) with it.
+- Battle_Direction_End counts each 128 used with the advantage in var 67 (1 .. 7). At each count
+  it names the vista (SetVistaFuncName / SetVistaMapName): s484_d16_00301_evt, s484_d08_00501_evt,
+  s484_t01_00701_evt, s484_t03_00901_evt, s484_t02_01101_evt, s484_t01_01301_evt,
+  s484_t01_01501_evt.
+- On command 129, Battle_Direction_End plays the strike, and at var 67 = 7 it calls ForceEnd.
+
+SetVistaFuncName sets Cr3ScriptWork's reserve 3. A battle that reserved a vista this way goes to
+it when it ends (CR3-U: endCr3Battle, as SetBattleToVista's battle-next 14 does). That is
+s484_t01_01501_evt, then s484_d16_01701 (MainQuestClear for quest 16 - flag 6016), the s490 /
+s491 epilogue across every town and dungeon, and back to t0104 (no script reserves the credits
+here). A skill's effect pair is chosen by its side's advantage: +0x30.. without it, +0x44.. with
+it (Cr3BattleRules::skillEffects). Battles 67 (monster 1768, HP 600,000) and 68 (ended by its
+script) come before it.
+
+Test aid: `--input guard:party` makes hits on the party do no damage for the rest of the run
+(Cr3BattleRules::partyUnhurt). With it the final battle plays out as scripted: seven 128 / 129
+calls, then ForceEnd. Its 67 still needs `win`.
+
+### The area scripts' camera, quake, motions and scroll (CR3)
+
+These natives were stubs in the 3D areas; they are now bound through the area runtime:
+
+- Cr3FieldMapCamera.SetScriptCamera(eye xyz, target xyz, frames) (Fld2SetFieldScriptCamera,
+  Fld2CameraScript::SetupCamera / Update) moves the camera's eye and target in a straight line
+  from where they are to there, over frames x GameSystem +0x148 (1/30 s), at once for 0.
+  SetScriptCameraPosition / SetScriptCameraTarget(x, y, z, frames) move one and keep the other.
+  ResetScriptCamera brings back the field's own camera.
+- Cr3System.StartQuake(width, from, to, frames) / StopQuake shake the picture (QuakeControlTask).
+- Cr3GimmickData.SetMotion(name, motion) (Fld2SetGimmickMotion) plays a person's animation by its
+  name (Fld2NPC::SetEventAnim, blended over 1/6 s). A block's or check object's is
+  `<model>_<motion>` (Fld2Block / Fld2CheckObject::SetMotion). Both are looped.
+- Cr3GimmickData.SetMapScrollSpeed(material, u, v) (Fld2TaskMap::SetScrollSpeed) sets the map
+  material's ScrollSpeedSet1 (0x55). d16's lifts (Lift_Down / Lift_Up: cobj_17, cobj_34,
+  cobj_47) use all of these.
+
+d16 (Theia's Nerve Center) is a door puzzle:
+
+- d1602's step switches fswc_00 / fswc_01 set 4024 / 4025.
+- d1604's m227_00 (battle 1875) sets 4026, and the next area entry sets 4175, which opens cobj_06
+  to d1606.
+- d1610's m311_00 (battle 1879) sets 4041 and then 4177, which opens d1609's cobj_27 to d1612.
+- The lifts take the party on: d1606 to d1607, d1612 to d1613, d1618 to d1619.
+- d1619's cobj_49 leads to d1620.
+
 ### The battle's announcements (CR3)
 
 BtlAnnounceUI puts one line at a time in InterfaceMain's BattleAnnouncementMenu - a OneHelpMenu

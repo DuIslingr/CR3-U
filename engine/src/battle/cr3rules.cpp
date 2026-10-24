@@ -228,6 +228,28 @@ int Cr3BattleRules::skillKindMax(int skill, int kind) const {
     return best;
 }
 
+std::vector<std::pair<int, int>> Cr3BattleRules::skillEffects(int skill, bool adv) const {
+    std::vector<std::pair<int, int>> out;
+    MbeFile::Row r;
+    if (!tables_ || !tables_->skill.find("Skill", skill, kSkill, r)) return out;
+    const int base = adv ? 17 : 12; // (+0x30 .. / +0x44 ..)
+    for (int e = 0; e < 2; ++e)
+        if (r.i(base + 2 * e) != 0) out.push_back({r.i(base + 2 * e), r.i(base + 1 + 2 * e)});
+    return out;
+}
+
+std::vector<int> Cr3BattleRules::skillCommands(int fighter) const {
+    std::vector<int> out;
+    if (fighter < 0 || size_t(fighter) >= fighters.size()) return out;
+    const Cr3Fighter& f = fighters[size_t(fighter)];
+    MbeFile::Row r;
+    for (int id : f.skills)
+        if (tables_ && tables_->skill.find("Skill", id, kSkill, r) && r.i(8) == 0)
+            for (const auto& [kind, value] : skillEffects(id, advantage(f.player)))
+                if (kind == 127) out.push_back(value);
+    return out;
+}
+
 int Cr3BattleRules::mpCost(const Cr3Fighter& f, const Cr3Command& c) const {
     // (MbCommandInfo::GetMpCost: 0 the value; 1 / 2 its percentage of the max MP, at least 1; 3 x
     // the weapon's consumption - CrxWeapon::GetConsumptionFactor, Weapon +0x44 / 100 -, at least 1;
@@ -637,7 +659,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                         landed = true;
                         bool crit = false, down = false;
                         lastContinued |= t.comboChance;
-                        const int d = damage(u, t, c, &crit, &down);
+                        const int d = partyUnhurt && t.player ? (damage(u, t, c, &crit, &down), 0) : damage(u, t, c, &crit, &down);
                         hit.hits.push_back(d);
                         hit.flags.push_back(uint8_t((crit ? 1 : 0) | (down ? 2 : 0)));
                         // (BtlBasicStatus::TakeDamage: no lower than the least HP its effects allow -
@@ -724,6 +746,19 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     usedSkills_.insert({int(k), id});
                     order.insert(order.begin() + long(at) + 1, {int(k), added, -1, 1});
                 }
+            }
+        // (BtlDamageChunk::TriggerAfterCommandToCalculation - trigger 10, after the unit's own
+        // command: its skills whose condition holds - 19 that command the constant, or none -, the
+        // effects of its side's advantage: kind 97 interrupts with its command, 126 too (with no
+        // target: AddNoTargetInterruptCommand), 100 follows - the final battle's 473: 128, then 129)
+        if (tables_ && !s.dead() && !fromSkill)
+            for (int id : s.skills) {
+                MbeFile::Row r;
+                if (!tables_->skill.find("Skill", id, kSkill, r) || r.i(7) != 10) continue;
+                if (r.i(8) != 0 && !(r.i(8) == 19 && r.i(9) == cmd)) continue;
+                size_t next = at + 1;
+                for (const auto& [kind, value] : skillEffects(id, advantage(s.player)))
+                    if (kind == 97 || kind == 126 || kind == 100) order.insert(order.begin() + long(next++), {src, value, kind == 97 ? tgt : -1, 1});
             }
         // (BtlDamageTarget::TriggerAfterDamageToCalculation - trigger 7, a hit landed on it: a
         // target's skills whose condition holds - 3 its HP at or under the constant's percentage,

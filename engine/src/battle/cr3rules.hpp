@@ -175,6 +175,7 @@ public:
     // (the party's first strike - BtlStatusList::ClearRatioToEnemy: the monsters' actions this turn
     // none - the next turn() the party's alone)
     bool monstersWait = false;
+    bool partyUnhurt = false; // (a test aid - --input guard:party: hits on the party do no damage)
     // (Battle_Monster_NNNN's BattleCommand.Add - BtlStatusList::AddCommand: a command for a monster
     // this turn, in place of its own pick), by fighter; the next turn() takes them
     std::map<int, std::vector<int>> scripted;
@@ -188,6 +189,12 @@ public:
     int skillConstant(const Cr3Fighter& f, int kind) const;
     std::vector<int> skillConstants(const Cr3Fighter& f, int kind) const; // (BtlSkillVisitor: each of the kind's constants)
     int skillKindMax(int skill, int kind) const;
+    // a skill's two (kind, constant) effects - with its side's gauge advantage the second set
+    // (+0x44 ..; MbSkillInfo, BtlSkillVisitor's advantage)
+    std::vector<std::pair<int, int>> skillEffects(int skill, bool advantage) const;
+    // the commands a fighter's skills add at the top of its list (kind 127 - BtlStatus::
+    // OpenCommandList: the final battle's 476, command 128 with the advantage)
+    std::vector<int> skillCommands(int fighter) const;
     void useTables(const Cr3BattleTables& t) { tables_ = &t; } // (the tables alone - no battle set up) // (a skill's own effects of the kind: the highest; 0 none)
     int outcome() const; // 0 going on, 1 won, 2 lost
     // status effects (BtlStatusEffectList): given (a script's, or a command's that landed), removed;
