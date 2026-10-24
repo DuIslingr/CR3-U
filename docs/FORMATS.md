@@ -316,6 +316,10 @@ SM_Init (a vista's end with SetComeFromVistaToField: the prologue's t0201_p3), S
 a volume's own point) - and clears it. An area's `evt000` that sets the next scene up and never
 waits (t0104's s111_t01_00301_set: SetVistaFuncName, then ppJump2) is over at once, and what it
 reserved still goes next (SM_FirstEvent, then BranchAfterEvent): the vista, then the pop point.
+Cr3System.CheckVistaEvent (Fld2CheckVistaEvent: SetVistaFuncName's or SetVistaFuncName2's reserve,
+work bytes 3 / 0x11) ends a dungeon's evt000 after its story set-ups: the music, people, map name
+and quest checks (MainQuestClear_ID11 - quest_complete) wait for its return from the vista, so a
+lost story battle (evt002, EventBattleLose) never clears the quest; CheckLunchEvent the meal's.
 The e-maps a map table entry's camera type 2 marks (an ortho camera: e0015, the coral wall's cave)
 are made by Fld2TaskMap::CreateArea2D - no `<area>c`: their defaultPos and walls are `<area>`'s own.
 The random dungeons' maps - the map table's 0x5e .. 0xc0 and 0x153 .. 0x1b5, d0601 .. d0699 (Magma

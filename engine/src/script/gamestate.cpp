@@ -198,6 +198,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("LunchEvent", "SetFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.lunch = true; });
     vm.setNative("LunchEvent", "SetMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });
     vm.setNative("Cr3System", "SetVistaFuncName2", [&next](NativeCall& c) { next.vistaFunction = c.string(0); }); // (Fld2SetVistaFuncName2)
+    // (Fld2CheckVistaEvent: a vista reserved - SetVistaFuncName's or SetVistaFuncName2's -; the areas'
+    // evt000 then stops before the field's own set-up and quest checks, which run when it's back)
+    vm.setNative("Cr3System", "CheckVistaEvent", [&next](NativeCall& c) { c.result(next.vista || (!next.lunch && !next.vistaFunction.empty())); });
+    vm.setNative("Cr3System", "CheckLunchEvent", [&next](NativeCall& c) { c.result(next.lunch); }); // (Fld2CheckLunchEvent)
     vm.setNative("Cr3System", "SetBattleNext", [&next](NativeCall& c) { next.battleNext = c.integer(0, 1); }); // (FldUtilSetBattleNext)
     vm.setNative("Cr3System", "BattleIN", [&next](NativeCall& c) { next.battle = c.integer(0); }); // (FldUtilReserveBattleIN)
     for (const char* name : {"BattleIn", "BattleIn2"}) // (CR3's: FldUtilReserveBattleIN / ..IN2)
