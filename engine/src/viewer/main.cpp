@@ -7763,7 +7763,11 @@ struct Viewer {
             const bool own = !inputScript.empty() && isCr3BattleToken(inputScript.front());
             if (!scripted && autoBattle && !own && cr3BattleClock - cr3StageStart > 0.6f) { // (--input auto: attack the first monster alive; auto:gene its first gene command on a foe first)
                 if (cr3BattleStage == Cr3BattleStage::Menu) autoGeneSkip = -1, chooseCr3GetSet(0);
-                else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(autoGene && autoGeneSkip != cr3Chooser ? 1 : 0);
+                else if (cr3BattleStage == Cr3BattleStage::Command) { // (a button a status shuts - menuEnabled - passed over: a guard at last)
+                    int b = autoGene && autoGeneSkip != cr3Chooser && cr3Rules.menuEnabled(cr3Chooser, 1) ? 1 : 0;
+                    if (b == 0 && !cr3Rules.menuEnabled(cr3Chooser, 0)) b = 3;
+                    chooseCr3Command(b);
+                }
                 else if (cr3BattleStage == Cr3BattleStage::Target) chooseCr3Target(0);
                 else if (cr3BattleStage == Cr3BattleStage::List) {
                     int pick = -1;
@@ -7809,7 +7813,7 @@ struct Viewer {
         } else if (cr3BattleStage == Cr3BattleStage::Won && vs.screen == 6) { // (VS: the score up - a tap, or --input vs:next, goes on)
             while (!inputScript.empty() && inputScript.front() != "vs:next" &&
                    (inputScript.front() == "battle" || inputScript.front() == "attack" || inputScript.front() == "guard" ||
-                    (inputScript.front().size() > 1 && inputScript.front()[0] == 't')))
+                    (inputScript.front().size() > 1 && inputScript.front()[0] == 't' && std::isdigit(static_cast<unsigned char>(inputScript.front()[1])))))
                 inputScript.pop_front(); // (the battle's leftover choices)
             if (!inputScript.empty() && inputScript.front() == "vs:next" && uiClock - vs.scoreAt > 1.0f) inputScript.pop_front(), vsBattleOver(true);
         } else if (cr3BattleStage == Cr3BattleStage::Won) {
@@ -7825,7 +7829,7 @@ struct Viewer {
             while (!inputScript.empty() && inputScript.front() != "result" &&
                    (inputScript.front() == "battle" || inputScript.front() == "escape" || inputScript.front() == "attack" ||
                     inputScript.front() == "guard" || inputScript.front().compare(0, 4, "gene") == 0 ||
-                    inputScript.front().compare(0, 4, "item") == 0 || (inputScript.front().size() > 1 && inputScript.front()[0] == 't')))
+                    inputScript.front().compare(0, 4, "item") == 0 || (inputScript.front().size() > 1 && inputScript.front()[0] == 't' && std::isdigit(static_cast<unsigned char>(inputScript.front()[1])))))
                 inputScript.pop_front();
             if (!inputScript.empty() && inputScript.front() == "result" && cr3BattleClock - cr3StageStart > 1.5f) inputScript.pop_front(), endCr3Battle();
             else if (autoBattle && cr3BattleClock - cr3StageStart > 1.5f) endCr3Battle(); // (--input auto: the result taken)
