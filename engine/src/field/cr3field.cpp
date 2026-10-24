@@ -216,7 +216,11 @@ void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt
         }
         if (f < 1) {
             eye = t + (eye - t) * f;
-            const float d = std::hypot(eye[0] - t[0], eye[2] - t[2]);
+            float d = std::hypot(eye[0] - t[0], eye[2] - t[2]);
+            if (d < 1e-3f) { // (a wall at the target itself: kept a hair back along its way, not straight above - a view and a stick's way still)
+                eye[0] = t[0] + std::sin(base) * 1e-3f, eye[2] = t[2] + std::cos(base) * 1e-3f;
+                d = 1e-3f;
+            }
             if (d < 2) eye[1] += 2 - d; // (raised as it comes in)
             if (d < 1) playerAlpha = 0.3f;
         }

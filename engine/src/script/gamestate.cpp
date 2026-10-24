@@ -433,7 +433,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     for (int s = 0; s < 32; ++s) o << "sopia " << s << ' ' << int(sopiaLevel[s]) << ' ' << sopiaExp[s] << '\n';
     o << "owned " << sopiaOwned << '\n';
     o << "difficulty " << difficulty << '\n';
-    o << "select " << selectDungeon << '\n';
+    o << "select " << selectDungeon << ' ' << selectLevel << '\n'; // (the level: a dungeon's encounters' band on resuming - DAT_014bde04)
     o << "boxes " << boxes.table;
     for (int k = 0; k < 3; ++k)
         for (int n = 0; n < 10; ++n) o << ' ' << int(boxes.set[k][n]) * 1 + int(boxes.open[k][n]) * 2;
@@ -574,6 +574,7 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             l >> sopiaOwned;
         } else if (key == "select") {
             l >> selectDungeon;
+            if (!(l >> selectLevel)) selectLevel = 0;
         } else if (key == "difficulty") {
             l >> difficulty;
         } else if (key == "boxes") {

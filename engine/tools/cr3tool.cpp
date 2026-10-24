@@ -671,6 +671,16 @@ int traceEvent(const char* path, const char* script, const char* function, int m
     int frame = 0, wait = 0;
     std::string last;
     int repeats = 0;
+    // (CR3_TRACE_RESULTS="Cr3Work.Get(24)=425;Cr3Flag.Check(2128)=1": calls' results as given - a
+    // quest's or a flag's branch followed)
+    std::map<std::string, int> given;
+    if (const char* r = std::getenv("CR3_TRACE_RESULTS"))
+        for (std::string all = r; !all.empty();) {
+            const size_t semi = all.find(';');
+            const std::string one = all.substr(0, semi);
+            all = semi == std::string::npos ? "" : all.substr(semi + 1);
+            if (const size_t eq = one.rfind('='); eq != std::string::npos) given[one.substr(0, eq)] = std::atoi(one.c_str() + eq + 1);
+        }
     vm.setNative("", "WaitFrame", [&](cr3::NativeCall& c) {
         wait = std::max(1, c.integer(0, 1));
         c.suspend();
@@ -693,6 +703,7 @@ int traceEvent(const char* path, const char* script, const char* function, int m
         else if (n == "EvtWindow.CheckYesNoButton") c.result(1);
         else if (n == "EvtIntroduction.GetVisible") c.result(false);
         else if (n == "VistaEvent.CheckExecution") c.result(false);
+        if (const auto it = given.find(line); it != given.end()) c.result(it->second);
     });
     bool ok = vm.call(fn);
     while (ok && vm.waiting() && frame < maxFrames) {

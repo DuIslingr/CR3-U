@@ -7226,7 +7226,7 @@ struct Viewer {
         const float forward[2] = {fx / fl, fz / fl}, right[2] = {-forward[1], forward[0]};
         float dx = forward[0] * sy + right[0] * sx, dz = forward[1] * sy + right[1] * sx;
         const float push = std::min(std::hypot(sx, sy), 1.0f);
-        const bool moving = push > 0.01f;
+        const bool moving = push > 0.01f && std::hypot(dx, dz) > 1e-6f; // (no way across: the camera straight above)
         const float speed = moving ? (run ? 4.8f : 1.2f) * push : 0.0f;
         if (moving) {
             const float dl = std::hypot(dx, dz);
