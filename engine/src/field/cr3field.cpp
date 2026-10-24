@@ -111,7 +111,9 @@ bool Cr3Area::load(const MvglArchive& a, const std::string& area, std::string* e
         }
         return true;
     }
-    for (const char* suffix : {"f", "s", "m1"})
+    // (<area>m1 isn't the scene's: Fld2TaskMap::OnDraw renders it into layer 10 alone - the post
+    // effect's mask, a black stand-in of the field (GameSystem +0x3c / +0x55 on) - not in CR3-U yet)
+    for (const char* suffix : {"f", "s"})
         if (a.contains(area + suffix + ".geom")) figures.push_back(area + suffix), places.push_back(Mat34());
     PhysScene scene;
     std::string err;

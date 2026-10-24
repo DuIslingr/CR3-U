@@ -336,6 +336,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
                                                 [&](const GameState::FieldEffect& e) { return e.target == target; }),
                                  state.fieldEffects.end());
     });
+    vm.setNative("Cr3GimmickData", "SetMove", [&state](NativeCall& c) { state.moveRequests[c.string(0)] = {c.number(1), c.number(2)}; });
     vm.setNative("Cr3GimmickData", "SwitchOn", [&state](NativeCall& c) { // (Fld2PhysicalSwitch::SetOnFlag: its other model, no sound)
         if (c.integer(1, 1)) state.switchesOn.insert(c.string(0));
         else state.switchesOn.erase(c.string(0));

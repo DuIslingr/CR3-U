@@ -160,7 +160,10 @@ struct GameState {
     // the field's boxes opened (Cr3GimmickData.BoxOpen - Fld2OpenTreasureBox: 1) and then let go
     // (DeleteBox - Fld2DeleteTrasureBox: 2, faded out), by name ("kbox_00") - not saved
     std::map<std::string, int> fieldBoxes;
-    std::set<std::string> switchesOn; // (Cr3GimmickData.SwitchOn: the bomb switches - Fld2PhysicalSwitch - turned on)
+    std::set<std::string> switchesOn; // (Cr3GimmickData.SwitchOn: the bomb switches - Fld2PhysicalSwitch - turned on, the step switches - Fld2StepSwitch - down)
+    // Cr3GimmickData.SetMove(name, end, frames) (Fld2SetMovingObjectMove): a moving object's motion
+    // to start - its area's <area>p animation from 0 to that frame over those frames; the field takes them
+    std::map<std::string, std::array<float, 2>> moveRequests;
     // the field's effects (Cr3FieldMapEffectResident.EffectResidentPlay / PlayOnce - Fld2TaskGimmick::
     // CreateEffect: a model - the scripts' SetFlagMark fe007poin02 - at a gimmick's place, "player"
     // the player's, + the offset, scaled; looped, or once; EffectResidentOut - DeleteEffect: the

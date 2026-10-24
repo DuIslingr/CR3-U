@@ -339,7 +339,10 @@ mirroring on that axis) each place a piece: `<piece>c.phys` with every body move
 position and rotation; the mirror its shape's scaling), and - by `<area>f`'s joints of those names,
 placed at `<area>c`'s - `<piece>f` and `<piece>s` drawn there (d0600_00: the kit's own d0600f, the sky
 and the lights, at the origin). `<area>f` itself is drawn at the origin; d0600m2 (blackened) isn't in
-CR3-U. The floors chain by the exit crystal (`cobj_00`: Cr3System.GetRandom - utils::GetRandom,
+CR3-U. A piece placed mirrored draws with culling off (Fld2TaskMap::OnDraw: EntryCullFaceEnable(false)).
+`<area>m1` is never the scene's: OnDraw renders it into layer 10 alone - a post effect's mask, a black
+stand-in of the whole field (Primordia's, the Edge of the World's) - so CR3-U leaves it undrawn. The
+floors chain by the exit crystal (`cobj_00`: Cr3System.GetRandom - utils::GetRandom,
 CrxRandom's modulo |n| - picks the next map, the global work's 51 the floors climbed). A script's map
 names may be upper case (q058_d07_00109's SetBattleToVista "D0712f"); the field takes them lower.
 A vista's model (a joint ev_<name>) shows the figure its name names up to the first '_' (EvtModel::
@@ -423,8 +426,12 @@ A bomb switch (Fld2PhysicalSwitch, ragdoll_bswc_..: f0000swc02, its other model 
 f0000swc03) turns when a bomb goes off within its row's +0x34 (1.5; CheckBlastObjectwithSwitchTiming,
 the bomb's first update gone off): Exchange - the other model shown, SE 0x24f, its function (bswc_01:
 flag 4025, the door cobj_05 open). The area script turns it back on on a new visit
-(Cr3GimmickData.SwitchOn(name, true)). The floor switch (Fld2StepSwitch, ragdoll_fswc_..: the player
-within 0.5 of it - CheckOnSwitch, SE 0x24e, pressed 0.105) isn't in yet. Crawl tests: near:<gimmick>:<distance>
+(Cr3GimmickData.SwitchOn(name, true)). The step switch (Fld2StepSwitch, ragdoll_fswc_..): the
+player's feet within 0.5 of it - the field free - press it (its model's `_n01`, SE 0x24e, its body
+0.105 down) and at the motion's end its function runs, once; SwitchOn has it down already. A moving
+object (Fld2MovingObject, ragdoll_fmove_..) follows its joint in `<area>p` as `<area>p.anim` plays:
+Cr3GimmickData.SetMove(name, end, frames) runs it from 0 to end / 30 at end / frames a second (d13's
+step switches raise d1300floor00 .. from -1.5 to 0); its rigid box is made with collision off. Crawl tests: near:<gimmick>:<distance>
 (the player put that far from it - the side toward the player first, else round it, the first spot
 that lands at its height), wait:<seconds> (the inputs after it held), and auto battles spend a jem at
 each defeat's Continue. `cr3view --chapter-jump <x_y>` runs `chapter_jump`'s chapter_jump_<x_y> on a

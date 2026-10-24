@@ -2,7 +2,7 @@
 // CR3's field (Fld2: docs/FORMATS.md "Fields (CR3)"). An area (Fld2TaskMap::CreateArea) is four
 // figures named after it: <area>c - not drawn; its lights, its joints (defaultPos ...) and its
 // <area>c.phys, the walls and floors (bodies named "camhit..." the camera's alone) -, <area>f the
-// field itself, <area>s over it 0.01 up and <area>m1. The player (Fld2TaskPlayer) is a
+// field itself, <area>s over it 0.01 up (<area>m1: a post effect mask, not drawn). The player (Fld2TaskPlayer) is a
 // Fld2CharaNameTbl model - j001 .. j005, c101 - walking (1.2 a second) or running (4.8) as a
 // sphere of 0.2 (Fld2CharaCtrl: step 0.1, slopes up to 45 degrees); the camera follows it
 // (Fld2CameraGom).
@@ -19,7 +19,7 @@ namespace cr3 {
 
 struct Cr3Area {
     std::string name;                 // "d0101"
-    std::vector<std::string> figures; // drawn, in order: <area>f, <area>s, <area>m1 (those it has)
+    std::vector<std::string> figures; // drawn, in order: <area>f, <area>s (those it has; not m1 - a post effect's mask)
     std::vector<Mat34> places;        // each figure's (a random area's pieces: at their joints)
     std::array<float, 3> spawn{};     // <area>c's defaultPos
     float spawnYaw = 0;               // (its rotation about y: the way the player faces)

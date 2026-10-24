@@ -1625,6 +1625,20 @@ struct Viewer {
                 int top = 0;
                 for (uint8_t j : vm.source.joints) top = std::max(top, int(j));
                 SDL_Log("%s mesh %zu: joints up to %d for a palette of %zu", name.c_str(), f.meshes.size(), top, vm.source.palette.size());
+                {
+                    float lo = 9, hi = -9;
+                    for (float c : vm.source.colour) lo = std::min(lo, c), hi = std::max(hi, c);
+                    SDL_Log("%s mesh %zu: %zu vertex colours %.3f .. %.3f", name.c_str(), f.meshes.size(), vm.source.colour.size() / 4, lo, hi);
+                    float u0 = 1e9f, u1 = -1e9f, v0 = 1e9f, v1 = -1e9f;
+                    for (size_t k = 0; k + 1 < vm.source.uv.size(); k += 2)
+                        u0 = std::min(u0, vm.source.uv[k]), u1 = std::max(u1, vm.source.uv[k]), v0 = std::min(v0, vm.source.uv[k + 1]), v1 = std::max(v1, vm.source.uv[k + 1]);
+                    SDL_Log("%s mesh %zu: uv %.3f .. %.3f, %.3f .. %.3f", name.c_str(), f.meshes.size(), u0, u1, v0, v1);
+                    float lo3[3] = {1e9f, 1e9f, 1e9f}, hi3[3] = {-1e9f, -1e9f, -1e9f};
+                    for (size_t k = 0; k + 2 < vm.source.position.size(); k += 3)
+                        for (int a = 0; a < 3; ++a) lo3[a] = std::min(lo3[a], vm.source.position[k + a]), hi3[a] = std::max(hi3[a], vm.source.position[k + a]);
+                    SDL_Log("%s mesh %zu: positions (%.1f %.1f %.1f) .. (%.1f %.1f %.1f), %zu w, palette %s", name.c_str(), f.meshes.size(), lo3[0], lo3[1], lo3[2], hi3[0], hi3[1], hi3[2], vm.source.positionW.size(),
+                            vm.source.palette.empty() ? "-" : std::to_string(vm.source.palette[0]).c_str());
+                }
                 SDL_Log("%s mesh %zu: key %08x_%08x_%08x_%08x textures [%s] params {%s} states {%s} lit %d", name.c_str(), f.meshes.size(),
                         vm.material.shaderKey[0], vm.material.shaderKey[1], vm.material.shaderKey[2], vm.material.shaderKey[3], tx.c_str(),
                         ps.c_str(), st.c_str(), int(vm.lit));
@@ -2056,7 +2070,7 @@ struct Viewer {
             m.material.state(0xa6, 1, v);
             m.material.state(0xa5, kGlBack, v2);
             st.cull = v && !SDL_getenv("CR3_NO_CULL") ? (v2 == kGlFront ? 1 : 2) : 0;
-            if (mirrored && st.cull) st.cull = st.cull == 1 ? 2 : 1; // (placed mirrored: its faces turned round)
+            if (mirrored) st.cull = 0; // (placed mirrored: Fld2TaskMap::OnDraw - EntryCullFaceEnable(false) while it draws)
             m.material.state(0xa8, 1, v);
             st.depthWrite = v != 0;
             m.material.state(0xa9, 1, v);
@@ -5892,6 +5906,68 @@ struct Viewer {
     cr3::CollisionWorld areaBaseWalls;
     cr3::PhysScene areaPhysP;
     std::string areaWallKey, areaPrefix;
+    // the moving objects (Fld2MovingObject::SetMove / UpdatePosRot): SetMove's end frame / 30 reached
+    // at end / frames a second from 0, <area>p posed at that time, the object on its ragdoll joint
+    // (its model kept its first offset from it)
+    ViewFigure areaP; // (Fld2TaskGimmick +0xe0: <area>p, its animation)
+    struct AreaNpc;
+    void placeMover(AreaNpc& npc) {
+        if (!areaP.animLoaded) return;
+        areaP.place = cr3::Mat34();
+        pose(areaP, npc.moveTime, false);
+        cr3::Mat34 r;
+        if (jointWorld(areaP, "ragdoll_" + npc.name, r)) npc.ragdoll = r;
+        if (!jointWorld(areaP, npc.name, r)) return; // (its model's joint - the ragdoll's plus the first offset)
+        for (int c = 0; c < 3; ++c) { // (its rotation, not the joint's scale)
+            const float l = std::sqrt(r.m[c] * r.m[c] + r.m[4 + c] * r.m[4 + c] + r.m[8 + c] * r.m[8 + c]);
+            if (l > 1e-6f) r.m[c] /= l, r.m[4 + c] /= l, r.m[8 + c] /= l;
+        }
+        npc.place = r;
+    }
+    void stepAreaMovers(float dt) {
+        for (const auto& [name, req] : game.moveRequests)
+            for (AreaNpc& npc : areaNpcs)
+                if (npc.mover && npc.name == name) {
+                    npc.moveTime = 0, npc.moveEnd = req[0] / 30.0f;
+                    npc.moveSpeed = req[0] != 0 && req[1] > 0 ? npc.moveEnd / (req[1] / 30.0f) : 0;
+                    if (req[1] <= 0) npc.moveTime = npc.moveEnd;
+                    npc.moving = true;
+                    SDL_Log("area %s: %s moves to frame %.0f over %.0f", area.name.c_str(), name.c_str(), req[0], req[1]);
+                }
+        game.moveRequests.clear();
+        for (AreaNpc& npc : areaNpcs) {
+            if (!npc.mover || !npc.moving) continue;
+            npc.moveTime += npc.moveSpeed * dt;
+            if (npc.moveTime >= npc.moveEnd) npc.moveTime = npc.moveEnd, npc.moving = false;
+            placeMover(npc);
+            if (!npc.moving) SDL_Log("area %s: %s at (%.2f %.2f %.2f)", area.name.c_str(), npc.name.c_str(), npc.place.m[3], npc.place.m[7], npc.place.m[11]);
+        }
+    }
+    // the step switches (Fld2StepSwitch::CheckOnSwitch: the player's feet within 0.5 - the field
+    // free -: down - its _n01 played, SE 0x24e -, and at the motion's end its function, once; a
+    // SwitchOn from the area's script has it down already)
+    void stepStepSwitches() {
+        const cr3::Vec3 p = areaWalker->position();
+        const float feet[3] = {p[0], p[1] - areaWalker->radius, p[2]};
+        for (AreaNpc& npc : areaNpcs) {
+            if (!npc.stepSwitch || !game.gimmickVisible(npc.name)) continue;
+            if (npc.stepState == 0 && game.switchesOn.count(npc.name)) npc.stepState = 2;
+            if (npc.stepState == 0 && !(areaEvents && areaEvents->running())) {
+                const float dx = feet[0] - npc.place.m[3], dy = feet[1] - npc.place.m[7], dz = feet[2] - npc.place.m[11];
+                if (std::sqrt(dx * dx + dy * dy + dz * dz) <= 0.5f) {
+                    npc.stepState = 1, npc.stepAt = areaClock;
+                    audio.playSe(0x24e, false);
+                    SDL_Log("area %s: %s stood on", area.name.c_str(), npc.name.c_str());
+                }
+            }
+            const float dur = npc.body.animLoaded ? npc.body.anim.duration() : 0.0f;
+            if (npc.stepState == 1 && areaClock - npc.stepAt >= dur) {
+                npc.stepState = 2;
+                game.switchesOn.insert(npc.name);
+                fieldPendingFunctions.push_back(npc.name); // (SetScript)
+            }
+        }
+    }
     void updateGimmickWalls() {
         std::string key;
         for (const AreaNpc& npc : areaNpcs)
@@ -6090,6 +6166,13 @@ struct Viewer {
         bool solid = false;             // (the Field row's +0x2c: a rigid body - its <area>p.phys body, named as it)
         bool rock = false;              // (Fld2Rock: ragdoll_krock_..)
         bool bombSwitch = false;        // (Fld2PhysicalSwitch: ragdoll_bswc_.. - a blast near turns it, its other model <model less 2>03)
+        bool stepSwitch = false;        // (Fld2StepSwitch: ragdoll_fswc_.. - stood on, it goes down - its _n01 -, then its function)
+        int stepState = 0;              // 0 up, 1 going down, 2 down (done: once)
+        float stepAt = 0;
+        bool mover = false;             // (Fld2MovingObject: ragdoll_fmove_.. - SetMove plays <area>p's animation, it follows its ragdoll joint)
+        bool moving = false;
+        float moveTime = 0, moveEnd = 0, moveSpeed = 0;
+        cr3::Mat34 ragdoll;             // (the ragdoll joint now - its rigid box is made with collision off: Fld2MovingObject::Create)
         ViewFigure alt;
         float blastRadius = 0;          // (+0x34: a bomb's blast this near breaks it - CheckBlastObject)
         bool broken = false;
@@ -6183,6 +6266,20 @@ struct Viewer {
             npc.solid = row.i(9) != 0;
             npc.rock = gimmick.compare(0, 13, "ragdoll_krock") == 0;
             npc.bombSwitch = gimmick.compare(0, 12, "ragdoll_bswc") == 0;
+            npc.stepSwitch = gimmick.compare(0, 12, "ragdoll_fswc") == 0;
+            npc.mover = gimmick.compare(0, 13, "ragdoll_fmove") == 0;
+            if (npc.mover) {
+                const auto rj = std::find(joints.begin(), joints.end(), gimmick);
+                if (rj != joints.end() && size_t(rj - joints.begin()) < world.size()) npc.ragdoll = world[size_t(rj - joints.begin())];
+                else npc.ragdoll = npc.place;
+            }
+            if (npc.stepSwitch) // (its going down: <model>_n01, slot 1)
+                for (size_t k = 0; k < npc.body.anims.size(); ++k)
+                    if (npc.body.anims[k] == model + "_n01.anim") {
+                        const float keep = time;
+                        loadAnim(npc.body, k);
+                        time = keep;
+                    }
             if (npc.bombSwitch && model.size() > 2) loadFigure(model.substr(0, model.size() - 2) + "03.geom", npc.alt, &err);
             npc.blastRadius = row.f(11);
             npc.broken = npc.rock && game.brokenRocks.count(name + ":" + npc.name);
@@ -6286,6 +6383,16 @@ struct Viewer {
                     else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
                         areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
                 loadAreaNpcs(name, names, w);
+                unload(areaP), areaP = ViewFigure();
+                if (std::any_of(areaNpcs.begin(), areaNpcs.end(), [](const AreaNpc& n) { return n.mover; }) && loadFigure(name + "p.geom", areaP, &err)) {
+                    areaP.absolute = true; // (CrxSimpleModel: its own animation)
+                    for (size_t k = 0; k < areaP.anims.size(); ++k)
+                        if (areaP.anims[k] == name + "p.anim") {
+                            const float keep = time;
+                            loadAnim(areaP, k);
+                            time = keep;
+                        }
+                }
                 // (the solid gimmicks' bodies - rocks, boxes, check objects: their <area>p.phys bodies,
                 // walls while they stand - updateGimmickWalls)
                 areaBaseWalls = area.walls, areaPhysP = cr3::PhysScene(), areaWallKey = "~";
@@ -6979,6 +7086,8 @@ struct Viewer {
         for (AreaNpc& npc : areaNpcs)
             if (npc.box) stepAreaBox(npc, dt);
         stepFieldBombs(dt);
+        stepAreaMovers(dt);
+        stepStepSwitches();
         updateGimmickWalls();
         if (!fieldPendingFunctions.empty() && areaEvents && !areaEvents->running()) {
             const std::string fn = fieldPendingFunctions.front();
@@ -7053,6 +7162,13 @@ struct Viewer {
                     pose(boxGet, areaClock - npc.openAt, false);
                     drawFigure(boxGet, vp.data());
                 }
+                continue;
+            }
+            if (npc.stepSwitch) { // (up, going down, or down - its _n01's end)
+                const float dur = npc.body.animLoaded ? npc.body.anim.duration() : 0.0f;
+                npc.body.place = npc.place;
+                pose(npc.body, npc.stepState == 0 ? 0.0f : npc.stepState == 1 ? std::min(areaClock - npc.stepAt, dur) : dur, false);
+                drawFigure(npc.body, vp.data());
                 continue;
             }
             if (npc.bombSwitch && game.switchesOn.count(npc.name) && !npc.alt.meshes.empty()) { // (Exchange: its other model)
