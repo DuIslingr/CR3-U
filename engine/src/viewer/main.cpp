@@ -7547,13 +7547,14 @@ struct Viewer {
                 c.result(down);
             });
             // (BattleCommand.Add(unit, actions, command) - BtlStatusList::AddCommand: its command this
-            // turn; SetId - commands of no unit's after the turn's end: not played yet)
+            // turn; SetId / SetIdAndTarget - commands of no unit's, played after the defeat's or the
+            // turn's end script: playCr3ScriptCommands)
             vm.setNative("BattleCommand", "Add", [this](cr3::NativeCall& c) {
                 if (c.integer(0, -1) >= 0) cr3Rules.scripted[c.integer(0)].push_back(c.integer(2));
             });
-            vm.setNative("BattleCommand", "SetId", [this](cr3::NativeCall& c) {
-                SDL_Log("battle %d: script command %d (not played)", cr3Battle.coupling, c.integer(0));
-            });
+            vm.setNative("BattleCoupling", "SetId", [this](cr3::NativeCall& c) { cr3NextCoupling = c.integer(0, -1); });
+            vm.setNative("BattleCommand", "SetId", [this](cr3::NativeCall& c) { cr3ScriptCommands.push_back({c.integer(0), -1}); });
+            vm.setNative("BattleCommand", "SetIdAndTarget", [this](cr3::NativeCall& c) { cr3ScriptCommands.push_back({c.integer(0), c.integer(1, -1)}); });
             vm.setNative("BattleStatus", "GetIdByPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(true, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByNonPlayerIndex", [nth](cr3::NativeCall& c) { c.result(nth(false, c.integer(0))); });
             vm.setNative("BattleStatus", "GetIdByCharId", [this](cr3::NativeCall& c) {
@@ -8014,8 +8015,87 @@ struct Viewer {
             drawUiText(cr3Announce.text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, a);
         }
     }
+    // the units' figures from `from` on (the party's, the monsters')
+    void loadCr3BattleUnits(size_t from) {
+        std::string err;
+        int monsters = 0;
+        for (size_t k = 0; k < cr3Battle.units.size(); ++k) {
+            const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
+            Cr3BattleUnitView& u = cr3BattleUnits[k];
+            if (!bu.player) u.phase = float(monsters++) + 0.25f; // (Standby: its slot's 0 / 1 / 2, + up to 0.5 at random)
+            if (k < from) continue;
+            figureVariant = bu.variant; // (CrxModel::ChangePartTextureVariation: the monster's)
+            for (int part = 0; part < 2; ++part) {
+                const std::string& fig = part ? bu.head : bu.figure;
+                ViewFigure& f = part ? u.head : u.body;
+                if (fig.empty()) continue;
+                if (!loadFigure(fig + ".geom", f, &err)) {
+                    SDL_Log("battle unit %s: %s", fig.c_str(), err.c_str());
+                    continue;
+                }
+                const auto it = std::find(f.anims.begin(), f.anims.end(), motionBase(fig) + "_bb01.anim"); // (a costume body: b01's motions)
+                if (it != f.anims.end()) loadAnim(f, size_t(it - f.anims.begin()));
+            }
+            figureVariant = bu.weaponVariant;
+            if (!bu.weapon.empty() && !loadFigure(bu.weapon + ".geom", u.weapon, &err)) SDL_Log("battle weapon %s: %s", bu.weapon.c_str(), err.c_str());
+            figureVariant.clear();
+        }
+    }
+    // the next wave (BattleCoupling.SetId in a victory script - BtlSysStateAction::phaseVictoryEvent's
+    // end: AcquireRemuneration, then reinforceByCoupling - BtlSystem::CreateMonster: the monsters
+    // gone, the coupling's in their place -, the coupling's script loaded (not booted), the units
+    // aligned, the camera's size, FadeInNonPlayers; then phaseCallTurnEndEvent - its Battle_Turn_End
+    // - and the next turn. The party as it stands - HP, MP, status effects -, the gauge, the turn)
+    int cr3NextCoupling = -1;
+    void reinforceCr3Battle(int coupling) {
+        acquireCr3Remuneration();
+        std::vector<cr3::Cr3Fighter> party;
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
+            if (f.player) party.push_back(f);
+        const int gauge = cr3Rules.gauge;
+        const std::vector<int> ids(std::begin(game.cr3Party), std::end(game.cr3Party));
+        std::string err;
+        cr3::Cr3Battle next;
+        if (!next.setup(cr3BattleTables, coupling, cr3BattleFieldId, ids, uint32_t(SDL_GetTicks()) | 1u, &err, &game.cr3Armour, &game.cr3Weapon)) {
+            SDL_Log("battle %d: the next wave %d: %s", cr3Battle.coupling, coupling, err.c_str());
+            return;
+        }
+        // (the party's units stay - the same, first -; the monsters' figures anew)
+        size_t players = 0;
+        while (players < next.units.size() && next.units[players].player) ++players;
+        for (size_t k = players; k < cr3BattleUnits.size(); ++k) unload(cr3BattleUnits[k].body), unload(cr3BattleUnits[k].head), unload(cr3BattleUnits[k].weapon);
+        cr3BattleUnits.resize(std::min(players, cr3BattleUnits.size()));
+        cr3BattleUnits.resize(next.units.size());
+        next.field = cr3Battle.field; // (the field stays)
+        cr3Battle = next;
+        loadCr3BattleUnits(players);
+        cr3PartyRules();
+        cr3Rules.partyMpLeft.clear();
+        const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
+        const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) + uint32_t(coupling) : uint32_t(SDL_GetTicks()) | 1u;
+        if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
+        for (size_t k = 0, p = 0; k < cr3Rules.fighters.size() && p < party.size(); ++k)
+            if (cr3Rules.fighters[k].player) {
+                const int unit = cr3Rules.fighters[k].unit;
+                cr3Rules.fighters[k] = party[p++], cr3Rules.fighters[k].unit = unit;
+            }
+        cr3Rules.gauge = gauge;
+        cr3HpShown.clear();
+        for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp);
+        for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
+            const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
+            if (!f.player) SDL_Log("battle %d: fighter %zu - monster %d, level %d, HP %d", coupling, k, f.id, f.level, f.maxHp);
+        }
+        cr3Drops.clear(), cr3Choices.clear(), cr3Actions.clear(), cr3Popups.clear();
+        SDL_Log("battle %d: the next wave - battle %d, %zu units", cr3Battle.coupling, coupling, cr3Battle.units.size());
+        playCr3Camera(cr3Battle.cameras[1], 1.0f, false, {0, 0, 0}, 0, 0);
+        cr3BattleStage = Cr3BattleStage::Action; // (phaseCallTurnEndEvent: the new script's turn's end, then the next turn)
+        runCr3BattleScript("Battle_Turn_End_Base");
+        playCr3ScriptCommands();
+        beginCr3Turn();
+    }
     bool startCr3Battle(int coupling, int fieldId) {
-        cr3BattleLost = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1, cr3Fx.clear(); // (BtlSystem::Init: s_ResultParam -1)
+        cr3BattleLost = false, cr3ScriptCommands.clear(), cr3NextCoupling = -1, cr3WaveExp = cr3WaveMoney = 0, cr3WaveDrops.clear(), cr3VictoryIn = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1, cr3Fx.clear(); // (BtlSystem::Init: s_ResultParam -1)
         cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
         cr3BattleVista = false;
         cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
@@ -8036,27 +8116,7 @@ struct Viewer {
         if (loadLights(cr3Battle.field)) SDL_Log("lights: %s", cr3Battle.field.c_str());
         for (Cr3BattleUnitView& u : cr3BattleUnits) unload(u.body), unload(u.head), unload(u.weapon);
         cr3BattleUnits.assign(cr3Battle.units.size(), Cr3BattleUnitView());
-        int monsters = 0;
-        for (size_t k = 0; k < cr3Battle.units.size(); ++k) {
-            const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
-            Cr3BattleUnitView& u = cr3BattleUnits[k];
-            figureVariant = bu.variant; // (CrxModel::ChangePartTextureVariation: the monster's)
-            for (int part = 0; part < 2; ++part) {
-                const std::string& fig = part ? bu.head : bu.figure;
-                ViewFigure& f = part ? u.head : u.body;
-                if (fig.empty()) continue;
-                if (!loadFigure(fig + ".geom", f, &err)) {
-                    SDL_Log("battle unit %s: %s", fig.c_str(), err.c_str());
-                    continue;
-                }
-                const auto it = std::find(f.anims.begin(), f.anims.end(), motionBase(fig) + "_bb01.anim"); // (a costume body: b01's motions)
-                if (it != f.anims.end()) loadAnim(f, size_t(it - f.anims.begin()));
-            }
-            figureVariant = bu.weaponVariant;
-            if (!bu.weapon.empty() && !loadFigure(bu.weapon + ".geom", u.weapon, &err)) SDL_Log("battle weapon %s: %s", bu.weapon.c_str(), err.c_str());
-            figureVariant.clear();
-            if (!bu.player) u.phase = float(monsters++) + 0.25f; // (Standby: its slot's 0 / 1 / 2, + up to 0.5 at random)
-        }
+        loadCr3BattleUnits(0);
         if (!cr3BattleCam.load(archive, "Cam_bt")) SDL_Log("battle: no Cam_bt");
         cr3BattleClock = 0, cr3BattleStage = Cr3BattleStage::In, cr3BattleStarted = false;
         dropSpark(cr3BattleSpark), cr3BattleSpark.fx.reset(), cr3BattleSparkClock = 0;
@@ -8211,6 +8271,17 @@ struct Viewer {
                     (inputScript.front().size() > 1 && inputScript.front()[0] == 't' && std::isdigit(static_cast<unsigned char>(inputScript.front()[1])))))
                 inputScript.pop_front(); // (the battle's leftover choices)
             if (!inputScript.empty() && inputScript.front() == "vs:next" && uiClock - vs.scoreAt > 1.0f) inputScript.pop_front(), vsBattleOver(true);
+        } else if (cr3BattleStage == Cr3BattleStage::Won && !scripted && !cr3VictoryIn) {
+            // (phaseVictoryEvent's end: a next wave - BattleCoupling.SetId -, else phaseVictoryIn:
+            // PlayResultBgm)
+            if (cr3NextCoupling >= 0) {
+                const int next = cr3NextCoupling;
+                cr3NextCoupling = -1;
+                reinforceCr3Battle(next);
+            } else {
+                cr3VictoryIn = true;
+                if (game.next.battleMusicAfter >= 0) audio.playBgm(game.next.battleMusicAfter, 0);
+            }
         } else if (cr3BattleStage == Cr3BattleStage::Won) {
             // (BtlSysStateAction::phaseVictory: then a half-second fade - and the result unless
             // story flag 5051 - DAT_014cfb67 bit 3 - is on, as for the ship's battles)
@@ -8755,8 +8826,7 @@ struct Viewer {
                     else game.cr3Mp[f.id] = f.mp;
                 }
         if (outcome == 1) { // (BtlSysStateAction::phaseVictoryEventStart: Battle_Victory_Base)
-            cr3BattleStage = Cr3BattleStage::Won, cr3StageStart = cr3BattleClock;
-            if (game.next.battleMusicAfter >= 0) audio.playBgm(game.next.battleMusicAfter, 0); // (phaseVictoryIn: PlayResultBgm)
+            cr3BattleStage = Cr3BattleStage::Won, cr3StageStart = cr3BattleClock, cr3VictoryIn = false;
             runCr3BattleScript("Battle_Victory_Base");
             for (size_t k = 0; k < cr3Battle.units.size(); ++k)
                 if (cr3Battle.units[k].player) {
@@ -8765,14 +8835,16 @@ struct Viewer {
                 }
             SDL_Log("battle %d: won", cr3Battle.coupling);
         } else if (outcome == 2) {
+            runCr3BattleScript("Battle_Defeat_Base"); // (phaseDefeatEventStart: the result 1, Battle_Defeat_Base)
+            if (playCr3ScriptCommands()) return beginCr3Turn(); // (its commands: not lost - the next turn)
             cr3BattleStage = Cr3BattleStage::Lost, cr3StageStart = cr3BattleClock;
-            cr3BattleLost = true; // (phaseDefeatEventStart: the result 1, Battle_Defeat_Base)
-            runCr3BattleScript("Battle_Defeat_Base");
+            cr3BattleLost = true;
             SDL_Log("battle %d: lost", cr3Battle.coupling);
         } else {
             // (the turn's end: the status effects' HP changes - poison, regeneration - and their
             // turns)
             runCr3BattleScript("Battle_Turn_End_Base"); // (its turn's end: battle scripts')
+            playCr3ScriptCommands();
             // (VS: a type-1 lifeline item's command at the turn's end - 79, Format: the party's
             // passing effects cured)
             if (vs.screen == 5)
@@ -8789,6 +8861,43 @@ struct Viewer {
             }
             beginCr3Turn();
         }
+    }
+
+    // the commands a battle script queued (BattleCommand.SetId / SetIdAndTarget - BtlSysStateAction::
+    // VUpdate's states 0xc, after Battle_Defeat_Base, and 0x12, after Battle_Turn_End_Base: with any
+    // queued, AllEndEffectToCalculation(0xb), the command manager cleared, each added with no unit -
+    // source -1 - and calculated; the battle goes on, no defeat). Every battle's defeat script with
+    // flag 5053 (chapter 1's d02 .. t01) queues 72: the party's side (target 11) back whole - KO
+    // (status effect 1) taken away, HP its power's percentage of the max
+    std::vector<std::pair<int, int>> cr3ScriptCommands; // (command, target fighter - -1 the command's own)
+    bool playCr3ScriptCommands() {
+        if (cr3ScriptCommands.empty()) return false;
+        for (const auto& [id, target] : cr3ScriptCommands) {
+            cr3::Cr3Command c;
+            if (!cr3Rules.command(id, c)) {
+                SDL_Log("battle %d: script command %d unknown", cr3Battle.coupling, id);
+                continue;
+            }
+            const bool players = c.target == 0 || c.target == 1 || c.target == 2 || c.target == 11; // (its own side's: the party's)
+            for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
+                cr3::Cr3Fighter& f = cr3Rules.fighters[k];
+                if (target >= 0 ? int(k) != target : (f.player != players || (!c.all && !f.dead() && !c.removes.empty())))
+                    continue;
+                const bool fallen = f.dead();
+                for (int e : c.removes) cr3Rules.removeEffect(int(k), e);
+                if (fallen && std::find(c.removes.begin(), c.removes.end(), 1) == c.removes.end()) continue; // (KO not taken away)
+                if (c.ally() || fallen) {
+                    const int before = f.hp;
+                    f.hp = std::min(std::max(f.hp, 0) + std::max(f.maxHp * c.power / 100, 1), f.maxHp);
+                    cr3Popups.push_back({f.hp - before, unitPoint(size_t(f.unit), "DummyDP01", 1.2f), cr3BattleClock});
+                }
+                cr3HpShown[k] = f.hp;
+                if (fallen) setCr3Motion(size_t(f.unit), "bb01", true);
+            }
+            SDL_Log("battle %d: script command %d played (target %d)", cr3Battle.coupling, id, target);
+        }
+        cr3ScriptCommands.clear();
+        return true;
     }
 
     // the result (BattleResultV2Menu: the EXP and money - the monsters' MbMonsterInfo::GetExp /
@@ -8834,10 +8943,13 @@ struct Viewer {
         }
         if (anyUp) audio.playSe("com_018", false);
     }
-    void enterCr3Result() {
-        cr3ResultExp = cr3ResultMoney = 0;
-        // (BtlStatusList::AcquireRemuneration: the fallen monsters' alone; VAcquireExperience: x (1 +
-        // (the monsters' average level - the party's highest gene level) x 0.02), 0.5 .. 2, at least 1)
+    // (BtlStatusList::AcquireRemuneration: the fallen monsters' alone - each wave's at its victory -;
+    // VAcquireExperience: x (1 + (the monsters' average level - the party's highest gene level) x
+    // 0.02), 0.5 .. 2, at least 1)
+    int cr3WaveExp = 0, cr3WaveMoney = 0;
+    std::vector<int> cr3WaveDrops; // (the items dropped, the waves' before)
+    bool cr3VictoryIn = false;     // (phaseVictoryIn: the victory event over, the result's music on)
+    void acquireCr3Remuneration() {
         int levels = 0, monsters = 0, geneTop = 1;
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
             if (f.player) geneTop = std::max(geneTop, f.geneLevel);
@@ -8848,9 +8960,16 @@ struct Viewer {
             cr3::MbeFile::Row r;
             if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiii", r)) continue;
             const int exp = r.i(14) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) & 0xffff));
-            if (exp >= 1) cr3ResultExp += std::max(int(gap * float(exp)), 1);
-            cr3ResultMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16)); // (+ a steal skill's - kind 0x74 -: not in)
+            if (exp >= 1) cr3WaveExp += std::max(int(gap * float(exp)), 1);
+            cr3WaveMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16)); // (+ a steal skill's - kind 0x74 -: not in)
         }
+        for (const auto& [fi, item] : cr3Drops)
+            if (item > 0) cr3WaveDrops.push_back(item);
+        cr3Drops.clear();
+    }
+    void enterCr3Result() {
+        acquireCr3Remuneration();
+        cr3ResultExp = cr3WaveExp, cr3ResultMoney = cr3WaveMoney;
         // (BtlInterfaceSystem::EntryResult: x (1 + every unit's skills' kind 0x6c constants / 100) - the
         // money's 0x6d)
         float expBy = 1, moneyBy = 1;
@@ -8864,8 +8983,8 @@ struct Viewer {
         cr3ResultExp = int(expBy * float(cr3ResultExp)), cr3ResultMoney = int(moneyBy * float(cr3ResultMoney));
         game.cr3Money += cr3ResultMoney;
         giveCr3GeneExp();
-        for (const auto& [fi, item] : cr3Drops) // (VAcquireDrop: the drops into the bag)
-            if (item > 0) game.cr3Items[item] = std::clamp(game.cr3Items[item] + 1, 0, 99), SDL_Log("battle %d: item %d into the bag", cr3Battle.coupling, item);
+        for (int item : cr3WaveDrops) // (VAcquireDrop: the drops into the bag)
+            game.cr3Items[item] = std::clamp(game.cr3Items[item] + 1, 0, 99), SDL_Log("battle %d: item %d into the bag", cr3Battle.coupling, item);
         if (game.next.battleMusicAfter >= 0) audio.stopBgm(20); // (phaseResult: FadeBgm, a second)
         cr3BattleStage = Cr3BattleStage::Result, cr3StageStart = cr3BattleClock;
         SDL_Log("battle %d: result - %d EXP, %d money", cr3Battle.coupling, cr3ResultExp, cr3ResultMoney);

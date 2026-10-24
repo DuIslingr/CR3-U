@@ -320,6 +320,9 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SetPopPoint", [&next](NativeCall& c) { next.popPoint = c.string(0); }); // (FldUtilSetPopPoint)
     vm.setNative("Cr3System", "SetPopPoint2", [&state](NativeCall& c) { state.popPoint2 = c.string(0); });
     vm.setNative("Cr3System", "ReserveTownMove", [&next](NativeCall&) { next.townMove = true; });
+    // (BuildNPC - Fld2TaskGimmick::BuildNPC: each Fld2NPC's model built once, placed, its idle
+    // animation and texture variation; CR3-U builds an area's people as it loads it - nothing left)
+    vm.setNative("Cr3GimmickData", "BuildNPC", [](NativeCall&) {});
     vm.setNative("Cr3GimmickData", "Disp", [&state](NativeCall& c) { state.gimmickShown[c.string(0)] = c.boolean(1); });
     for (const bool loop : {true, false})
         vm.setNative("Cr3FieldMapEffectResident", loop ? "EffectResidentPlay" : "EffectResidentPlayOnce", [&state, loop](NativeCall& c) {
