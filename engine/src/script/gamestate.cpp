@@ -329,6 +329,8 @@ void bindGameState(ScriptVM& vm, GameState& state) {
             e.serial = ++state.fieldEffectSerial;
             state.fieldEffects.push_back(e);
         });
+    vm.setNative("Cr3System", "PlayMovie", [&state](NativeCall& c) { state.movieRequest = c.string(0), state.moviePlaying = true; });
+    vm.setNative("Cr3System", "IsPlayingMovie", [&state](NativeCall& c) { c.result(state.moviePlaying); });
     vm.setNative("Cr3FieldMapEffectResident", "EnvironmentEffectPlay", [&state](NativeCall& c) {
         GameState::FieldEffect e;
         e.model = c.string(0), e.loop = c.boolean(1, true), e.serial = ++state.fieldEffectSerial;

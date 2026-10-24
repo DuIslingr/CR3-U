@@ -42,6 +42,7 @@ add_library(cr3core STATIC
     src/assets/text.cpp
     src/assets/language.cpp
     src/assets/spark.cpp
+    src/assets/movie.cpp
     src/field/fieldmap.cpp
     src/field/cr3field.cpp
     src/field/collision.cpp
@@ -121,6 +122,44 @@ elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/faad2/libfaad/decoder.c)
     message(STATUS "iPad music: FAAD2 2.11.1 (bundled)")
 else()
     message(STATUS "iPad music: no FAAD2, not played")
+endif()
+# The movies (H.264 in MP4: assets/movie.hpp): OpenH264's decoder - the system's when pkg-config
+# finds it, else the copy in third_party/openh264 (OpenH264 2.6.0's codec/api, common and decoder,
+# its C++ alone - no assembly). CR3_BUNDLED_OPENH264=ON forces the bundled one.
+option(CR3_BUNDLED_OPENH264 "Build the bundled OpenH264 even if the system has one" OFF)
+if(NOT CR3_BUNDLED_OPENH264)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(OPENH264 QUIET IMPORTED_TARGET openh264)
+    endif()
+endif()
+set(CR3_OH264 ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openh264/codec)
+if(OPENH264_FOUND)
+    target_link_libraries(cr3core PUBLIC PkgConfig::OPENH264)
+    target_compile_definitions(cr3core PUBLIC CR3_HAVE_OPENH264=1)
+    message(STATUS "Movies: OpenH264 ${OPENH264_VERSION} (system)")
+elseif(EXISTS ${CR3_OH264}/decoder/plus/src/welsDecoderExt.cpp)
+    file(GLOB CR3_OH264_SOURCES ${CR3_OH264}/common/src/*.cpp ${CR3_OH264}/decoder/core/src/*.cpp
+         ${CR3_OH264}/decoder/plus/src/*.cpp)
+    add_library(cr3_openh264 STATIC ${CR3_OH264_SOURCES})
+    target_include_directories(cr3_openh264 PUBLIC ${CR3_OH264}/api
+                               PRIVATE ${CR3_OH264}/api/wels ${CR3_OH264}/common/inc ${CR3_OH264}/decoder/core/inc
+                                       ${CR3_OH264}/decoder/plus/inc)
+    if(MSVC)
+        target_compile_options(cr3_openh264 PRIVATE /w)
+    else()
+        target_compile_options(cr3_openh264 PRIVATE -w)
+    endif()
+    find_package(Threads)
+    if(Threads_FOUND)
+        target_link_libraries(cr3_openh264 PUBLIC Threads::Threads)
+    endif()
+    set_target_properties(cr3_openh264 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(cr3core PUBLIC cr3_openh264)
+    target_compile_definitions(cr3core PUBLIC CR3_HAVE_OPENH264=1)
+    message(STATUS "Movies: OpenH264 2.6.0 (bundled)")
+else()
+    message(STATUS "Movies: no OpenH264, not played")
 endif()
 # The Vita's music (ATRAC9 in SXD): LibAtrac9's C decoder (CR1:U's copy), built here
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libatrac9/src/libatrac9.c)

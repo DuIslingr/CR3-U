@@ -86,6 +86,7 @@ bool AudioPlayer::open(const std::string& archivePath, bool device, std::string*
 void AudioPlayer::close() {
     if (!slots_.empty()) soundHooks() = SoundHooks();
     for (Voice& v : slots_) endVoice(v);
+    endVoice(movie_);
     slots_.clear();
     if (bgm_) SDL_DestroyAudioStream(bgm_), bgm_ = nullptr;
     music_.reset();
@@ -100,6 +101,7 @@ void AudioPlayer::setVolumes(float bgm, float effects, float voices) {
 
 void AudioPlayer::applyGains() {
     if (bgm_) SDL_SetAudioStreamGain(bgm_, volume_[0] * bgmFade_);
+    if (movie_.stream) SDL_SetAudioStreamGain(movie_.stream, volume_[0]);
     for (const Voice& v : slots_)
         if (v.stream) SDL_SetAudioStreamGain(v.stream, volume_[v.voice ? 2 : 1] * v.fade);
 }
@@ -203,6 +205,15 @@ void AudioPlayer::endVoice(Voice& v) {
     if (v.stream) SDL_DestroyAudioStream(v.stream);
     v = Voice();
 }
+
+// MVGL::AV::MediaPlayer's sound: a movie's whole track at once, at the music's volume
+void AudioPlayer::playMovieSound(std::vector<int16_t> pcm, int rate, int channels) {
+    log.push_back("movie sound");
+    startPcm(movie_, std::move(pcm), rate, channels, false, false);
+    if (movie_.stream) SDL_SetAudioStreamGain(movie_.stream, volume_[0]);
+}
+
+void AudioPlayer::stopMovieSound() { endVoice(movie_); }
 
 void AudioPlayer::startClip(Voice& v, SoundData::Bank bank, int clip, bool loop) {
     endVoice(v);

@@ -37,7 +37,7 @@
 //           [--lights <figure> | none] [--field <map> [--at <point>] [--binary <file>]
 //           [--walk sx,sy,seconds]] [--event <function> [--vista <map>] [--page s]]
 //           [--resolution WxH] [--upscaler off|fsr3 [--quality q] [--sharpness s]] [--run s] [--fps n]
-//           [--renderer vulkan|opengl] [--capture out.bmp]
+//           [--renderer vulkan|opengl] [--movie cNN] [--capture out.bmp]
 //
 // Models: drag to turn, the wheel to zoom, Left / Right (or PageUp / PageDown) for the archive's
 // other models, Up / Down for the figure's animations. Fields: the arrow keys (or WASD) run,
@@ -75,6 +75,7 @@
 #include "assets/mvgl.hpp"
 #include "assets/skeleton.hpp"
 #include "assets/spark.hpp"
+#include "assets/movie.hpp"
 #include "battle/battledata.hpp"
 #include "battle/camera.hpp"
 #include "battle/motion.hpp"
@@ -718,6 +719,7 @@ struct Viewer {
     // A tap (Return, a click): the vista's page; the field's - its event's page, else the nearest
     // balloon's function (FldMain::CheckTouchEventExec_Tap, EventExecute), the leader turned to it
     void tap() {
+        if (movieTap()) return;
         if (cr3BattleMode) return cr3BattleTap();
         if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
             if (areaEvents->running()) areaEvents->touch();
@@ -2130,6 +2132,7 @@ struct Viewer {
         dev->endScene();
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
         drawEventUi(); // (the vista's, or the field's events')
+        drawMovie(screenW, screenH);
     }
     // The game's screen in a frame of fw x fh (screenX ...), the scene's viewport on it
     void placeScreen(int fw, int fh) {
@@ -2556,6 +2559,7 @@ struct Viewer {
     int loggedTeamLevel = 1; // (the team level as last logged)
     void advance(float dt, float sx, float sy, bool run) {
         uiClock += dt;
+        stepMovie(dt);
         if (areaMode || cr3BattleMode) game.cr3Records.playSeconds += dt; // (My Page's play time)
         if (game.cr3TeamLevel != loggedTeamLevel) SDL_Log("team level %d -> %d", loggedTeamLevel, game.cr3TeamLevel), loggedTeamLevel = game.cr3TeamLevel;
         if (cr3::EventRuntime* ev = activeEvents()) {
@@ -22400,6 +22404,136 @@ struct Viewer {
         }
     }
 
+    // The movies (Cr3System.PlayMovie - MovieControlTask: MVGL::AV::MediaPlayer over the game,
+    // IsPlayingMovie till its end): cNN.mp4 from the release (the iPad's .app, the Vita's movie/,
+    // Android's CRDBmov pack), else movies/ in the game folder or CR3_MOVIES (another release's -
+    // the iPad lacks c04..c11); its sound at the music's volume; its subtitles (MovieControlTask::SM_Set:
+    // "<name>_jp.srt" in Japanese - the fan translation's English too -, else "_en") along the bottom.
+    // A tap shows Skip (the iOS release's btn_movie_skip), a second within 3 s ends it; --input
+    // movie:skip ends it
+    struct MovieShow {
+        std::unique_ptr<cr3::Movie> mv;
+        std::string name;
+        float clock = 0, skipShown = -10;
+        int shown = 0; // (pictures decoded)
+        bool ended = false;
+        cr3::Texture tex;
+        std::vector<uint8_t> rgba;
+        std::vector<cr3::Subtitle> subs;
+    } movie;
+    std::string moviesDir; // (movies/ in the game folder, or CR3_MOVIES)
+    bool movieBytes(const std::string& file, std::vector<uint8_t>& out) {
+        if (archive.read(file, out)) return true;
+        if (!moviesDir.empty()) {
+            for (const std::string& f : {moviesDir + "/" + file, moviesDir + "/movie/" + file}) {
+                std::FILE* fp = std::fopen(f.c_str(), "rb");
+                if (!fp) continue;
+                std::fseek(fp, 0, SEEK_END);
+                out.resize(size_t(std::max(0L, std::ftell(fp))));
+                std::fseek(fp, 0, SEEK_SET);
+                const bool ok = std::fread(out.data(), 1, out.size(), fp) == out.size();
+                std::fclose(fp);
+                if (ok) return true;
+            }
+        }
+        return false;
+    }
+    void startMovie(const std::string& name) {
+        endMovie();
+        std::vector<uint8_t> bytes;
+        if (!movieBytes(name + ".mp4", bytes)) {
+            SDL_Log("movie %s: not in the release (movies/ in the game folder, or CR3_MOVIES, may hold another release's)", name.c_str());
+            game.moviePlaying = false;
+            return;
+        }
+        auto mv = std::make_unique<cr3::Movie>();
+        std::string err;
+        if (!mv->open(std::move(bytes), &err)) {
+            SDL_Log("movie %s: %s", name.c_str(), err.c_str());
+            game.moviePlaying = false;
+            return;
+        }
+        movie.mv = std::move(mv), movie.name = name, movie.clock = 0, movie.shown = 0, movie.ended = false, movie.skipShown = -10;
+        { // (the fan translation's English is in its _jp files)
+            std::vector<uint8_t> t;
+            if (movieBytes(name + (optionLanguage == 0 || archive.overlayActive() ? "_jp" : "_en") + ".srt", t))
+                movie.subs = cr3::parseSrt(std::string(t.begin(), t.end()));
+        }
+        SDL_Log("movie %s: %d x %d, %d pictures at %.0f a second (%.1f s), sound %s, %zu subtitles", name.c_str(), movie.mv->width(),
+                movie.mv->height(), movie.mv->frames(), double(movie.mv->fps()), double(movie.mv->duration()),
+                movie.mv->pcm.empty() ? "none" : "on", movie.subs.size());
+        if (!movie.mv->pcm.empty()) audio.playMovieSound(std::move(movie.mv->pcm), movie.mv->rate, movie.mv->channels);
+    }
+    void endMovie() {
+        if (!movie.mv) return;
+        SDL_Log("movie %s: %s at %.1f s", movie.name.c_str(), movie.ended ? "ended" : "skipped", double(movie.clock));
+        audio.stopMovieSound();
+        if (movie.tex.id) dev->destroy(movie.tex);
+        movie = MovieShow();
+        game.moviePlaying = false;
+    }
+    void stepMovie(float dt) {
+        if (!game.movieRequest.empty()) {
+            const std::string name = game.movieRequest;
+            game.movieRequest.clear();
+            startMovie(name);
+        }
+        if (!movie.mv) return;
+        if (!inputScript.empty() && inputScript.front() == "movie:skip" && movie.clock > 1.0f) {
+            inputScript.pop_front();
+            return endMovie();
+        }
+        movie.clock += dt;
+        // the pictures due by now (the movie's clock; the last one decoded shown)
+        bool fresh = false;
+        while (float(movie.shown) < movie.clock * movie.mv->fps()) {
+            if (!movie.mv->next(movie.rgba)) {
+                movie.ended = true;
+                return endMovie();
+            }
+            ++movie.shown, fresh = true;
+        }
+        if (fresh) {
+            cr3::Image img;
+            img.width = movie.mv->width(), img.height = movie.mv->height(), img.rgba = movie.rgba;
+            cr3::Texture old = movie.tex;
+            movie.tex = dev->upload(img);
+            if (old.id) dev->destroy(old);
+        }
+    }
+    bool movieTap() {
+        if (!movie.mv) return false;
+        if (uiClock - movie.skipShown < 3.0f) endMovie();
+        else movie.skipShown = uiClock;
+        return true;
+    }
+    void drawMovie(int w, int h) {
+        if (!movie.mv) return;
+        static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+        const Mat4 id = cr3::mat4Identity();
+        static const float kBlack[4] = {0, 0, 0, 1}, kWhite[4] = {1, 1, 1, 1};
+        dev->clearDepth();
+        dev->drawQuad(white, kScreen, id.data(), kBlack);
+        if (movie.tex.id && movie.mv->height() > 0) { // (letterboxed: its shape kept)
+            const float ma = float(movie.mv->width()) / float(movie.mv->height()), sa = float(w) / float(std::max(h, 1));
+            const float sx = ma < sa ? ma / sa : 1.0f, sy = ma < sa ? 1.0f : sa / ma;
+            const float v[24] = {-sx, -sy, 0, 1, sx, -sy, 1, 1, sx, sy, 1, 0, -sx, -sy, 0, 1, sx, sy, 1, 0, -sx, sy, 0, 0};
+            dev->drawQuad(movie.tex, v, id.data(), kWhite);
+        }
+        for (const cr3::Subtitle& t : movie.subs) {
+            if (movie.clock < t.from || movie.clock >= t.to) continue;
+            std::vector<std::string> rows;
+            for (size_t p = 0, q; p <= t.text.size(); p = q + 1) {
+                q = t.text.find('\n', p);
+                if (q == std::string::npos) q = t.text.size();
+                rows.push_back(t.text.substr(p, q - p));
+            }
+            for (size_t r = 0; r < rows.size(); ++r)
+                drawUiText(rows[r], 26, 0, -0.26f + 0.04f * float(rows.size() - 1 - r), w, h, false);
+        }
+        if (uiClock - movie.skipShown < 3.0f) drawUiText("Skip", 28, 0.40f, 0.27f, w, h, false);
+    }
+
     void drawEventUi() {
         dev->clearDepth(); // (the scene's depths behind all of it: a near camera's ground too)
         if (credits.stage) return drawCredits();
@@ -22645,6 +22779,7 @@ int main(int argc, char** argv) {
     std::string upscaler = "off", quality = "quality";
     float sharpness = 0.3f;
     float runSeconds = 0; // --run: a capture plays this long first, 60 frames a second
+    std::string movieArg; // --movie cNN: that movie played at once (as Cr3System.PlayMovie)
     int fps = 60;         // --fps: the frame rate the window aims at (0: as fast as the display shows them)
     float yaw = 30, pitch = 15, startTime = 0;
     // no arguments (a double-click, Android's launcher): the game, from its title screen
@@ -22773,6 +22908,7 @@ int main(int argc, char** argv) {
         else if (a == "--quality" && next) quality = next, ++i;
         else if (a == "--fps" && next) fps = std::clamp(std::atoi(next), 0, 1000), ++i;
         else if (a == "--run" && next) runSeconds = float(std::atof(next)), ++i;
+        else if (a == "--movie" && next) movieArg = next, ++i;
         else if (a == "--sharpness" && next) sharpness = std::clamp(float(std::atof(next)), 0.0f, 1.0f), ++i;
     }
     if (resW || resH) {
@@ -22902,11 +23038,16 @@ int main(int argc, char** argv) {
         if (!languageArg.empty() && !cr3::parseLanguage(languageArg, want)) SDL_Log("--language %s: ja, en or fan-en", languageArg.c_str());
         const cr3::LanguageChoice l = cr3::applyLanguage(v.archive, want);
         v.optionLanguage = l.slot;
+        if (!movieArg.empty()) v.game.movieRequest = movieArg, v.game.moviePlaying = true;
         v.englishTextures = l.slot == 1; // (the release's own English: its images_eng)
         SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
                 l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
     }
     v.hdDir = hdFolder;
+    { // (movies/: cNN.mp4 the release lacks - the iPad's c04..c11 - from another; CR3_MOVIES elsewhere)
+        const char* env = SDL_getenv("CR3_MOVIES");
+        v.moviesDir = env && *env ? std::string(env) : gameFolder + "movies";
+    }
     if (hdArg >= 0) v.hdTextures = hdArg == 1;
     { // the HD models: models/hd/ in the game folder (CR3_HD_MODELS elsewhere)
         const char* env = SDL_getenv("CR3_HD_MODELS");

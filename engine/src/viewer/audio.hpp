@@ -48,6 +48,9 @@ public:
     void stopAllSe(int fadeFrames);
     int playVoice(int clip);
     void stopAllVoices(int fadeFrames);
+    // a movie's sound (its own stream, at the music's volume): started, stopped
+    void playMovieSound(std::vector<int16_t> pcm, int rate, int channels);
+    void stopMovieSound();
     bool playing(int slot) const;
 
     std::vector<std::string> log; // (what was asked, in turn: checks)
@@ -80,6 +83,7 @@ private:
     float bgmFade_ = 1, bgmFadeStep_ = 0; // (gain, its change a second)
     void feedBgm();
     std::vector<Voice> slots_; // 0..15 effects, 16..31 voices
+    Voice movie_;
     float volume_[3] = {1, 1, 1};
 };
 

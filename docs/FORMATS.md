@@ -394,6 +394,32 @@ idles on Fld2NPCAnimeNameTbl[0], fn01. Cr3GimmickData.Disp(name, shown) - the sc
 ModelDisp_Field, Fld2SetGimmickVisible - hides or shows one. The party's j<id>_00 and the
 monsters' m<id>_<nn> are talked to like the c<id>_<nn> people (their functions named so).
 
+### Movies (CR3)
+
+Cr3System.PlayMovie(name) - MovieControlTask::Play, then MediaPlayer::Play - plays `<name>.mp4`
+over the game. IsPlayingMovie is true until it ends (the scripts' WaitMovie polls it each frame).
+d14's s420_d14_00101_evt, for one, does StopSEAll, PlayMovie('c08'), WaitMovie. MovieControlTask::
+SM_Set picks the subtitles: `<name>_jp` while the language is Japanese, else `<name>_en`, then
+`.srt`. A loose file comes first, then the database's. The movies are MP4 (`ftyp mp42`): H.264 Main
+profile (CABAC, B-frames) at 1280 x 720, 30 frames a second, with no colour description (CR3-U
+takes BT.709, video range), plus AAC LC at 48 kHz in stereo. The iPad's c01 is 182.0 s, Vita's c08
+213.4 s. The releases hold them differently:
+
+- The iPad's `.app` has c01..c03 and c50..c58 loose, with c01..c03's `_en` / `_jp` subtitles.
+- The Vita's `CR3/resources/movie/` has c01..c11 and c50..c58, with `_jp` subtitles for c01..c11.
+  The fan translation puts English in those `_jp` files.
+- Android's `CRDBmov.android.mvgl` asset pack stores all of them by name (`c08.mp4`, uncompressed).
+
+CR3-U reads a movie through the release's database (loose files and archives alike), else from
+`movies/` in the game folder or `CR3_MOVIES`. It decodes the video with OpenH264
+(`assets/movie.hpp`): each sample's NAL units go in with start codes, the avcC's SPS / PPS first,
+through DecodeFrameNoDelay. FlushFrame drains the pictures held back for their order at the end.
+OpenH264's output matched FFmpeg's within 2 levels on 97 of c50's 689 pictures, and exactly on the
+rest. The sound is the AAC track, decoded whole by FAAD2. FAAD2 gives nothing for its first packet;
+the reader now goes on past it (it used to stop there when a track had no iTunSMPB priming). A tap
+shows Skip; a second tap within 3 s skips (the iOS release's btn_movie_skip). `--movie cNN` plays
+one at start-up, and `--input movie:skip` skips one (test aids).
+
 ### The field's effects: the story's markers (CR3)
 
 Cr3FieldMapEffectResident.EffectResidentPlay / EffectResidentPlayOnce(model, target, sx, sy, sz,

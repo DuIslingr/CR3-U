@@ -181,6 +181,10 @@ struct GameState {
     };
     std::vector<FieldEffect> fieldEffects;
     uint32_t fieldEffectSerial = 0;
+    // a movie asked for (Cr3System.PlayMovie(name) - MovieControlTask::Play: "c08"); the viewer
+    // plays it and clears moviePlaying at its end (IsPlayingMovie: the scripts' WaitMovie)
+    std::string movieRequest;
+    bool moviePlaying = false;
     // the field's goods buttons (Cr3TabMenu.AddGoodsButton / DelGoodsButton - Fld2GoodsButton::
     // SetButtonEnableOne: 0 the bomb, 1 the toy camera, 2 the detector, 3 the darts; the areas'
     // MenuTabAddALL puts them back by flags 4101 ..) - not saved

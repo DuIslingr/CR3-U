@@ -106,6 +106,7 @@ program - it finds it by itself. The game folder is:
 ├── translation/
 │   └── rePatch/                        the fan translation's rePatch folder (rePatch/PCSG00500/CR3/resources/*.psp2.mvgl):
 │                                       laid over an unpatched Vita copy as the language "English (fan translation)"
+├── movies/                          cNN.mp4 your release lacks, from another (the iPad lacks c04..c11): "Movies"
 └── textures/
     ├── export/                         written by --export-textures: the pictures to upscale (<hash>.crraw)
     └── hd/                             read by the game: the upscaled pictures (<hash>.crhd)
@@ -127,6 +128,18 @@ If nothing is found the program says where it looked. The older places still wor
 To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `CR3_DATA`), `--patch <the rePatch folder>`. Settings and saves go to the profile folder
 (`~/.local/share/DuIslingr/CR3-U/` on Linux; the same folders under `%APPDATA%\` on Windows and
 `~/Library/Application Support/` on macOS), not the game folder. All four ports (CR1:U, CRO-U, CR2-U, CR3-U) look for their copies the same way.
+
+## Movies
+
+The story's movies play as in the game: full screen, with their sound at the music's volume and
+their subtitles in the game's language (`cNN_en.srt` / `cNN_jp.srt`; the fan translation's English
+is in its `_jp` files). Tap once for **Skip**, again within three seconds to skip. Each release
+has its own: the iPad's `.app` holds c01..c03 and c50..c58 but not the story's c04..c11 (the game
+downloaded those), the Vita's `CR3/resources/movie/` and Android's asset pack hold them all. Put
+the ones yours lacks in `movies/` in the game folder (or point `CR3_MOVIES` at a folder of them,
+such as a Vita copy's `CR3/resources/movie/`); a movie found nowhere is skipped. `--movie cNN`
+plays one at start-up. The video is H.264, decoded with OpenH264 (the system's, else the copy
+built in), the sound with FAAD2.
 
 ## Field and battle speed
 

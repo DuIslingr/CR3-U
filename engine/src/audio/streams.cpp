@@ -104,7 +104,7 @@ public:
                 if (pos_ >= end || next_ >= caf_.size.size()) break;
                 buf_ = decode(next_++);
                 bufAt_ = 0;
-                if (buf_.empty()) break;
+                if (buf_.empty()) continue; // (FAAD2's first packet gives nothing: on to the next)
                 const size_t drop = size_t(std::min<int64_t>(skip_, int64_t(buf_.size() / size_t(ch))));
                 bufAt_ = drop, skip_ -= int64_t(drop), pos_ += int64_t(drop);
                 continue;
@@ -458,8 +458,17 @@ bool parseMp4Aac(const std::vector<uint8_t>& file, CafAac& out, std::string* err
     for (const Box& b : boxes(f, 0, file.size()))
         if (b.type == fourcc("moov")) moov = b;
     if (!moov.type) return fail(error, "not an MP4 file (no moov)");
-    // the first track: its sample table
-    const Box trak = child(f, moov, "trak");
+    // the first track with AAC (mp4a): its sample table (the movies' second, after their video)
+    Box trak{0, 0, 0};
+    for (const Box& t : boxes(f, moov.at, moov.at + moov.len)) {
+        if (t.type != fourcc("trak")) continue;
+        const Box sd = child(f, child(f, child(f, child(f, t, "mdia"), "minf"), "stbl"), "stsd");
+        if (sd.type && sd.len >= 16 && be32(f + sd.at + 12) == fourcc("mp4a")) {
+            trak = t;
+            break;
+        }
+    }
+    if (!trak.type) return fail(error, "not AAC (no mp4a track)");
     const Box mdia = child(f, trak, "mdia");
     const Box stbl = child(f, child(f, mdia, "minf"), "stbl");
     const Box mdhd = child(f, mdia, "mdhd");
