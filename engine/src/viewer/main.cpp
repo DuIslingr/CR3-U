@@ -6248,8 +6248,8 @@ struct Viewer {
         areaCamera.reset({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw), rail.started = false;
         areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, areaYaw, false, 0, &area.cameraWalls, &area.walls);
         areaMode = true, areaClock = 0;
-        // (Cr3System.GetDungeonNum / GetAreaNum: the dungeon - a town 0 - and the area from 0)
-        game.dungeon = name[0] == 't' ? 0 : std::atoi(name.substr(1, 2).c_str());
+        // (Cr3System.GetDungeonNum / GetAreaNum: the dungeon - the Field_ table's, t01 0, d01 5 - and the area from 0)
+        game.dungeon = cr3::cr3DungeonNum(name);
         game.area = std::atoi(name.substr(3, 2).c_str()) - 1;
         areaEvents = std::make_unique<cr3::EventRuntime>(archive, game);
         areaEvents->language = optionLanguage, areaEvents->autoPage = pageSeconds, areaEvents->askYesNo = true;
@@ -6863,7 +6863,21 @@ struct Viewer {
                     float dx = p[0] - g.world.m[3], dz = p[2] - g.world.m[11];
                     const float l = std::max(std::hypot(dx, dz), 1e-3f);
                     dx /= l, dz /= l;
-                    areaWalker->setPosition({g.world.m[3] + dx * away, g.world.m[7] + 0.5f, g.world.m[11] + dz * away});
+                    // (the side toward the player first, then round it: the first that lands at the
+                    // object's height - not dropped off a walkway into what's below)
+                    const float from = std::atan2(dz, dx);
+                    for (int t = 0; t < 8; ++t) {
+                        const float a = from + float(t) * 0.785398f;
+                        const float ex = std::cos(a), ez = std::sin(a);
+                        areaWalker->setPosition({g.world.m[3] + ex * away, g.world.m[7] + 0.5f, g.world.m[11] + ez * away});
+                        for (int k = 0; k < 60; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
+                        if (std::fabs(areaWalker->position()[1] - g.world.m[7]) < 2.5f || t == 7) {
+                            if (std::fabs(areaWalker->position()[1] - g.world.m[7]) >= 2.5f) // (none: the player's side)
+                                areaWalker->setPosition({g.world.m[3] + dx * away, g.world.m[7] + 0.5f, g.world.m[11] + dz * away});
+                            else dx = ex, dz = ez;
+                            break;
+                        }
+                    }
                     for (int k = 0; k < 60; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
                     areaYaw = std::atan2(-dx, -dz);
                     const cr3::Vec3 q = areaWalker->position();
@@ -7545,7 +7559,7 @@ struct Viewer {
         } else if (stage == 3 && id == kCtnYes) {
             audio.playSe("com_003", false);
             game.cr3Items[kJemItem] = cr3Jems() - 1;
-            cr3Ctn.stage = 0, cr3Ctn.decided = true;
+            cr3Ctn.stage = 0; // (not decided: a later defeat asks again)
             continueCr3Battle();
         }
     }
@@ -8588,7 +8602,8 @@ struct Viewer {
     }
 
     // the battle over (won): where SetBattleNext sent it - the vista SetVistaFuncName2 named
-    // (SetBattleToVista), else the field it came from (Fld2Main::SM_FirstEvent: evt000, evt002 if lost)
+    // (SetBattleToVista), else - and after a game over - the field it came from (Fld2Main::SM_FirstEvent:
+    // evt000, evt002 if lost)
     bool cr3BattleLost = false;
     int cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = -1;
     std::vector<int> cr3FieldEffects; // (BtlFieldEffectManager: the boot script's AddFieldStatusEffect)
@@ -8599,7 +8614,7 @@ struct Viewer {
         const int next = n.battleNext;
         n.battleNext = 1;
         cr3BattleEvents.reset();
-        if (next == 14 && !n.vistaFunction.empty()) {
+        if (next == 14 && !n.vistaFunction.empty() && !cr3BattleLost) { // (a game over: the field's evt002 instead - EventBattleLose)
             const std::string fn = n.vistaFunction, map = n.vistaMap.empty() ? "null" : n.vistaMap;
             n = cr3::GameState::Next();
             SDL_Log("battle: on to %s in %s", fn.c_str(), map.c_str());
@@ -22349,6 +22364,7 @@ int main(int argc, char** argv) {
     bool exportAnimations = true; // --no-animations: --export-models without them (they are for previewing; a character's run to hundreds of MB)
     std::string eventName, vista = "null", fontPath, playFrom, callEntry = "evt000";
     std::string areaName, areaPlayerArg; // --area <area> [--player <model>]: CR3's field
+    std::string chapterJumpArg;
     int creditsArg = -1;
     int fightMode = 0;
     std::string inputArg; // (--input: the commands chosen, as tokens)
@@ -22408,6 +22424,7 @@ int main(int argc, char** argv) {
         else if (a == "--walk" && next) std::sscanf(next, "%f,%f,%f", &walkX, &walkY, &walkSeconds), ++i;
         else if (a == "--event" && next) eventName = next, ++i;
         else if (a == "--area" && next) areaName = next, ++i;
+        else if (a == "--chapter-jump" && next) chapterJumpArg = next, ++i; // (the game's own chapter_jump_<x_y> on a new game, then saved: tests)
         else if (a == "--player" && next) areaPlayerArg = next, ++i;
         else if (a == "--battle" && next) battleId = std::atoi(next), ++i;
         else if (a == "--battle-field" && next) battleFieldArg = std::atoi(next), ++i;
@@ -22923,6 +22940,25 @@ int main(int argc, char** argv) {
     }
     v.load(start);
     if (!areaName.empty() && !v.loadArea(areaName, areaPlayerArg)) return 1;
+    // (--chapter-jump x_y: script\\chapter_jump.nut's chapter_jump_<x_y> - the debug jump: its
+    // FlgSet_Chapter_x_y's flags, party and goods, then ppJump - run on the new game, that place
+    // entered and CR3-U's save1.txt written there, the title's tap to take it up)
+    if (!chapterJumpArg.empty()) {
+        cr3::EventRuntime jump(v.archive, v.game);
+        v.game.next = cr3::GameState::Next();
+        if (!jump.start("chapter_jump", "chapter_jump_" + chapterJumpArg)) {
+            SDL_Log("chapter jump %s: %s", chapterJumpArg.c_str(), jump.error().c_str());
+            return 1;
+        }
+        for (int k = 0; k < 600 && jump.running(); ++k) jump.tick();
+        for (int f : flagsArg) v.game.setFlag(f, true); // (the jump's own flag reset undone for the test's)
+        const std::string pop = v.game.next.popPoint;
+        v.game.next = cr3::GameState::Next();
+        SDL_Log("chapter jump %s: to %s", chapterJumpArg.c_str(), pop.c_str());
+        v.cr3Playing = v.playMode = true;
+        if (pop.size() <= 5 || !v.enterPopPoint(pop) || !v.writeCr3Save()) return 1;
+        return 0;
+    }
     if (model == "c001" && leaderDefaulted) v.leaderFollows = true, v.refreshLeader();
     v.stateArg = stateArg;
     v.chargeArg = chargeArg, v.gaugeArg = gaugeArg;

@@ -397,8 +397,17 @@ f0000swc03) turns when a bomb goes off within its row's +0x34 (1.5; CheckBlastOb
 the bomb's first update gone off): Exchange - the other model shown, SE 0x24f, its function (bswc_01:
 flag 4025, the door cobj_05 open). The area script turns it back on on a new visit
 (Cr3GimmickData.SwitchOn(name, true)). The floor switch (Fld2StepSwitch, ragdoll_fswc_..: the player
-within 0.5 of it - CheckOnSwitch, SE 0x24e, pressed 0.105) isn't in yet. Crawl tests: near:<gimmick>:<distance>,
-wait:<seconds> (the inputs after it held), and auto battles spend a jem at a lost battle's Continue.
+within 0.5 of it - CheckOnSwitch, SE 0x24e, pressed 0.105) isn't in yet. Crawl tests: near:<gimmick>:<distance>
+(the player put that far from it - the side toward the player first, else round it, the first spot
+that lands at its height), wait:<seconds> (the inputs after it held), and auto battles spend a jem at
+each defeat's Continue. `cr3view --chapter-jump <x_y>` runs `chapter_jump`'s chapter_jump_<x_y> on a
+new game (FlgSet_Chapter_x_y - it clears the flags first -, then ppJump), enters that place and writes
+save1.txt there; `--flag`s are set again after it (a save part way through a chapter: tests).
+
+Cr3System.GetDungeonNum is the map's place in the Field_ table (Fld2TaskMap::GetDungeonNo: its first
+three letters) - t01 .. t05 0 .. 4, d01 .. d17 5 .. 21, e00 22 - not the map's number (d10: 14); the
+scripts' EventBattleLose, PlayDungeonBGM, PartyMemberLock and Field_FadeIn branch on it. GetAreaNum is
+the map's last two digits less one.
 
 A Field row's +0x2c makes its gimmick solid (a rigid body: its body in `<area>p.phys`, named as it) -
 rocks, boxes, check objects, people - a wall while it stands and is shown.
@@ -1465,7 +1474,8 @@ Give up asks `AnnounceBattle` 0x2a; revive asks 0x2b, or with none AnnounceMenuN
 ("{jem}" the count). The buttons close while it asks. Yes to giving up - or a defeat that can't
 continue - is the game over (BtlGameOverUI, GameOverMenu: btGameOverMenu at btGameOverPositon's
 call_btGameOverMenu_fit0, its own animation to its end; then FadeOut(0.5) and the field's
-`evt002`). Yes to reviving: one gem paid
+`evt002` - EventBattleLose takes the story's flag back, the event box ready again -, never the
+SetBattleToVista the win would go on to). Yes to reviving: one gem paid
 (PaymentJem) and phaseContinue - command 59 (all the player's side, formula 18, 100: HP and MP
 whole), the gauge even (BtlBreakGaugeUI::Even), the battle's music again, the next turn.
 

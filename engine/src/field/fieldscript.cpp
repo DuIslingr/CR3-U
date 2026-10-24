@@ -184,9 +184,8 @@ bool FieldScript::enter(const std::string& map, const std::vector<Gimmick>& gimm
     fieldCharacters_[0] = state_.party[0], fieldCharacters_[1] = state_.party[1];
     if (state_.party[1] < 0) state_.active = 0;
     if (map.size() < 5) return error_ = map + ": not a map's name", false;
-    // the dungeon table (FldMap::GetCr3FieldDataDungeonNumFromFieldMapNum): the town 0, dNN NN; the
-    // area the map's last two digits - 1
-    dungeon_ = map[0] == 't' ? 0 : std::atoi(map.substr(1, 2).c_str());
+    // the dungeon table (cr3DungeonNum); the area the map's last two digits - 1
+    dungeon_ = cr3DungeonNum(map);
     area_ = std::atoi(map.substr(3, 2).c_str()) - 1;
     state_.dungeon = dungeon_, state_.area = area_; // (GetDungeonNum / GetAreaNum: a vista's too)
     const std::string script = map[0] == 't' ? "t01" : "d" + map.substr(1, 2);
