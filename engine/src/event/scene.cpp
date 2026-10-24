@@ -82,10 +82,10 @@ bool EventScene::load(const MvglArchive& a, const std::string& event, std::strin
             if (n.compare(0, 3, "ev_") != 0 || n.find("Cam") != std::string::npos || n.find("p000") != std::string::npos) continue;
             EventModel m;
             m.name = n.substr(3);
-            // (EvtModel::Init: the name up to its first '_' - an instance's _01, _2)
+            // (EvtModel::Init: the name up to its first '_' - an instance's _01, _2, _00_2)
             const size_t us = m.name.find('_');
             m.figure = us != std::string::npos && us + 1 < m.name.size() &&
-                               std::all_of(m.name.begin() + long(us) + 1, m.name.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)) != 0; })
+                               std::all_of(m.name.begin() + long(us) + 1, m.name.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)) != 0 || ch == '_'; })
                            ? m.name.substr(0, us)
                            : m.name;
             locators_[lower(m.name)] = int(j);

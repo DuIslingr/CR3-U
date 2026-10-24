@@ -163,7 +163,10 @@ select (ModeSelectMenu: `ttlModeMain` / `VS` / `Back`) and a yes / no; a first g
 white into the prologue - TitleMain loads the save, runs `t01`'s `Login`, and the new game's first
 vista is `s000_t01_00101_evt`. From there the events hand over (SetVistaEvent - a name's second
 part its script: `s000_d01_00301_evt` is d01's) through `00103`, `00201` (the opening) and the ship
-(`s000_d01_00301_evt`), whose SetVistaToField returns to the field of its map: `d0101`.
+(`s000_d01_00301_evt`), whose SetVistaToField returns to the field of its map: `d0101`. A vista
+left from a field goes back to that field (Fld2Main::SM_Init: Cr3FieldData, as Fld2SaveData kept it -
+only a pop point or a map jump changes it), whatever map the vista used: quest 76's last scene is
+in e0007f but the field it returns to is d1008, whose evt000 then announces the quest.
 
 The prologue's story on (part 1 of the reference, 354 - 712 s): d0102's event box `evt101_00`
 (flag 2001 on, 2002 off: sets 2002) plays `s000_d01_00401_evt` - the first battle, then
@@ -340,7 +343,8 @@ CR3-U. The floors chain by the exit crystal (`cobj_00`: Cr3System.GetRandom - ut
 CrxRandom's modulo |n| - picks the next map, the global work's 51 the floors climbed). A script's map
 names may be upper case (q058_d07_00109's SetBattleToVista "D0712f"); the field takes them lower.
 A vista's model (a joint ev_<name>) shows the figure its name names up to the first '_' (EvtModel::
-Init) - CR3-U where the rest is digits alone: m202_01, d0600hana00_2 (q057's second flower).
+Init) - CR3-U where the rest is digits and '_' alone: m202_01, d0600hana00_2 (q057's second flower),
+f0000food02_00_2.
 
 ### Meals (CR3)
 

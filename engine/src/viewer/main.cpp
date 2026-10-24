@@ -8901,7 +8901,9 @@ struct Viewer {
                 if (!enterPopPoint(pop)) SDL_Log("area %s: not entered", pop.c_str());
                 return;
             }
-            if (game.next.fieldMode == 2 && !eventScript.empty() && vistaMapName.size() == 6 && vistaMapName.back() == 'f') {
+            // (a vista from no field - the prologue's, from the title -: its map's area; else the field
+            // it was left from - Fld2Main::SM_Init: Cr3FieldData, as Fld2SaveData kept it)
+            if (game.next.fieldMode == 2 && !eventScript.empty() && vistaMapName.size() == 6 && vistaMapName.back() == 'f' && savedArea.empty()) {
                 const std::string a = vistaMapName.substr(0, 5);
                 game.next = cr3::GameState::Next();
                 SDL_Log("event: back to the field, %s", a.c_str());
@@ -8909,7 +8911,7 @@ struct Viewer {
                 if (!loadArea(a, "")) SDL_Log("area %s: not entered", a.c_str());
                 return;
             }
-            if (playMode && toField && !eventScript.empty() && !savedArea.empty()) { // (the field the vista was left from, where the player stood)
+            if (playMode && (toField || game.next.fieldMode == 2) && !eventScript.empty() && !savedArea.empty()) { // (the field the vista was left from, where the player stood)
                 const std::string a = savedArea;
                 game.next = cr3::GameState::Next();
                 SDL_Log("event: back to the field, %s", a.c_str());
