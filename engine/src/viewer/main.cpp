@@ -7824,6 +7824,12 @@ struct Viewer {
             // (--input: "attack" / "guard", a target "t<n>" - the n-th monster alive; "escape" then
             // "yes" / "no" - once the battle's script is over, as the menu waits: a turn end's scene)
             takeAutoBattleToken();
+            if (!scripted && !inputScript.empty() && inputScript.front() == "win") { // (--input win: tests - won as Battle.ForceVictory)
+                inputScript.pop_front();
+                SDL_Log("battle %d: won by the test input", cr3Battle.coupling);
+                cr3ForcedEnd = 0;
+                return;
+            }
             const bool own = !inputScript.empty() && isCr3BattleToken(inputScript.front());
             if (!scripted && autoBattle && !own && cr3BattleClock - cr3StageStart > 0.6f) { // (--input auto: attack the first monster alive; auto:gene its first gene command on a foe first)
                 if (cr3BattleStage == Cr3BattleStage::Menu) autoGeneSkip = -1, chooseCr3GetSet(0);

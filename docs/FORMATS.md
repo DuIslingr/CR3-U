@@ -325,7 +325,8 @@ SetAnimationTime, 30 a second), SetMotionLoopPoint(model, start, end) loops it b
 (Animator +0x78 / +0x7c) until ResetMotionLoopPoint or the next SetMotion. Cr3Fade.BackFadeIn/Out
 (and the 2s, from % to %) fade InterfaceMain's back fade window - CR3-U draws it under the windows,
 before the fade. Tests: `CR3_STUBS=1` prints each not-bound native's first call; `wait:<s>` counts
-in a vista or battle too.
+in a vista or battle too; `win` (once a battle waits for a choice) ends it won, as Battle.ForceVictory -
+for story crawls past bosses the test party can't beat (never on a battle the story loses by script).
 The e-maps a map table entry's camera type 2 marks (an ortho camera: e0015, the coral wall's cave)
 are made by Fld2TaskMap::CreateArea2D - no `<area>c`: their defaultPos and walls are `<area>`'s own.
 The random dungeons' maps - the map table's 0x5e .. 0xc0 and 0x153 .. 0x1b5, d0601 .. d0699 (Magma
