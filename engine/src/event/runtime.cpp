@@ -95,6 +95,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         EventModel* m = scene_.model(c.string(0));
         if (!m || m->stagedMotion.empty()) return;
         m->animation = m->stagedMotion, m->loop = c.boolean(1, true), m->animTime = 0, m->blendSeconds = 0;
+        m->loopStart = m->loopEnd = 0; // (a new animator: its own loop)
     });
     vm.setNative("EvtScene", "SetBlendMotion", [this](NativeCall& c) {
         EventModel* m = scene_.model(c.string(0));
@@ -103,6 +104,17 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         m->blendFromTime = m->animTime;
         m->blendSeconds = float(std::max(c.integer(2), 0)) * kTick;
         m->animation = m->stagedMotion, m->loop = c.boolean(1, true), m->animTime = 0;
+        m->loopStart = m->loopEnd = 0;
+    });
+    // (Cr3EvtSceneSetMotionTime: the motion at that frame; ..LoopPoint: CrxModel::SetAnimationLoopStart/End)
+    vm.setNative("EvtScene", "SetMotionTime", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->animTime = c.number(1) * kTick, m->blendSeconds = 0;
+    });
+    vm.setNative("EvtScene", "SetMotionLoopPoint", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->loopStart = c.number(1) * kTick, m->loopEnd = c.number(2) * kTick;
+    });
+    vm.setNative("EvtScene", "ResetMotionLoopPoint", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->loopStart = m->loopEnd = 0;
     });
     vm.setNative("EvtScene", "LoadFaceMotion", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->stagedFace = m->figure + "_" + c.string(1);
@@ -548,6 +560,13 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("Cr3Fade", "DeleteEffectLine", [this](NativeCall&) { effectLine = false; });
     vm.setNative("Cr3Fade", "FadeIn2", fade2);
     vm.setNative("Cr3Fade", "FadeOut2", fade2);
+    vm.setNative("Cr3Fade", "BackFadeIn", [this](NativeCall& c) { backFade_.start(fadeColour(c.integer(0)), c.integer(1), 1, 0); });
+    vm.setNative("Cr3Fade", "BackFadeOut", [this](NativeCall& c) { backFade_.start(fadeColour(c.integer(0)), c.integer(1), 0, 1); });
+    auto backFade2 = [this](NativeCall& c) {
+        backFade_.start(fadeColour(c.integer(0)), c.integer(1), c.number(2) / 100.0f, c.number(3) / 100.0f);
+    };
+    vm.setNative("Cr3Fade", "BackFadeIn2", backFade2);
+    vm.setNative("Cr3Fade", "BackFadeOut2", backFade2);
     // the vista's skip button (EvtSkip): held - the viewer's fastForward while it shows
     vm.setNative("EvtSkip", "CheckButtonTouch", [this](NativeCall& c) { c.result(skipHeld()); });
     vm.setNative("EvtSkip", "ButtonCreate", [this](NativeCall&) { skipButton_ = true; });
@@ -600,7 +619,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
 
 void EventRuntime::reset() {
     scene_ = EventScene();
-    fade_ = EventFade();
+    fade_ = EventFade(), backFade_ = EventFade();
     faces_.clear();
     text_ = TextData(), names_ = TextData();
     windowText_.clear(), tutorialPicture_ = TutorialPicture();
@@ -667,7 +686,7 @@ bool EventRuntime::update(ScriptVM* vm) {
         else if (s->wait == 0 && autoPage > 0 && (pageTime_ += kTick) >= autoPage) advance(); // (a tap mark: as a page)
     } else if (message_ > 0 && ending()) message_ = 0, page_ = 0; // (\*: its end by itself)
     else if ((message_ > 0 || execution_) && autoPage > 0 && (pageTime_ += kTick) >= autoPage) advance();
-    fade_.update();
+    fade_.update(), backFade_.update();
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)

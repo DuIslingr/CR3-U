@@ -320,6 +320,12 @@ Cr3System.CheckVistaEvent (Fld2CheckVistaEvent: SetVistaFuncName's or SetVistaFu
 work bytes 3 / 0x11) ends a dungeon's evt000 after its story set-ups: the music, people, map name
 and quest checks (MainQuestClear_ID11 - quest_complete) wait for its return from the vista, so a
 lost story battle (evt002, EventBattleLose) never clears the quest; CheckLunchEvent the meal's.
+Vista motions: EvtScene.SetMotionTime(model, frame) puts the motion at that frame (CrxModel::
+SetAnimationTime, 30 a second), SetMotionLoopPoint(model, start, end) loops it between those frames
+(Animator +0x78 / +0x7c) until ResetMotionLoopPoint or the next SetMotion. Cr3Fade.BackFadeIn/Out
+(and the 2s, from % to %) fade InterfaceMain's back fade window - CR3-U draws it under the windows,
+before the fade. Tests: `CR3_STUBS=1` prints each not-bound native's first call; `wait:<s>` counts
+in a vista or battle too.
 The e-maps a map table entry's camera type 2 marks (an ortho camera: e0015, the coral wall's cave)
 are made by Fld2TaskMap::CreateArea2D - no `<area>c`: their defaultPos and walls are `<area>`'s own.
 The random dungeons' maps - the map table's 0x5e .. 0xc0 and 0x153 .. 0x1b5, d0601 .. d0699 (Magma

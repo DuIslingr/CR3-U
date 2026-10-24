@@ -8,6 +8,7 @@
 // model's animation <figure>e826.
 
 #include <map>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,14 @@ struct EventModel {
     std::string animation;
     bool loop = true;
     float animTime = 0;
+    // SetMotionLoopPoint(model, start, end) (Animator +0x78 / +0x7c, frames at 30 a second): a loop
+    // past its end goes back to start, not 0; ResetMotionLoopPoint clears it (end 0: the animation's)
+    float loopStart = 0, loopEnd = 0;
+    float motionTime(float lead) const {
+        const float t = animTime + lead;
+        if (!loop || loopEnd <= loopStart || t < loopEnd) return t;
+        return loopStart + std::fmod(t - loopStart, loopEnd - loopStart);
+    }
     // ChangeAnimatorBlend: the motion it fades from (its animation, how far into it) over
     // blendSeconds (EvtMotionManager's two slots, linear)
     std::string blendFrom;

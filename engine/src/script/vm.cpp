@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "squirrel.h"
@@ -136,7 +137,12 @@ ScriptVM* owner(HSQUIRRELVM v) { return static_cast<ScriptVM*>(sq_getforeignptr(
 
 } // namespace
 
-long stubNativeCalls(ScriptVM& s, const char* name) { return ++s.stubCalls_[name]; }
+long stubNativeCalls(ScriptVM& s, const char* name) {
+    const long n = ++s.stubCalls_[name];
+    static const bool trace = std::getenv("CR3_STUBS") != nullptr; // (tests: each not-bound native's first call)
+    if (trace && n == 1) std::fprintf(stderr, "stub native: %s\n", name);
+    return n;
+}
 
 // a stub's trace hook: the call's arguments (all but the name, the free variable on the top)
 SQInteger_t stubNativeHook(ScriptVM& s, SQVM* v, const char* name) {

@@ -76,6 +76,7 @@ public:
     const EventScene& scene() const { return scene_; }
     bool sceneShown() const { return scene_.loaded() && !terminated_ && !drawSkip_; }
     const EventFade& fade() const { return fade_; }
+    const EventFade& backFade() const { return backFade_; } // (Cr3Fade::BackFade*: InterfaceMain's back fade window, under the windows)
     // the face textures EvtScene.SetFaceTexture set (slot -> image)
     const std::map<int, std::string>& faces() const { return faces_; }
 
@@ -349,7 +350,7 @@ private:
     GameState& state_;
     std::unique_ptr<ScriptVM> vm_;
     EventScene scene_;
-    EventFade fade_;
+    EventFade fade_, backFade_;
     SpacePort spacePort_;
     WorldSelect worldSelect_;
     Lunch lunch_;

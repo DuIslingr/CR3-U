@@ -2575,6 +2575,10 @@ struct Viewer {
         if (titleMenu.stage) return updateTitle(dt);
         if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt; // (its clock: the field's camp keeps its own)
         if (cr3Title.stage) return updateCr3Title(dt);
+        // (--input wait:<seconds>: tests - the inputs after it held that long, whatever runs meanwhile:
+        // the field, a vista, a battle)
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && (inputWait += dt) >= float(std::atof(inputScript.front().c_str() + 5)))
+            inputScript.pop_front(), inputWait = 0;
         // (Battle Speed, Field Speed: the battles, and the field while the player walks it - nothing
         // running or open over it -, that many times as fast)
         if (cr3BattleMode) return updateCr3Battle(dt * float(optionsOpen || settingsOpen || cr3OptionsOver() ? 1 : settings.battleSpeed));
@@ -6656,9 +6660,6 @@ struct Viewer {
     bool areaScriptOver = false; // (the area's evt000 over as it started - its BranchAfterEvent still to come)
     void updateArea(float dt, float sx, float sy, bool run) {
         takeAutoBattleToken();
-        // (--input wait:<seconds>: tests - the inputs after it held that long, the field going on)
-        if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && (inputWait += dt) >= float(std::atof(inputScript.front().c_str() + 5)))
-            inputScript.pop_front(), inputWait = 0;
         areaClock += dt, areaMotionAge += dt;
         stepFieldEffects(dt);
         if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
@@ -9028,7 +9029,7 @@ struct Viewer {
         }
         f.place = ev.scene().placeAt(m, eventLead());
         f.tint[3] = m.alpha(eventLead()); // (ChangeAlpha)
-        pose(f, m.animTime + eventLead(), m.loop);
+        pose(f, m.motionTime(eventLead()), m.loop);
     }
 
     void drawEvent(int w, int h) {
@@ -22207,14 +22208,15 @@ struct Viewer {
             poseUi(rl, "radiate_loop", uiClock, true);
             drawFigure(rl.fig, view.data());
         }
-        const cr3::EventFade& fd = ev->fade();
-        const float alpha = fd.at(eventLead() / cr3::EventRuntime::kTick);
-        if (alpha > 0 && white.id) {
-            static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
-            const Mat4 id = cr3::mat4Identity();
-            const float* c = fadeColours[std::clamp(fd.colour, 0, 3)];
-            const float rgba[4] = {c[0], c[1], c[2], alpha};
-            dev->drawQuad(white, kScreen, id.data(), rgba);
+        for (const cr3::EventFade* fd : {&ev->backFade(), &ev->fade()}) { // (the back fade first: both under the windows)
+            const float alpha = fd->at(eventLead() / cr3::EventRuntime::kTick);
+            if (alpha > 0 && white.id) {
+                static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+                const Mat4 id = cr3::mat4Identity();
+                const float* c = fadeColours[std::clamp(fd->colour, 0, 3)];
+                const float rgba[4] = {c[0], c[1], c[2], alpha};
+                dev->drawQuad(white, kScreen, id.data(), rgba);
+            }
         }
         const bool message = ev->messageShown() && ev->page() < int(ev->message().pages.size());
         const bool onVista = message && ev->messageWindow() == cr3::EventRuntime::Vista;
