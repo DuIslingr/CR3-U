@@ -1075,7 +1075,22 @@ A dungeon's town button
 goods held (GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock). Itemizing gift 600022 sets flag
 28 (DBSystem::SM_ItemizeGift: Explorer Training's step). The tutorial quests (rank 6: Explorer
 Training, Basic Combat - the Colosseum -, Using Coins - the Sp Shop's Lucky Box, not in yet) are
-among the Sub Quests.
+among the Sub Quests. Explorer Training (56, d0212): three boxes (kbox_03 .. 05 - flags 1402 ..
+1404, a weapon, armour and accessory), then all three worn by the hero (evt001 on the camp's
+closing: 1405, and the area entered again), a box again with Tom Sawyer (1406) worn (1407), a box
+with Gift: Tree of Knowledge (1408) itemised (1409), then the Microcommunicator - item 1 in the
+camp's New or Field list, asked 0x2a6, CampItemMain's 0x21 exit: Fld2Main::SM_Camp 6, the area
+script's DungeonExit - home, where the quest ends. Basic Combat (59): the Colosseum desk (`c121_00`)
+calls SetBattleParty(0, 9) and (1 / 2, -1) - FldUtilSetBattleParty's three slots, the battle's party
+where the first isn't -1 (BtlBootParam +0 .. +8) - and battle 175: Cremate (241), Electra (1768),
+then a guard - RequestModeChange(monster, 1) lets it attack; its 1122 landing on the hero with
+status effect 2 passes -, then Chocolate by J (526) and ForceVictory. A guard has no direction,
+so no Battle_Direction_End. Using Coins (79) asks for a Lucky Box opened (LuckyBoxMain sets flag
+39): not in yet. The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
+`cr3tool couplings <archive> <monster>` lists where a monster is met.
+
+A save keeps the world select's level beside the dungeon (`select <dungeon> <level>`): a dungeon
+resumed meets its band's monsters (it fell back to the first band).
 
 The global work (Cr3UtilGlobalWorkGet / Set - the scripts' GetVar / SetVar) holds 100 values; 24 is
 the quest set off on.
@@ -1573,6 +1588,34 @@ effects aren't drawn), StopAuto (no auto battle), OpenUI / CloseUI, AddFieldObje
 and forces the win after turn 5; the ace battles (503, 506, 509, 515) triple EXP and money when
 all three fall; battle 3's defeat plays its event and ends.
 
+BattleCommand.SetId(id) / SetIdAndTarget(id, target) queue commands of no unit's
+(BtlSysStateAction::VUpdate, states 0xc and 0x12): after the defeat script, any queued are played -
+AllEndEffectToCalculation(0xb), the command manager cleared, each added with source -1 and
+calculated - instead of the defeat, and the battle goes on; after the turn-end script likewise.
+Every battle's Battle_Defeat_Base with flag 5053 (chapter 1's stretch from d02's s101_d02_00101_set
+to t01's s102_t01_00101_set) queues 72 - target 11, the party's side, power 100, taking KO (status
+effect 1) away: the party back whole, with the voice j005_338. CR3-U applies the command itself
+(KO gone, HP its power's percentage of the max; its direction isn't played).
+
+BattleCoupling.SetId(id) in a victory script brings the next wave: at the victory event's end
+(phaseVictoryEvent - its state 4) AcquireRemuneration takes the fallen monsters' EXP and money, then
+reinforceByCoupling - BtlSystem::CreateMonster: the monsters gone and the coupling's in their place;
+BtlScriptSystem::Initialize loads its script (no boot); the units aligned, the camera's size,
+FadeInNonPlayers; then phaseCallTurnEndEvent (its Battle_Turn_End) and the next turn. The party as
+it stands, the gauge and the turn carry on; one result at the end has every wave's. Battle 15
+(d05) goes on to 16, then 17. Without a next wave phaseVictoryIn plays the result's music
+(PlayResultBgm) - after the victory event, not with it.
+
+An item's battle command is item_para's +0x30 (Chocolate 511, Chocolate by J 526; -1 none - field
+items as the Microcommunicator aren't listed); +0x0c names no command. BattleStatus.
+RequestModeChange(unit, mode) is queued (BtlStatusList +0x150) and applied in phaseStatusEffect
+(BtlStatusList::ChangeMode -> BtlMonsterStatus::VChangeMode): that mode's MonsterCommand row - the
+attack command, commands, skills and its +8 element.
+
+Tests: `CR3_TRACE_NATIVES=<text>` logs every script native whose name holds the text (`.` all);
+`cr3tool event` takes `CR3_TRACE_RESULTS="Cr3Flag.Check(1401)=1;..."` to follow a branch;
+`tools/nut.py dis` disassembles a script; `cr3tool texts <release> <message file>` prints one file.
+
 ### Monster scripts, triggered skills and cooperations (CR3)
 
 Before a turn is worked out (BtlStatusList::CallMonsterScript) each living monster's
@@ -2056,6 +2099,11 @@ average (each release's own lossy compression), orientation and alpha alike.
 
 PVR v3's channels of 8 bits each are stored byte by byte in order; its packed ones (4444, 5551)
 from the top bit down.
+
+Alpha-only textures (legacy PVR A8 0x1b, PVR v3 `a 8`, GXT U8 R000) decode black with their alpha:
+PvrLoad2 uploads A8 as GL_ALPHA, which samples (0, 0, 0, a). The camp top's panel masks
+(`cam_parts_02`, additive with an alpha test) so draw nothing and only write depth - each panel
+drawn right to left clips the art of the one before it.
 
 Row order: every Android PVR and all but 2 of the iPad's are stored bottom row first (the GL
 releases upload the rows as stored, so texture v = 0 is the picture's bottom); every GXT top row
