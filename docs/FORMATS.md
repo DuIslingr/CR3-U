@@ -392,6 +392,13 @@ d0200rock00 - and +0x34 its radius, 3) within its radius of a blast breaks (Upda
 frame), its function (krock_11: a flag, SE fe_014), its body gone, its model hidden; thirty chips fly
 - ten of <model less 2>01, twenty smaller of ..02 - 0.98 down an update, one bounce at 0.7, faded by
 1.2 s. The area script puts broken rocks back on a new visit (flags 4031 .. reset).
+A bomb switch (Fld2PhysicalSwitch, ragdoll_bswc_..: f0000swc02, its other model <model less 2>03 -
+f0000swc03) turns when a bomb goes off within its row's +0x34 (1.5; CheckBlastObjectwithSwitchTiming,
+the bomb's first update gone off): Exchange - the other model shown, SE 0x24f, its function (bswc_01:
+flag 4025, the door cobj_05 open). The area script turns it back on on a new visit
+(Cr3GimmickData.SwitchOn(name, true)). The floor switch (Fld2StepSwitch, ragdoll_fswc_..: the player
+within 0.5 of it - CheckOnSwitch, SE 0x24e, pressed 0.105) isn't in yet. Crawl tests: near:<gimmick>:<distance>,
+wait:<seconds> (the inputs after it held), and auto battles spend a jem at a lost battle's Continue.
 
 A Field row's +0x2c makes its gimmick solid (a rigid body: its body in `<area>p.phys`, named as it) -
 rocks, boxes, check objects, people - a wall while it stands and is shown.

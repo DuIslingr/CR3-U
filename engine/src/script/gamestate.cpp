@@ -331,6 +331,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
                                                 [&](const GameState::FieldEffect& e) { return e.target == target; }),
                                  state.fieldEffects.end());
     });
+    vm.setNative("Cr3GimmickData", "SwitchOn", [&state](NativeCall& c) { // (Fld2PhysicalSwitch::SetOnFlag: its other model, no sound)
+        if (c.integer(1, 1)) state.switchesOn.insert(c.string(0));
+        else state.switchesOn.erase(c.string(0));
+    });
     vm.setNative("Cr3GimmickData", "BoxOpen", [&state](NativeCall& c) { state.fieldBoxes[c.string(0)] = std::max(state.fieldBoxes[c.string(0)], 1); });
     vm.setNative("Cr3GimmickData", "DeleteBox", [&state](NativeCall& c) {
         if (state.fieldBoxes[c.string(0)] >= 1) state.fieldBoxes[c.string(0)] = 2; // (Fld2Box::Update: an opened one fades)

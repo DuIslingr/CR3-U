@@ -5910,7 +5910,7 @@ struct Viewer {
     // (CheckBlastObject: a rock within its radius of it breaks; CheckBlastChain: a bomb put within 1
     // goes off after the chain's count x 0.4 s), then gone at its animation's end
     struct FieldBomb {
-        bool on = false, blasting = false, chained = false;
+        bool on = false, blasting = false, chained = false, fresh = false; // (fresh: its first update gone off)
         int stage = 0; // 1 the fuse, 2 gone off (blasting), 3 dying away
         float t = 0, chainT = 0, chainDelay = 0, yaw = 0;
         cr3::Vec3 pos{};
@@ -5957,7 +5957,7 @@ struct Viewer {
             if (b.stage == 1) {
                 if (b.chained) b.chainT += dt;
                 if ((fuseEnd > 0 && b.t >= fuseEnd) || b.t >= 1.5f || (b.chained && b.chainT >= b.chainDelay)) {
-                    b.stage = 2, b.t = 0, b.blasting = true;
+                    b.stage = 2, b.t = 0, b.blasting = true, b.fresh = true;
                     b.yaw = float(std::rand()) / float(RAND_MAX) * 3.14159f;
                     if (std::none_of(fieldBombs.begin(), fieldBombs.end(), [](const FieldBomb& o) { return o.on && o.stage == 1; })) audio.stopSe("fe_012", 0);
                     audio.playSe("fe_013", false);
@@ -6002,6 +6002,18 @@ struct Viewer {
             SDL_Log("area %s: %s broken", area.name.c_str(), npc.name.c_str());
             fieldPendingFunctions.push_back(npc.name); // (SetScript: its function - krock_11: flag 4034, SE fe_014 - once the area's script is free)
         }
+        // (Fld2PhysicalSwitch::Update: a bomb going off within the row's +0x34 of it -
+        // CheckBlastObjectwithSwitchTiming - turns it: Exchange, the other model, SE 0x24f, its function)
+        for (AreaNpc& npc : areaNpcs) {
+            if (!npc.bombSwitch || !game.gimmickVisible(npc.name)) continue;
+            const cr3::Vec3 at{npc.place.m[3], npc.place.m[7], npc.place.m[11]};
+            if (std::none_of(fieldBombs.begin(), fieldBombs.end(), [&](const FieldBomb& b) { return b.on && b.fresh && bombDist(b.pos, at) <= npc.blastRadius; })) continue;
+            if (!game.switchesOn.erase(npc.name)) game.switchesOn.insert(npc.name);
+            audio.playSe(0x24f, false);
+            SDL_Log("area %s: %s turned %s", area.name.c_str(), npc.name.c_str(), game.switchesOn.count(npc.name) ? "on" : "off");
+            fieldPendingFunctions.push_back(npc.name); // (SetScript)
+        }
+        for (FieldBomb& b : fieldBombs) b.fresh = false;
         for (AreaNpc& npc : areaNpcs) { // (the chips: 0.98 down an update - 30 a second -, one bounce at the rock's foot)
             if (npc.chips.empty()) continue;
             const float age = areaClock - npc.brokenAt;
@@ -6070,6 +6082,8 @@ struct Viewer {
         float openAt = -1, fade = 1;    // (BoxOpen: its _a01 from then, held; DeleteBox: 0.1 less each update)
         bool solid = false;             // (the Field row's +0x2c: a rigid body - its <area>p.phys body, named as it)
         bool rock = false;              // (Fld2Rock: ragdoll_krock_..)
+        bool bombSwitch = false;        // (Fld2PhysicalSwitch: ragdoll_bswc_.. - a blast near turns it, its other model <model less 2>03)
+        ViewFigure alt;
         float blastRadius = 0;          // (+0x34: a bomb's blast this near breaks it - CheckBlastObject)
         bool broken = false;
         float brokenAt = 0;
@@ -6161,6 +6175,8 @@ struct Viewer {
             npc.box = gimmick.compare(0, 12, "ragdoll_kbox") == 0;
             npc.solid = row.i(9) != 0;
             npc.rock = gimmick.compare(0, 13, "ragdoll_krock") == 0;
+            npc.bombSwitch = gimmick.compare(0, 12, "ragdoll_bswc") == 0;
+            if (npc.bombSwitch && model.size() > 2) loadFigure(model.substr(0, model.size() - 2) + "03.geom", npc.alt, &err);
             npc.blastRadius = row.f(11);
             npc.broken = npc.rock && game.brokenRocks.count(name + ":" + npc.name);
             npc.phase = float(areaNpcs.size()) * 0.37f;
@@ -6182,9 +6198,9 @@ struct Viewer {
         }
         for (ViewFigure& f : areaFigures) unload(f);
         areaFigures.clear();
-        for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head);
+        for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head), unload(npc.alt);
         areaNpcs.clear();
-        game.gimmickShown.clear(), game.fieldBoxes.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
+        game.gimmickShown.clear(), game.fieldBoxes.clear(), game.switchesOn.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
         game.fieldEffects.clear();
         if (name.compare(0, 3, areaPrefix) != 0) game.brokenRocks.clear(); // (another dungeon or a town: its rocks whole again)
         areaPrefix = name.substr(0, 3);
@@ -6628,6 +6644,9 @@ struct Viewer {
     bool areaScriptOver = false; // (the area's evt000 over as it started - its BranchAfterEvent still to come)
     void updateArea(float dt, float sx, float sy, bool run) {
         takeAutoBattleToken();
+        // (--input wait:<seconds>: tests - the inputs after it held that long, the field going on)
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && (inputWait += dt) >= float(std::atof(inputScript.front().c_str() + 5)))
+            inputScript.pop_front(), inputWait = 0;
         areaClock += dt, areaMotionAge += dt;
         stepFieldEffects(dt);
         if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
@@ -6812,7 +6831,12 @@ struct Viewer {
             const std::string want = inputScript.front().substr(5);
             inputScript.pop_front();
             SDL_Log("area %s: calls %s", area.name.c_str(), want.c_str());
-            runAreaFunction(want);
+            const bool here = std::any_of(areaGimmicks.begin(), areaGimmicks.end(), [&](const AreaGimmick& g) { return g.function == want; }) ||
+                              std::any_of(areaNpcs.begin(), areaNpcs.end(), [&](const AreaNpc& n) { return n.name == want; });
+            const size_t us = want.rfind('_'); // (a gimmick's name - cobj_05, c121_00 - only where it is; a script's own function anywhere)
+            const bool gimmickLike = us != std::string::npos && want.size() - us == 3 && std::isdigit(static_cast<unsigned char>(want[us + 1])) && std::isdigit(static_cast<unsigned char>(want[us + 2]));
+            if (here || !gimmickLike) runAreaFunction(want);
+            else SDL_Log("area %s: %s not here", area.name.c_str(), want.c_str());
         }
         // (--input drag:<x0>/<y0>/<x1>/<y1> - a finger touched at the first screen fraction, moved to
         // the second, held - and drag:end, let go: tests)
@@ -6824,9 +6848,11 @@ struct Viewer {
             else if (std::sscanf(want.c_str(), "%f/%f/%f/%f", &a, &b, &c, &d) == 4) areaDragStart(a, b), areaDragMove(c, d);
             SDL_Log("area %s: drag %s", area.name.c_str(), want.c_str());
         }
-        // (--input near:<gimmick>: tests - the player stood 1.5 from it on its side, facing it)
+        // (--input near:<gimmick>[:<distance>]: tests - the player stood 1.5 (or that) from it on its side, facing it)
         if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 5, "near:") == 0) {
-            const std::string want = inputScript.front().substr(5);
+            std::string want = inputScript.front().substr(5);
+            float away = 1.5f;
+            if (const size_t colon = want.find(':'); colon != std::string::npos) away = float(std::atof(want.c_str() + colon + 1)), want.resize(colon);
             inputScript.pop_front();
             std::vector<AreaGimmick> near = areaGimmicks;
             for (const AreaNpc& npc : areaNpcs) // (a rock, a box: by its place)
@@ -6837,7 +6863,7 @@ struct Viewer {
                     float dx = p[0] - g.world.m[3], dz = p[2] - g.world.m[11];
                     const float l = std::max(std::hypot(dx, dz), 1e-3f);
                     dx /= l, dz /= l;
-                    areaWalker->setPosition({g.world.m[3] + dx * 1.5f, g.world.m[7] + 0.5f, g.world.m[11] + dz * 1.5f});
+                    areaWalker->setPosition({g.world.m[3] + dx * away, g.world.m[7] + 0.5f, g.world.m[11] + dz * away});
                     for (int k = 0; k < 60; ++k) areaWalker->setVelocity({0, 0, 0}), areaWalker->step();
                     areaYaw = std::atan2(-dx, -dz);
                     const cr3::Vec3 q = areaWalker->position();
@@ -7000,6 +7026,12 @@ struct Viewer {
                     pose(boxGet, areaClock - npc.openAt, false);
                     drawFigure(boxGet, vp.data());
                 }
+                continue;
+            }
+            if (npc.bombSwitch && game.switchesOn.count(npc.name) && !npc.alt.meshes.empty()) { // (Exchange: its other model)
+                npc.alt.place = npc.place;
+                pose(npc.alt, 0, false);
+                drawFigure(npc.alt, vp.data());
                 continue;
             }
             for (ViewFigure* fp : {&npc.body, &npc.head}) {
@@ -7464,6 +7496,7 @@ struct Viewer {
     bool autoBattle = false, autoGene = false;
     int autoGeneSkip = -1; // (auto:gene - the chooser with no gene command to use this turn)
     float wanderLeft = 0, wanderTurn = 0; // (--input wander:<seconds>)
+    float inputWait = 0;                  // (--input wait:<seconds>)
     void takeAutoBattleToken() {
         while (!inputScript.empty() && (inputScript.front() == "auto" || inputScript.front() == "auto:gene" || inputScript.front() == "manual")) {
             autoBattle = inputScript.front() != "manual", autoGene = inputScript.front() == "auto:gene";
@@ -7485,6 +7518,10 @@ struct Viewer {
             const auto it = kCtn.find(inputScript.front().substr(4));
             inputScript.pop_front();
             if (it != kCtn.end()) chooseCr3Continue(it->second);
+        } else if (autoBattle && (inputScript.empty() || inputScript.front().compare(0, 4, "ctn:") != 0) && cr3BattleClock - cr3Ctn.since > 0.6f) {
+            // (--input auto: a jem spent where one is held, else given up)
+            const int stage = cr3Ctn.stage;
+            chooseCr3Continue(stage == 1 ? (cr3Jems() > 0 ? kCtnJem : kCtnGiveUp) : stage == 4 ? kCtnOk : kCtnYes);
         }
     }
     void chooseCr3Continue(int id) {
