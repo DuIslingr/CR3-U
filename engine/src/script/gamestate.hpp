@@ -248,6 +248,9 @@ struct GameState {
         std::string vistaFunction, vistaMap = "null";
         int battle = -1;
         int battleParty[2] = {-1, -1};
+        // (CR3's: FldUtilSetBattleParty - DAT_0141e298's three slots; with the first not -1 the
+        // battle's party is these, -1 none - BtlBootParam +0 .. +8 -, the party's own otherwise)
+        int cr3BattleParty[3] = {-1, -1, -1};
         // (CR3's BattleIn(coupling, field, level, music) / BattleIn2(.., the music after):
         // FldUtilReserveBattleIN - BtlBootParam +0x14, +0x10 the battle field (battle_field.mbe),
         // +0x18 the monsters' level, +0x1c the music; the scripts' wrappers name them cup, map,

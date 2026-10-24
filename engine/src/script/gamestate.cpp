@@ -220,6 +220,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SetBattleParty", [&next](NativeCall& c) {
         const int k = c.integer(0);
         if (k == 0 || k == 1) next.battleParty[k] = c.integer(1, -1);
+        if (k >= 0 && k < 3) next.cr3BattleParty[k] = c.integer(1, -1);
     });
     // the party (Cr3UtilSetActivePartyMember / Get..., SetPartyMember, CopyPartyMember)
     vm.setNative("Cr3System", "SetActivePartyMember", [&state](NativeCall& c) {

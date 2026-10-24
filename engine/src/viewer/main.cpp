@@ -7571,6 +7571,9 @@ struct Viewer {
             vm.setNative("BattleStatus", "RemovesStatusEffect", [this](cr3::NativeCall& c) { cr3Rules.removeEffect(c.integer(0, -1), c.integer(1)); });
             // (BtlStatusList::HaveStatusEffectToDirection: the direction's effects - 1, KO, taken as a
             // unit falls - BtlStatus::TriggerSkillToDirection's trigger 7 -, CountKilledMonster's)
+            vm.setNative("BattleStatus", "RequestModeChange", [this](cr3::NativeCall& c) {
+                if (c.integer(0, -1) >= 0) cr3Rules.modeRequests.push_back({c.integer(0), c.integer(1)});
+            });
             vm.setNative("BattleStatus", "HaveStatusEffect", [this, fighter](cr3::NativeCall& c) {
                 const int id = c.integer(0, -1), effect = c.integer(1);
                 const auto* f = fighter(id);
@@ -8015,6 +8018,14 @@ struct Viewer {
             drawUiText(cr3Announce.text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, a);
         }
     }
+    // the battle's party: SetBattleParty's three where a script set them (the tutorials' own
+    // fighters - battle 175's character 9 alone), else the party's
+    std::vector<int> cr3BattlePartyIds() const {
+        if (game.next.cr3BattleParty[0] == -1) return std::vector<int>(std::begin(game.cr3Party), std::end(game.cr3Party));
+        std::vector<int> party(3, 0);
+        for (int k = 0; k < 3; ++k) party[size_t(k)] = std::max(game.next.cr3BattleParty[k], 0);
+        return party;
+    }
     // the units' figures from `from` on (the party's, the monsters')
     void loadCr3BattleUnits(size_t from) {
         std::string err;
@@ -8053,7 +8064,7 @@ struct Viewer {
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
             if (f.player) party.push_back(f);
         const int gauge = cr3Rules.gauge;
-        const std::vector<int> ids(std::begin(game.cr3Party), std::end(game.cr3Party));
+        const std::vector<int> ids = cr3BattlePartyIds();
         std::string err;
         cr3::Cr3Battle next;
         if (!next.setup(cr3BattleTables, coupling, cr3BattleFieldId, ids, uint32_t(SDL_GetTicks()) | 1u, &err, &game.cr3Armour, &game.cr3Weapon)) {
@@ -8104,7 +8115,8 @@ struct Viewer {
             SDL_Log("battle: %s", err.c_str());
             return false;
         }
-        const std::vector<int> party(std::begin(game.cr3Party), std::end(game.cr3Party));
+        const std::vector<int> party = cr3BattlePartyIds();
+        if (game.next.cr3BattleParty[0] != -1) SDL_Log("battle %d: the script's party %d %d %d", coupling, party[0], party[1], party[2]);
         if (!cr3Battle.setup(cr3BattleTables, coupling, fieldId, party, uint32_t(SDL_GetTicks()) | 1u, &err, &game.cr3Armour, &game.cr3Weapon)) {
             SDL_Log("battle %d: %s", coupling, err.c_str());
             return false;
@@ -8593,9 +8605,11 @@ struct Viewer {
             for (const auto& [id, n] : game.cr3Items) {
                 if (id <= 0 || id >= 100000 || n <= 0) continue; // (an Item's full id its own)
                 cr3::MbeFile::Row r;
-                if (!cr3BattleTables.item.find("Item", id, "iiiiiiiiiiiii", r)) continue;
+                // (item_para's +0x30 its battle command - Chocolate by J's 526, a Plum's 511; -1 none:
+                // a field item, the Microcommunicator, not listed. +0x0c is no command)
+                if (!cr3BattleTables.item.find("Item", id, "iiiiiiiiiiiii", r) || r.i(12) < 0) continue;
                 Cr3ListRow row;
-                row.item = id, row.command = r.i(3), row.count = n, row.name = cr3NameOf("item_name.mbe", "ItemName", id);
+                row.item = id, row.command = r.i(12), row.count = n, row.name = cr3NameOf("item_name.mbe", "ItemName", id);
                 cr3::Cr3Command c;
                 row.usable = cr3Rules.command(row.command, c) && c.usable();
                 cr3List.push_back(row);
@@ -8803,7 +8817,10 @@ struct Viewer {
             // once the spider endures at 1 HP - and the next action after it; BattleArgument its
             // action - CallDirectionEnd: SetSource, SetDamageChunk)
             cr3ArgAction = int(cr3ActionAt) - 1, cr3ArgSource = cr3Actions[cr3ActionAt - 1].source;
-            if (runCr3BattleScript("Battle_Direction_End_Base") && cr3BattleEvents && cr3BattleEvents->running()) {
+            // (a guard, or a unit unable to act, has no direction: no CallDirectionEnd - battle
+            // 175's guard lesson would tell the guard off)
+            const bool directed = cr3Actions[cr3ActionAt - 1].command >= 0;
+            if (directed && runCr3BattleScript("Battle_Direction_End_Base") && cr3BattleEvents && cr3BattleEvents->running()) {
                 cr3ActionStart = cr3BattleClock, cr3ActionPlay = Cr3ActionPlay(), cr3ActionPlay.end = 0, cr3ActionPlay.hitsShown = 1 << 20;
                 cr3PendingStart = true;
                 return;
@@ -9081,6 +9098,7 @@ struct Viewer {
     std::vector<int> cr3FieldEffects; // (BtlFieldEffectManager: the boot script's AddFieldStatusEffect)
     int cr3ResultAdd[2] = {0, 0}, cr3ResultFactor[2] = {1, 1}; // (the scripts' EXP / money added, and factors)
     void endCr3Battle() {
+        for (int& c : game.next.cr3BattleParty) c = -1; // (GameMain::SM_ChangeMode: cleared)
         cr3BattleMode = false;
         cr3::GameState::Next& n = game.next;
         const int next = n.battleNext;

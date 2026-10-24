@@ -501,7 +501,26 @@ bool Cr3BattleRules::effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const
     return int(random() * 256.0f) < std::max(chance, 0);
 }
 
+void Cr3BattleRules::changeMode(int fi, int mode) {
+    if (!tables_ || fi < 0 || size_t(fi) >= fighters.size() || fighters[size_t(fi)].player) return;
+    Cr3Fighter& f = fighters[size_t(fi)];
+    const MbeFile::Table* mc = tables_->monster.table("MonsterCommand");
+    for (size_t row = 0; mc && row < mc->rows.size(); ++row) {
+        MbeFile::Row m;
+        if (!tables_->monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != f.id || m.i(1) != mode) continue;
+        f.attackCommand = m.i(5), f.element = m.i(2);
+        f.commands.clear(), f.skills.clear();
+        for (size_t c = 0; c < 8; ++c)
+            if (m.i(8 + c * 3) >= 0) f.commands.emplace_back(m.i(8 + c * 3), std::max(m.i(9 + c * 3), 0));
+        for (size_t k = 32; k < 40; ++k)
+            if (m.i(k) > 0) f.skills.push_back(m.i(k));
+        return;
+    }
+}
+
 std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>>& choices) {
+    for (const auto& [fi, mode] : modeRequests) changeMode(fi, mode);
+    modeRequests.clear();
     std::vector<Cr3Action> out;
     // the party's (their choices) and the monsters' (by their commands' ratios): the side with the
     // gauge's advantage first, the party at even
