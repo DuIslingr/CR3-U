@@ -10517,6 +10517,13 @@ struct Viewer {
             time = keep;
             std::vector<uint8_t> d;
             if (archive.read(name + ".name", d)) u.joints = cr3::parseJointNames(d), u.materials = cr3::parseMaterialNames(d);
+            std::vector<uint32_t> hashes; // (the materials' names by their hashes, not the file's order)
+            for (const ViewMesh& vm : u.fig.meshes)
+                if (vm.source.material < 4096) {
+                    if (hashes.size() <= vm.source.material) hashes.resize(vm.source.material + 1);
+                    hashes[vm.source.material] = vm.baseMaterial.hash;
+                }
+            if (!u.materials.empty() && !hashes.empty()) u.materials = cr3::orderNamesByHash(u.materials, hashes);
         }
         return u;
     }
@@ -16571,7 +16578,7 @@ struct Viewer {
         if (cr3Camp.stage == 1 && cr3UiCall(top, "call_camTopCharaMenu", x, y, w, h)) {
             UiFig& chara = cr3UiPut("camtopcharamenu", "", 0, x, y, view);
             const std::vector<int> members = cr3PartyMembers();
-            for (int k = 0; k < 5; ++k) {
+            for (int k = 4; k >= 0; --k) { // (right to left: each panel's A8 mask - drawn black, depth alone - clips the art of the one before it, as the reference's curved edges show)
                 if (k >= int(members.size())) {
                     if (k > 0 && cr3UiCall(chara, "call_camTopNoEntory_fr00_00" + std::to_string(k), cx, cy)) cr3UiPut("camtopnoentory_fr00", "", 0, cx, cy, view);
                     continue;
@@ -16647,6 +16654,10 @@ struct Viewer {
         if (cr3Camp.stage == 2) {
             drawCr3CampCharas(w, h, view);
             drawCr3Header(t, 3, {}, w, h, view);
+        }
+        if (cr3Camp.stage == 1) { // (SetCampWindowParameter: HeaderMenu 0x42, title 0 - "Camp"; an interface of its own, over the panels' depth masks)
+            dev->clearDepth();
+            drawCr3Header(t, 0, {}, w, h, view);
         }
         drawCr3CampFooter(w, h, view);
     }
@@ -16951,7 +16962,7 @@ struct Viewer {
         std::vector<std::pair<int, int>> rows;  // (the category's: the item's full id, how many)
         int item = 0, count = 1, held = 0;      // (the item chosen, how many to use, how many held)
         int kind = 0, amount = 0;               // (its first field effect)
-        int step = 0;                           // 0 the list, 1 how many, 2 a gene for it, 3 a character, 4 asked (a gift itemised)
+        int step = 0;                           // 0 the list, 1 how many, 2 a gene for it, 3 a character, 4 asked (a gift itemised), 5 asked (the Microcommunicator)
         std::string told;                       // (an alert over it - a tap ends it)
         float toldSince = 0;
     } campItems;
@@ -17190,6 +17201,7 @@ struct Viewer {
             }
         }
         if (ci.step == 1) drawCampItemCount(w, h, view);
+        if (ci.step == 5) drawCr3Asked(areaEvents ? areaEvents->filterMessage(menuAnnounce(0x2a6)) : menuAnnounce(0x2a6), t, 0, true, 500, 501, w, h, view);
         if (ci.step == 4) {
             std::string text = menuAnnounce(0x1d0);
             if (const size_t at = text.find("{name}"); at != std::string::npos) text.replace(at, 6, cr3ItemText(ci.item, false));
@@ -17312,6 +17324,11 @@ struct Viewer {
                 return;
             }
             const auto [item, n] = ci.rows[size_t(k)];
+            if (item == 1 && ci.category < 2) { // (CampItemMain 1: the Microcommunicator, from New or Field - asked 0x2a6)
+                audio.playSe("com_003", false);
+                ci.item = item, ci.step = 5, cr3Camp.since = 0;
+                return;
+            }
             if (!cr3ItemUsable(item)) return (void)audio.playSe("com_005", false);
             audio.playSe("com_003", false);
             ci.item = item, ci.held = n, ci.count = 1;
@@ -17337,6 +17354,17 @@ struct Viewer {
                 audio.playSe("com_003", false);
                 campItemsTarget();
             }
+            return;
+        }
+        if (ci.step == 5 && (id == 500 || id == 501)) {
+            // (yes: CampItemMain 6 - faded out, the camp left with 0x21: Fld2Main::SM_Camp 6, the area
+            // script's DungeonExit - home to the town -, not the camp's evt001)
+            audio.playSe(id == 500 ? "com_003" : "com_004", false);
+            ci.step = 0;
+            if (id == 501) return;
+            cr3Camp.stage = 0, cr3CampWasOpen = false;
+            SDL_Log("camp: the Microcommunicator - %s's DungeonExit", area.name.c_str());
+            runAreaFunction("DungeonExit");
             return;
         }
         if (ci.step == 4 && (id == 500 || id == 501)) {
@@ -17413,7 +17441,7 @@ struct Viewer {
             else if (left || right) chooseCampItems(left ? 601 : 600);
             else if (enter || key == SDLK_Y) chooseCampItems(500);
             else if (key == SDLK_N) chooseCampItems(501);
-        } else if (ci.step == 4) {
+        } else if (ci.step == 4 || ci.step == 5) {
             if (enter || key == SDLK_Y) chooseCampItems(500);
             else if (key == SDLK_N) chooseCampItems(501);
         } else if (ci.step == 2) {
@@ -23314,6 +23342,11 @@ int main(int argc, char** argv) {
             cr3::FigureExport fe;
             fe.geom = &g, fe.skeleton = &sk;
             if (v.archive.read(base + ".name", d)) fe.jointNames = cr3::parseJointNames(d), fe.materialNames = cr3::parseMaterialNames(d);
+            {
+                std::vector<uint32_t> hashes;
+                for (const cr3::GeomMaterial& m : g.materials) hashes.push_back(m.hash);
+                if (!fe.materialNames.empty()) fe.materialNames = cr3::orderNamesByHash(fe.materialNames, hashes);
+            }
             for (const cr3::GeomMaterial& m : g.materials)
                 for (const auto& [id, picture] : m.textures) {
                     const std::string& img = picture; // (a lambda can't take a structured binding before C++20 - Apple's clang)

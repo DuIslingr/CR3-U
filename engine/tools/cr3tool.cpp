@@ -482,7 +482,7 @@ int usage() {
     std::fprintf(stderr,
                  "cr3tool [--patch <fan translation>] <command> ...\n"
                  "cr3tool release <release>\n"
-                 "cr3tool texts <release>\n"
+                 "cr3tool texts <release> [message file]\n"
                  "cr3tool events <release> [script | all] [seconds]\n"
                  "cr3tool check <archive>\n"
                  "cr3tool scripts <archive> [name]\n"
@@ -500,6 +500,7 @@ int usage() {
                  "cr3tool play <archive> <event | all>\n"
                  "cr3tool battle <archive> <coupling | all>\n"
                  "cr3tool fight <archive> <coupling> [solo | pair] [seed] [a,b]\n"
+                 "cr3tool couplings <archive> <monster>  (CR3: the couplings it's in, where they're met)\n"
                  "cr3tool sound <release> [--full]\n"
                  "cr3tool glass <seeds>\n"
                  "cr3tool save-import <game.dat | cont.dat> [system.dat]  (a CR3-U save on stdout)\n"
@@ -557,9 +558,22 @@ int release(const char* path) {
 
 // every message file in each of the release's languages: parses, how many messages have text,
 // how much of it is ASCII (no text shown)
-int texts(const char* path) {
+int texts(const char* path, const char* only = nullptr) {
     cr3::Database a;
     if (!openArchive(a, path)) return 1;
+    if (only) { // (one file's messages in the release's first language that has text: tests)
+        const std::vector<cr3::LanguageChoice> langs = cr3::releaseLanguages(a);
+        const cr3::LanguageChoice& l = langs.size() > 1 ? langs[1] : langs.front();
+        cr3::applyLanguage(a, l.id);
+        std::vector<uint8_t> d;
+        cr3::TextData t;
+        std::string name = only;
+        if (name.find('\\') == std::string::npos) name = "message\\" + name;
+        if (name.find('.') == std::string::npos) name += ".dat";
+        if (!a.read(name, d) || !t.parse(d)) return std::fprintf(stderr, "%s: not read\n", name.c_str()), 1;
+        for (int n = 1; n <= t.count(); ++n) std::printf("%3d  %s\n", n, t.message(n, l.slot).c_str());
+        return 0;
+    }
     int bad = 0;
     for (const cr3::LanguageChoice& l : cr3::releaseLanguages(a)) {
         cr3::applyLanguage(a, l.id);
@@ -1411,6 +1425,39 @@ int pose(const char* path, const std::string& figure, const std::string& animNam
     return 0;
 }
 
+// the couplings (mon_cop) a CR3 monster is in - a slot's list holding it -, and the dungeons'
+// encounter rows (mon_enc: dungeon, the coupling's levels, its event flag) that meet them
+int cr3Couplings(const char* path, int monster) {
+    cr3::MvglArchive a;
+    if (!openArchive(a, path)) return 1;
+    std::string err;
+    cr3::Cr3BattleTables t;
+    if (!t.load(a, &err)) return std::fprintf(stderr, "%s\n", err.c_str()), 1;
+    cr3::MbeFile enc;
+    std::vector<uint8_t> d;
+    if (a.read("data\\mon_enc.mbe", d)) enc.parse(d);
+    const cr3::MbeFile::Table* ct = t.coupling.table("Coupling");
+    for (size_t k = 0; ct && k < ct->rows.size(); ++k) {
+        cr3::MbeFile::Row cp;
+        if (!t.coupling.row(*ct, k, "i_ip_ip_ipiiii", cp)) continue;
+        bool in = false;
+        for (size_t s = 0; s < 3 && !in; ++s)
+            for (int n = 0; n < cp.i(1 + s * 2) && !in; ++n) in = cp.element(2 + s * 2, size_t(n)) == monster;
+        if (!in) continue;
+        std::printf("coupling %d", cp.i(0));
+        if (const cr3::MbeFile::Table* et = enc.table("MonsterEncounter"))
+            for (size_t e = 0; e < et->rows.size(); ++e) {
+                cr3::MbeFile::Row r;
+                if (!enc.row(*et, e, "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r) || r.i(2) != cp.i(0)) continue;
+                std::printf(" - dungeon %d, levels %d..%d, flag %d, areas", r.i(0), r.i(3), r.i(4), r.i(6));
+                for (int area = 1; area <= 100; ++area)
+                    if (int8_t(uint32_t(r.i(8 + (area - 1) / 4)) >> ((area - 1) % 4 * 8)) > 0) std::printf(" %d", area);
+            }
+        std::printf("\n");
+    }
+    return 0;
+}
+
 // CR3's battle (battle/cr3battle.hpp): a coupling's set-up on a battle field - its units, where
 // they stand, the cameras of the largest's size, and whether Cam_bt holds them
 int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg, uint32_t seed = 1, const char* commandsArg = nullptr) {
@@ -2011,7 +2058,7 @@ int main(int argc, char** argv) {
     if (argc < 3) return usage();
     if (!std::strcmp(argv[1], "release")) return release(argv[2]);
     if (!std::strcmp(argv[1], "db")) return db(argv[2], argc > 3 ? argv[3] : nullptr);
-    if (!std::strcmp(argv[1], "texts")) return texts(argv[2]);
+    if (!std::strcmp(argv[1], "texts")) return texts(argv[2], argc > 3 ? argv[3] : nullptr);
     if (!std::strcmp(argv[1], "events")) return events(argv[2], argc > 3 && std::strcmp(argv[3], "all") ? argv[3] : nullptr, argc > 4 ? std::atoi(argv[4]) : 300);
     if (!std::strcmp(argv[1], "check")) return check(argv[2]);
     if (!std::strcmp(argv[1], "scripts")) return scripts(argv[2], argc > 3 ? argv[3] : nullptr);
@@ -2031,6 +2078,7 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[1], "extract") && argc > 3) return extract(argv[2], argv[3], argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "images")) return images(argv[2], argc > 3 ? argv[3] : nullptr, argc > 4 ? argv[4] : nullptr);
     if (!std::strcmp(argv[1], "battle") && argc > 3) return battles(argv[2], argv[3]);
+    if (!std::strcmp(argv[1], "couplings") && argc > 3) return cr3Couplings(argv[2], std::atoi(argv[3]));
     if (!std::strcmp(argv[1], "cr3battle") && argc > 4) return cr3Battle(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), argc > 5 ? argv[5] : "6",
                                                                        argc > 6 ? uint32_t(std::strtoul(argv[6], nullptr, 10)) : 1u, argc > 7 ? argv[7] : nullptr);
     if (!std::strcmp(argv[1], "fight") && argc > 3) {

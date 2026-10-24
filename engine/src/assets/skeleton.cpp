@@ -171,6 +171,19 @@ std::vector<std::string> parseMaterialNames(const std::vector<uint8_t>& d) {
     return out;
 }
 
+std::vector<std::string> orderNamesByHash(const std::vector<std::string>& names, const std::vector<uint32_t>& hashes) {
+    std::vector<std::string> out(hashes.size());
+    for (size_t k = 0; k < hashes.size(); ++k) {
+        for (const std::string& n : names)
+            if (nameHash(n.c_str()) == hashes[k]) {
+                out[k] = n;
+                break;
+            }
+        if (out[k].empty() && k < names.size()) out[k] = names[k];
+    }
+    return out;
+}
+
 int Skeleton::joint(uint32_t hash) const {
     for (size_t j = 0; j < nameHashes.size(); ++j)
         if (nameHashes[j] == hash) return int(j);

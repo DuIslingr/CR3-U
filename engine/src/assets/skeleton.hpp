@@ -56,6 +56,10 @@ bool parseSkeleton(const std::vector<uint8_t>& file, Skeleton& out, std::string*
 std::vector<std::string> parseJointNames(const std::vector<uint8_t>& file);
 // the same file's material names (after the joints'), in the figure's materials' order
 std::vector<std::string> parseMaterialNames(const std::vector<uint8_t>& file);
+// those names put in the order of the materials' hashes (GeomMaterial::hash - each the name whose
+// nameHash it is): the file's order isn't always the figure's (camTopGene_id00 has its two the
+// other way round); a hash no name has keeps the file's name at that place
+std::vector<std::string> orderNamesByHash(const std::vector<std::string>& names, const std::vector<uint32_t>& hashes);
 
 class Animation {
 public:
