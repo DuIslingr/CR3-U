@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "assets/mvgl.hpp"
+#include "assets/skeleton.hpp"
 #include "field/collision.hpp"
 
 namespace cr3 {
@@ -19,6 +20,7 @@ namespace cr3 {
 struct Cr3Area {
     std::string name;                 // "d0101"
     std::vector<std::string> figures; // drawn, in order: <area>f, <area>s, <area>m1 (those it has)
+    std::vector<Mat34> places;        // each figure's (a random area's pieces: at their joints)
     std::array<float, 3> spawn{};     // <area>c's defaultPos
     float spawnYaw = 0;               // (its rotation about y: the way the player faces)
     CollisionWorld walls;             // the player's (<area>c.phys but its camhit bodies)

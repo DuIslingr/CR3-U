@@ -2020,6 +2020,8 @@ struct Viewer {
     // A figure's meshes with their materials' render states; opaque meshes first, then those blending
     void drawFigure(const ViewFigure& f, const float* mvp) {
         if (f.tint[3] <= 0) return;
+        const float* q = f.place.m;
+        const bool mirrored = q[0] * (q[5] * q[10] - q[6] * q[9]) - q[1] * (q[4] * q[10] - q[6] * q[8]) + q[2] * (q[4] * q[9] - q[5] * q[8]) < 0;
         std::vector<const ViewMesh*> order;
         for (const ViewMesh& m : f.meshes) order.push_back(&m);
         std::stable_sort(order.begin(), order.end(), [](const ViewMesh* a, const ViewMesh* b) {
@@ -2054,6 +2056,7 @@ struct Viewer {
             m.material.state(0xa6, 1, v);
             m.material.state(0xa5, kGlBack, v2);
             st.cull = v && !SDL_getenv("CR3_NO_CULL") ? (v2 == kGlFront ? 1 : 2) : 0;
+            if (mirrored && st.cull) st.cull = st.cull == 1 ? 2 : 1; // (placed mirrored: its faces turned round)
             m.material.state(0xa8, 1, v);
             st.depthWrite = v != 0;
             m.material.state(0xa9, 1, v);
@@ -6190,7 +6193,9 @@ struct Viewer {
     std::array<float, 3> savedPos{};
     float savedYaw = 0;
 
-    bool loadArea(const std::string name, const std::string& player) { // (a copy: callers pass members it resets)
+    bool loadArea(std::string name, const std::string& player) { // (a copy: callers pass members it resets)
+        // (a script's map name may be upper case - q058_d07_00109's "D0712f": the map table's own is lower)
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
         std::string err;
         if (!area.load(archive, name, &err)) {
             SDL_Log("area %s: %s", name.c_str(), err.c_str());
@@ -6213,13 +6218,16 @@ struct Viewer {
             ViewFigure f;
             if (!loadFigure(n + ".geom", f, &err)) {
                 SDL_Log("area %s: %s", n.c_str(), err.c_str());
-                continue;
+                f = ViewFigure(), f.tint[3] = 0; // (kept in its place: Cr3Area::places by index)
             }
             f.absolute = true; // (CrxSimpleModel: its own animation, looped)
             areaFigures.push_back(std::move(f));
         }
         // the lights: Fld2TaskMap::EntryLight's, the <map>f model's figure (Fld2CameraBase::SetLight: else <map>c)
-        if (loadLights(name + "f")) SDL_Log("lights: %sf", name.c_str());
+        // (a random area's: its d0600_00 piece's figure - CreateAreaRandom's +0x378 -, d0600f)
+        const bool randomArea = name.compare(0, 3, "d06") == 0 || name.compare(0, 3, "d18") == 0;
+        if (randomArea && loadLights(name.substr(0, 3) + "00f")) SDL_Log("lights: %s00f", name.substr(0, 3).c_str());
+        else if (loadLights(name + "f")) SDL_Log("lights: %sf", name.c_str());
         else if (loadLights(name + "c")) SDL_Log("lights: %sc", name.c_str());
         else lighting = cr3::SceneLighting();
         initEventDrawing(); // (the area's script's windows and fades)
@@ -6395,6 +6403,7 @@ struct Viewer {
                     areaYaw = std::atan2(w[j].m[2], w[j].m[10]);
                     const cr3::Vec3 q = areaWalker->position();
                     areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw), rail.started = false;
+                    SDL_Log("area %s: player at %s (%.2f %.2f %.2f)", map.c_str(), pop.c_str(), q[0], q[1], q[2]);
                 }
         }
         for (AreaGimmick& g : areaGimmicks) g.inside = gimmickHolds(g);
@@ -6406,7 +6415,10 @@ struct Viewer {
         if (!areaEvents) return;
         SDL_Log("area %s: %s", area.name.c_str(), fn.c_str());
         if (!areaEvents->start(area.name.substr(0, 3), fn)) SDL_Log("area %s: %s - %s", area.name.c_str(), fn.c_str(), areaEvents->error().c_str());
-        else if (!areaEvents->running()) afterAreaScript(); // (over at once: no wait in it)
+        else if (!areaEvents->running()) {
+            if (!areaEvents->error().empty()) SDL_Log("area %s: %s - %s", area.name.c_str(), fn.c_str(), areaEvents->error().c_str());
+            afterAreaScript(); // (over at once: no wait in it)
+        }
     }
 
     // a script over: what it reserved (Fld2Main::BranchAfterEvent) - a vista (the field left, the
@@ -7019,7 +7031,7 @@ struct Viewer {
         // the area (Fld2TaskMap::OnDraw: <area>f, <area>s 0.01 up, <area>m1), its animations looping
         for (size_t k = 0; k < areaFigures.size(); ++k) {
             ViewFigure& f = areaFigures[k];
-            f.place = cr3::Mat34();
+            f.place = k < area.places.size() ? area.places[k] : cr3::Mat34();
             if (k < area.figures.size() && area.figures[k] == area.name + "s") f.place.m[7] = 0.01f;
             pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(areaClock, f.anim.duration()) : 0.0f, false);
             drawFigure(f, vp.data());

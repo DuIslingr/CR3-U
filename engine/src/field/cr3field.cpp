@@ -42,8 +42,77 @@ bool Cr3Area::load(const MvglArchive& a, const std::string& area, std::string* e
             spawn = {m.m[3], m.m[7], m.m[11]};
             spawnYaw = std::atan2(m.m[2], m.m[10]); // (its z axis, along the ground)
         }
+    // a random area (Fld2TaskMap::CreateArea: d06's and d18's maps - CreateAreaRandom): <area>c's
+    // joints d0600partNN_MM (a last x / y / z: mirrored on that axis) each place a piece - its
+    // <piece>c.phys, moved to the joint (CollisionObject::SetPosition / SetRotation, the mirror its
+    // shape's scaling), and <piece>f and <piece>s drawn there -, with <area>f at the origin
+    if (area.compare(0, 3, "d06") == 0 || area.compare(0, 3, "d18") == 0) {
+        const std::string kit = area.substr(0, 3) + "00";
+        // (a joint's piece and place: its name less "_xx" and the mirror's letter; the place <area>c's
+        // joint of that name - Cr3GetPositionFromFigure / Cr3GetRotationFromFigure -, the origin if none)
+        auto pieceOf = [&](std::string n, Mat34& place) {
+            float scale[3] = {1, 1, 1};
+            const char last = n.back();
+            if (last == 'x' || last == 'y' || last == 'z') scale[last - 'x'] = -1, n.pop_back();
+            Mat34 at;
+            for (size_t j = 0; j < names.size() && j < world.size(); ++j)
+                if (names[j] == n || names[j] == n + last) at = world[j];
+            for (int r = 0; r < 3; ++r) { // (its position and rotation alone)
+                const float l = std::sqrt(at.m[r] * at.m[r] + at.m[4 + r] * at.m[4 + r] + at.m[8 + r] * at.m[8 + r]);
+                if (l > 1e-6f) at.m[r] /= l, at.m[4 + r] /= l, at.m[8 + r] /= l;
+            }
+            Mat34 mirror;
+            mirror.m[0] = scale[0], mirror.m[5] = scale[1], mirror.m[10] = scale[2];
+            place = at * mirror;
+            return n.size() > 3 ? n.substr(0, n.size() - 3) : std::string();
+        };
+        figures.push_back(area + "f"), places.push_back(Mat34());
+        std::vector<std::string> fNames; // (the pieces drawn: <area>f's joints - Fld2TaskMap +0x110)
+        if (a.read(area + "f.name", d)) fNames = parseJointNames(d);
+        for (const std::string& n : fNames) {
+            if (n.find(kit) == std::string::npos) continue;
+            Mat34 place;
+            const std::string piece = pieceOf(n, place);
+            for (const char* suffix : {"f", "s"})
+                if (!piece.empty() && a.contains(piece + suffix + ".geom")) figures.push_back(piece + suffix), places.push_back(place);
+        }
+        for (size_t j = 0; j < names.size() && j < world.size(); ++j) {
+            if (names[j].find(kit) == std::string::npos) continue;
+            Mat34 place;
+            const std::string piece = pieceOf(names[j], place);
+            PhysScene ps;
+            if (!a.read(piece + "c.phys", d) || !parsePhys(d, ps)) continue;
+            for (PhysShape& sh : ps.shapes) { // (baked: the joint's place, mirrored)
+                for (Vec3& v : sh.vertices) {
+                    const Vec3 u = v;
+                    for (int r = 0; r < 3; ++r) v[size_t(r)] = place.m[r * 4] * u[0] + place.m[r * 4 + 1] * u[1] + place.m[r * 4 + 2] * u[2] + place.m[r * 4 + 3];
+                }
+                if (sh.kind == PhysShape::Box) { // (a box: its 12 triangles, placed)
+                    const Vec3 h = sh.halfExtents;
+                    sh.kind = PhysShape::Mesh;
+                    for (int c = 0; c < 8; ++c) {
+                        const Vec3 u = {c & 1 ? h[0] : -h[0], c & 2 ? h[1] : -h[1], c & 4 ? h[2] : -h[2]};
+                        Vec3 v;
+                        for (int r = 0; r < 3; ++r) v[size_t(r)] = place.m[r * 4] * u[0] + place.m[r * 4 + 1] * u[1] + place.m[r * 4 + 2] * u[2] + place.m[r * 4 + 3];
+                        sh.vertices.push_back(v);
+                    }
+                    static const uint32_t kFaces[12][3] = {{0, 1, 3}, {0, 3, 2}, {4, 6, 7}, {4, 7, 5}, {0, 4, 5}, {0, 5, 1},
+                                                           {2, 3, 7}, {2, 7, 6}, {0, 2, 6}, {0, 6, 4}, {1, 5, 7}, {1, 7, 3}};
+                    for (const auto& f : kFaces) sh.triangles.push_back({f[0], f[1], f[2]});
+                    sh.surfaces.assign(12, sh.surfaces.empty() ? 0 : sh.surfaces[0]);
+                }
+            }
+            for (PhysBody& b : ps.bodies) b.position = {0, 0, 0}, b.rotation = {0, 0, 0, 1};
+            PhysScene solid = ps, camera = ps;
+            solid.bodies.clear(), camera.bodies.clear();
+            for (const PhysBody& b : ps.bodies) (b.name.find("camhit") != std::string::npos ? camera : solid).bodies.push_back(b);
+            walls.addScene(solid);
+            cameraWalls.addScene(camera);
+        }
+        return true;
+    }
     for (const char* suffix : {"f", "s", "m1"})
-        if (a.contains(area + suffix + ".geom")) figures.push_back(area + suffix);
+        if (a.contains(area + suffix + ".geom")) figures.push_back(area + suffix), places.push_back(Mat34());
     PhysScene scene;
     std::string err;
     if (a.read(c + ".phys", d) && parsePhys(d, scene, &err)) {

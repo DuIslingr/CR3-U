@@ -318,6 +318,18 @@ waits (t0104's s111_t01_00301_set: SetVistaFuncName, then ppJump2) is over at on
 reserved still goes next (SM_FirstEvent, then BranchAfterEvent): the vista, then the pop point.
 The e-maps a map table entry's camera type 2 marks (an ortho camera: e0015, the coral wall's cave)
 are made by Fld2TaskMap::CreateArea2D - no `<area>c`: their defaultPos and walls are `<area>`'s own.
+The random dungeons' maps - the map table's 0x5e .. 0xc0 and 0x153 .. 0x1b5, d0601 .. d0699 (Magma
+Ocean) and d1801 .. d1899 - have no field of their own: Fld2TaskMap::CreateAreaRandom builds them from
+the kit `d0600` / `d1800`. `<area>c`'s joints named after the kit (d0600part05_00, a last x / y / z
+mirroring on that axis) each place a piece: `<piece>c.phys` with every body moved to the joint (its
+position and rotation; the mirror its shape's scaling), and - by `<area>f`'s joints of those names,
+placed at `<area>c`'s - `<piece>f` and `<piece>s` drawn there (d0600_00: the kit's own d0600f, the sky
+and the lights, at the origin). `<area>f` itself is drawn at the origin; d0600m2 (blackened) isn't in
+CR3-U. The floors chain by the exit crystal (`cobj_00`: Cr3System.GetRandom - utils::GetRandom,
+CrxRandom's modulo |n| - picks the next map, the global work's 51 the floors climbed). A script's map
+names may be upper case (q058_d07_00109's SetBattleToVista "D0712f"); the field takes them lower.
+A vista's model (a joint ev_<name>) shows the figure its name names up to the first '_' (EvtModel::
+Init) - CR3-U where the rest is digits alone: m202_01, d0600hana00_2 (q057's second flower).
 
 ### Meals (CR3)
 

@@ -1,6 +1,7 @@
 #include "script/gamestate.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include <ctime>
 #include <sstream>
@@ -347,6 +348,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("InterfaceWindow", "GetChapterID", [&state](NativeCall& c) { c.result(state.selectChapter); }); // (CR3InterfaceEvent_GetSelectChapterID)
     vm.setNative("Cr3System", "GetDungeonNum", [&state](NativeCall& c) { c.result(state.dungeon); });
     vm.setNative("Cr3System", "GetAreaNum", [&state](NativeCall& c) { c.result(state.area); });
+    vm.setNative("Cr3System", "GetRandom", [](NativeCall& c) { // (utils::GetRandom: CrxRandom's, modulo |n| - 0 none)
+        const uint32_t r = uint32_t(std::rand()) << 16 ^ uint32_t(std::rand()), n = uint32_t(std::abs(int(c.integer(0))));
+        c.result(int(n ? r % n : r));
+    });
     // the character change (FldChangeCharacter): its button allowed, the leader, a change at once
     // (FldMain::ChangeCharacterQuick: the other of the two, unless it leads already); the tab
     vm.setNative("Cr3ChangeCharacter", "SetEnable", [&state](NativeCall& c) { state.changeEnable = c.boolean(0); });
