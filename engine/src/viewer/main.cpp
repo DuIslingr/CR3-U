@@ -5956,6 +5956,13 @@ struct Viewer {
         v.fx->quads(root, camera, sparkQuads);
         std::map<const cr3::SparkMaterial*, std::vector<const cr3::SparkEffect::Quad*>> byMaterial;
         for (const auto& q : sparkQuads) byMaterial[q.material].push_back(&q);
+        if (SDL_getenv("CR3_SPARK") && !sparkQuads.empty() && int(time * 2) != int((time - 1.0f / 60.0f) * 2)) { // (tests: twice a second)
+            const auto& q = sparkQuads.back();
+            const float wx = q.corner[1][0] - q.corner[0][0], wy = q.corner[1][1] - q.corner[0][1], wz = q.corner[1][2] - q.corner[0][2];
+            SDL_Log("spark: %zu quads, last %s rgba %.2f %.2f %.2f %.2f, %.3f wide at (%.1f %.1f %.1f)", sparkQuads.size(),
+                    q.material ? q.material->name.c_str() : "-", q.color[0][0], q.color[0][1], q.color[0][2], q.color[0][3],
+                    std::sqrt(wx * wx + wy * wy + wz * wz), q.corner[0][0], q.corner[0][1], q.corner[0][2]);
+        }
         for (auto& [mat, list] : byMaterial) {
             auto& slot = v.meshes[mat];
             if (slot.second < list.size()) { // (room for twice as many)
@@ -5971,7 +5978,7 @@ struct Viewer {
             static const float kNormal[3] = {0, 0, 1}, kTangent[3] = {1, 0, 0}, kBinormal[3] = {0, 1, 0};
             for (size_t k = 0; k < list.size(); ++k)
                 for (int c = 0; c < 4; ++c)
-                    packVertex(&verts[(k * 4 + size_t(c)) * cr3::kVertexStride], list[k]->corner[c], kNormal, kUv[c], list[k]->color, kTangent,
+                    packVertex(&verts[(k * 4 + size_t(c)) * cr3::kVertexStride], list[k]->corner[c], kNormal, kUv[c], list[k]->color[c], kTangent,
                                kBinormal, kUv[c]);
             dev->updateVertices(slot.first, verts);
             cr3::DrawState st;

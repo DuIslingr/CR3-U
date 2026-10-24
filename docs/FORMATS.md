@@ -429,8 +429,21 @@ tag and its whole size (+4):
   (SparkUtils::SetupAssetRuntimeShader: 0 SRC_ALPHA ONE, 1 the same reverse-subtracted, 2 SRC_ALPHA
   ONE_MINUS_SRC_ALPHA); +0x188 the shader key. Types 0 (null), 2 (emitter), 3 (sprite) and 8
   (trail) are the tree's nodes.
-- `ANIM`: curves for the nodes' channels (SparkUtils::Animate(curves, default, channel, frame)).
-  fe201am10's nodes use none.
+- `ANIM`: a set of curves (SparkUtils::BindAnimeData). Nodes (+0x198), materials (+0x240) and
+  textures (+0x80, their crop: channels 0x87..0x8a) name a set by its index among the chunks. Data
+  +0 holds the curves' count, and +0x10 their offsets (u64, counted from the table's end). A curve
+  has its channel at +0, its extrapolations before and after its keys at +2 / +3 (0 holds the end
+  value, 1 loops, 2 loops adding the span's change each lap) and its keys' count at +4. Its keys
+  start at +0x10, 0x18 bytes each: +0 the frame (s16), +2 the interpolation (0 step, 1 linear, 2
+  Bezier), +4 the value, +8 / +0xc the in handle (frames, value offset), +0x10 / +0x14 the out
+  handle. A Bezier runs value, value + out, next + next's in, next over the frames linearly
+  (SparkFCurve::EvalInterpolation, SparkUtils::CalcBezeir). A curve stands in for its channel's
+  least value; the random part is added on top (SparkUtils::GetRandomValueF(.., true): 0 .. max -
+  min). The frame is the node's (SparkNode::Update +0x478): its age x fps, scaled by its life's
+  least over the life it drew (+0x474), + 1. So a particle's curves always span its nominal life.
+  Channels: 1..3 position, 4..6 rotation, 7..9 scale, 10..12 velocity, 13..15 turning, 16..18
+  scale's change, 0x2d / 0x2e a sprite's size, 0x30 / 0x31 its pivot, 0x6f + corner x 4 + r g b
+  a its colours, and a material's 0x35..0x38 r g b a.
 - `NLST`: from +0x10, the node ids that the nodes' child lists index.
 - `TERM`: the end.
 
@@ -460,6 +473,8 @@ A sprite (SparkSprite) has these fields:
 - +0x258: its material's id.
 - +0x263: its pivot (4 is the centre).
 - +0x268: flags. Bit 18 billboards it; with +0x26a bit 3 it stays upright.
+- The corner colours are drawn only when the material's +0x170 bit 7 is set (UpdateColor). The
+  material's colour is always drawn (DiffuseColor).
 - +0x274: the shape (0 a quad - BuildBox's +-0.5, 1 a circle, 2 a ring, 3 a point).
 
 When it is not billboarded, DrawSprite draws the quad in the node's own place times its size.
@@ -475,8 +490,12 @@ result is a few dozen thin diagonal streaks around the player.
 
 CR3-U plays the subset this needs (assets/spark.hpp): the kinematics and their links, the
 emitters' three modes and both shapes, and quad sprites (turned or billboarded) with their
-materials. Particles live in their emitter's place, which follows the effect's root each frame.
-Curves, forces, trails, other shapes and the other pivots are not in. The field draws any effect
+materials, and the curves on all the channels above (the textures' crops aside). Particles live in
+their emitter's place, which follows the effect's root each frame. Forces, trails, other shapes and
+the other pivots are not in. The other environment effects fade by their materials' alpha curves:
+Primordia's fe201am09 (ash darkened out - blend 1 - and glow added, alpha 0 -> 0.49 -> 0 over 60
+frames), fe201am02's clouds (field 26), fe201am05's orange sparks (fields 45 / 46 / 55 / 59, corner
+colours on). CR3_SPARK=1 logs the quads drawn twice a second (a test aid). The field draws any effect
 with a `.sprk` (EffectResidentPlay's too). The battle draws Battle.SetFieldVisualEffect's.
 
 ### The bomb, rocks and solid gimmicks (CR3)

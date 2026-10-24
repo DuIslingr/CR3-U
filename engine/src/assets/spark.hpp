@@ -4,8 +4,9 @@
 // textures. The subset the field's effects use (fe201am10, the lab's rain): node kinematics
 // (position, rotation, scale and velocity, each a random range), emitters (point and box shapes;
 // once, by rate and by interval), sprites (quads, turned or billboarded) and their materials'
-// blending. Not in: the curves (the ANIM chunk: every channel at its default), the other node
-// kinds (trails, models, cameras ..), forces, the sprites' pivots but the centre's.
+// blending, and the curves (ANIM chunks) on the nodes' channels and the materials' colours. Not
+// in: the other node kinds (trails, models, cameras ..), forces, the textures' crop curves, the
+// sprites' pivots but the centre's.
 
 #include <array>
 #include <cstdint>
@@ -20,6 +21,21 @@ struct SparkRange {
     float min = 0, max = 0;
 };
 
+// An ANIM chunk's curve (SparkFCurve): keys of a frame, an interpolation (0 step, 1 linear, 2
+// Bezier over the value handles) and a value; before the first and after the last key held (0),
+// looped (1) or looped with the span's change added each lap (2)
+struct SparkCurve {
+    int channel = 0;
+    int pre = 0, post = 0;
+    struct Key {
+        int frame = 0, interp = 1;
+        float value = 0, in = 0, out = 0; // (in / out: the handles' value offsets)
+    };
+    std::vector<Key> keys;
+    float eval(int frame, float fallback) const;
+};
+using SparkAnim = std::vector<SparkCurve>;
+
 struct SparkNode {
     int type = 0; // 0 null, 2 emitter, 3 sprite (8 trail, ... - not drawn)
     uint32_t id = 0;
@@ -27,6 +43,8 @@ struct SparkNode {
     std::array<SparkRange, 3> position, rotation, scale, velocity; // +0x48 (rotation in degrees)
     uint32_t link = 0;             // +0x168: y / z taking x's random value (bits 0/1 position, 16/17 scale ..)
     int lifeMin = -1, lifeMax = -1; // +0x178 frames (-1: for ever)
+    float spin[3][2]{}, grow[3][2]{}; // +0xf0 turning (degrees a second), +0x108 scale's change a second
+    int anim = -1;                 // +0x198: its curves (an ANIM chunk's index)
     std::vector<int> children;     // +0x188 / +0x190: the nodes it starts with (indices into nodes)
     // an emitter's
     int order = 0;                 // +0x1a8: which child kind next - 0 in turn, 1 at random
@@ -54,6 +72,8 @@ struct SparkMaterial {
     int blendMode = 0;             // +0x186: 0 add (SRC_ALPHA, ONE), 1 subtract (reverse), 2 alpha
     bool depthTest = true, depthWrite = false; // +0x170 bits 17, 18
     bool alphaTest = false;        // +0x170 bit 19, against alphaRef (+0x180)
+    bool spriteColor = false;      // +0x170 bit 7: the sprites' corner colours drawn (SparkSprite::UpdateColor)
+    int anim = -1;                 // +0x240: its colour's curves (0x35 .. 0x38 r g b a)
     float alphaRef = 0.5f;
     std::string shaderKey;         // +0x188
 };
@@ -62,7 +82,10 @@ struct SparkAsset {
     float fps = 30;                // header +0x10
     std::vector<SparkNode> nodes;  // the tree's (types 0 .. 8), the root first
     std::vector<SparkMaterial> materials;
+    std::vector<SparkAnim> anims;  // the ANIM chunks, in order
     int root = -1;
+    // a channel's value at a frame: its curve's, else `fallback` (SparkUtils::Animate)
+    float animate(int anim, int channel, int frame, float fallback) const;
     const SparkMaterial* materialById(uint32_t id) const;
 };
 
@@ -76,7 +99,7 @@ public:
     void step(float dt);
     struct Quad {
         float corner[4][3]; // (-x +y, +x +y, -x -y, +x -y) as BuildBox lays them
-        float color[4];     // the sprite's (corner 0's) times its material's
+        float color[4][4];  // each corner's: its material's colour (times the sprite's corner's - +0x170 bit 7)
         const SparkMaterial* material = nullptr;
     };
     // its sprites' quads under `root`; `camera`: the camera's place (billboards turn to it)
@@ -88,7 +111,8 @@ private:
         int node = 0;
         float age = 0, life = -1;
         float pos[3]{}, rot[3]{}, scale[3]{1, 1, 1}, vel[3]{};
-        float size[2]{1, 1}, color[4]{1, 1, 1, 1};
+        float size[2]{1, 1}, color[4][4]{}, matColor[4]{}; // (size, colours: their random parts)
+        float lifeScale = 1;                       // (the curves' frame: age x fps x this + 1)
         int emitted = 0, lastFrame = 0, next = 0, interval = 1; // (an emitter's)
         std::vector<std::vector<Inst>> spawned; // (an emitter's, per kind)
         std::vector<Inst> children;
@@ -103,6 +127,7 @@ private:
     void stepInst(Inst& in, float dt);
     void emit(Inst& in, int count);
     Mat34 local(const Inst& in) const;
+    int frame(const Inst& in) const;
     void collect(const Inst& in, const Mat34& parent, const Mat34& camera, std::vector<Quad>& out) const;
     static size_t count(const Inst& in);
 };

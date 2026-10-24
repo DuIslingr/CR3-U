@@ -7,6 +7,41 @@
 
 namespace cr3 {
 
+float SparkCurve::eval(int f, float fallback) const {
+    // SparkFCurve::Eval / EvalInterpolation / EvalInner- and EvalOuterExtrapolation
+    if (keys.empty()) return fallback;
+    if (keys.size() == 1) return keys[0].value;
+    const int first = keys.front().frame, last = keys.back().frame, span = last - first;
+    float shift = 0;
+    if (f < first || f >= last) {
+        const int mode = f < first ? pre : post;
+        if (mode == 0 || span <= 0) return f < first ? keys.front().value : keys.back().value;
+        const int laps = f < first ? (first - f + span - 1) / span : (f - first) / span;
+        if (mode == 2) shift = (keys.back().value - keys.front().value) * float(f < first ? -laps : laps);
+        f += f < first ? laps * span : -laps * span;
+    }
+    for (size_t k = 0; k + 1 < keys.size(); ++k) {
+        const Key& a = keys[k];
+        const Key& b = keys[k + 1];
+        if (f < a.frame || f >= b.frame) continue;
+        const float t = float(f - a.frame) / float(b.frame - a.frame);
+        if (a.interp == 0) return a.value + shift;
+        if (a.interp == 2) { // (SparkUtils::CalcBezeir: a.value, a.value + a.out, b.value + b.in, b.value)
+            const float u = 1 - t;
+            return u * u * u * a.value + 3 * u * u * t * (a.value + a.out) + 3 * u * t * t * (b.value + b.in) + t * t * t * b.value + shift;
+        }
+        return a.value + t * (b.value - a.value) + shift;
+    }
+    return keys.back().value + shift;
+}
+
+float SparkAsset::animate(int anim, int channel, int frame, float fallback) const {
+    if (anim < 0 || size_t(anim) >= anims.size()) return fallback;
+    for (const SparkCurve& c : anims[size_t(anim)])
+        if (c.channel == channel) return c.eval(frame, fallback);
+    return fallback;
+}
+
 const SparkMaterial* SparkAsset::materialById(uint32_t id) const {
     for (const SparkMaterial& m : materials)
         if (m.id == id) return &m;
@@ -52,6 +87,8 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                 const uint32_t f = u32(nd + 0x170);
                 m.blend = f >> 15 & 1, m.depthTest = f >> 17 & 1, m.depthWrite = f >> 18 & 1, m.alphaTest = f >> 19 & 1;
                 m.alphaRef = f32(nd + 0x180), m.blendMode = d[nd + 0x186];
+                m.spriteColor = f >> 7 & 1;
+                m.anim = int(int32_t(u32(nd + 0x240)));
                 m.shaderKey = text(nd + 0x188, 0x40);
                 m.texture = std::to_string(u32(nd + 0xe0)); // (an id until the textures are known)
                 out.materials.push_back(m);
@@ -65,6 +102,10 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                     n.velocity[size_t(a)] = range(nd + 0xd8 + size_t(a) * 8);
                 }
                 n.link = u32(nd + 0x168);
+                for (int a = 0; a < 3; ++a)
+                    for (int k = 0; k < 2; ++k)
+                        n.spin[a][k] = f32(nd + 0xf0 + size_t(a) * 8 + size_t(k) * 4), n.grow[a][k] = f32(nd + 0x108 + size_t(a) * 8 + size_t(k) * 4);
+                n.anim = int(int32_t(u32(nd + 0x198)));
                 n.lifeMin = i16(nd + 0x178), n.lifeMax = i16(nd + 0x17a);
                 Raw r{nd, u32(nd + 0x188), u32(nd + 0x190), 0, 0};
                 if (type == 2) {
@@ -87,6 +128,27 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                 out.nodes.push_back(n);
                 raw.push_back(r);
             }
+        } else if (std::memcmp(&d[o], "ANIM", 4) == 0) {
+            // (SparkUtils::BindAnimeData: +0 the curves' count, +0x10 their offsets - u64, from
+            // after the table -; a curve: +0 its channel, +2 / +3 its extrapolations, +4 its keys'
+            // count, keys from +0x10 of 0x18 bytes - +0 frame, +2 interpolation, +4 value, +8 / +0xc
+            // the in handle's frame and value, +0x10 / +0x14 the out handle's)
+            const size_t a = o + 0x10;
+            const size_t n = d[a] | size_t(d[a + 1]) << 8, table = a + 0x10;
+            SparkAnim anim;
+            for (size_t k = 0; k < n; ++k) {
+                const size_t c = table + n * 8 + u32(table + k * 8);
+                if (c + 0x10 > o + size) break;
+                SparkCurve cv;
+                cv.channel = d[c] | d[c + 1] << 8, cv.pre = d[c + 2], cv.post = d[c + 3];
+                const size_t count = d[c + 4] | size_t(d[c + 5]) << 8;
+                for (size_t j = 0; j < count && c + 0x10 + j * 0x18 + 0x18 <= o + size; ++j) {
+                    const size_t q = c + 0x10 + j * 0x18;
+                    cv.keys.push_back({i16(q), int(int8_t(d[q + 2])), f32(q + 4), f32(q + 0xc), f32(q + 0x14)});
+                }
+                anim.push_back(cv);
+            }
+            out.anims.push_back(anim);
         } else if (std::memcmp(&d[o], "NLST", 4) == 0) {
             for (size_t p = o + 0x10; p + 4 <= o + size; p += 4) list.push_back(u32(p));
         } else if (std::memcmp(&d[o], "TERM", 4) == 0) {
@@ -140,10 +202,17 @@ SparkEffect::Inst SparkEffect::make(int node) {
         if (n.link >> (bit + 1) & 1) v[2] = v[0];
     };
     link(in.pos, 0), link(in.vel, 4), link(in.rot, 8), link(in.scale, 16);
-    if (n.lifeMax >= 0) in.life = float(int(random(float(n.lifeMin), float(n.lifeMax) + 0.999f))) / asset_->fps;
+    if (n.lifeMax >= 0) {
+        const int frames = int(random(float(n.lifeMin), float(n.lifeMax) + 0.999f));
+        in.life = float(frames) / asset_->fps;
+        if (n.lifeMin > 0 && n.lifeMax > 0 && frames > 0) in.lifeScale = float(n.lifeMin) / float(frames); // (SparkNode::OnInit +0x474)
+    }
     if (n.type == 3) {
         in.size[0] = random(n.sizeX), in.size[1] = random(n.sizeY);
-        for (int k = 0; k < 4; ++k) in.color[k] = std::clamp(random(n.color[0][size_t(k)]), 0.0f, 1.0f);
+        for (int c = 0; c < 4; ++c)
+            for (int k = 0; k < 4; ++k) in.color[c][k] = random(n.color[size_t(c)][size_t(k)]);
+        if (const SparkMaterial* m = asset_->materialById(n.material))
+            for (int k = 0; k < 4; ++k) in.matColor[k] = random(m->color[size_t(k)]);
     }
     if (n.type == 2) {
         in.spawned.resize(n.emits.size());
@@ -210,18 +279,42 @@ void SparkEffect::step(float dt) {
     for (Inst& r : roots_) stepInst(r, dt);
 }
 
-// a node's place in its parent's: moved by its velocity, turned (x, then y, then z), scaled
+// a node's frame for its curves (SparkNode::Update +0x478: its age's frames, scaled to its life's
+// shortest, + 1)
+int SparkEffect::frame(const Inst& in) const {
+    return int(in.age * asset_->fps * in.lifeScale + 0.001f) + 1;
+}
+
+// a node's place in its parent's (SparkNode::UpdateKineLocalPos / Rot / Scl): each its curve's value
+// (channels 1..3 position, 4..6 rotation, 7..9 scale) - else its least - + its random part, plus its
+// velocity (10..12), turning (13..15, degrees) and scale's change (16..18) over its age; turned x,
+// then y, then z
 Mat34 SparkEffect::local(const Inst& in) const {
-    const float cx = std::cos(in.rot[0]), sx = std::sin(in.rot[0]);
-    const float cy = std::cos(in.rot[1]), sy = std::sin(in.rot[1]);
-    const float cz = std::cos(in.rot[2]), sz = std::sin(in.rot[2]);
+    const SparkNode& n = asset_->nodes[size_t(in.node)];
+    const int f = frame(in);
+    auto curve = [&](int ch, const std::array<SparkRange, 3>& r, float* out) { // (the curves' part: links too)
+        for (int a = 0; a < 3; ++a) out[a] = asset_->animate(n.anim, ch + a, f, r[size_t(a)].min) - r[size_t(a)].min;
+    };
+    float dp[3], dr[3], ds[3], dv[3];
+    curve(1, n.position, dp), curve(4, n.rotation, dr), curve(7, n.scale, ds), curve(10, n.velocity, dv);
+    float pos[3], rot[3], scale[3];
+    for (int a = 0; a < 3; ++a) {
+        pos[a] = in.pos[a] + dp[a] + (in.vel[a] + dv[a]) * in.age;
+        rot[a] = in.rot[a] + (dr[a] + n.spin[a][0] * in.age) * 3.14159265f / 180;
+        scale[a] = in.scale[a] + ds[a] + n.grow[a][0] * in.age;
+    }
+    if (n.link >> 16 & 1) scale[1] = scale[0];
+    if (n.link >> 17 & 1) scale[2] = scale[0];
+    const float cx = std::cos(rot[0]), sx = std::sin(rot[0]);
+    const float cy = std::cos(rot[1]), sy = std::sin(rot[1]);
+    const float cz = std::cos(rot[2]), sz = std::sin(rot[2]);
     const float r[9] = {cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz, //
                         cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz, //
                         -sy, sx * cy, cx * cy};
     Mat34 m;
     for (int row = 0; row < 3; ++row) {
-        for (int c = 0; c < 3; ++c) m.m[row * 4 + c] = r[row * 3 + c] * in.scale[c];
-        m.m[row * 4 + 3] = in.pos[row] + in.vel[row] * in.age;
+        for (int c = 0; c < 3; ++c) m.m[row * 4 + c] = r[row * 3 + c] * scale[c];
+        m.m[row * 4 + 3] = pos[row];
     }
     return m;
 }
@@ -243,11 +336,30 @@ void SparkEffect::collect(const Inst& in, const Mat34& parent, const Mat34& came
         } else {
             for (int r = 0; r < 3; ++r) ax[r] = w.m[r * 4], ay[r] = w.m[r * 4 + 1];
         }
+        // (SparkSprite::UpdateSize: channels 0x2d / 0x2e; UpdateColor: 0x6f + corner x 4 + r g b a;
+        // SparkMaterial::Update: 0x35 .. 0x38 - each at the sprite's frame)
+        const int f = frame(in);
+        const float size[2] = {in.size[0] + asset_->animate(n.anim, 0x2d, f, n.sizeX.min) - n.sizeX.min,
+                               in.size[1] + asset_->animate(n.anim, 0x2e, f, n.sizeY.min) - n.sizeY.min};
+        float mat[4] = {1, 1, 1, 1};
+        if (q.material)
+            for (int k = 0; k < 4; ++k) {
+                const float lo = q.material->color[size_t(k)].min;
+                mat[k] = std::clamp(in.matColor[k] + asset_->animate(q.material->anim, 0x35 + k, f, lo) - lo, 0.0f, 1.0f);
+            }
         static const float kCorner[4][2] = {{-0.5f, 0.5f}, {0.5f, 0.5f}, {-0.5f, -0.5f}, {0.5f, -0.5f}};
-        for (int c = 0; c < 4; ++c)
+        for (int c = 0; c < 4; ++c) {
             for (int r = 0; r < 3; ++r)
-                q.corner[c][r] = w.m[r * 4 + 3] + ax[r] * kCorner[c][0] * in.size[0] + ay[r] * kCorner[c][1] * in.size[1];
-        for (int k = 0; k < 4; ++k) q.color[k] = in.color[k] * (q.material ? q.material->color[size_t(k)].min : 1.0f);
+                q.corner[c][r] = w.m[r * 4 + 3] + ax[r] * kCorner[c][0] * size[0] + ay[r] * kCorner[c][1] * size[1];
+            for (int k = 0; k < 4; ++k) {
+                float v = 1;
+                if (q.material && q.material->spriteColor) {
+                    const float lo = n.color[size_t(c)][size_t(k)].min;
+                    v = std::clamp(in.color[c][k] + asset_->animate(n.anim, 0x6f + c * 4 + k, f, lo) - lo, 0.0f, 1.0f);
+                }
+                q.color[c][k] = v * mat[k];
+            }
+        }
         out.push_back(q);
     }
     for (const std::vector<Inst>& group : in.spawned)
