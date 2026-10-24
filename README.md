@@ -80,8 +80,22 @@ An encrypted Vita dump (NoNpDrm, still PFS-encrypted) has to be installed first 
 
 ## Your copy
 
-Nothing has to be given on the command line: put your copy in the **game folder** and start the
-program - it finds it by itself. The game folder is:
+The easiest way: just start the program. With no copy found, it asks where yours is (one copy is
+the game: the first given is used) - pick it in the window it opens, and it takes the files from there:
+
+- **iOS** - the `.ipa` (or any file in its unpacked `.app`): unpacked into `ios/` in the game folder
+  (the profile folder's if that one can't be written), found there from then on;
+- **Android** - the `.apks` (or the `base.apk` with its asset packs): read where it is;
+- **Vita** - Vita3K's folder (its own, the folder its `config.yml` names as `pref-path`, or `ux0`)
+  or the game's own `PCSG00500` folder (the Prequel Trilogy's `PCSG00457` too): read where it is -
+  then its fan translation (the `rePatch` folder): Vita3K's `ux0/rePatch/PCSG00500` by itself, else
+  asked for, or left out.
+
+The Android and Vita copies and the translation are remembered in `settings.ini` (in the profile
+folder: `data=`, `patch=`). (Windows, Linux and macOS; on Android, copy the files over USB as below.)
+
+Or, as before, nothing given on the command line: put your copy in the **game folder** and start
+the program - it finds it by itself. The game folder is:
 
 | Platform | The game folder |
 |---|---|

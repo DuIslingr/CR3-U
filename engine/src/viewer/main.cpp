@@ -89,6 +89,9 @@
 #include "script/gamesave.hpp"
 #include "event/runtime.hpp"
 #include "viewer/audio.hpp"
+#include "viewer/setup.hpp"
+
+std::string storedSetting(const char* key); // (settings.ini's data= / patch=: below)
 #include "field/character.hpp"
 #include "field/cr3field.hpp"
 #include "field/fieldmap.hpp"
@@ -350,6 +353,7 @@ struct Viewer {
     }
     void saveSettings() const {
         if (!settingsPersist) return;
+        const std::string keepData = storedSetting("data="), keepPatch = storedSetting("patch="); // (the setup's, kept - read before the file is rewritten)
         std::FILE* f = std::fopen(savePath(settingsFile()).c_str(), "wb");
         if (!f) return;
         const Settings& s = settings;
@@ -358,6 +362,8 @@ struct Viewer {
                         "msaa=%d\nanisotropy=%d\nsharp_textures=%d\nhd_textures=%d\nhd_models=%d\npad_swap=%d\nfield_speed=%d\nbattle_speed=%d\n",
                      s.display, s.resolution, s.vsync ? 1 : 0, s.fps, s.renderer, s.upscaler, s.quality, s.sharpness, s.msaa,
                      s.anisotropy, s.sharpTextures ? 1 : 0, s.hdTextures ? 1 : 0, s.hdModels ? 1 : 0, s.padSwap ? 1 : 0, s.fieldSpeed, s.battleSpeed);
+        if (!keepData.empty()) std::fprintf(f, "data=%s\n", keepData.c_str());
+        if (!keepPatch.empty()) std::fprintf(f, "patch=%s\n", keepPatch.c_str());
         std::fclose(f);
     }
     // The settings onto the device, the window and the textures (each only as it changes)
@@ -22957,8 +22963,47 @@ std::vector<std::string> dataPlaces() {
 #endif
     add(base);
     if (char* cwd = SDL_GetCurrentDirectory()) add(cwd), SDL_free(cwd);
+    if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) add(pref), SDL_free(pref); // (the profile folder: an .ipa the first start unpacked there)
 #endif
     return out;
+}
+// settings.ini's line `key` (data=, patch= - the first start's setup's: a copy read where it lies, the
+// Vita release's fan translation): its value; and set, the other lines kept
+static std::string settingsIni() {
+    char* dir = SDL_GetPrefPath("DuIslingr", "CR3-U");
+    const std::string path = (dir ? std::string(dir) : std::string()) + "settings.ini";
+    SDL_free(dir);
+    return path;
+}
+std::string storedSetting(const char* key) {
+    std::string out;
+    size_t size = 0;
+    if (char* text = static_cast<char*>(SDL_LoadFile(settingsIni().c_str(), &size))) {
+        const std::string all(text, size);
+        SDL_free(text);
+        const size_t kl = std::strlen(key);
+        for (size_t at = 0; at < all.size();) {
+            const size_t e = std::min(all.find('\n', at), all.size());
+            if (all.compare(at, kl, key) == 0) out = all.substr(at + kl, e - at - kl);
+            at = e + 1;
+        }
+    }
+    while (!out.empty() && (out.back() == '\r' || out.back() == ' ')) out.pop_back();
+    return out;
+}
+void storeSetting(const char* key, const std::string& value) {
+    size_t size = 0;
+    char* text = static_cast<char*>(SDL_LoadFile(settingsIni().c_str(), &size));
+    std::string all = text ? std::string(text, size) : std::string(), out;
+    SDL_free(text);
+    const size_t kl = std::strlen(key);
+    for (size_t at = 0; at < all.size();) {
+        const size_t e = std::min(all.find('\n', at), all.size());
+        if (all.compare(at, kl, key) != 0) out += all.substr(at, e - at) + "\n";
+        at = e + 1;
+    }
+    if (!value.empty()) out += key + value + "\n";
+    SDL_SaveFile(settingsIni().c_str(), out.data(), out.size());
 }
 
 int main(int argc, char** argv) {
@@ -23160,8 +23205,38 @@ int main(int argc, char** argv) {
     if (data.empty()) { // (CR3_DATA, else a copy in a game folder: vita/, android/, ios/ ...)
         searched = dataPlaces();
         data = cr3::defaultArchive(searched);
+        if (data.empty()) data = storedSetting("data="); // (the first start's setup's: an Android or Vita copy where it lies)
     }
     data = cr3::resolveArchive(data); // (a folder: the OBB or the CRDB.*.mvgl in it, a Vita copy's PCSG00498 ...)
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+    if (data.empty() && argc <= 1 && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp)
+        SDL_Init(SDL_INIT_VIDEO); // (its message boxes and the system's dialogs)
+        cr3::SetupGame setup;
+        setup.title = "Chaos Rings III", setup.port = "CR3-U", setup.vitaId = "PCSG00500", setup.trilogyDir = "CR3";
+        setup.obbHint = "asset packs (the .apks has them all)";
+        setup.oneRelease = true; // (one copy is the game)
+        auto releaseIs = [](const std::string& p, cr3::Database::Kind kind) {
+            cr3::Database db;
+            return db.open(p) && db.kind() == kind;
+        };
+        setup.iosOk = [&](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Ios); };
+        setup.androidOk = [&](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Android); };
+        setup.vitaOk = [&](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Vita); };
+        setup.patchOk = [](const std::string& p) {
+            cr3::Database db;
+            return db.addOverlay(p);
+        };
+        std::string profile;
+        if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = std::string(pref) + "ios/", SDL_free(pref);
+        cr3::SetupResult got;
+        if (!cr3::runSetup(setup, searched.empty() ? profile : searched.front() + "ios/", profile, got)) return 0;
+        const std::string pick = !got.ios.empty() ? got.ios : !got.android.empty() ? got.android : got.vita;
+        if (got.ios.empty()) storeSetting("data=", pick); // (the .ipa's is found in ios/ again; the others where they are)
+        storeSetting("patch=", got.patch);
+        data = cr3::resolveArchive(pick);
+        SDL_Log("setup: %s%s", data.c_str(), got.patch.empty() ? "" : (" with " + got.patch).c_str());
+    }
+#endif
     if (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
 #ifdef SDL_PLATFORM_ANDROID
         if (!searched.empty()) // (the folders made, to be seen over USB)
@@ -23207,6 +23282,7 @@ int main(int argc, char** argv) {
         if (!hdFolder.empty() && hdFolder.back() != '/' && hdFolder.back() != '\\') hdFolder += '/';
         // the fan translation (--patch, else translation/ in the game folder: its rePatch/ or PCSG00500/ - for the Vita release)
         if (patch.empty() && isDir(gameFolder + "translation")) patch = gameFolder + "translation", patchFound = true;
+        if (patch.empty() && !(patch = storedSetting("patch=")).empty()) patchFound = true; // (the first start's setup's)
     }
     Viewer v;
     { // CR3-U's settings (settings.ini; not for captures and exports), the command line's flags over them
