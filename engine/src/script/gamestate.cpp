@@ -326,8 +326,20 @@ void bindGameState(ScriptVM& vm, GameState& state) {
             GameState::FieldEffect e;
             e.model = c.string(0), e.target = c.string(1), e.loop = loop;
             for (int k = 0; k < 3; ++k) e.scale[size_t(k)] = c.number(2 + k, 1), e.offset[size_t(k)] = c.number(5 + k, 0);
+            e.serial = ++state.fieldEffectSerial;
             state.fieldEffects.push_back(e);
         });
+    vm.setNative("Cr3FieldMapEffectResident", "EnvironmentEffectPlay", [&state](NativeCall& c) {
+        GameState::FieldEffect e;
+        e.model = c.string(0), e.loop = c.boolean(1, true), e.serial = ++state.fieldEffectSerial;
+        state.fieldEffects.push_back(e);
+    });
+    vm.setNative("Cr3FieldMapEffectResident", "EnvironmentPlayerPlay", [&state](NativeCall& c) {
+        GameState::FieldEffect e; // (name, joint - 'RootLocator' -, turned with it, offset xyz, rotation xyz)
+        e.model = c.string(0), e.target = "player", e.serial = ++state.fieldEffectSerial;
+        for (int k = 0; k < 3; ++k) e.offset[size_t(k)] = c.number(3 + k, 0);
+        state.fieldEffects.push_back(e);
+    });
     vm.setNative("Cr3TabMenu", "AddGoodsButton", [&state](NativeCall& c) { state.goodsButtons.insert(c.integer(0)); });
     vm.setNative("Cr3TabMenu", "DelGoodsButton", [&state](NativeCall& c) { state.goodsButtons.erase(c.integer(0)); });
     vm.setNative("Cr3FieldMapEffectResident", "EffectResidentOut", [&state](NativeCall& c) {

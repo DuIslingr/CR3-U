@@ -74,6 +74,7 @@
 #include "assets/language.hpp"
 #include "assets/mvgl.hpp"
 #include "assets/skeleton.hpp"
+#include "assets/spark.hpp"
 #include "battle/battledata.hpp"
 #include "battle/camera.hpp"
 #include "battle/motion.hpp"
@@ -5844,6 +5845,7 @@ struct Viewer {
     // player's - + the offset, scaled; its animation looped, or once and then gone)
     std::map<std::string, ViewFigure> fieldEffectFigs;
     bool fieldTargetAt(const std::string& name, cr3::Vec3& out) {
+        if (name.empty()) return out = {0, 0, 0}, true; // (an environment effect: where its model is)
         if (name == "player" && areaWalker) {
             out = areaWalker->position(), out[1] -= areaWalker->radius;
             return true;
@@ -5867,10 +5869,43 @@ struct Viewer {
     }
     std::map<std::string, cr3::Vec3> areaJoints;
     std::string areaJointsOf;
+    // an effect's particles (its model's .sprk - fe201am10, the lab's rain: assets/spark.hpp), by
+    // the effect's serial; the quads drawn from a buffer of its own a material
+    std::map<std::string, std::unique_ptr<cr3::SparkAsset>> sparkAssets; // (null: none)
+    struct ViewSpark {
+        std::unique_ptr<cr3::SparkEffect> fx;
+        std::map<const cr3::SparkMaterial*, std::pair<cr3::GpuMesh, size_t>> meshes; // (its quads' room)
+    };
+    std::map<uint32_t, ViewSpark> fieldSparks;
+    const cr3::SparkAsset* sparkAsset(const std::string& model) {
+        auto it = sparkAssets.find(model);
+        if (it == sparkAssets.end()) {
+            std::unique_ptr<cr3::SparkAsset> a;
+            std::vector<uint8_t> d;
+            std::string err;
+            if (archive.read(model + ".sprk", d)) {
+                a = std::make_unique<cr3::SparkAsset>();
+                if (!cr3::parseSpark(d, *a, &err)) SDL_Log("effect %s: %s", model.c_str(), err.c_str()), a.reset();
+            }
+            it = sparkAssets.emplace(model, std::move(a)).first;
+        }
+        return it->second.get();
+    }
+    void dropSpark(ViewSpark& v) {
+        for (auto& [m, mesh] : v.meshes) dev->destroy(mesh.first);
+        v.meshes.clear();
+    }
     void stepFieldEffects(float dt) {
         for (cr3::GameState::FieldEffect& e : game.fieldEffects) {
-            if (e.age == 0) SDL_Log("area %s: effect %s on %s", area.name.c_str(), e.model.c_str(), e.target.c_str());
+            if (e.age == 0) SDL_Log("area %s: effect %s on %s", area.name.c_str(), e.model.c_str(), e.target.empty() ? "the map" : e.target.c_str());
             e.age += dt;
+            auto it = fieldSparks.find(e.serial);
+            if (it == fieldSparks.end()) {
+                ViewSpark v;
+                if (const cr3::SparkAsset* a = sparkAsset(e.model)) v.fx = std::make_unique<cr3::SparkEffect>(a, e.serial * 2654435761u);
+                it = fieldSparks.emplace(e.serial, std::move(v)).first;
+            }
+            if (it->second.fx) it->second.fx->step(dt);
         }
         game.fieldEffects.erase(std::remove_if(game.fieldEffects.begin(), game.fieldEffects.end(),
                                                [this](const cr3::GameState::FieldEffect& e) {
@@ -5879,8 +5914,16 @@ struct Viewer {
                                                    return !e.loop && e.age > d;
                                                }),
                                 game.fieldEffects.end());
+        for (auto it = fieldSparks.begin(); it != fieldSparks.end();) {
+            const uint32_t serial = it->first;
+            if (std::none_of(game.fieldEffects.begin(), game.fieldEffects.end(), [&](const cr3::GameState::FieldEffect& e) { return e.serial == serial; }))
+                dropSpark(it->second), it = fieldSparks.erase(it);
+            else
+                ++it;
+        }
     }
-    void drawFieldEffects(const float* vp) {
+    // `camera`: the camera's place (the billboards')
+    void drawFieldEffects(const float* vp, const cr3::Mat34& camera) {
         for (const cr3::GameState::FieldEffect& e : game.fieldEffects) {
             cr3::Vec3 at;
             if (!fieldTargetAt(e.target, at)) continue;
@@ -5892,13 +5935,59 @@ struct Viewer {
                 f.absolute = true;
                 it = fieldEffectFigs.emplace(e.model, std::move(f)).first;
             }
+            cr3::Mat34 place;
+            for (int k = 0; k < 3; ++k) place.m[k * 5] = e.scale[size_t(k)], place.m[3 + 4 * k] = at[size_t(k)] + e.offset[size_t(k)];
+            if (auto sp = fieldSparks.find(e.serial); sp != fieldSparks.end() && sp->second.fx) drawSpark(sp->second, place, camera, vp);
             ViewFigure& f = it->second;
             if (f.meshes.empty()) continue;
-            f.place = cr3::Mat34();
-            for (int k = 0; k < 3; ++k) f.place.m[k * 5] = e.scale[size_t(k)], f.place.m[3 + 4 * k] = at[size_t(k)] + e.offset[size_t(k)];
+            f.place = place;
             const float d = f.animLoaded ? f.anim.duration() : 0.0f;
             pose(f, d > 0 ? (e.loop ? std::fmod(e.age, d) : std::min(e.age, d)) : 0.0f, false);
             drawFigure(f, vp);
+        }
+    }
+    // a Spark effect's sprites (SparkSprite::DrawSprite): its material's texture times DiffuseColor
+    // (the shader 08810000_00000111_00070300's), blended as the material says (SparkUtils::
+    // SetupAssetRuntimeShader: +0x186 0 SRC_ALPHA ONE, 1 the same subtracted, 2 SRC_ALPHA
+    // ONE_MINUS_SRC_ALPHA), tested against the depth, not written to it, both faces
+    std::vector<cr3::SparkEffect::Quad> sparkQuads;
+    void drawSpark(ViewSpark& v, const cr3::Mat34& root, const cr3::Mat34& camera, const float* vp) {
+        sparkQuads.clear();
+        v.fx->quads(root, camera, sparkQuads);
+        std::map<const cr3::SparkMaterial*, std::vector<const cr3::SparkEffect::Quad*>> byMaterial;
+        for (const auto& q : sparkQuads) byMaterial[q.material].push_back(&q);
+        for (auto& [mat, list] : byMaterial) {
+            auto& slot = v.meshes[mat];
+            if (slot.second < list.size()) { // (room for twice as many)
+                dev->destroy(slot.first);
+                slot.second = std::max<size_t>(list.size() * 2, 64);
+                std::vector<uint32_t> idx;
+                for (uint32_t k = 0; k < slot.second; ++k)
+                    for (const uint32_t i : {0u, 2u, 1u, 1u, 2u, 3u}) idx.push_back(k * 4 + i);
+                slot.first = dev->upload(std::vector<uint8_t>(slot.second * 4 * cr3::kVertexStride, 0), idx, -1);
+            }
+            std::vector<uint8_t> verts(slot.second * 4 * cr3::kVertexStride, 0); // (the rest: nothing)
+            static const float kUv[4][2] = {{0, 1}, {1, 1}, {0, 0}, {1, 0}};
+            static const float kNormal[3] = {0, 0, 1}, kTangent[3] = {1, 0, 0}, kBinormal[3] = {0, 1, 0};
+            for (size_t k = 0; k < list.size(); ++k)
+                for (int c = 0; c < 4; ++c)
+                    packVertex(&verts[(k * 4 + size_t(c)) * cr3::kVertexStride], list[k]->corner[c], kNormal, kUv[c], list[k]->color, kTangent,
+                               kBinormal, kUv[c]);
+            dev->updateVertices(slot.first, verts);
+            cr3::DrawState st;
+            cr3::MeshShading sh;
+            cr3::Texture* tex = mat ? texture(mat->texture) : nullptr;
+            sh.texMode = tex ? 4 : -1;
+            st.cull = 0;
+            st.depthTest = mat ? mat->depthTest : true;
+            st.depthWrite = mat ? mat->depthWrite : false;
+            st.blend = !mat || mat->blend;
+            const int mode = mat ? mat->blendMode : 0;
+            st.blendSrc = cr3::blendCode(kGlSrcAlpha, false);
+            st.blendDst = cr3::blendCode(mode == 2 ? kGlOneMinusSrcAlpha : 1u, true);
+            st.blendOp = mode == 1 ? 2 : 0;
+            if (mat && mat->alphaTest) sh.alphaRef = mat->alphaRef;
+            dev->drawMesh(slot.first, tex, vp, sh, st);
         }
     }
     // the walls: the area's own (<area>c.phys) and the solid gimmicks standing (their <area>p.phys
@@ -7146,7 +7235,7 @@ struct Viewer {
             pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(areaClock, f.anim.duration()) : 0.0f, false);
             drawFigure(f, vp.data());
         }
-        drawFieldEffects(vp.data());
+        drawFieldEffects(vp.data(), cw);
         drawFieldBombs(vp.data());
         for (AreaNpc& npc : areaNpcs) { // (Fld2NPC::Draw, Fld2Box::Draw)
             if (!game.gimmickVisible(npc.name) || npc.broken) continue;
@@ -7327,6 +7416,12 @@ struct Viewer {
             vm.setNative("Battle", "GetBreakPoint", [this](cr3::NativeCall& c) { c.result(cr3GaugeShown); });
             vm.setNative("Battle", "GetFiledId", [this](cr3::NativeCall& c) { c.result(cr3BattleFieldId); });
             vm.setNative("Battle", "AddFieldStatusEffect", [this](cr3::NativeCall& c) { cr3FieldEffects.push_back(c.integer(0)); });
+            vm.setNative("Battle", "SetFieldVisualEffect", [this](cr3::NativeCall& c) { // (BtlField::SetVisualEffect: fe201am10, the lab's rain)
+                const std::string model = c.string(0);
+                dropSpark(cr3BattleSpark), cr3BattleSpark.fx.reset(), cr3BattleSparkClock = cr3BattleClock;
+                if (const cr3::SparkAsset* a = sparkAsset(model)) cr3BattleSpark.fx = std::make_unique<cr3::SparkEffect>(a, uint32_t(SDL_GetTicks()) | 1u);
+                else SDL_Log("battle %d: visual effect %s (no particles)", cr3Battle.coupling, model.c_str());
+            });
             // (BattleArgument - BtlScript::BattleArgument: the source set, the damage chunk's command,
             // whether it downed - WasDown -, was a cooperation - IsCooperation)
             auto argAction = [this]() -> const cr3::Cr3Action* {
@@ -7851,6 +7946,7 @@ struct Viewer {
         }
         if (!cr3BattleCam.load(archive, "Cam_bt")) SDL_Log("battle: no Cam_bt");
         cr3BattleClock = 0, cr3BattleStage = Cr3BattleStage::In, cr3BattleStarted = false;
+        dropSpark(cr3BattleSpark), cr3BattleSpark.fx.reset(), cr3BattleSparkClock = 0;
         // (the rules' random numbers: the clock's, or CR3_BATTLE_SEED's for a battle to replay)
         const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
         const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) : uint32_t(SDL_GetTicks()) | 1u;
@@ -8831,9 +8927,17 @@ struct Viewer {
             }
             drawAttached(u.weapon, u.body, "DummyWP", cr3BattleClock, vp.data());
         }
+        if (cr3BattleSpark.fx) { // (the field's visual effect: BtlFieldVisualEffect - its figure at the field's origin)
+            const float dt = cr3BattleClock - cr3BattleSparkClock;
+            cr3BattleSparkClock = cr3BattleClock;
+            if (dt > 0 && dt < 1) cr3BattleSpark.fx->step(dt);
+            drawSpark(cr3BattleSpark, cr3::Mat34(), cw, vp.data());
+        }
         drawCr3Effects(cw, vp);
         drawCr3Glass();
     }
+    ViewSpark cr3BattleSpark; // (Battle.SetFieldVisualEffect's particles, stepped by the battle's clock)
+    float cr3BattleSparkClock = 0;
 
     // VistaMain: the map's figure, the event's script (its scene's figures follow it)
     bool startVista(const std::string& function, const std::string& map) {

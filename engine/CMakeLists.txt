@@ -41,6 +41,7 @@ add_library(cr3core STATIC
     src/assets/addons.cpp
     src/assets/text.cpp
     src/assets/language.cpp
+    src/assets/spark.cpp
     src/field/fieldmap.cpp
     src/field/cr3field.cpp
     src/field/collision.cpp

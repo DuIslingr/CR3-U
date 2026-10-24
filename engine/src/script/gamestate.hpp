@@ -167,14 +167,20 @@ struct GameState {
     // the field's effects (Cr3FieldMapEffectResident.EffectResidentPlay / PlayOnce - Fld2TaskGimmick::
     // CreateEffect: a model - the scripts' SetFlagMark fe007poin02 - at a gimmick's place, "player"
     // the player's, + the offset, scaled; looped, or once; EffectResidentOut - DeleteEffect: the
-    // target's gone) - not saved, an area's own; age: its clock, the viewer's
+    // target's gone) - not saved, an area's own; age: its clock, the viewer's. The environment's too
+    // (EnvironmentEffectPlay - Fld2TaskGimmick::CreateEnvironmentEffect: the model where it is,
+    // target ""; EnvironmentPlayerPlay - Fld2SetEnvironmentEffectPlayer: an attachment of the
+    // player's model on a joint - RootLocator -, target "player" + the offset, not turned with it).
+    // serial: its own (the viewer's particles - a .sprk's - by it)
     struct FieldEffect {
         std::string model, target;
         std::array<float, 3> scale{1, 1, 1}, offset{};
         bool loop = true;
         float age = 0;
+        uint32_t serial = 0;
     };
     std::vector<FieldEffect> fieldEffects;
+    uint32_t fieldEffectSerial = 0;
     // the field's goods buttons (Cr3TabMenu.AddGoodsButton / DelGoodsButton - Fld2GoodsButton::
     // SetButtonEnableOne: 0 the bomb, 1 the toy camera, 2 the detector, 3 the darts; the areas'
     // MenuTabAddALL puts them back by flags 4101 ..) - not saved

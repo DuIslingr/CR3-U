@@ -406,6 +406,79 @@ orange arrow) over the person the story goes on with (its offset by name - 1.2 u
 SetFlagMarkField a pop point's `fe007poin01` (blue), ClearFlagMark takes them away as one is
 talked to. CR3-U logs each (`area t0104: effect fe007poin02 on c111_01`).
 
+### The environment effects and Spark particles (CR3)
+
+EnvironmentEffectPlay(model, loop) (Fld2TaskGimmick::CreateEnvironmentEffect(name, loop)) plays a
+model where it is. EnvironmentPlayerPlay(model, joint, turned, ox, oy, oz, rx, ry, rz)
+(Fld2SetEnvironmentEffectPlayer, then Fld2Effect::Create's attachment) puts it on the player's model
+instead: CrxModel::LoadAttachment, then SetConstrainAttachment on that joint (the scripts pass
+`RootLocator`). It follows the joint's position and scale, and its turn only when `turned` is set
+(the scripts pass false). The offset and rotation are added. The lab's deck (d10 areas 0, 7 and 10:
+the d10_gim script's `EnvironmentEffectPlayer('fe201am10')`) gets its rain this way. A battle on the
+lab's fields (GetFiledId 37 / 38) gets it from Battle.SetFieldVisualEffect('fe201am10')
+(BtlFieldVisualEffect: the figure at the field's origin, looped).
+
+`fe201am10` is a figure with no meshes plus a **Spark** particle system, `fe201am10.sprk`. The
+file starts with 'SPAK'; header byte +0x10 is the frame rate (30). Chunks follow at +0x18, each a
+tag and its whole size (+4):
+
+- `NODE`: data at +0x10. Data +0 is the type (u16), +2 the size, +4 the id, +8 the name (0x40).
+  Type 9 is a texture: the image's name at +0x48. Type 10 is a material: +0x48 r g b a, each a
+  (min, max) pair - DiffuseColor; +0xe0 its texture's id; +0x170 flags (bit 15 blending, bit 17
+  depth test, bit 18 depth write, bit 19 alpha test against +0x180); +0x186 the blend
+  (SparkUtils::SetupAssetRuntimeShader: 0 SRC_ALPHA ONE, 1 the same reverse-subtracted, 2 SRC_ALPHA
+  ONE_MINUS_SRC_ALPHA); +0x188 the shader key. Types 0 (null), 2 (emitter), 3 (sprite) and 8
+  (trail) are the tree's nodes.
+- `ANIM`: curves for the nodes' channels (SparkUtils::Animate(curves, default, channel, frame)).
+  fe201am10's nodes use none.
+- `NLST`: from +0x10, the node ids that the nodes' child lists index.
+- `TERM`: the end.
+
+Every tree node has the same kinematics (SparkNode::OnActivated; every value a random (min, max)
+pair, f32): +0x48 position x y z, +0x60 rotation (degrees), +0x78 scale, +0xd8 velocity (units a
+second). +0x168 links them (ProcessTRSRndLink): bits 0 / 1 make position y / z take x's value, bits
+4 / 5 velocity's, 8 / 9 rotation's, 16 / 17 scale's. +0x16c bits 4..6 make the node follow its
+parent each frame. +0x174 is the start delay and +0x178 the life, both s16 (min, max) in frames
+(-1 for ever). +0x188 / +0x190 are the children it starts with (an NLST index and a count).
+
+An emitter (SparkEmitter::UpdateWork) has these fields:
+
+- +0x1a8: which kind comes next (0 in turn, 1 at random).
+- +0x1a9: the mode. 0 emits by rate, (age x count) + 1 so far. 1 emits `count` once. 2 emits
+  `count` every `interval` frames.
+- +0x1ac: the count, s16 (min, max).
+- +0x1b0: the interval, s16 (min, max).
+- +0x1b8 / +0x1c0: the kinds it spawns (an NLST index and a count).
+- +0x1c4: the shape (SparkUtils::GetGenPos: 0 a point, 1 a box, each axis -e .. +e).
+- +0x1c8: the box's half sizes.
+- +0x1e0: how many of a kind may be alive at once.
+
+A sprite (SparkSprite) has these fields:
+
+- +0x1a8 / +0x1b0: its size x / y (min, max).
+- +0x1d8: its four corners' r g b a.
+- +0x258: its material's id.
+- +0x263: its pivot (4 is the centre).
+- +0x268: flags. Bit 18 billboards it; with +0x26a bit 3 it stays upright.
+- +0x274: the shape (0 a quad - BuildBox's +-0.5, 1 a circle, 2 a ring, 3 a point).
+
+When it is not billboarded, DrawSprite draws the quad in the node's own place times its size.
+
+fe201am10 is a root with two emitters. `Emitter` sits at (-2.5, 8..12, 0), turned 15 degrees about
+z, and emits 3 sprites every frame. `Emitter2` sits at (-5, 8..12, 0), turned 30 degrees, and emits
+2. Both emit in a box of +-5 x / z, at most 100 alive. Each sprite falls at 20 units a second for
+18 frames (0.6 s). It is turned -90..90 degrees about y and scaled 0.05..0.15, uniformly (bits 16 /
+17). Its quad is 0.3 by 8..18 (10..20 for the second kind), so each streak is 0.015..0.045 wide and
+0.4..2.7 long. The material is `eff_par_03` (a soft 64 x 64 dot), alpha 0.25, added (SRC_ALPHA ONE),
+depth-tested but not written. The emitters' x offsets put the slanted fall back over the player. The
+result is a few dozen thin diagonal streaks around the player.
+
+CR3-U plays the subset this needs (assets/spark.hpp): the kinematics and their links, the
+emitters' three modes and both shapes, and quad sprites (turned or billboarded) with their
+materials. Particles live in their emitter's place, which follows the effect's root each frame.
+Curves, forces, trails, other shapes and the other pivots are not in. The field draws any effect
+with a `.sprk` (EffectResidentPlay's too). The battle draws Battle.SetFieldVisualEffect's.
+
 ### The bomb, rocks and solid gimmicks (CR3)
 
 The goods buttons (Cr3TabMenu.AddGoodsButton / DelGoodsButton - Fld2GoodsButton: 0 the bomb, 1
@@ -2173,7 +2246,12 @@ one, chosen by bits (`shade_flags.h`), the same formulas in the same order:
 - the normal map bumps N by (rgb - 1/2) x Bumpiness along the tangent and binormal
 - fog: mix by clamp(1 - (FogParams.x + depth x FogParams.y)) x FogParams.z; alpha test: the
   texture's alpha < AlphaRef discarded (the material's alpha_func reference)
-- texture coordinates + OffsetSet1 + fract(ScrollSpeedSet1 x Time)
+- texture coordinates + OffsetSet1 + fract(ScrollSpeedSet1 x Time). Time is in seconds. It is not a
+  global: Figure::SetupUserChannelAnimations lists the materials' Time parameters ('T', 0x54).
+  Figure::Pose then takes the figure's first animator's running total (Animator +0x68: rate x dt
+  summed, never wrapped), mod 2048, and Figure::Render writes it into each one. The map's
+  `<area>f` has its animation looped (CrxSimpleModel::Build), stepped by the map task's dt.
+  d1001_sky04's (1, 5) scrolls 5 repeats a second.
 
 Billboards (25 keys - nearly every effect, a few objects and figures): the vertices turned by
 ViewInverse's 3x3 (the camera's axes), or - word 2's 0x8, 5 keys - by camPos (the view's third
