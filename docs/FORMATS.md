@@ -1145,7 +1145,7 @@ and a wait of 5 + (0, -1, -2, 1, 2, 2)[rand % 6] s. 2 / 3 (MovePass) follow thei
 `<area>p`'s animation, run so they go that fast (SetMoveSpeed: the joint's way over the first
 second), facing the way they go. The player within the row's +0x34 (Check: +0x1f0) stops them;
 Cr3GimmickData.NPCMove(name, false) (Fld2SetNPCMove - SetMove: +0x1f1) holds them. Met: t0101's
-c551 / c552 (4) and c553 (3), t0102's c555, t0107's three, t0302's four, t0401's c559 / c560 (5).
+c551 / c552 (4) and c553 (3), t0102's c555, t0107's three, t0302's three, t0303's c652, t0401's c559 / c560 (5).
 
 ### A town's shop (CR3)
 
