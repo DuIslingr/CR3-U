@@ -75,6 +75,23 @@ static bool holdsCopy(const std::string& dir) {
     return false;
 }
 
+// a folder with a release in it, a few folders down at most: a CRDB.*.mvgl, Android's main.*.mvgl, an OBB or an .apks (an
+// older place's name alone - a "data" folder in the home folder, a double-click's working folder - is no copy)
+static bool holdsRelease(const std::string& dir) {
+    std::error_code ec;
+    if (fs::is_regular_file(dir, ec)) return true; // (an archive given by its own name)
+    size_t seen = 0;
+    fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+    for (; it != end && !ec && seen < 20000; it.increment(ec), ++seen) {
+        if (it.depth() >= 4) it.disable_recursion_pending();
+        std::string n = it->path().filename().string();
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        const auto ends = [&](const char* t) { const size_t k = std::strlen(t); return n.size() >= k && n.compare(n.size() - k, k, t) == 0; };
+        if (((n.compare(0, 5, "crdb.") == 0 || n.compare(0, 5, "main.") == 0) && ends(".mvgl")) || ends(".obb") || ends(".apks")) return true;
+    }
+    return false;
+}
+
 std::string defaultArchive(const std::vector<std::string>& places) {
     std::error_code ec;
     if (const char* env = std::getenv("CR3_DATA"); env && *env) return env;
@@ -91,7 +108,7 @@ std::string defaultArchive(const std::vector<std::string>& places) {
         if (base.back() != '/' && base.back() != '\\') base += '/';
         for (const char* sub : {"ipad", "PCSG00500", "PCSG00457", "ChaosRings3_FINAL_ENG.app", "Payload", "data"}) {
             const std::string a = base + sub;
-            if (fs::exists(a, ec)) return a;
+            if (fs::exists(a, ec) && holdsRelease(a)) return a;
         }
     }
     return {};

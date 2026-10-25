@@ -25018,6 +25018,8 @@ int main(int argc, char** argv) {
     std::string err;
     if (!v.archive.open(data, &err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
+        if (argc <= 1) // (opened with nothing - a double-click -: said in a window, not only to a terminal)
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", ("The copy of the game in\n" + data + "\ncan't be read: " + err).c_str(), nullptr);
         return 1;
     }
     SDL_Log("data: %s", data.c_str());
