@@ -202,7 +202,7 @@ retextured - moving with the game's own skeleton and animations:
    A material keeps the game's render state by its name `cr_mat_<n>...`; give it a picture of your own
    (PNG or JPEG, any size, packed in the `.glb`) and that picture replaces the figure's.
 3. Export it from Blender as glTF 2.0 (`.glb`, the defaults) to `models/hd/<figure>.glb` (`j001b01.glb`
-   for the figure `j001b01`). With HD Models on (Options, Graphics; on by itself) it is drawn
+   for the figure `j001b01`). With HD Models on (Options, Graphics; off until you switch it on) it is drawn
    instead of the original from the next scene on.
 
 What it reads: triangles, the first UV set and the second and colour set, four weights a vertex; meshes
@@ -212,6 +212,14 @@ its own. `cr3tool gltfcheck <release> <figure|all> [file.glb]` checks a round tr
 back: every figure lands exactly on the original in every animation). `CR3_HD_MODELS=<folder>` reads
 them from elsewhere. Personal use: the exports are the game's models - keep them, and what you make
 from them, out of anything shared.
+
+## Smooth models
+
+Options, Graphics, **Smooth Models**: Off, Smooth (4x triangles) or Smoother (9x) - every model in
+the world (characters, monsters, stages and props; not the menus) rounded out at load time with PN
+triangles, as CR1-U's: the original vertices stay put, edges sharper than 60 degrees stay hard, and
+skinning and animation work as before. From the next scene on; kept in settings.ini
+(`smooth_models` 0, 2 or 3), `--smooth-models n` for one run.
 
 ## Add-ons: outfits and weapons of your own
 

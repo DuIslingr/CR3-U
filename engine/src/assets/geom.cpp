@@ -156,8 +156,8 @@ bool parseGeom(const std::vector<uint8_t>& f, Geom& out, std::string* error) {
         if (nodeAt && !has(nodeAt, size_t(paletteSize) * 4)) return fail(error, "geom palette outside the file");
         for (unsigned k = 0; nodeAt && k < paletteSize; ++k) m.palette.push_back(u32(nodeAt + 4 * size_t(k)));
         m.strip.resize(indices);
-        if (indices) std::memcpy(m.strip.data(), &f[iAt], size_t(indices) * 2);
-        for (uint16_t ix : m.strip)
+        for (unsigned k = 0; k < indices; ++k) m.strip[k] = u16(iAt + 2 * size_t(k));
+        for (uint32_t ix : m.strip)
             if (ix >= m.vertexCount) return fail(error, "geom index past the vertices");
         for (unsigned k = 0; k < attrs; ++k) {
             const size_t d = aAt + 8 * size_t(k);

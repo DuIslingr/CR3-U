@@ -33,6 +33,7 @@ add_library(cr3core STATIC
     src/db/cr3db.cpp
     src/assets/image.cpp
     src/assets/geom.cpp
+    src/assets/smooth.cpp
     src/assets/skeleton.cpp
     src/assets/maptable.cpp
     src/assets/release.cpp
