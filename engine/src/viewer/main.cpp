@@ -2559,6 +2559,51 @@ struct Viewer {
     struct { int id = 0; float x0 = 0, y0 = 0, x1 = 0, y1 = 0; } fastRect;
     bool fastHeld = false;
     float fastUntil = -1;
+    // a press on the screen at (fx, fy) - fractions of it, from the top left: what's over it takes it
+    void pointerDown(float fx, float fy) {
+        if (overFast(fx, fy)) fastHeld = true; // (the fast-forward button: held, not a tap)
+        else if (cr3OptionsClick(fx, fy)) {} // (CR3-U's Options over the title or a battle; the title's button)
+        else if (saveMenuClick(fx, fy)) {} // (CR3's save files)
+        else if (cr3Title.stage == 2) tap(); // (CR3's title: a click anywhere is its tap)
+        else if (titleMenu.stage) titleClick(fx, fy);
+        else if (geneGetTap()) {}
+        else if (collectClick(fx, fy)) {}
+        else if (yesNoClick(fx, fy)) {}
+        else if (choiceClick(fx, fy)) {}
+        else if (clearQuestClick(fx, fy)) {}
+        else if (keyBuyClick(fx, fy)) {}
+        else if (lunchClick(fx, fy)) {}
+        else if (geneLabClick(fx, fy)) {}
+        else if (spacePortClick(fx, fy)) {}
+        else if (cr3ShopClick(fx, fy)) {}
+        else if (worldSelectClick(fx, fy)) {}
+        else if (townMoveClick(fx, fy)) {}
+        else if (vsClick(fx, fy)) {}
+        else if (cr3CampClick(fx, fy)) {}
+        else if (battleMode && choosing) battleClick(fx, fy);
+        else if (cr3BattleMode && cr3BattleClick(fx, fy)) {}
+        else if (vslash.stage == 1) vslashPointer(fx, fy, 0);
+        else if (fieldMode && !eventMode && keyLock.stage != 0) unlockPointer(fx, fy, 0);
+        else if (fieldMode && !eventMode && iai.stage) iaiPointer(fx, fy, 0);
+        else if (fieldMode && !eventMode && aim.stage) aimPointer(fx, fy, 0);
+        else if (fieldMode && !eventMode && hakkei.stage) hakkeiPointer(fx, fy);
+        else if (fieldMode && !eventMode && mystic.stage) mysticPointer(fx, fy);
+        else if (fieldMode && !eventMode && (sprintTap(fx, fy) || actionTap(fx, fy))) {}
+        else if (fieldMode && !eventMode && fieldClick(fx, fy)) {
+        } else if (areaDragFree()) areaDragStart(fx, fy); // (CR3's field: a drag walks, a touch let go taps)
+        else if (eventMode || fieldMode || battleMode || cr3BattleMode || areaMode) tap();
+    }
+    // (--input click:<fx>:<fy>: a press and its release there, for tests)
+    void testClick() {
+        if (inputScript.empty() || inputScript.front().compare(0, 6, "click:") != 0 || uiClock < inputNext) return;
+        float fx = 0.5f, fy = 0.5f;
+        std::sscanf(inputScript.front().c_str() + 6, "%f:%f", &fx, &fy);
+        inputScript.pop_front();
+        inputNext = uiClock + 0.4f;
+        SDL_Log("click at %.3f %.3f", fx, fy);
+        pointerDown(fx, fy);
+        areaDragEnd(), fastHeld = false;
+    }
     bool overFast(float fx, float fy) const {
         if (fastRect.id == 0) return false;
         const float k = std::min(float(screenW) / 0.96f, float(screenH) / 0.64f);
@@ -2569,6 +2614,7 @@ struct Viewer {
     int loggedTeamLevel = 1; // (the team level as last logged)
     void advance(float dt, float sx, float sy, bool run) {
         uiClock += dt;
+        testClick();
         stepMovie(dt);
         if (areaMode || cr3BattleMode) game.cr3Records.playSeconds += dt; // (My Page's play time)
         if (game.cr3TeamLevel != loggedTeamLevel) SDL_Log("team level %d -> %d", loggedTeamLevel, game.cr3TeamLevel), loggedTeamLevel = game.cr3TeamLevel;
@@ -2609,14 +2655,14 @@ struct Viewer {
         updateVistaSlash();
         if (optionsWasOpen && !optionsOpen && scriptSaves) writeSystem(); // (OptionMenu's end: Cr3Util_Save_SystemData)
         optionsWasOpen = optionsOpen;
+        // (--input wait:<seconds>: tests - the inputs after it held that long, whatever runs meanwhile:
+        // the field, a vista, a battle, the title)
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && (inputWait += dt) >= float(std::atof(inputScript.front().c_str() + 5)))
+            inputScript.pop_front(), inputWait = 0;
         if (credits.stage) return updateCredits(dt);
         if (titleMenu.stage) return updateTitle(dt);
         if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt; // (its clock: the field's camp keeps its own)
         if (cr3Title.stage) return updateCr3Title(dt);
-        // (--input wait:<seconds>: tests - the inputs after it held that long, whatever runs meanwhile:
-        // the field, a vista, a battle)
-        if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && (inputWait += dt) >= float(std::atof(inputScript.front().c_str() + 5)))
-            inputScript.pop_front(), inputWait = 0;
         // (Battle Speed, Field Speed: the battles, and the field while the player walks it - nothing
         // running or open over it -, that many times as fast)
         if (cr3BattleMode) return updateCr3Battle(dt * float(optionsOpen || settingsOpen || cr3OptionsOver() ? 1 : settings.battleSpeed));
@@ -10774,7 +10820,7 @@ struct Viewer {
         if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", 0, cx, cy, view);
         if (cr3UiCall(panel, "call_comBtnIconS_fr00", cx, cy)) cr3UiPut("combtnicons_fr00", "", 6.0f / 30, cx, cy, view);
         float ax, ay, ex, ey;
-        if (cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, kTapTitleOptions});
+        if (cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, kTapTitleOptions));
     }
 
     // CR3's map name (MapNameMenu): feNameMenu at feNamePosition's call_feNameMenu_fit3, its _in
@@ -15271,6 +15317,13 @@ struct Viewer {
         float x0, y0, x1, y1;
         int id; // (a button's: 17, 28, 21, 29, 30, 31; -1 back; kTapCard + n a card, kTapRow + n a row, kTapTab + n a tab; kTapMix the mix button; kTapYes / kTapNo)
     };
+    // a round tap area (CRXPartsBase::ProvisionalCheckHitCollision's second kind: tapAreaCP<n> its
+    // centre, tapAreaAP<n> a point on its edge - within the distance between them), as the square
+    // about it the taps are tested against
+    static Cr3GeneLabTap circleTap(float cx, float cy, float ax, float ay, int id) {
+        const float r = std::hypot(ax - cx, ay - cy);
+        return {cx - r, cy - r, cx + r, cy + r, id};
+    }
     static constexpr int kTapCard = 1000, kTapRow = 2000, kTapTab = 3000, kTapMix = 4000, kTapYes = 4001, kTapNo = 4002, kTapOk = 4003, kTapAlert = 4004;
     std::vector<Cr3GeneLabTap> geneLabTaps;
     bool geneLabWasOpen = false;
@@ -15883,7 +15936,7 @@ struct Viewer {
         if (chosen && cr3UiCall(mp, "call_mixBtn_fr00", x, y)) {
             UiFig& b = cr3UiPut("mixbtn_fr00", "", geneMenu.result ? 1.0f / 30 : 0.0f, x, y, view);
             float ax, ay, bx, by;
-            if (cr3UiCall(b, "tapAreaCP01", ax, ay) && cr3UiCall(b, "tapAreaAP01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, kTapMix});
+            if (cr3UiCall(b, "tapAreaCP01", ax, ay) && cr3UiCall(b, "tapAreaAP01", bx, by)) geneLabTaps.push_back(circleTap(ax, ay, bx, by, kTapMix));
         }
         // the list
         UiFig& pos = cr3UiPut("comlistposition", "comlistposition_io", t, 0, 0, view);
@@ -16067,7 +16120,7 @@ struct Viewer {
             if (cr3UiCall(mp, "call_mixBtn_fr00", x, y)) {
                 UiFig& b = cr3UiPut("mixbtn_fr00", "", geneMenu.result ? 1.0f / 30 : 0.0f, x, y, view);
                 float ax, ay, bx, by;
-                if (cr3UiCall(b, "tapAreaCP01", ax, ay) && cr3UiCall(b, "tapAreaAP01", bx, by)) geneLabTaps.push_back({ax, ay, bx, by, kTapMix});
+                if (cr3UiCall(b, "tapAreaCP01", ax, ay) && cr3UiCall(b, "tapAreaAP01", bx, by)) geneLabTaps.push_back(circleTap(ax, ay, bx, by, kTapMix));
             }
         }
         UiFig& pos = cr3UiPut("comlistposition", "comlistposition_io", t, 0, 0, view);
@@ -16900,7 +16953,7 @@ struct Viewer {
             if (cr3UiCall(icon, "call_spIcon_fr", cx, cy)) cr3UiPut("spicon_fr00", "", float(kTownIcon[pt]) / 30, cx, cy, view);
             if ((game.flag(kTownHit[pt]) || game.flag(kTownHit2[pt])) && cr3UiCall(icon, "call_comListHit", cx, cy)) cr3UiPut("comlisthit", "", 0, cx, cy, view);
             if (map) { // (TouchGestureTap: the point's or its icon's)
-                if (cr3UiCall(menu, "tapAreaCP01", ax, ay) && cr3UiCall(menu, "tapAreaAP01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapTownPoint + pt});
+                if (cr3UiCall(menu, "tapAreaCP01", ax, ay) && cr3UiCall(menu, "tapAreaAP01", bx, by)) cr3CampTaps.push_back(circleTap(ax, ay, bx, by, kTapTownPoint + pt));
                 if (cr3UiCall(icon, "tapAreaS01", ax, ay) && cr3UiCall(icon, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapTownPoint + pt});
             }
         }
@@ -16909,7 +16962,7 @@ struct Viewer {
             UiFig& bm = cr3UiPut("spbtnmenu", "", 0, x, y, view);
             if (cr3UiCall(bm, "call_spListBtn", cx, cy)) {
                 UiFig& lb = cr3UiPut("splistbtn", "", 0, cx, cy, view);
-                if (cr3UiCall(lb, "tapAreaCP01", ax, ay) && cr3UiCall(lb, "tapAreaAP01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapTownList});
+                if (cr3UiCall(lb, "tapAreaCP01", ax, ay) && cr3UiCall(lb, "tapAreaAP01", bx, by)) cr3CampTaps.push_back(circleTap(ax, ay, bx, by, kTapTownList));
             }
         }
         if (town.stage == 2) {
@@ -17002,7 +17055,7 @@ struct Viewer {
         if (!game.flag(1001) && cr3UiCall(pos, "call_feBtnTown", x, y, w, h)) {
             UiFig& u = cr3UiPut("febtntown", "", 0, x, y, view);
             float ax, ay, ex, ey;
-            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 108}); // (Fld2TabMenu tab 8)
+            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 108)); // (Fld2TabMenu tab 8)
         }
         if (!cr3UiCall(pos, "call_feBtnMenu", x, y, w, h)) return;
         UiFig& menu = cr3UiPut("febtnmenu", "", 0, x, y, view);
@@ -17031,7 +17084,7 @@ struct Viewer {
             float ix, iy;
             if (b.id == 0 && cr3UiCall(u, "call_feIconOpen_fr00", ix, iy)) cr3UiPut("febtniconopen_fr00", "", open ? 1.0f / 30 : 0.0f, ix, iy, view);
             float ax, ay, ex, ey;
-            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 100 + b.id});
+            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 100 + b.id));
         }
         drawCr3Goods(w, h, view);
     }
@@ -17052,7 +17105,7 @@ struct Viewer {
         UiFig& panel = cr3UiPut("fegoodspanel", "fegoodspanel_in", 1.0f, px, py, view);
         if (cr3UiCall(panel, "call_feGoodsIcon_fr00", ix, iy)) cr3UiPut("fegoodsicon_fr00", "", float(goods) / 30, ix, iy, view);
         float ax, ay, ex, ey;
-        if (cr3UiCall(panel, "tapAreaCP00", ax, ay) && cr3UiCall(panel, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 120 + goods});
+        if (cr3UiCall(panel, "tapAreaCP00", ax, ay) && cr3UiCall(panel, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 120 + goods));
         else cr3CampTaps.push_back({px - 0.5f, py - 0.5f, px + 0.5f, py + 0.5f, 120 + goods});
     }
     void useGoods(int goods) {
@@ -17159,7 +17212,7 @@ struct Viewer {
                     if (cr3UiCall(panel, "call_comBtnIconS_fr00", cx, cy)) cr3UiPut("combtnicons_fr00", "", float(id) / 30, cx, cy, view, off ? 0.5f : 1.0f);
                     if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
                     float ax, ay, ex, ey;
-                    if (!off && cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, 200 + b});
+                    if (!off && cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 200 + b));
                 }
             }
         }
@@ -18447,7 +18500,7 @@ struct Viewer {
             cr3UiScale = 1, cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             if (focused && cr3UiCall(btn, "typeM_C01", cx, cy)) labelX = cx, labelY = cy;
             float ax, ay, ex, ey;
-            if (cr3UiCall(btn, "tapAreaCP00", ax, ay) && cr3UiCall(btn, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back({ax - 0.3f, ay, ex + 0.3f, ey + 0.1f, tapBase + k});
+            if (cr3UiCall(btn, "tapAreaCP00", ax, ay) && cr3UiCall(btn, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, tapBase + k));
         }
     }
 
@@ -19081,11 +19134,8 @@ struct Viewer {
     void stepSaveMenu(float dt) {
         Cr3SaveMenu& m = saveMenu;
         m.since += dt, m.askSince += dt;
-        if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && uiClock >= inputNext) { // (--input wait:<s> here too)
-            inputNext = uiClock + float(std::atof(inputScript.front().c_str() + 5));
-            inputScript.pop_front();
-        }
-        if (!inputScript.empty() && inputScript.front().compare(0, 5, "save:") != 0 && inputScript.front().compare(0, 5, "wait:") != 0 && !m.ask) {
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "save:") != 0 && inputScript.front().compare(0, 5, "wait:") != 0 &&
+            inputScript.front().compare(0, 6, "click:") != 0 && !m.ask) {
             m.askSlot = 0, m.ask = 1; // (--input going on past the title without save: tokens - file 1 played, as before the save files)
             return chooseSave(kTapSaveYes);
         }
@@ -19716,7 +19766,7 @@ struct Viewer {
             UiFig& bg = uiFig("mplistbgpanel");
             if ((cl.cgl == 0 || (cl.cgl == 5 && cl.since >= cl.prizeAt + 1.0f)) && cr3UiCall(bg, "call_mpListCloseBtn", cx, cy)) {
                 UiFig& close = cr3UiPut("mplistclosebtn", "", 0, cx, cy, view);
-                if (cl.phase == 0 && cr3UiCall(close, "tapAreaCP01", ax, ay) && cr3UiCall(close, "tapAreaAP01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapCollectClose});
+                if (cl.phase == 0 && cr3UiCall(close, "tapAreaCP01", ax, ay) && cr3UiCall(close, "tapAreaAP01", bx, by)) cr3CampTaps.push_back(circleTap(ax, ay, bx, by, kTapCollectClose));
             }
         }
     }
@@ -25546,37 +25596,7 @@ int main(int argc, char** argv) {
                     dragging = true;
                     float fx, fy;
                     screenFraction(e.button.x, e.button.y, fx, fy);
-                    if (v.overFast(fx, fy)) v.fastHeld = true; // (the fast-forward button: held, not a tap)
-                    else if (v.cr3OptionsClick(fx, fy)) {} // (CR3-U's Options over the title or a battle; the title's button)
-                    else if (v.saveMenuClick(fx, fy)) {} // (CR3's save files)
-                    else if (v.cr3Title.stage == 2) v.tap(); // (CR3's title: a click anywhere is its tap)
-                    else if (v.titleMenu.stage) v.titleClick(fx, fy);
-                    else if (v.geneGetTap()) {}
-                    else if (v.collectClick(fx, fy)) {}
-                    else if (v.yesNoClick(fx, fy)) {}
-                    else if (v.choiceClick(fx, fy)) {}
-                    else if (v.clearQuestClick(fx, fy)) {}
-                    else if (v.keyBuyClick(fx, fy)) {}
-                    else if (v.lunchClick(fx, fy)) {}
-                    else if (v.geneLabClick(fx, fy)) {}
-                    else if (v.spacePortClick(fx, fy)) {}
-                    else if (v.cr3ShopClick(fx, fy)) {}
-                    else if (v.worldSelectClick(fx, fy)) {}
-                    else if (v.townMoveClick(fx, fy)) {}
-                    else if (v.vsClick(fx, fy)) {}
-                    else if (v.cr3CampClick(fx, fy)) {}
-                    else if (v.battleMode && v.choosing) v.battleClick(fx, fy);
-                    else if (v.cr3BattleMode && v.cr3BattleClick(fx, fy)) {}
-                    else if (v.vslash.stage == 1) v.vslashPointer(fx, fy, 0);
-                    else if (v.fieldMode && !v.eventMode && v.keyLock.stage != 0) v.unlockPointer(fx, fy, 0);
-                    else if (v.fieldMode && !v.eventMode && v.iai.stage) v.iaiPointer(fx, fy, 0);
-                    else if (v.fieldMode && !v.eventMode && v.aim.stage) v.aimPointer(fx, fy, 0);
-                    else if (v.fieldMode && !v.eventMode && v.hakkei.stage) v.hakkeiPointer(fx, fy);
-                    else if (v.fieldMode && !v.eventMode && v.mystic.stage) v.mysticPointer(fx, fy);
-                    else if (v.fieldMode && !v.eventMode && (v.sprintTap(fx, fy) || v.actionTap(fx, fy))) {}
-                    else if (v.fieldMode && !v.eventMode && v.fieldClick(fx, fy)) {
-                    } else if (v.areaDragFree()) v.areaDragStart(fx, fy); // (CR3's field: a drag walks, a touch let go taps)
-                    else if (v.eventMode || v.fieldMode || v.battleMode || v.cr3BattleMode || v.areaMode) v.tap();
+                    v.pointerDown(fx, fy);
                 }
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
                     v.areaDragEnd();
