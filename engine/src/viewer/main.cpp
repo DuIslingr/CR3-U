@@ -6268,6 +6268,8 @@ struct Viewer {
         bool bombSwitch = false;        // (Fld2PhysicalSwitch: ragdoll_bswc_.. - a blast near turns it, its other model <model less 2>03)
         bool stepSwitch = false;        // (Fld2StepSwitch: ragdoll_fswc_.. - stood on, it goes down - its _n01 -, then its function)
         bool eventMotion = false;       // (Cr3GimmickData.SetMotion: its own animation, from motionAt)
+        float turnFrom = 0, turnTo = 0;  // (Cr3GimmickData.ChangeDirection - Fld2DirectionManager: its yaw from, to)
+        int turnStep = 0, turnFrames = 0; // (updates done, of how many)
         float motionAt = 0;
         int stepState = 0;              // 0 up, 1 going down, 2 down (done: once)
         float stepAt = 0;
@@ -6440,6 +6442,27 @@ struct Viewer {
         });
         vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; });
         vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { areaMotions[c.string(0)] = c.string(1); });
+        // (ChangeDirection(name, target, frames) - Fld2ChangeNPCDirection, Fld2DirectionManager::
+        // SetDirection: the person turned about y toward "player" or another person - Cr3GetDirY,
+        // atan2(dx, dz) -, slerped over that many updates)
+        vm.setNative("Cr3GimmickData", "ChangeDirection", [this](cr3::NativeCall& c) {
+            const std::string name = c.string(0), target = c.string(1);
+            std::array<float, 3> to{};
+            bool found = false;
+            if (target == "player" && areaWalker) {
+                const cr3::Vec3 p = areaWalker->position();
+                to = {p[0], p[1], p[2]}, found = true;
+            } else
+                for (const AreaNpc& o : areaNpcs)
+                    if (o.name == target) to = {o.place.m[3], o.place.m[7], o.place.m[11]}, found = true;
+            if (!found) return;
+            for (AreaNpc& npc : areaNpcs) {
+                if (npc.name != name) continue;
+                npc.turnFrom = std::atan2(npc.place.m[2], npc.place.m[0]);
+                npc.turnTo = std::atan2(to[0] - npc.place.m[3], to[2] - npc.place.m[11]);
+                npc.turnFrames = std::max(c.integer(2, 1), 1), npc.turnStep = 0;
+            }
+        });
         vm.setNative("Cr3GimmickData", "SetMapScrollSpeed", [this](cr3::NativeCall& c) {
             const uint32_t hash = cr3::nameHash(c.string(0).c_str());
             const std::vector<float> speed = {float(c.number(1)), float(c.number(2))};
@@ -6451,6 +6474,25 @@ struct Viewer {
         });
     }
     // the motions asked for, put on their people and objects
+    // the people turning (Fld2DirectionManager::Update: an update's share - 20 a second - of the
+    // turn, the shorter way round)
+    float areaTurnClock = 0;
+    void stepAreaTurns(float dt) {
+        areaTurnClock += dt;
+        for (; areaTurnClock >= cr3::CharacterController::kUpdate; areaTurnClock -= cr3::CharacterController::kUpdate)
+            for (AreaNpc& npc : areaNpcs) {
+                if (npc.turnStep >= npc.turnFrames) continue;
+                ++npc.turnStep;
+                const float k = std::min(float(npc.turnStep) / float(npc.turnFrames), 1.0f);
+                const float yaw = npc.turnFrom + std::remainder(npc.turnTo - npc.turnFrom, 6.2831853f) * k;
+                const float sc = std::hypot(npc.place.m[0], npc.place.m[8]) > 1e-6f ? std::hypot(npc.place.m[0], npc.place.m[8]) : 1.0f;
+                const float c = std::cos(yaw) * sc, sn = std::sin(yaw) * sc;
+                cr3::Mat34& m = npc.place;
+                m.m[0] = c, m.m[1] = 0, m.m[2] = sn;
+                m.m[4] = 0, m.m[5] = sc, m.m[6] = 0;
+                m.m[8] = -sn, m.m[9] = 0, m.m[10] = c;
+            }
+    }
     void stepAreaMotions() {
         for (const auto& [name, motion] : areaMotions) {
             for (AreaNpc& npc : areaNpcs) {
@@ -6961,6 +7003,7 @@ struct Viewer {
         stepFieldEffects(dt);
         stepAreaScriptCam(dt);
         stepAreaMotions();
+        stepAreaTurns(dt);
         if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
             const bool wasRunning = areaEvents->running();
             areaEventClock = std::min(areaEventClock + dt, 0.25f);
