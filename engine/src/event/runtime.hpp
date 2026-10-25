@@ -304,6 +304,7 @@ public:
     struct Shop {
         bool open = false;
         bool talk = false, talking = false;
+        bool alter = false; // (the alteration shop's: CreateReModelingMenu)
         std::string id, clerk;
     };
     const Shop& shop() const { return shop_; }

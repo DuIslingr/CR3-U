@@ -151,6 +151,9 @@ public:
     // what each wears (the save's: weapon, armour, accessory table ids - -1 the char_para row's, 0
     // none), by char_para id; a guest its row's always
     std::map<int, std::array<int, 3>> partyEquip;
+    // the equipment's attachments (CrxWeapon / CrxArmor / CrxAccessory +0x40: the attached item's
+    // info, its constant added to theirs), by the equipment's full id: the item attached
+    std::map<int, int> attachments;
     int teamLevel = 1; // (every character's level: CrxCharacter::initialize's DAT_014c6ab0)
     bool playerStats(const Cr3BattleTables& tables, int character, Cr3Fighter& out) const;
     // the VS mode's tallies (BtlStatus::TakeDamageToDirection: the party's damage to the monsters -

@@ -7395,6 +7395,7 @@ struct Viewer {
             inputNext = uiClock + 0.5f;
             if (want == "talk") chooseShop(*areaEvents, 0x11);
             else if (want == "buy") chooseShop(*areaEvents, 0x14);
+            else if (want == "alter") chooseShop(*areaEvents, 0x29);
             else if (want == "sell") chooseShop(*areaEvents, 0x15);
             else if (want == "back") chooseShop(*areaEvents, -1);
             else if (want == "yes") chooseShop(*areaEvents, kTapShopYes);
@@ -7811,6 +7812,9 @@ struct Viewer {
                 cr3Rules.partyGenes[ch] = pg;
             }
         cr3Rules.teamLevel = game.cr3TeamLevel;
+        cr3Rules.attachments.clear();
+        for (const auto& [equipment, a] : game.cr3Attachments)
+            if (a.first > 0) cr3Rules.attachments[equipment] = a.first;
         cr3Rules.partyEquip.clear();
         for (int slot = 0; slot < 3; ++slot) {
             const std::map<int, int>& worn = slot == 0 ? game.cr3Weapon : slot == 1 ? game.cr3Armour : game.cr3Accessory;
@@ -18223,7 +18227,8 @@ struct Viewer {
     // ragdoll_call_camEquMenu, camEquWepPanel - a weapon, armour - or camEquJewPanel - an accessory:
     // the character's icon, its numbers as they are and with `item` in the slot, its name and its
     // gene's. The menu drawn (for the camp's button), or null
-    UiFig* drawCr3EquipStatus(int chara, int slot, int item, float t, int w, int h, const Mat4& view) {
+    // (preview: an item attached to an equipment for the second numbers - the alteration's)
+    UiFig* drawCr3EquipStatus(int chara, int slot, int item, float t, int w, int h, const Mat4& view, const std::pair<int, int>* preview = nullptr) {
         float x, y, cx, cy;
         UiFig& pos = cr3UiPut("camequposition", "", t, 0, 0, view);
         if (!cr3UiCall(pos, "ragdoll_call_camEquMenu", x, y, w, h)) return nullptr;
@@ -18233,7 +18238,14 @@ struct Viewer {
             UiFig& panel = cr3UiPut(slot == 2 ? "camequjewpanel" : "camequweppanel", "", 0, px, py, view);
             if (cr3UiCall(panel, "call_camEquCharaIcon_fr00", cx, cy)) cr3UiPut("genecngcahaicon_fr00", "", float(chara - 1) / 30, cx, cy, view); // (SetCharaParam: the part is geneCngCahaIcon_fr00)
             cr3::Cr3Fighter was, now;
-            if (cr3EquipStats(chara, -1, 0, was) && cr3EquipStats(chara, slot, item, now)) drawCr3EquipNumbers(panel, slot, was, now, view);
+            bool shown = cr3EquipStats(chara, -1, 0, was);
+            if (preview && preview->second > 0) {
+                const auto keep = game.cr3Attachments;
+                game.cr3Attachments[preview->first] = {preview->second, 1};
+                shown = shown && cr3EquipStats(chara, slot, item, now);
+                game.cr3Attachments = keep;
+            } else shown = shown && cr3EquipStats(chara, slot, item, now);
+            if (shown) drawCr3EquipNumbers(panel, slot, was, now, view);
             // (SetCharaParam: the name at the first typeM_L, the gene's at the next - lighter, smaller)
             cr3UiLabel(panel, "typeM_L01", cr3NameOf("char_name.mbe", "CharName", chara), w, h, 0.22f);
             float tx, ty;
@@ -19889,11 +19901,18 @@ struct Viewer {
         int amount = 1, most = 1; // (how many, and at most)
         int bought = 0;           // (5: the equipment just bought)
         int chara = 0;            // (the footer's character - ShopMenuMain +0x60 -: the status's, who wears what's bought; 0 the party's first)
+        // the alteration shop's (RemodelingMain): the equipment chosen, the list it came from
+        // (screen 6 lists the items to attach in its place), what attaching it would do
+        bool alter = false;
+        int equip = 0, equipRow = 0, pattern = 0;
+        std::vector<Row> equipRows;
         std::string told;
         float toldSince = 0;
     } shopMenu;
     std::vector<Cr3GeneLabTap> shopTaps;
     static constexpr int kShopTop[3] = {0x11, 0x14, 0x15};
+    static constexpr int kAlterTop[2] = {0x11, 0x29};        // (RemodelingMain 8: Talk, Alter)
+    static constexpr int kAlterSecond[3] = {0x16, 0x17, 0x18}; // (6: Weapons, Armor, Accessories)
     static constexpr int kShopSecond[4] = {8, 0x16, 0x17, 0x18};
     static constexpr int kShopFirst[4] = {0x14, 3, 4, 5}; // (the second buttons' categories)
     static constexpr int kShopTabs[8] = {0x14, 0, 0x15, 0x16, 0x17, 3, 4, 5};
@@ -19910,6 +19929,7 @@ struct Viewer {
         return v >= 3 && v <= 5 ? v - 3 : -1;
     }
     int shopTitle() const {
+        if (shopMenu.alter) return 0x1d; // (CreateRemodelingtop: the header's 0x1d)
         const std::string& id = areaEvents ? areaEvents->shop().id : std::string();
         return id == "T03_1" ? 0x1b : id == "T04_1" ? 0x1c : 0x1a;
     }
@@ -19925,6 +19945,21 @@ struct Viewer {
         if (!game.cr3Db || !areaEvents) return out;
         const int cat = shopCampCategory(value);
         auto heldOf = [&](int id) { const auto it = game.cr3Items.find(id); return it == game.cr3Items.end() ? 0 : it->second; };
+        if (m.alter) { // (CreateReModelingListItem(slot, character): the slot's equipment held or worn that the character can wear)
+            const int slot = value - 3, chara = shopChara();
+            if (slot < 0 || slot > 2) return out;
+            std::set<int> ids;
+            for (const auto& [id, n] : game.cr3Items)
+                if (id / 100000 == slot + 1 && n > 0) ids.insert(id);
+            if (const int w = cr3WornItem(chara, slot)) ids.insert(w);
+            for (const int id : ids)
+                if (cr3CanWear(chara, id) || id == cr3WornItem(chara, slot)) {
+                    Cr3ShopMenu::Row r;
+                    r.item = id, r.held = std::max(heldOf(id), 1), r.unit = 2;
+                    out.push_back(r);
+                }
+            return out;
+        }
         if (m.buy) {
             const cr3::BsonValue* t = game.cr3Db->table("shops");
             if (!t) return out;
@@ -19961,6 +19996,7 @@ struct Viewer {
     int shopPurse(int unit) const { return unit == 0 ? game.cr3Coins : unit == 1 ? game.cr3GP : int(game.cr3Money); }
     std::vector<int> shopCategories() {
         std::vector<int> out;
+        if (shopMenu.alter) return {5, 6, 7}; // (weapons, armour, accessories)
         for (int k = 0; k < 8; ++k)
             if (!shopRows(kShopTabs[k]).empty()) out.push_back(k);
         return out;
@@ -19979,6 +20015,37 @@ struct Viewer {
         SDL_Log("shop: %s list %d (%zu):%s", m.buy ? "buy" : "sell", m.category, m.rows.size(), items.c_str());
     }
     void shopScreen(int screen) { shopMenu.screen = screen, shopMenu.since = 0; }
+    // (CreateReModelingAttachmentListItem(equipment, slot): the items held whose attachment fits
+    // the slot - Attachment +0x08's bit; their price the attachment's gold)
+    std::vector<Cr3ShopMenu::Row> alterRows(int equipment) {
+        std::vector<Cr3ShopMenu::Row> out;
+        const int slot = equipment / 100000 - 1;
+        if (!cr3TablesReady() || slot < 0 || slot > 2) return out;
+        for (const auto& [id, n] : game.cr3Items) {
+            cr3::Cr3BattleTables::Attachment a;
+            if (id <= 0 || id >= 100000 || n <= 0 || !cr3BattleTables.attachmentOf(id, a) || !(a.fits >> slot & 1)) continue;
+            Cr3ShopMenu::Row r;
+            r.item = id, r.held = n, r.price = a.gold, r.unit = 2, r.affordable = a.gold <= game.cr3Money;
+            out.push_back(r);
+        }
+        return out;
+    }
+    // (GetAttachItemPattern: 0 the equipment has none, 1 another, 2 the same - its levels added,
+    // under 50 -, 3 the same at 50)
+    int alterPattern(int equipment, int item) const {
+        const auto it = game.cr3Attachments.find(equipment);
+        if (it == game.cr3Attachments.end() || it->second.first < 1 || it->second.second < 1) return 0;
+        if (it->second.first != item) return 1;
+        return it->second.second > 49 ? 3 : 2;
+    }
+    std::string alterAsk() {
+        const Cr3ShopMenu& m = shopMenu;
+        const int item = m.row < int(m.rows.size()) ? m.rows[size_t(m.row)].item : 0;
+        std::string ask = menuAnnounce(m.pattern == 0 ? 0x314 : m.pattern == 1 ? 0x315 : 0x169);
+        for (const auto& [key, value] : {std::pair<const char*, std::string>{"{itemname}", cr3ItemText(m.equip, false)}, {"{attachname}", cr3ItemText(item, false)}})
+            if (const size_t at = ask.find(key); at != std::string::npos) ask.replace(at, std::strlen(key), value);
+        return ask;
+    }
     void drawCr3Shop(cr3::EventRuntime& ev, int w, int h, bool front) {
         const cr3::EventRuntime::Shop& sh = ev.shop();
         if (!front) shopTaps.clear();
@@ -19998,18 +20065,18 @@ struct Viewer {
         dev->clearDepth();
         std::vector<Cr3GeneLabTap> keep;
         keep.swap(cr3CampTaps);
-        std::string sentence = menuAnnounce(m.screen == 0 ? 0x26e : m.buy ? 0x26f : 0x270);
+        std::string sentence = menuAnnounce(m.alter ? (m.screen == 0 ? 0x163 : 0x164) : m.screen == 0 ? 0x26e : m.buy ? 0x26f : 0x270);
         if (m.screen >= 2 && m.row < int(m.rows.size())) sentence = cr3ItemText(m.rows[size_t(m.row)].item, true);
         // the buttons
         if (m.screen <= 1) {
             UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
             if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
                 UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", m.since, x, y, view);
-                const int count = m.screen == 0 ? 3 : 4;
+                const int count = m.alter ? (m.screen == 0 ? 2 : 3) : m.screen == 0 ? 3 : 4;
                 for (int b = 0; b < count; ++b) {
                     float px, py;
                     if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(4 + b), px, py)) continue;
-                    const int id = m.screen == 0 ? kShopTop[b] : kShopSecond[b];
+                    const int id = m.alter ? (m.screen == 0 ? kAlterTop[b] : kAlterSecond[b]) : m.screen == 0 ? kShopTop[b] : kShopSecond[b];
                     UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
                     if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
                     if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
@@ -20032,7 +20099,7 @@ struct Viewer {
                     values.push_back(kShopTabs[cats[k]]);
                 }
                 float labelX = 0, labelY = -100, lx, ly;
-                if (!values.empty()) drawCr3Categories(menu, values.data(), int(values.size()), focus, kTapShopCat, labelX, labelY, view);
+                if (!values.empty() && m.screen != 6 && !(m.alter && m.screen == 4)) drawCr3Categories(menu, values.data(), int(values.size()), focus, kTapShopCat, labelX, labelY, view);
                 if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
                     const int n = int(m.rows.size());
                     const int top = m.row - 2;
@@ -20047,24 +20114,24 @@ struct Viewer {
                         if (cr3ItemRow(r.item, ir) && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
                             cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), ir.i(3)), cx, cy, view);
                         if (!m.buy && cr3UiCall(panel, "call_comListNumI_num00", cx, cy)) drawCr3ListDigits(cr3UiPut("comlistnumi_num00", "", 0, cx, cy, view), r.held, 1, view);
-                        if (cr3UiCall(panel, "call_comListNumUn_num00", cx, cy)) {
+                        if (!(m.alter && m.screen != 6) && cr3UiCall(panel, "call_comListNumUn_num00", cx, cy)) {
                             UiFig& num = cr3UiPut("comlistnumun_num00", "", 0, cx, cy, view);
                             float ix, iy;
                             if (cr3UiCall(num, "call_comListUnIcon_fr00", ix, iy)) cr3UiPut("comlistunicon_fr00", "", float(r.unit) / 30, ix, iy, view);
                             cr3UiNumber(num, "call_comListNum_fr00", "comlistnum_fr00", r.price, 7, 30, view);
                         }
                         cr3UiLabel(panel, "typeM_L01", cr3ItemText(r.item, false) + (r.count > 1 ? " x" + std::to_string(r.count) : std::string()), w, h, 0.3f);
-                        if (m.screen == 2 && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapShopRow + k});
+                        if ((m.screen == 2 || m.screen == 6) && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapShopRow + k});
                     }
                 }
-                if (labelY > -100) {
+                if (labelY > -100 && m.screen != 6 && !(m.alter && m.screen == 4)) {
                     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
                     drawUiText(menuAnnounce(kShopTabs[m.category] + 0x29), 20, labelX / 10, (labelY - 0.1f) / 10, w, h, false, 1.0f);
                 }
             }
         }
         // the Buy / Sell tab (shTabPositon's optSltBtn_fr00: frame 0 Buy on, 1 Sell)
-        if (m.screen >= 1 && m.screen <= 2) {
+        if (m.screen >= 1 && m.screen <= 2 && !m.alter) {
             UiFig& tp = cr3UiPut("shtabpositon", "shtabpositon_io", m.clock, 0, 0, view);
             if (cr3UiCall(tp, "call_optSltBtn_fr00", x, y, w, h)) {
                 UiFig& tab = cr3UiPut("optsltbtn_fr00", "", m.buy ? 0.0f : 1.0f / 30, x + 3.0f, y, view); // (Pose: 3 to the right)
@@ -20084,7 +20151,11 @@ struct Viewer {
         const int slot = m.screen >= 2 ? shopEquipSlot() : -1;
         if (slot >= 0) {
             const int focusItem = m.row < int(m.rows.size()) ? m.rows[size_t(m.row)].item : 0;
-            drawCr3EquipStatus(shopChara(), slot, focusItem, m.screen == 2 ? m.since : 1.0f, w, h, view);
+            if (m.alter && m.screen >= 4 && m.screen != 5) { // (SetCampEquipItemAttachment: the equipment with the focused item attached)
+                const std::pair<int, int> preview{m.equip, m.screen == 6 || m.screen == 4 ? focusItem : 0};
+                drawCr3EquipStatus(shopChara(), slot, m.equip, 1.0f, w, h, view, &preview);
+            } else
+                drawCr3EquipStatus(shopChara(), slot, m.alter && m.screen == 5 ? m.bought : focusItem, m.screen == 2 ? m.since : 1.0f, w, h, view);
             UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
             if (cr3UiCall(foot, "call_comFtrEquipMenu", x, y, w, h)) {
                 UiFig& fm = cr3UiPut("comftrequipmenu", "", 0, x, y, view);
@@ -20095,7 +20166,7 @@ struct Viewer {
                     const int ch = members[size_t(k)];
                     const int frame = ch <= 5 ? ch - 1 + (ch == chara ? 0 : 5) : ch == chara ? 10 : 11;
                     UiFig& b = cr3UiPut("comftrcharabtn_fr00", "", float(frame) / 30, cx, cy, view);
-                    if (m.screen == 2 && cr3UiCall(b, "tapAreaS01", ax, ay) && cr3UiCall(b, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapShopChara + k});
+                    if (m.screen == 2 && cr3UiCall(b, "tapAreaS01", ax, ay) && cr3UiCall(b, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapShopChara + k}); // (alter: the list rebuilt)
                 }
             }
             if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
@@ -20118,7 +20189,7 @@ struct Viewer {
             }
             drawCr3CampFooter(w, h, view);
         }
-        drawCr3Header(m.clock, m.screen == 0 ? shopTitle() : m.buy ? 0xd : 0xe, sentence, w, h, view);
+        drawCr3Header(m.clock, m.screen == 0 || m.alter ? shopTitle() : m.buy ? 0xd : 0xe, sentence, w, h, view);
         // how many, asked
         const Cr3ShopMenu::Row* r = m.row < int(m.rows.size()) ? &m.rows[size_t(m.row)] : nullptr;
         if ((m.screen == 3 || m.screen == 4) && r) {
@@ -20160,11 +20231,11 @@ struct Viewer {
                         cr3UiDigits(cr3UiPut("camitemstock_num00", "", 0, cx, cy, view), "call_camItemNum_fr00", "camitemnum_fr00", r->held, 3, 0, view);
                 }
             } else cr3CampTaps.clear();
-            std::string ask = menuAnnounce(m.buy ? 0x248 : 0x210);
+            std::string ask = m.alter ? alterAsk() : menuAnnounce(m.buy ? 0x248 : 0x210);
             for (const auto& [key, value] : {std::pair<const char*, std::string>{"{itemname}", cr3ItemText(r->item, false)}, {"{currency}", menuAnnounce(0x249 + r->unit)},
                                              {"{num}", std::to_string(m.amount)}, {"{price}", std::to_string(r->price * m.amount)}})
                 if (const size_t at = ask.find(key); at != std::string::npos) ask.replace(at, std::strlen(key), value);
-            const bool yesOn = m.amount >= 1 && m.amount <= m.most;
+            const bool yesOn = m.alter || (m.amount >= 1 && m.amount <= m.most);
             drawCr3Asked(ask, m.since, 0, yesOn, kTapShopYes, kTapShopNo, w, h, view);
         }
         if (m.screen == 5) { // (0x1a: "Equip {itemname}?" 0x20e)
@@ -20188,13 +20259,16 @@ struct Viewer {
         }
         if (m.screen == 2 && id >= kTapShopChara && id < kTapShopChara + 5) { // (GetCampEquipFutterSelectChara)
             const std::vector<int> members = cr3PartyMembers();
-            if (id - kTapShopChara < int(members.size()) && members[size_t(id - kTapShopChara)] != shopChara())
+            if (id - kTapShopChara < int(members.size()) && members[size_t(id - kTapShopChara)] != shopChara()) {
                 m.chara = members[size_t(id - kTapShopChara)], audio.playSe("com_002", false);
+                if (m.alter) m.row = 0, shopList(kShopTabs[m.category]); // (CreateReModelingListItem for the character)
+            }
             return;
         }
         if (m.screen == 0) {
             if (id == -1) return audio.playSe("com_004", false), ev.shopEnd(); // (0x25: EndCutInMenu, done)
             if (id == 0x11) return audio.playSe("com_003", false), ev.shopTalk();
+            if (id == 0x29 && m.alter) return audio.playSe("com_003", false), (void)(m.buy = false), m.focus = 0, shopScreen(1);
             if (id == 0x14 || id == 0x15) return audio.playSe("com_003", false), (void)(m.buy = id == 0x14), m.focus = 0, shopScreen(1);
             return;
         }
@@ -20206,11 +20280,11 @@ struct Viewer {
             return;
         }
         if (m.screen == 1) {
-            if (id == -1) return audio.playSe("com_004", false), m.focus = m.buy ? 1 : 2, shopScreen(0);
-            if (id >= kTapShopSecond && id < kTapShopSecond + 4) {
+            if (id == -1) return audio.playSe("com_004", false), m.focus = m.alter ? 1 : m.buy ? 1 : 2, shopScreen(0);
+            if (id >= kTapShopSecond && id < kTapShopSecond + (m.alter ? 3 : 4)) {
                 audio.playSe("com_003", false);
                 m.row = 0;
-                shopList(kShopFirst[id - kTapShopSecond]);
+                shopList(m.alter ? 3 + (id - kTapShopSecond) : kShopFirst[id - kTapShopSecond]);
                 ev.shopClerk(false); // (EndCutInMenu(2))
                 shopScreen(2);
             }
@@ -20228,6 +20302,15 @@ struct Viewer {
                 const int r = id - kTapShopRow;
                 if (r != m.row) return audio.playSe("com_002", false), (void)(m.row = r);
                 const Cr3ShopMenu::Row& row = m.rows[size_t(r)];
+                if (m.alter) { // (0xe: the items to attach to it)
+                    std::vector<Cr3ShopMenu::Row> rows = alterRows(row.item);
+                    if (rows.empty()) return void(audio.playSe("com_004", false));
+                    audio.playSe("com_003", false);
+                    m.equip = row.item, m.equipRows = m.rows, m.equipRow = m.row;
+                    m.rows = rows, m.row = 0;
+                    SDL_Log("alteration: %d - %zu items to attach", m.equip, m.rows.size());
+                    return shopScreen(6);
+                }
                 const bool equip = row.item / 100000 >= 1 && row.item / 100000 <= 3;
                 m.most = m.buy ? std::min(99 - row.held, row.price > 0 ? shopPurse(row.unit) / row.price : 99) : row.held;
                 if (m.buy && equip) m.most = std::min(m.most, 1);
@@ -20240,6 +20323,42 @@ struct Viewer {
                 m.amount = 1;
                 shopScreen(equip ? 4 : 3);
             }
+            return;
+        }
+        if (m.screen == 6) { // (0xf: an item to attach - its pattern asked, or told it's at its most)
+            if (id == -1) return audio.playSe("com_004", false), (void)(m.rows = m.equipRows), (void)(m.row = m.equipRow), shopScreen(2);
+            if (id >= kTapShopRow && id < kTapShopRow + int(m.rows.size())) {
+                const int r = id - kTapShopRow;
+                if (r != m.row) return audio.playSe("com_002", false), (void)(m.row = r);
+                audio.playSe("com_003", false);
+                m.pattern = alterPattern(m.equip, m.rows[size_t(r)].item);
+                if (m.pattern == 3) return (void)(m.told = menuAnnounce(0x16a)), (void)(m.toldSince = 0); // (0x16: its levels at the most)
+                shopScreen(4);
+            }
+            return;
+        }
+        if (m.screen == 4 && m.alter) { // (0x12: yes - SetAttachment, DBSystem::EnforceItem; 0x15: com_024, "Equip it?" if the character doesn't wear it)
+            if (id == kTapShopNo || id == -1) return audio.playSe("com_004", false), shopScreen(6);
+            if (id != kTapShopYes || m.row >= int(m.rows.size()) || !game.cr3Db || !cr3TablesReady()) return;
+            cr3::Cr3BattleTables::Attachment a;
+            const int item = m.rows[size_t(m.row)].item;
+            if (!cr3BattleTables.attachmentOf(item, a)) return;
+            const auto had = game.cr3Attachments.find(m.equip);
+            const int levels = std::min(a.levels + (had != game.cr3Attachments.end() && had->second.first == item ? had->second.second : 0), 50);
+            const int rc = game.cr3Db->enforceItem(game, m.equip, item, levels, a.gold);
+            SDL_Log("alteration: %d on %d, level %d for %d gold -> %d", item, m.equip, levels, a.gold, rc);
+            if (rc != cr3::kDbOk) {
+                audio.playSe("com_004", false);
+                m.told = menuAnnounce(rc == cr3::kDbNoGold ? 0xfe : 0x100), m.toldSince = 0;
+                return shopScreen(6);
+            }
+            audio.playSe("com_024", false);
+            const int chara = shopChara(), slot = m.equip / 100000 - 1;
+            m.rows = shopRows(kShopTabs[m.category]);
+            const auto at = std::find_if(m.rows.begin(), m.rows.end(), [&](const Cr3ShopMenu::Row& r) { return r.item == m.equip; });
+            m.row = at != m.rows.end() ? int(at - m.rows.begin()) : 0;
+            shopScreen(2);
+            if (cr3WornItem(chara, slot) != m.equip && chara > 0 && !(chara == 5 && game.flag(1155))) m.bought = m.equip, shopScreen(5);
             return;
         }
         if (m.screen == 3 || m.screen == 4) {
@@ -20296,16 +20415,17 @@ struct Viewer {
         const bool enter = key == SDLK_RETURN || key == SDLK_SPACE, back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
         if (!m.told.empty()) return chooseShop(*ev, kTapShopTold), true;
         if (m.screen <= 1) {
-            const int n = m.screen == 0 ? 3 : 4;
+            const int n = m.alter ? (m.screen == 0 ? 2 : 3) : m.screen == 0 ? 3 : 4;
             if (key == SDLK_UP || key == SDLK_DOWN) m.focus = (m.focus + (key == SDLK_DOWN ? 1 : n - 1)) % n, audio.playSe("com_002", false);
-            else if (enter) chooseShop(*ev, m.screen == 0 ? kShopTop[m.focus] : kTapShopSecond + m.focus);
+            else if (enter) chooseShop(*ev, m.screen == 0 ? (m.alter ? kAlterTop[std::min(m.focus, 1)] : kShopTop[m.focus]) : kTapShopSecond + m.focus);
             else if (back) chooseShop(*ev, -1);
             else if (key == SDLK_TAB && m.screen == 1) chooseShop(*ev, m.buy ? kTapShopSellTab : kTapShopBuyTab);
             return true;
         }
-        if (m.screen == 2) {
+        if (m.screen == 2 || m.screen == 6) {
             const int n = int(m.rows.size());
             if ((key == SDLK_UP || key == SDLK_DOWN) && n > 0) chooseShop(*ev, kTapShopRow + std::clamp(m.row + (key == SDLK_DOWN ? 1 : -1), 0, n - 1));
+            else if (m.screen == 6 && (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_TAB)) {}
             else if (key == SDLK_LEFT || key == SDLK_RIGHT) {
                 const std::vector<int> cats = shopCategories();
                 const auto it = std::find(cats.begin(), cats.end(), m.category);
@@ -20316,7 +20436,7 @@ struct Viewer {
             else if (back) chooseShop(*ev, -1);
             return true;
         }
-        if (m.screen == 5) {
+        if (m.screen == 5 || (m.screen == 4 && m.alter)) {
             if (enter || key == SDLK_Y) chooseShop(*ev, kTapShopYes);
             else if (back || key == SDLK_N) chooseShop(*ev, kTapShopNo);
             return true;
@@ -20333,7 +20453,7 @@ struct Viewer {
         const bool open = ev && ev->shop().open;
         if (open && !m.wasOpen) {
             m = Cr3ShopMenu();
-            m.focus = 1;
+            m.focus = 1, m.alter = ev->shop().alter;
             SDL_Log("shop: %s open", ev->shop().id.c_str());
         }
         if (!open && m.wasOpen) SDL_Log("shop: closed");

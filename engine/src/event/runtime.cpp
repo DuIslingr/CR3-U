@@ -407,6 +407,23 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         shop_.talking = false;
         if (shop_.open) clerk(shop_.clerk); // (the clerk back - the talk's own cut-ins closed)
     });
+    // the alteration shop (CreateReModelingMenu(clerk) - RemodelingMain, InterfaceMain::
+    // CreateReModelingMain: the town shop's way - its clerk, its talk, done when it's left)
+    vm.setNative("InterfaceWindow", "CreateReModelingMenu", [this, clerk](NativeCall& c) {
+        shop_ = Shop();
+        shop_.open = askYesNo && !autoMenus, shop_.clerk = c.string(0), shop_.alter = true;
+        if (shop_.open) clerk(shop_.clerk);
+    });
+    vm.setNative("InterfaceWindow", "CheckEndReModelingMenu", [this](NativeCall& c) { c.result(shop_.open); });
+    vm.setNative("InterfaceWindow", "CheckSelectTalkReModelingMenu", [this](NativeCall& c) {
+        const bool talk = shop_.talk;
+        if (talk) shop_.talk = false, shop_.talking = true;
+        c.result(talk);
+    });
+    vm.setNative("InterfaceWindow", "EndTalkNextReModelingMenu", [this, clerk](NativeCall&) {
+        shop_.talking = false;
+        if (shop_.open) clerk(shop_.clerk);
+    });
     // a dungeon's collection (CollectList in runtime.hpp)
     vm.setNative("InterfaceWindow", "CreateCollectListMain", [this](NativeCall& c) {
         collectListOpen(c.integer(0), c.integer(1, -1), c.integer(2, -1));

@@ -2097,6 +2097,26 @@ entries won / with a prize. Window 7 in CR3 is `GetItemMenu` (`EvtItemWindow` -
 (`comListIcon_fr00`; gold 0xc2) and `feGetDeco`, the text at the panel's `tyepM_L00` (so spelled),
 size 32, dark (0.17, 0.18, 0.18). `--input check` taps the check object the player is by.
 
+The alteration shop (t01's `cobj_03` after quest 73: `ReserveReModelingMenu(cutin, talk)` -
+`CreateReModelingMenu`, `CheckEndReModelingMenu`, `CheckSelectTalkReModelingMenu`,
+`EndTalkNextReModelingMenu`, the town shop's way; `RemodelingMain`): the header's 0x1d, Talk (0x11)
+and Alter (0x29) - AnnounceMenuName 0x163 -, then Weapons / Armor / Accessories (0x16 .. 0x18,
+0x164); the slot's equipment held or worn that the footer's character can wear
+(`CreateReModelingListItem`) beside its status (`CampEquipStatusMenu`); one chosen, the items held
+whose attachment fits the slot (`CreateReModelingAttachmentListItem`: `data\attachment_para.mbe`
+Attachment, 0x1c rows - the item's id, group, the equipment it fits as bits 1 weapon 2 armour 4
+accessory, category, amount, levels, gold), the status showing it attached
+(`SetCampEquipItemAttachment`). Chosen: `GetAttachItemPattern` - 0 the equipment has none (0x314
+`{attachname}` `{itemname}`), 1 another (0x315), 2 the same, levels under 50 (0x169), 3 the same at
+50 (0x16a told) -; yes, `SetAttachment` - `DBSystem::EnforceItem(equipment, item, the item's
+levels + the same one's had, at most 50, its gold)` - and com_024, then "Equip it?" (0x20e) where
+the character doesn't wear it. An attachment's effect (`MbItemInfo::GetConstant(category)` added
+by `CrxWeapon` / `CrxArmor` / `CrxAccessory`): category 0 weight, 1 break power, 2 .. 7 a weapon's
+element e lowered (e + 1: `BtlElement`), 8 .. 13 an armour's resisted (e + 7), 14 .. 19 an
+accessory's HP, MP, attack, guard, speed, luck. Its levels never fall in the shipped game
+(`CrxCharacter::DecreaseAttachmentDurability` is empty in all three). The port keeps attachments
+by equipment kind, not by piece. `--input shop:alter`.
+
 Quests 191-197, 399 and 400 are unused: number 0, level -1, flag 6999 needed (never set) - and
 191-197's `quest_check` branches call `q191_t01_00101`, which no script has.
 
