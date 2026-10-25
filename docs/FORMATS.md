@@ -1085,8 +1085,12 @@ calls SetBattleParty(0, 9) and (1 / 2, -1) - FldUtilSetBattleParty's three slots
 where the first isn't -1 (BtlBootParam +0 .. +8) - and battle 175: Cremate (241), Electra (1768),
 then a guard - RequestModeChange(monster, 1) lets it attack; its 1122 landing on the hero with
 status effect 2 passes -, then Chocolate by J (526) and ForceVictory. A guard has no direction,
-so no Battle_Direction_End. Using Coins (79) asks for a Lucky Box opened (LuckyBoxMain sets flag
-39): not in yet. The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
+so no Battle_Direction_End. Using Coins (79): the coin girl (`c923_00`, t0107) gives 5 coins (CoinGet,
+flag 2509); a Lucky Box opened (LuckyBoxMain 5: flag 39) - then 1402 -, Special Items bought
+(ShopBuyCoreMain: flag 38), and the quest is announced (1403). Rank 2 / 3 quests met: 137 (d0203 -
+GetAreaNum counts from 0, Fld2SaveData: GetAreaNo - 1 - its scene and battle 107), 54 (d0203's
+evt112_00: battles 168 and 169), deliveries (310: five of item 115 - item_delivery asks, takes them,
+fast_report2), Terror Cubes (234). The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
 `cr3tool couplings <archive> <monster>` lists where a monster is met.
 
 A save keeps the world select's level beside the dungeon (`select <dungeon> <level>`): a dungeon
@@ -1094,6 +1098,37 @@ resumed meets its band's monsters (it fell back to the first band).
 
 The global work (Cr3UtilGlobalWorkGet / Set - the scripts' GetVar / SetVar) holds 100 values; 24 is
 the quest set off on.
+
+### The Sp Shop and its boxes (CR3)
+
+The field's Shop button (Fld2Main::SM_Shop - CreatePiucomTop: HeaderMenu 0x42 title 9, SShopMenu
+0x74) opens the Sp Shop's top: SshopPositon's call_SshopBg / call_SshopBox / call_SshopItem /
+call_SshopVipPanel (the VIP days - SshopVipCount and SshopVipNum's digits, 0.3 left in English -,
+or SshopVipDefault), the header's sentence 0x275. A panel tapped (+0x70: 1 the box, 2 the items, 3
+VIP) goes on through SShopMenu's table (0x11, 0xc, 4): the boxes (0x12: CreateLuckyBoxMenu,
+SetBoxNumberLuckyBoxMenu(0xc, 0x22)), Special Items (0xd: the goods - PiuComMenu's list in CR3-U),
+VIP (not in).
+
+The boxes (LuckyBoxMenu, interface 0x44; its header title 0xb) - IBox's kinds, in order: the gene
+boxes on offer (GeneBox: `cltList_gene_01`, `boxBg_gene_01`; constants GENEBOX_PRICES / _AMOUNTS,
+coins), a Lucky Box for each item sheet with any entry won (LuckyBox: `cltList_<sheet>`,
+`boxBg_<sheet>` - `boxBg_Colosseum_01` for a sheet named with e or v -; LUCKYBOX_PRICES /
+_AMOUNTS, coins) and the GP box (GpBox: `cltList_gp_01`, `boxBg_gp_01`; GPBOX_PRICES / _AMOUNTS,
+GP). mpBoxBgPositon's mpBoxBgMenu - mpBoxBg_id00's mat_boxBg_d02 the box's background,
+mpBoxName_id00's mat_cltList_d02 its name plate -, mpBoxPositon (its own animation: in from the
+right) with mpBoxMenu's three call_mpBoxImagePanel (the boxes before, in focus - 1.35 x - and after:
+mpBoxImagePanel's mpBoxImage_id00, each picture with its `..A` mask), mpBoxNumMenu (the place and
+the count: mpBoxNum_num00's mpBoxNoNum_fr digits) and mpBoxArrowMenu (looped). The box in focus
+tapped: mpBoxBuyPositon's mpBoxBuyMenu with three BoxBuyPanels (mpBoxBuyPanel: Icon_fr the amount
+- 1 / 5 / 10 frames 0 .. 2 -, Size_fr - its call_mpBoxBuyImage_id the box -, Num_num - Uni_fr the
+currency, 0 coins, 1 GP, and four PriceNum_fr digits at digit + 10 x the currency -; Tap hidden, a
+press's highlight). A panel tapped: asked 0x123; yes - LuckyBoxMain 5: DBSystem::OpenLuckyBox /
+OpenGeneBox / OpenGPBox, flag 39, com_024, the coins again, what came out told.
+`--input vs:box / goods / boxprev / boxpick / boxnext / buy<n> / item<n>`.
+
+People turn (Cr3GimmickData.ChangeDirection(name, target, frames) - Fld2ChangeNPCDirection,
+Fld2DirectionManager::SetDirection): about y toward "player" or another person (Cr3GetDirY:
+atan2(dx, dz)), slerped over that many updates.
 
 ### A town's shop (CR3)
 
