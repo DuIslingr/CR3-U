@@ -6273,6 +6273,9 @@ struct Viewer {
         cr3::Mat34 rect;                // (ragdoll_npc_<name>: its place and turn, the sides apart)
         float rectW = 0, rectD = 0, talkRange = 0, walkSpeed = 0, wait = 0, walkTime = 0;
         bool walking = false, held = false; // (held: NPCMove false)
+        bool idle2 = false, idle2On = true; // (Fld2NPCIdle2Name's model - +0x1e8 -; NPCIdle2Enable - +0x2a4)
+        int idle2State = 0;             // (+0x1e4: 0 fn01, 1 fn02 once)
+        float idle2Left = 0;            // (+0x1e0)
         std::array<float, 3> target{};
         int turnStep = 0, turnFrames = 0; // (updates done, of how many)
         float motionAt = 0;
@@ -6392,6 +6395,9 @@ struct Viewer {
             if (npc.bombSwitch && model.size() > 2) loadFigure(model.substr(0, model.size() - 2) + "03.geom", npc.alt, &err);
             npc.blastRadius = npc.talkRange = row.f(11);
             npc.wander = row.i(10);
+            for (const char* m : {"j001", "j002", "j003", "j004", "j005", "c112", "c127"}) // (Fld2NPCIdle2Name - Fld2NPC::Build)
+                if (model.compare(0, 4, m) == 0) npc.idle2 = true;
+            npc.idle2Left = 10.0f + 5.0f * float(std::rand()) / float(RAND_MAX);
             if (npc.wander >= 4 && npc.wander <= 5) {
                 const auto rj = std::find(joints.begin(), joints.end(), "ragdoll_npc_" + npc.name);
                 if (rj != joints.end() && size_t(rj - joints.begin()) < world.size()) {
@@ -6461,6 +6467,10 @@ struct Viewer {
         });
         vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; });
         vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { areaMotions[c.string(0)] = c.string(1); });
+        vm.setNative("Cr3GimmickData", "NPCIdle2Enable", [this](cr3::NativeCall& c) { // (Fld2SetIdle2Enable)
+            for (AreaNpc& npc : areaNpcs)
+                if (npc.name == c.string(0)) npc.idle2On = c.boolean(1);
+        });
         vm.setNative("Cr3GimmickData", "NPCMove", [this](cr3::NativeCall& c) { // (Fld2SetNPCMove - Fld2NPC::SetMove: false holds it where it is)
             for (AreaNpc& npc : areaNpcs)
                 if (npc.name == c.string(0)) npc.held = !c.boolean(1), npc.wait = 0;
@@ -6591,8 +6601,25 @@ struct Viewer {
             npc.place.m[3] = at[0], npc.place.m[7] = at[1], npc.place.m[11] = at[2];
         }
     }
+    // (Fld2NPC::Update: one of Fld2NPCIdle2Name's standing - not walking, no talk of its own going -
+    // with NPCIdle2Enable on: after 10 .. 15 s fn02 once - at its end, or 10 s on, fn01 again for
+    // another 10 .. 15)
+    void stepAreaIdle2(float dt) {
+        const bool talking = areaEvents && areaEvents->running();
+        for (AreaNpc& npc : areaNpcs) {
+            if (!npc.idle2 || !npc.idle2On || npc.walking || talking) continue;
+            npc.idle2Left -= dt;
+            const float dur = npc.body.animLoaded ? npc.body.anim.duration() : 0.0f;
+            const bool ended = npc.idle2State == 1 && areaClock - npc.motionAt >= dur;
+            if (npc.idle2Left > 0 && !ended) continue;
+            npc.idle2State = npc.idle2State == 0 ? 1 : 0;
+            npc.idle2Left = 10.0f + 5.0f * float(std::rand()) / float(RAND_MAX);
+            if (!setNpcAnim(npc, npc.idle2State == 1 ? "fn02" : "fn01") && npc.idle2State == 1) setNpcAnim(npc, "fn01"), npc.idle2State = 0;
+        }
+    }
     void stepAreaWanderers(float dt) {
         if (!areaWalker) return;
+        stepAreaIdle2(dt);
         const cr3::Vec3 pp = areaWalker->position();
         stepAreaPassers(dt, pp);
         for (AreaNpc& npc : areaNpcs) {
