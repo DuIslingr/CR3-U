@@ -165,7 +165,7 @@ settings.ini (`field_speed`, `battle_speed`); `--field-speed n` / `--battle-spee
 
 On a desktop the Options' tabs and rows get smaller as the window grows, so more of the Graphics
 rows fit at once (a phone or tablet keeps the game's size and four rows). **Reset**, the round
-button left of the back (or R), asks, then puts the open tab's settings back to their defaults.
+button left of the back (or R), asks, then puts the open tab's settings back to their defaults (Graphics keeps the window's type and resolution).
 
 ## HD textures
 

@@ -22485,8 +22485,10 @@ struct Viewer {
             audio.setVolumes(1, 1, 1);
         } else if (co.tab == 1) co.hands = 0;
         else if (co.tab == 2) optionQuality = 0;
-        else {
+        else { // (the window's type and resolution kept)
+            const int display = settings.display, resolution = settings.resolution;
             settings = Settings();
+            settings.display = display, settings.resolution = resolution;
             applySettings();
             saveSettings();
         }
