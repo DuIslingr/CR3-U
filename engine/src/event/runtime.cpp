@@ -455,9 +455,25 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     // CR3's choice menus and text entry (runtime.hpp)
     for (int kind : {2, 3}) {
         const std::string n = kind == 2 ? "Two" : "Three";
-        vm.setNative("InterfaceWindow", "CreateSelect" + n + "ChoiceMenu", [this, kind](NativeCall&) { choiceKind_ = kind, choiceAnswer_ = -1, choiceAge_ = 0, ++choicesAsked_; });
+        vm.setNative("InterfaceWindow", "CreateSelect" + n + "ChoiceMenu", [this, kind](NativeCall&) {
+            choiceKind_ = kind, choiceAnswer_ = -1, choiceAge_ = 0, choiceClosing_ = -1, ++choicesAsked_;
+            choiceText_ = TextData(), choiceIds_.clear();
+        });
+        vm.setNative("InterfaceWindow", "SetTextDataSelect" + n + "ChoiceMenu", [this](NativeCall& c) { loadText(c.string(0), choiceText_); });
+        vm.setNative("InterfaceWindow", "SetTextSelect" + n + "ChoiceMenu", [this, kind](NativeCall& c) {
+            choiceIds_.clear();
+            for (int k = 0; k < kind; ++k) choiceIds_.push_back(c.integer(k, 0));
+        });
         vm.setNative("InterfaceWindow", "GetTapSelect" + n + "ChoiceMenu", [this](NativeCall& c) { c.result(choiceAnswer_); });
-        vm.setNative("InterfaceWindow", "DeleteSelect" + n + "ChoiceMenu", [this](NativeCall&) { choiceKind_ = 0; });
+        // (SetParamNumber 2: closing - Update waits for the tapped button's comBtnEffe to end)
+        vm.setNative("InterfaceWindow", "DeleteSelect" + n + "ChoiceMenu", [this](NativeCall&) {
+            if (choiceKind_ == 0 || choiceClosing_ >= 0) return;
+            float seconds = 0;
+            std::vector<uint8_t> d;
+            Animation a;
+            if (choiceAnswer_ >= 0 && archive_.read("combtneffe.anim", d) && a.parse(d)) seconds = a.duration();
+            choiceClosing_ = 0, choiceCloseSeconds_ = seconds;
+        });
         vm.setNative("InterfaceWindow", "GetAliveSelect" + n + "ChoiceMenu", [this, kind](NativeCall& c) { c.result(choiceKind_ == kind); });
     }
     vm.setNative("Cr3System", "SetInputDialogText", [this](NativeCall& c) { inputText_ = c.string(0); });
@@ -689,6 +705,8 @@ bool EventRuntime::update(ScriptVM* vm) {
     fade_.update(), backFade_.update();
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
+    else if (choiceKind_ && choiceAnswer_ >= 0 && choiceClosing_ < 0) choiceAge_ += kTick;
+    if (choiceKind_ && choiceClosing_ >= 0 && (choiceClosing_ += kTick) >= choiceCloseSeconds_) choiceKind_ = 0, choiceClosing_ = -1;
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
     if (geneGet_.open && (geneGet_.age += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) geneGet_.open = false; // (pages by themselves: a tap)
     for (auto& [w, t] : opened_) t += kTick;
@@ -841,6 +859,19 @@ const TextStop* EventRuntime::held() const {
 bool EventRuntime::awaitingTap() const {
     const TextStop* s = held();
     return (typed() && !ending()) || (s && s->wait == 0);
+}
+
+std::vector<std::vector<std::string>> EventRuntime::choiceLines() const {
+    std::vector<std::vector<std::string>> out;
+    for (int id : choiceIds_) {
+        std::vector<std::string> lines;
+        const ParsedMessage m = parseMessage(filterMessage(choiceText_.message(id, language)));
+        if (!m.pages.empty())
+            for (const TextLine& l : m.pages[0].lines)
+                if (lines.size() < 2) lines.push_back(l.text);
+        out.push_back(lines);
+    }
+    return out;
 }
 
 std::string EventRuntime::filterMessage(std::string text) const {

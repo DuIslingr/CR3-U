@@ -166,9 +166,16 @@ public:
     // until one is tapped, then its index; Msg_Choice2/3 poll it) - answered by answerChoice (the
     // viewer's), or with askYesNo and autoPage after that long - the first, then on each asking
     // again the next (a quiz asks until it's answered right, as a player would try them)
+    // Its texts: SetTextDataSelect...Menu's message file, SetTextSelect...Menu's messages in it, a
+    // line or two each (SetParamNumber 7: the speaker's tag left out, Cr3UtilNPrint's \n). Once
+    // DeleteSelect...Menu is called it stays up - closing - while the tapped button's comBtnEffe plays
     int choiceShown() const { return choiceKind_; } // 0 none, 2 or 3 options
+    int choiceAnswer() const { return choiceAnswer_; }
+    float choiceAge() const { return choiceAge_; }   // (since it opened; once answered, since then)
+    float choiceClosing() const { return choiceClosing_; } // (-1 not; else since)
+    std::vector<std::vector<std::string>> choiceLines() const;
     void answerChoice(int index) {
-        if (choiceKind_ && index >= 0 && index < choiceKind_) choiceAnswer_ = index;
+        if (choiceKind_ && choiceAnswer_ < 0 && index >= 0 && index < choiceKind_) choiceAnswer_ = index, choiceAge_ = 0;
     }
     // CR3's text entry (Cr3System.ShowInputDialog: the OS's keyboard dialog; CheckInputDialog while
     // open; GetInputDialogText its text; Set<Name|TeamName|PetName|FoodName>FromInputDialogText keep
@@ -383,7 +390,9 @@ private:
     // with it): the frame it ends at, -1 none
     int giftEffectEnd_ = -1;
     int choiceKind_ = 0, choiceAnswer_ = -1, choicesAsked_ = 0;
-    float choiceAge_ = 0;
+    float choiceAge_ = 0, choiceClosing_ = -1, choiceCloseSeconds_ = 0;
+    TextData choiceText_;
+    std::vector<int> choiceIds_;
     bool inputOpen_ = false, inputOk_ = true;
     float inputAge_ = 0;
     std::string inputText_;

@@ -1090,8 +1090,12 @@ flag 2509); a Lucky Box opened (LuckyBoxMain 5: flag 39) - then 1402 -, Special 
 (ShopBuyCoreMain: flag 38), and the quest is announced (1403). Rank 2 / 3 quests met: 137 (d0203 -
 GetAreaNum counts from 0, Fld2SaveData: GetAreaNo - 1 - its scene and battle 107), 54 (d0203's
 evt112_00: battles 168 and 169), deliveries (310: five of item 115 - item_delivery asks, takes them,
-fast_report2), Terror Cubes (234), 120 (Dorothy: item 331 delivered). 267 asks for a weapon worn
-(100012 / 100112) from the Nameless Man's chain. The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
+fast_report2), Terror Cubes (234), 120 (Dorothy: item 331 delivered). A quest's title and request
+(`message\Quest_Title`, `Quest_message`) are by its id, not its `no`. 267 (Marco the Collector)
+reports at once with the three old types held (items 100012, 100112, 100212 - kept). The Nameless
+Man's Lost Name 1 .. 4 (198 .. 201, each after the one before) are Terror Cubes: d0211's cobj_51
+(battle 130), d0310's cobj_52 (131), d0405's cobj_51 through Winterborough (132), d0604's cobj_51 in
+the random-floor ruins (133) - CubeBreak's ItemGet_Msg 500040 .. 500043. The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
 `cr3tool couplings <archive> <monster>` lists where a monster is met.
 
 A save keeps the world select's level beside the dungeon (`select <dungeon> <level>`): a dungeon
@@ -1144,7 +1148,10 @@ for c553), set on the ground (a ray from 1 above to 1 below), there within 0.4 o
 and a wait of 5 + (0, -1, -2, 1, 2, 2)[rand % 6] s. 2 / 3 (MovePass) follow their own joint of
 `<area>p`'s animation, run so they go that fast (SetMoveSpeed: the joint's way over the first
 second), facing the way they go. The player within the row's +0x34 (Check: +0x1f0) stops them;
-Cr3GimmickData.NPCMove(name, false) (Fld2SetNPCMove - SetMove: +0x1f1) holds them. Met: t0101's
+Cr3GimmickData.NPCMove(name, false) (Fld2SetNPCMove - SetMove: +0x1f1) holds them. A standing
+person whose model is in Fld2NPCIdle2Name (j001 .. j005, c112, c127), not talking, plays fn02 once
+every 10 .. 15 s (Build: +0x1e0 = 10 + 5 x rand; Update toggles +0x1e4 at 0 or at fn02's end);
+NPCIdle2Enable(name, on) - Fld2SetIdle2Enable, +0x2a4 - switches it. Met: t0101's
 c551 / c552 (4) and c553 (3), t0102's c555, t0107's three, t0302's three, t0303's c652, t0401's c559 / c560 (5).
 
 ### A town's shop (CR3)
@@ -2024,6 +2031,20 @@ menus (`GetTapSelect...ChoiceMenu` -1 until tapped) and the text entry (`ShowInp
 `CheckInputDialog`, `GetInputDialogText`, `Set...NameFromInputDialogText`). Headless runs answer
 questions as a player confirming would (`askYesNo` with `autoPage`): yes, the first choice - then
 the next each time the same menu is asked again (the quizzes) - and the text entry as given.
+
+The choice menus (`Msg_Choice2(file, a, b)` / `Msg_Choice3(file, a, b, c)` in the scripts:
+`CreateSelect<Two|Three>ChoiceMenu`, `SetTextDataSelect...ChoiceMenu(file)` - an event message
+file -, `SetTextSelect...ChoiceMenu(a, b[, c])` - its messages -, then `GetTapSelect...` each frame
+until one is tapped, kept as `GetVar(4)`; `DeleteSelect...`, then `GetAliveSelect...` until it has
+gone). `SelectTwoChoicesMenu` / `SelectThreeChoicesMenu`: `comMsgC<n>Position`, `comMsgC<n>Menu` at
+its `call_comMsgC<n>Menu` (fitted), all fading in over 0.1333 s. Each option's text is its message
+less the speaker's tag (`\d001`, 5 characters); the two-way menu splits it at `\n` into two
+lines at the menu's `typeM_L01`/`02` and `03`/`04` (size 32; a line alone 0.24 towards the middle -
+`SetTextHeadPosition`), the three-way puts one at each of `typeM_L01`..`03` (size 28); both from
+the joint plus (size / 2) / 200 right and down. The `comMsgC<n>Panel`s at `call_comMsgC<n>Panel`
+are hidden - their tap areas only (the menu's `tapAreaS0k`/`E0k` are the same rows) -, and a tapped
+option's `comBtnEffe` (at its panel's `call_comBtnEffe`) plays to its end before the menu goes
+(`SetParamNumber 2`, `Update`). No dimming. `--input` `choice:<n>` answers one (from 1); keys 1-3.
 
 ## Sound
 

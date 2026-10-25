@@ -2580,6 +2580,10 @@ struct Viewer {
                     break;
                 }
         }
+        if (!inputScript.empty() && inputScript.front().compare(0, 7, "choice:") == 0 && choiceShown() && activeEvents()->choiceAge() > 0.5f) { // (--input: an event's choice, from 1)
+            answerChoice(std::atoi(inputScript.front().c_str() + 7) - 1);
+            inputScript.pop_front();
+        }
         if (!inputScript.empty() && (inputScript.front() == "yes" || inputScript.front() == "no") && yesNoShown() &&
             activeEvents()->yesNoAge() > 0.5f) { // (--input: an event's yes / no)
             answerYesNo(inputScript.front() == "yes");
@@ -12805,6 +12809,90 @@ struct Viewer {
             float ax, ay, bx, by;
             if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) yesNoRects.push_back({b == 0, ax / 10, ay / 10, bx / 10, by / 10});
         }
+    }
+    // CR3's choice menus (Msg_Choice2 / 3 - SelectTwo/ThreeChoicesMenu, interface event): no dimming;
+    // comMsgC<n>Position, comMsgC<n>Menu at its call_comMsgC<n>Menu with the options' texts at the
+    // menu's typeM_L joints - two's a line or two each (option k's at 2k + 1, 2k + 2; one line alone
+    // 0.24 off to the middle), three's one each at k + 1 -, all fading in over 0.1333 s
+    // (SetAllAlpha); the options' comMsgC<n>Panels at its
+    // call_comMsgC<n>Panel are hidden - only their tap areas -, comBtnEffe at a tapped one's
+    // call_comBtnEffe plays until the menu closes
+    std::vector<YesNoRect> choiceRects; // (yes: unused; their order the options')
+    void drawChoice(cr3::EventRuntime& ev, int w, int h) {
+        choiceRects.clear();
+        const int n = ev.choiceShown();
+        if (n < 2) return;
+        const std::string c = "C" + std::to_string(n), lc = "c" + std::to_string(n);
+        const bool closing = ev.choiceClosing() >= 0;
+        const float a = closing ? 1.0f : ev.choiceAnswer() >= 0 ? 1.0f : std::min(ev.choiceAge() / 0.13333334f, 1.0f);
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        dev->setLighting(cr3::SceneLighting());
+        dev->clearDepth();
+        float x, y;
+        UiFig& pos = cr3UiPut("commsg" + lc + "position", "", 0, 0, 0, view, a);
+        if (!cr3UiCall(pos, "call_comMsg" + c + "Menu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("commsg" + lc + "menu", "", 0, x, y, view, a);
+        const std::vector<std::vector<std::string>> lines = ev.choiceLines();
+        for (int k = 0; k < n; ++k) {
+            const std::vector<std::string> two = k < int(lines.size()) ? lines[size_t(k)] : std::vector<std::string>();
+            for (int l = 0; l < (n == 2 ? 2 : 1); ++l) {
+                std::string line = l < int(two.size()) ? two[size_t(l)] : std::string();
+                if (n == 3)
+                    for (size_t m = 1; m < two.size(); ++m) line += " " + two[m];
+                if (line.empty()) continue;
+                char num[4];
+                std::snprintf(num, sizeof num, "%02d", n == 2 ? 2 * k + l + 1 : k + 1);
+                float tx, ty;
+                bool found = false;
+                for (const std::string& j : menu.joints)
+                    if (j.size() >= 2 && j.compare(j.size() - 2, 2, num) == 0 && j.compare(0, 4, "type") == 0 && uiJoint(menu, j, tx, ty)) {
+                        found = true;
+                        break;
+                    }
+                if (!found) continue;
+                if (n == 2 && two.size() == 1) ty -= 0.24f; // (SetTextHeadPosition: the line alone towards the middle)
+                const float size = n == 2 ? 32.0f : 28.0f, off = size / 2 / 200; // (CreateText: SetTextRender 0x20 / 0x1c, (s / 2) / 200 right and down)
+                drawUiText(line, size - 4, (tx + off) / 10, (ty - off) / 10, w, h, true, a); // (typeM_L: from the left)
+            }
+            float px, py;
+            if (!cr3UiCallNth(menu, "call_comMsg" + c + "Panel", k, px, py)) continue;
+            UiFig& panel = uiFig("commsg" + lc + "panel");
+            panel.fig.place = cr3::Mat34();
+            panel.fig.place.m[0] = panel.fig.place.m[5] = panel.fig.place.m[10] = cr3UiScale;
+            panel.fig.place.m[3] = px, panel.fig.place.m[7] = py, panel.fig.place.m[11] = cr3UiZ;
+            poseUi(panel, "commsg" + lc + "panel", 0);
+            float ax, ay, bx, by; // (the menu's tapAreaS0k / E0k: each option's row - the panels' own the same)
+            const std::string kk = std::to_string(k + 1);
+            if (cr3UiCall(menu, "tapAreaS0" + kk, ax, ay) && cr3UiCall(menu, "tapAreaE0" + kk, bx, by)) choiceRects.push_back({false, ax / 10, ay / 10, bx / 10, by / 10});
+            float ex, ey;
+            if (k == ev.choiceAnswer() && cr3UiCall(panel, "call_comBtnEffe", ex, ey)) cr3UiPut("combtneffe", "", std::max(ev.choiceClosing(), 0.0f) + (closing ? 0.0f : ev.choiceAge()), ex, ey, view);
+        }
+    }
+    void answerChoice(int index) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || ev->choiceShown() < 2 || ev->choiceAnswer() >= 0 || index < 0 || index >= ev->choiceShown()) return;
+        audio.playSe("com_003", false); // (comBtn's tap: decide)
+        ev->answerChoice(index);
+        SDL_Log("choice: %d of %d", index + 1, ev->choiceShown());
+    }
+    bool choiceShown() {
+        cr3::EventRuntime* ev = activeEvents();
+        return ev && ev->choiceShown() >= 2;
+    }
+    bool choiceClick(float fx, float fy) {
+        if (!choiceShown()) return false;
+        const float k = std::min(float(screenW) / 0.96f, float(screenH) / 0.64f);
+        const float x = (fx - 0.5f) * float(screenW) / k, y = (0.5f - fy) * float(screenH) / k;
+        for (size_t i = 0; i < choiceRects.size(); ++i) {
+            const YesNoRect& r = choiceRects[i];
+            if (x >= std::min(r.x0, r.x1) && x <= std::max(r.x0, r.x1) && y >= std::min(r.y0, r.y1) && y <= std::max(r.y0, r.y1)) {
+                answerChoice(int(i));
+                break;
+            }
+        }
+        return true; // (the menu takes every tap)
     }
     void answerYesNo(bool yes) {
         cr3::EventRuntime* ev = activeEvents();
@@ -23360,7 +23448,7 @@ struct Viewer {
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)
             Viewer* v; cr3::EventRuntime* ev;
-            ~YesNoLast() { v->dev->clearDepth(), v->drawYesNo(*ev, v->screenW, v->screenH); }
+            ~YesNoLast() { v->dev->clearDepth(), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
         } yesNoLast{this, ev};
         if (ev->effectLine) { // (BattleEffectTypeBMenu: radiate_loop, scaled aspect / 1.5 - or 1.5 / aspect - across)
             Mat4 camera = cr3::mat4Identity();
@@ -24434,6 +24522,11 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     if (v.cr3BattleMode && v.cr3BattleKey(k)) continue; // (CR3's battle menus)
+                    if (v.choiceShown()) { // (an event's choice: 1, 2 or 3)
+                        if (k >= SDLK_1 && k <= SDLK_3) v.answerChoice(int(k - SDLK_1));
+                        else if (k >= SDLK_KP_1 && k <= SDLK_KP_3) v.answerChoice(int(k - SDLK_KP_1));
+                        continue;
+                    }
                     if (v.yesNoShown()) { // (an event's yes / no: Y or Return yes, N or Backspace no)
                         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_Y) v.answerYesNo(true);
                         else if (k == SDLK_BACKSPACE || k == SDLK_N) v.answerYesNo(false);
@@ -24531,6 +24624,7 @@ int main(int argc, char** argv) {
                     else if (v.geneGetTap()) {}
                     else if (v.collectClick(fx, fy)) {}
                     else if (v.yesNoClick(fx, fy)) {}
+                    else if (v.choiceClick(fx, fy)) {}
                     else if (v.lunchClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
                     else if (v.spacePortClick(fx, fy)) {}
