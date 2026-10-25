@@ -392,7 +392,7 @@ bool Database::addOverlay(const std::string& path, std::string* error) {
     // its archives' folder: the shallowest one holding a .psp2.mvgl
     std::string at;
     size_t best = size_t(-1);
-    for (const std::string& f : walk(dir, 6)) {
+    for (const std::string& f : walk(dir, 8)) { // (8: a download's folder - extracted/rePatch/<id>/CR3/resources/ - too)
         if (!endsWith(f, ".psp2.mvgl")) continue;
         const size_t depth = size_t(std::count(f.begin(), f.end(), '/') + std::count(f.begin(), f.end(), '\\'));
         if (depth < best) best = depth, at = fs::path(f).parent_path().string();
