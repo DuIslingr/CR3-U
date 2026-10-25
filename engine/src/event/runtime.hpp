@@ -188,6 +188,8 @@ public:
     // it): closed by answerInput (the viewer's), or with askYesNo and autoPage after that long with
     // the text it holds (ShowInputDialog starts it with the current name; SetInputDialogText), accepted
     bool inputShown() const { return inputOpen_; }
+    int inputKind() const { return inputKind_; }                 // (0 the name, 1 the team, 3 the pet, else the food)
+    const std::string& inputText() const { return inputText_; } // (what it starts with)
     void answerInput(const std::string& text, bool ok = true) {
         if (inputOpen_) inputOpen_ = false, inputText_ = text, inputOk_ = ok;
     }
@@ -405,6 +407,7 @@ private:
     std::map<int, std::vector<std::pair<std::string, std::string>>> parameters_; // (by window)
     std::vector<int> choiceIds_;
     bool inputOpen_ = false, inputOk_ = true;
+    int inputKind_ = 0;
     float inputAge_ = 0;
     std::string inputText_;
     bool tutorialMenuOpen_ = false;

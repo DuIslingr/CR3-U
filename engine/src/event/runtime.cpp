@@ -529,7 +529,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("Cr3System", "ShowInputDialog", [this](NativeCall& c) {
         const int kind = c.integer(0, 0);
         inputText_ = enteredNames[kind == 0 ? "name" : kind == 1 ? "team" : kind == 3 ? "pet" : "food"];
-        inputOpen_ = true, inputOk_ = true, inputAge_ = 0;
+        inputOpen_ = true, inputOk_ = true, inputAge_ = 0, inputKind_ = kind;
     });
     vm.setNative("Cr3System", "CheckInputDialog", [this](NativeCall& c) { c.result(inputOpen_); });
     vm.setNative("Cr3System", "GetInputDialogResult", [this](NativeCall& c) { c.result(inputOk_); });

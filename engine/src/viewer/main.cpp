@@ -2578,7 +2578,8 @@ struct Viewer {
     float fastUntil = -1;
     // a press on the screen at (fx, fy) - fractions of it, from the top left: what's over it takes it
     void pointerDown(float fx, float fy) {
-        if (overFast(fx, fy)) fastHeld = true; // (the fast-forward button: held, not a tap)
+        if (inputDialogClick(fx, fy)) {} // (CR3's text entry: over everything)
+        else if (overFast(fx, fy)) fastHeld = true; // (the fast-forward button: held, not a tap)
         else if (cr3OptionsClick(fx, fy)) {} // (CR3-U's Options over the title or a battle; the title's button)
         else if (saveMenuClick(fx, fy)) {} // (CR3's save files)
         else if (cr3Title.stage == 2) tap(); // (CR3's title: a click anywhere is its tap)
@@ -2660,6 +2661,11 @@ struct Viewer {
         }
         if (!inputScript.empty() && inputScript.front().compare(0, 7, "choice:") == 0 && choiceShown() && activeEvents()->choiceAge() > 0.5f) { // (--input: an event's choice, from 1)
             answerChoice(std::atoi(inputScript.front().c_str() + 7) - 1);
+            inputScript.pop_front();
+        }
+        syncInputDialog();
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "type:") == 0 && inputDialog.open && uiClock - inputDialog.since > 0.5f) { // (--input type:<text>: the text entry's text, then its OK)
+            inputDialog.text.clear(), typeInputDialog(inputScript.front().c_str() + 5), closeInputDialog(true);
             inputScript.pop_front();
         }
         if (!inputScript.empty() && (inputScript.front() == "yes" || inputScript.front() == "no") && yesNoShown() &&
@@ -10203,10 +10209,23 @@ struct Viewer {
             wl->window = window;
             wl->inAnim = std::string(name) + "_in.anim", wl->outAnim = std::string(name) + "_out.anim";
         }
-        loadWindow(systemWindow, "syswin_io");
-        systemWindow.linesPerPage = 3, systemWindow.slots = {"01", "02", "03"}, systemWindow.window = cr3::EventRuntime::System;
-        systemWindow.inAnim = "syswin_io.anim", systemWindow.outBackwards = true;
-        systemWindow.fig.absolute = true; // (the figure's own animator: SetParameterDataBase's)
+        if (archive.contains("comMsgSMenu.geom")) {
+            // CR3's system window (EvtSystemWindow, window 5: SysWindowMenu, interface 0xb) - comMsgSMenu at
+            // comMsgSPosition's call_comMsgSMenu_fit2 (its move offset 2 is depth), three lines at
+            // typeM_L05..L07 (SetStringData: size 32, (0.282, 0.306, 0.306), left)
+            loadWindow(systemWindow, "commsgsmenu");
+            systemWindow.linesPerPage = 3, systemWindow.slots = {"05", "06", "07"}, systemWindow.window = cr3::EventRuntime::System;
+            systemWindow.uiUnit = 10, systemWindow.lineSize = 32;
+            loadPosition(systemWindow, "commsgsposition", "call_comMsgSMenu", 0);
+            systemWindow.inAnim = "commsgsmenu.anim", systemWindow.outBackwards = true;
+            systemWindow.lineRgb[0] = 0.282f, systemWindow.lineRgb[1] = systemWindow.lineRgb[2] = 0.306f;
+            systemWindow.fig.absolute = true;
+        } else {
+            loadWindow(systemWindow, "syswin_io");
+            systemWindow.linesPerPage = 3, systemWindow.slots = {"01", "02", "03"}, systemWindow.window = cr3::EventRuntime::System;
+            systemWindow.inAnim = "syswin_io.anim", systemWindow.outBackwards = true;
+            systemWindow.fig.absolute = true; // (the figure's own animator: SetParameterDataBase's)
+        }
         loadWindow(itemWindow, "getitem");
         itemWindow.stretch = true, itemWindow.linesPerPage = 1, itemWindow.slots = {"01"}, itemWindow.window = 7;
         itemWindow.inAnim = "getitem_in.anim", itemWindow.outAnim = "getitem_out.anim";
@@ -13015,6 +13034,110 @@ struct Viewer {
     }
     // a question on the system window (syswin_io's typeM_L01) with choice_io's Yes / No (call_cBtn_fr11 /
     // 12: circleBtn_fr at those frames) - their taps `yes` / `no`
+    // CR3's text entry (Cr3System.ShowInputDialog: utils::ShowInputDialog -> GameDebug::ShowCUI ->
+    // GUITools::OpenEditBox, the OS's own - Android's EditBoxActivity: an AlertDialog with the text,
+    // the cursor at its end, CANCEL and OK, not cancelable otherwise): the screen dimmed, the box in
+    // its upper half (a phone's keyboard under it), typed into (SDL's text input), Return its OK,
+    // Escape its CANCEL (the text as it was), Delete the whole text. Up to 16 characters for the
+    // name, 24 for the others (ShowInputDialog's lengths)
+    struct YesNoRectBox {
+        float x0, y0, x1, y1;
+    };
+    struct InputDialog {
+        bool open = false;
+        int kind = 0;
+        std::string text, was;
+        float since = 0;
+        YesNoRectBox ok{}, cancel{};
+    } inputDialog;
+    bool japaneseText = false; // (the release's Japanese, no English over it: the box's hint in Japanese)
+    bool inputDialogShown() const { return inputDialog.open; }
+    static size_t codePoints(const std::string& t) {
+        size_t n = 0;
+        for (unsigned char c : t) n += (c & 0xc0) != 0x80;
+        return n;
+    }
+    void syncInputDialog() {
+        cr3::EventRuntime* ev = activeEvents();
+        const bool want = ev && ev->inputShown();
+        if (want && !inputDialog.open) {
+            inputDialog.open = true, inputDialog.kind = ev->inputKind(), inputDialog.text = inputDialog.was = ev->inputText(), inputDialog.since = uiClock;
+            SDL_Log("text entry: kind %d", inputDialog.kind);
+        } else if (!want) inputDialog.open = false;
+    }
+    void closeInputDialog(bool ok) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!inputDialog.open || !ev) return;
+        if (inputDialog.text.empty()) ok = false; // (nothing typed: as it was)
+        audio.playSe(ok ? "com_003" : "com_004", false);
+        ev->answerInput(ok ? inputDialog.text : inputDialog.was, ok);
+        inputDialog.open = false;
+        SDL_Log("text entry: %s", ok ? "OK" : "cancelled");
+    }
+    void typeInputDialog(const char* utf8) {
+        if (!inputDialog.open || !utf8) return;
+        const size_t most = inputDialog.kind == 0 ? 16 : 24;
+        for (const char* c = utf8; *c;) { // (a code point at a time, control characters left out)
+            size_t n = 1;
+            while (c[n] && (static_cast<unsigned char>(c[n]) & 0xc0) == 0x80) ++n;
+            if (static_cast<unsigned char>(*c) >= 0x20 && codePoints(inputDialog.text) < most) inputDialog.text.append(c, n);
+            c += n;
+        }
+    }
+    bool inputDialogKey(SDL_Keycode k) {
+        if (!inputDialog.open) return false;
+        std::string& t = inputDialog.text;
+        if (k == SDLK_RETURN || k == SDLK_KP_ENTER) closeInputDialog(true);
+        else if (k == SDLK_ESCAPE) closeInputDialog(false);
+        else if (k == SDLK_DELETE) t.clear();
+        else if (k == SDLK_BACKSPACE && !t.empty()) { // (the last code point)
+            size_t at = t.size() - 1;
+            while (at > 0 && (static_cast<unsigned char>(t[at]) & 0xc0) == 0x80) --at;
+            t.erase(at);
+        }
+        return true; // (every key its own while it's up)
+    }
+    bool inputDialogClick(float fx, float fy) {
+        if (!inputDialog.open) return false;
+        const float k = std::min(float(screenW) / 0.96f, float(screenH) / 0.64f);
+        const float x = (fx - 0.5f) * float(screenW) / k, y = (0.5f - fy) * float(screenH) / k;
+        auto in = [&](const YesNoRectBox& r) { return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1; };
+        if (in(inputDialog.ok)) closeInputDialog(true);
+        else if (in(inputDialog.cancel)) closeInputDialog(false);
+        else if (window) SDL_StartTextInput(window); // (the field: a phone's keyboard back)
+        return true; // (the box takes every tap)
+    }
+    void drawInputDialog(int w, int h) {
+        if (!inputDialog.open || !white.id) return;
+        static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+        const Mat4 id = cr3::mat4Identity(), proj = uiProjection(w, h);
+        const float a = std::min((uiClock - inputDialog.since) * 10.0f, 1.0f);
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        dev->clearDepth();
+        const float dim[4] = {0, 0, 0, 0.5f * a};
+        dev->drawQuad(white, kScreen, id.data(), dim);
+        auto box = [&](float x0, float y0, float x1, float y1, float r, float g, float b, float al) {
+            const float v[24] = {x0, y0, 0, 1, x1, y0, 1, 1, x1, y1, 1, 0, x0, y0, 0, 1, x1, y1, 1, 0, x0, y1, 0, 0};
+            const float rgba[4] = {r, g, b, al * a};
+            dev->drawQuad(white, v, proj.data(), rgba);
+        };
+        const float X = 0.27f, top = 0.25f, bottom = 0.03f; // (UI units: the screen 0.96 x 0.64 about its centre)
+        box(-X - 0.003f, bottom - 0.003f, X + 0.003f, top + 0.003f, 0.45f, 0.45f, 0.48f, 1);
+        box(-X, bottom, X, top, 0.13f, 0.13f, 0.15f, 0.97f);
+        static const char* const kHints[2][4] = {{"Name", "Team name", "Pet name", "Food name"}, {"名前", "チーム名", "ペットの名前", "食べ物の名前"}};
+        const int kind = inputDialog.kind == 0 ? 0 : inputDialog.kind == 1 ? 1 : inputDialog.kind == 3 ? 2 : 3;
+        const char* hint = kHints[japaneseText ? 1 : 0][kind];
+        drawUiText(hint, 20, -X + 0.02f, 0.215f, w, h, true, 0.65f);
+        box(-X + 0.02f, 0.125f, X - 0.02f, 0.185f, 0.92f, 0.92f, 0.94f, 1); // (the field)
+        box(-X + 0.02f, 0.122f, X - 0.02f, 0.126f, 0.2f, 0.6f, 0.9f, 1);  // (its underline)
+        const float tw = drawUiText(inputDialog.text, 26, -X + 0.035f, 0.155f, w, h, true, 0.08f, 2 * X - 0.07f);
+        if (std::fmod(uiClock - inputDialog.since, 1.0f) < 0.55f) box(-X + 0.037f + tw, 0.135f, -X + 0.040f + tw, 0.175f, 0.1f, 0.1f, 0.1f, 1); // (the cursor)
+        inputDialog.cancel = {-X + 0.02f, bottom + 0.012f, -0.01f, bottom + 0.072f};
+        inputDialog.ok = {0.01f, bottom + 0.012f, X - 0.02f, bottom + 0.072f};
+        for (const YesNoRectBox* r : {&inputDialog.cancel, &inputDialog.ok}) box(r->x0, r->y0, r->x1, r->y1, 0.22f, 0.22f, 0.25f, 1);
+        drawUiText("CANCEL", 22, (inputDialog.cancel.x0 + inputDialog.cancel.x1) / 2, bottom + 0.042f, w, h, false, 0.9f);
+        drawUiText("OK", 22, (inputDialog.ok.x0 + inputDialog.ok.x1) / 2, bottom + 0.042f, w, h, false, 0.9f);
+    }
     // An event's yes / no buttons (EvtWindow.ShowYesNoButton - drawYesNo): their tap areas kept
     // for a click
     struct YesNoRect {
@@ -24493,7 +24616,7 @@ struct Viewer {
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)
             Viewer* v; cr3::EventRuntime* ev;
-            ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawLevelUp(*ev, v->screenW, v->screenH), v->drawKeyBuy(v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
+            ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawLevelUp(*ev, v->screenW, v->screenH), v->drawKeyBuy(v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH), v->drawInputDialog(v->screenW, v->screenH); }
         } yesNoLast{this, ev};
         if (ev->effectLine) { // (BattleEffectTypeBMenu: radiate_loop, scaled aspect / 1.5 - or 1.5 / aspect - across)
             Mat4 camera = cr3::mat4Identity();
@@ -25050,6 +25173,7 @@ int main(int argc, char** argv) {
         v.optionLanguage = l.slot;
         if (!movieArg.empty()) v.game.movieRequest = movieArg, v.game.moviePlaying = true;
         v.englishTextures = l.slot == 1; // (the release's own English: its images_eng)
+        v.japaneseText = l.slot == 0 && !l.overlay;
         SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
                 l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
     }
@@ -25592,8 +25716,13 @@ int main(int argc, char** argv) {
         const Uint64 started = last;
         while (running) {
             SDL_Event e;
+            if (v.window && v.inputDialogShown() != SDL_TextInputActive(v.window)) { // (the text entry's typing: a phone's keyboard up with it)
+                if (v.inputDialogShown()) SDL_StartTextInput(v.window);
+                else SDL_StopTextInput(v.window);
+            }
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_EVENT_QUIT) running = false;
+                else if (e.type == SDL_EVENT_TEXT_INPUT) v.typeInputDialog(e.text.text);
                 else if (e.type == SDL_EVENT_KEY_DOWN) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
@@ -25602,6 +25731,7 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     if (v.saveMenuKey(k)) continue; // (CR3's save files)
+                    if (v.inputDialogKey(k)) continue; // (CR3's text entry)
                     if (v.cr3Title.stage == 2 && v.cr3Camp.stage == 0 && (k == SDLK_O || k == SDLK_G)) { // (the title's Options)
                         v.openCr3OptionsFrom(1);
                         continue;
