@@ -10117,6 +10117,10 @@ struct Viewer {
         int from = -1;                    // the page's characters before it (-1: shown whole - the name)
         std::string joint;                // (its place: the joint's as the window's animation has it, + dx, dy)
         float dx = 0, dy = 0;
+        float border = 0;                 // (a black outline this wide, UI units: ProvisionalMenuText type 2's SetBordering)
+        float below = 0;                  // (the bitmap's rows under the line's box: its descenders, UI units)
+        bool shadow = false;              // (a drop shadow: ProvisionalMenuText type 3's copy at (0.01, -0.0172), its back colour)
+        float shadowRgb[3] = {0, 0, 0};
     };
     std::vector<TextQuad> textQuads;
     std::string shownText; // (what textQuads were made for)
@@ -10406,7 +10410,7 @@ struct Viewer {
                 q.from = from;
                 const float unitsPerPx = float(drawn) / pxUnit / float(rasterPx);
                 for (float p : pen) q.pen.push_back(p * unitsPerPx);
-                q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx;
+                q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx, q.below = float(img.height - th) * unitsPerPx;
                 if (wl.lineSize) {
                     // CR3's (64-bit ProvisionalMenuText; s the size its window asks for, a unit 200
                     // half-pixels): the window's Pose moves the joint (s / 2) / 200 right and down
@@ -10427,6 +10431,9 @@ struct Viewer {
                     q.y = jy + (float(drawn) / pxUnit - q.h) / 2;
                 }
                 q.joint = joint, q.dx = q.x - jx, q.dy = q.y - jy;
+                if (whole && wl.speakerOnly) q.border = 2 / pxUnit; // (the vista's name: Initialize type 2 - bordered black, 2 pixels where the UI isn't the iPhone's)
+                if (whole && wl.nameTag && wl.lineSize) // (CR3's conversation name: MessageWindowMenu::SetStringData's type 3, (0.361, 0.349, 0.380) behind)
+                    q.shadow = true, q.shadowRgb[0] = 0.361f, q.shadowRgb[1] = 0.349f, q.shadowRgb[2] = 0.380f;
                 cr3::textColour(colour, q.rgb);
                 if (colour == 0 && !whole)
                     for (int c = 0; c < 3; ++c) q.rgb[c] = wl.lineRgb[c]; // (the name stays white)
@@ -10466,8 +10473,24 @@ struct Viewer {
                 tw = std::min(q.w, q.pen[size_t(n)]);
             }
             const float u1 = q.w > 0 ? tw / q.w : 1;
-            const float x0 = q.x, x1 = q.x + tw, y0 = q.y - q.h / 2, y1 = q.y + q.h / 2; // (rows top first: v 0 at the top)
+            const float x0 = q.x, x1 = q.x + tw, y0 = q.y - q.h / 2 - q.below, y1 = q.y + q.h / 2; // (rows top first: v 0 at the top)
             const float v[24] = {x0, y0, 0, 1, x1, y0, u1, 1, x1, y1, u1, 0, x0, y0, 0, 1, x1, y1, u1, 0, x0, y1, 0, 0};
+            if (q.border > 0) { // (its outline: the text in black, around it)
+                static const float kRound[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {0.7071f, 0.7071f}, {-0.7071f, 0.7071f}, {0.7071f, -0.7071f}, {-0.7071f, -0.7071f}};
+                const float black[4] = {0, 0, 0, 1};
+                for (const auto& d : kRound) {
+                    float o[24];
+                    for (int i = 0; i < 24; i += 4) o[i] = v[i] + d[0] * q.border, o[i + 1] = v[i + 1] + d[1] * q.border, o[i + 2] = v[i + 2], o[i + 3] = v[i + 3];
+                    dev->drawQuad(q.tex, o, proj.data(), black);
+                }
+            }
+            if (q.shadow) {
+                const float dx = 1 / pxUnit, dy = -1.72f / pxUnit;
+                float o[24];
+                for (int i = 0; i < 24; i += 4) o[i] = v[i] + dx, o[i + 1] = v[i + 1] + dy, o[i + 2] = v[i + 2], o[i + 3] = v[i + 3];
+                const float back[4] = {q.shadowRgb[0], q.shadowRgb[1], q.shadowRgb[2], 1};
+                dev->drawQuad(q.tex, o, proj.data(), back);
+            }
             const float rgba[4] = {q.rgb[0], q.rgb[1], q.rgb[2], 1};
             dev->drawQuad(q.tex, v, proj.data(), rgba);
         }
@@ -11613,12 +11636,12 @@ struct Viewer {
             if (img.rgba.empty()) return 0;
             q.tex = dev->upload(img);
             const float unitsPerPx = size * uiTextScale / 1000.0f / float(px);
-            q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx;
+            q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx, q.below = float(img.height - th) * unitsPerPx;
             it = uiTexts.emplace(key, q).first;
         }
         const TextQuad& q = it->second;
         const float qw = maxWidth > 0 ? std::min(q.w, maxWidth) : q.w;
-        const float x0 = left ? x : x - qw / 2, x1 = x0 + qw, y0 = y - q.h / 2, y1 = y + q.h / 2;
+        const float x0 = left ? x : x - qw / 2, x1 = x0 + qw, y0 = y - q.h / 2 - q.below, y1 = y + q.h / 2;
         const float v[24] = {x0, y0, 0, 1, x1, y0, 1, 1, x1, y1, 1, 0, x0, y0, 0, 1, x1, y1, 1, 0, x0, y1, 0, 0};
         const float rgba[4] = {shade, shade, shade, 1};
         dev->drawQuad(q.tex, v, uiProjection(w, h).data(), rgba);

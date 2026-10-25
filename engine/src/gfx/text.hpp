@@ -34,7 +34,8 @@ public:
     const std::string& path() const { return path_; }
 
     // one line of UTF-8 at `sizePx` (rows top first): white, the coverage in alpha. Empty when the
-    // text draws nothing. `width` / `height` the bitmap's (Text2Bitmap's measureText / font metrics)
+    // text draws nothing. `width` / `height` the line's (Text2Bitmap's measureText / font metrics) -
+    // the bitmap may run lower than `height`: its descenders, to be drawn below the line's box
     // `penX` (optional): each code point's left edge in the bitmap, and the end (size + 1)
     Image render(const std::string& utf8, int sizePx, int& width, int& height, std::vector<float>* penX = nullptr);
 

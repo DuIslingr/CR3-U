@@ -137,11 +137,11 @@ Image TextRasterizer::render(const std::string& utf8, int sizePx, int& width, in
     width = int(advance + 0.5f);
     height = int(top + bottom + 0.5f);
     if (width <= 0 || height <= 0) return img;
-    img.width = width;
-    img.height = height;
-    img.rgba.assign(size_t(width) * size_t(height) * 4, 0);
-    for (size_t p = 0; p < img.rgba.size(); p += 4) img.rgba[p] = img.rgba[p + 1] = img.rgba[p + 2] = 255;
     const int baseline = sizePx - 1; // (Text2Bitmap: drawText at y = size - 1)
+    img.width = width;
+    img.height = std::max(height, baseline + 1 + int(std::ceil(bottom))); // (the descenders whole below `height`: CR3's Gothic reaches lower than its top leaves room for)
+    img.rgba.assign(size_t(width) * size_t(img.height) * 4, 0);
+    for (size_t p = 0; p < img.rgba.size(); p += 4) img.rgba[p] = img.rgba[p + 1] = img.rgba[p + 2] = 255;
     for (const Glyph& gl : glyphs) {
         FT_Face gf = gl.face;
         if (FT_Load_Glyph(gf, gl.index, FT_LOAD_DEFAULT) || FT_Render_Glyph(gf->glyph, FT_RENDER_MODE_NORMAL)) continue;
@@ -150,7 +150,7 @@ Image TextRasterizer::render(const std::string& utf8, int sizePx, int& width, in
         for (unsigned y = 0; y < b.rows; ++y)
             for (unsigned x = 0; x < b.width; ++x) {
                 const int px = ox + int(x), py = oy + int(y);
-                if (px < 0 || py < 0 || px >= width || py >= height) continue;
+                if (px < 0 || py < 0 || px >= width || py >= img.height) continue;
                 uint8_t& a = img.rgba[(size_t(py) * size_t(width) + size_t(px)) * 4 + 3];
                 a = std::max<uint8_t>(a, b.buffer[size_t(y) * size_t(std::abs(b.pitch)) + x]);
             }
