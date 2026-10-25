@@ -17,7 +17,7 @@ struct Image {
     // 4 bytes a pixel, the rows in the order the game's texture coordinates assume (v = 0 the first
     // row): the PVRs' as stored (the GL releases upload them so), the Vita's GXTs turned bottom-up
     std::vector<uint8_t> rgba;
-    bool alphaOnly = false;    // (A8 / U8 R000: a mask, no colour of its own)
+    bool alphaOnly = false;    // (A8 / U8 R000: a mask, no colour of its own - black, as GL_ALPHA samples)
     bool bottomUp = false;     // the first row is the picture's bottom (PVR's flip flag / orientation)
     std::string format;        // for tools: "PVR2 PVRTC4", "PVR3 ETC1", "GXT UBC2", ...
     bool mipmaps = false;      // upload with a mip chain

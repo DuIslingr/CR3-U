@@ -35,7 +35,14 @@ bool Cr3BattleTables::load(const MvglArchive& a, std::string* error) {
            readTable(a, "battle.mbe", battle, error) && readTable(a, "char_para.mbe", character, error) &&
            readTable(a, "command_para.mbe", command, error) && readTable(a, "direction.mbe", direction, error) &&
            readTable(a, "gene_para.mbe", gene, error) && readTable(a, "item_para.mbe", item, error) &&
-           readTable(a, "skill_para.mbe", skill, error);
+           readTable(a, "skill_para.mbe", skill, error) && (readTable(a, "attachment_para.mbe", attachment, nullptr), true);
+}
+
+bool Cr3BattleTables::attachmentOf(int item, Attachment& out) const {
+    MbeFile::Row r;
+    if (item <= 0 || !attachment.find("Attachment", item, "iiiiiii", r)) return false;
+    out = Attachment{r.i(0), r.i(1), r.i(2), r.i(3), r.i(4), r.i(5), r.i(6)};
+    return true;
 }
 
 int Cr3BattleTables::defaultArmour(int ch) const {

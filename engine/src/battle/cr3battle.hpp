@@ -23,7 +23,17 @@ namespace cr3 {
 // the battle's tables (data\*.mbe), read once
 struct Cr3BattleTables {
     MbeFile model, monster, coupling, field, battle, character, command, direction, gene, item, skill;
+    MbeFile attachment; // (attachment_para.mbe's Attachment: an alteration's item - MbItemInfo +0x20; empty where a release lacks it)
     bool load(const MvglArchive& archive, std::string* error = nullptr);
+    // an attachment's effect (MbItemInfo::GetConstant: the row's +0x0c category - 0 weight, 1 break
+    // power, 2 .. 7 a weapon's element lowered (element - 1), 8 .. 13 an armour's element resisted
+    // (element - 7), 14 .. 19 an accessory's HP, MP, attack, guard, speed, luck - and +0x10 its
+    // amount), its +0x08 the equipment it fits (1 weapons, 2 armour, 4 accessories), +0x14 the
+    // levels it gives and +0x18 its price in gold; false: not an attachment
+    struct Attachment {
+        int item = 0, group = 0, fits = 0, category = -1, amount = 0, levels = 0, gold = 0;
+    };
+    bool attachmentOf(int item, Attachment& out) const;
     // a character's armour (CrxCharacter: a guest's its char_para row's +0x14; anyone else's the
     // save's - where no script has put one on yet, the starting kit's: test_equip.i's PartyEquip,
     // which the row's are but for j001's armour 83 - body model 2, as the reference shows it -),

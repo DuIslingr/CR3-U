@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 
+#include "assets/mbe.hpp"
 #include "assets/skeleton.hpp"
 #include "audio/sounddata.hpp"
 
@@ -168,6 +169,10 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     // (a vista's Cr3FieldMapCharacter.ChangeModel: no field player then - FldUtilGetFieldMapPlayerInstance
     // none - so nothing; the field's own binding, made after these, changes its leader)
     vm.setNative("Cr3FieldMapCharacter", "ChangeModel", [](NativeCall&) {});
+    // (PauseMove(on): Fld2PuaseCharaMove - Fld2TaskTouch::SetIsEventPause, the touches' walking held
+    // during the event; Fld2Main::SM_Event lets it go when the event ends. Here the field takes no
+    // walking while an area script runs anyway - cr3FieldIdle)
+    vm.setNative("Cr3FieldMapCharacter", "PauseMove", [](NativeCall&) {});
     vm.setNative("EvtScene", "Move", [this](NativeCall& c) { scene_.slide(c.string(0), c.integer(1), c.integer(2)); });
     vm.setNative("EvtScene", "ChangeModelColor", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->color = std::clamp(c.integer(1), -1, 3);
@@ -402,6 +407,23 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         shop_.talking = false;
         if (shop_.open) clerk(shop_.clerk); // (the clerk back - the talk's own cut-ins closed)
     });
+    // the alteration shop (CreateReModelingMenu(clerk) - RemodelingMain, InterfaceMain::
+    // CreateReModelingMain: the town shop's way - its clerk, its talk, done when it's left)
+    vm.setNative("InterfaceWindow", "CreateReModelingMenu", [this, clerk](NativeCall& c) {
+        shop_ = Shop();
+        shop_.open = askYesNo && !autoMenus, shop_.clerk = c.string(0), shop_.alter = true;
+        if (shop_.open) clerk(shop_.clerk);
+    });
+    vm.setNative("InterfaceWindow", "CheckEndReModelingMenu", [this](NativeCall& c) { c.result(shop_.open); });
+    vm.setNative("InterfaceWindow", "CheckSelectTalkReModelingMenu", [this](NativeCall& c) {
+        const bool talk = shop_.talk;
+        if (talk) shop_.talk = false, shop_.talking = true;
+        c.result(talk);
+    });
+    vm.setNative("InterfaceWindow", "EndTalkNextReModelingMenu", [this, clerk](NativeCall&) {
+        shop_.talking = false;
+        if (shop_.open) clerk(shop_.clerk);
+    });
     // a dungeon's collection (CollectList in runtime.hpp)
     vm.setNative("InterfaceWindow", "CreateCollectListMain", [this](NativeCall& c) {
         collectListOpen(c.integer(0), c.integer(1, -1), c.integer(2, -1));
@@ -455,11 +477,52 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     // CR3's choice menus and text entry (runtime.hpp)
     for (int kind : {2, 3}) {
         const std::string n = kind == 2 ? "Two" : "Three";
-        vm.setNative("InterfaceWindow", "CreateSelect" + n + "ChoiceMenu", [this, kind](NativeCall&) { choiceKind_ = kind, choiceAnswer_ = -1, choiceAge_ = 0, ++choicesAsked_; });
+        vm.setNative("InterfaceWindow", "CreateSelect" + n + "ChoiceMenu", [this, kind](NativeCall&) {
+            choiceKind_ = kind, choiceAnswer_ = -1, choiceAge_ = 0, choiceClosing_ = -1, ++choicesAsked_;
+            choiceText_ = TextData(), choiceIds_.clear();
+        });
+        vm.setNative("InterfaceWindow", "SetTextDataSelect" + n + "ChoiceMenu", [this](NativeCall& c) { loadText(c.string(0), choiceText_); });
+        vm.setNative("InterfaceWindow", "SetTextSelect" + n + "ChoiceMenu", [this, kind](NativeCall& c) {
+            choiceIds_.clear();
+            for (int k = 0; k < kind; ++k) choiceIds_.push_back(c.integer(k, 0));
+        });
         vm.setNative("InterfaceWindow", "GetTapSelect" + n + "ChoiceMenu", [this](NativeCall& c) { c.result(choiceAnswer_); });
-        vm.setNative("InterfaceWindow", "DeleteSelect" + n + "ChoiceMenu", [this](NativeCall&) { choiceKind_ = 0; });
+        // (SetParamNumber 2: closing - Update waits for the tapped button's comBtnEffe to end)
+        vm.setNative("InterfaceWindow", "DeleteSelect" + n + "ChoiceMenu", [this](NativeCall&) {
+            if (choiceKind_ == 0 || choiceClosing_ >= 0) return;
+            float seconds = 0;
+            std::vector<uint8_t> d;
+            Animation a;
+            if (choiceAnswer_ >= 0 && archive_.read("combtneffe.anim", d) && a.parse(d)) seconds = a.duration();
+            choiceClosing_ = 0, choiceCloseSeconds_ = seconds;
+        });
         vm.setNative("InterfaceWindow", "GetAliveSelect" + n + "ChoiceMenu", [this, kind](NativeCall& c) { c.result(choiceKind_ == kind); });
     }
+    // The team's level-up banner (InterfaceWindow.CreateLevelUpMenu - LevelUpMenu, interface 0xb6:
+    // btRsltUpPositon on its _in, faded in over 0.2 s, btRsltLvUpMenu at its call_btRsltLvUpMenu):
+    // CheckAliveLevelUpMenu true until btRsltLvUpMenu's animation ends (Update: IsEndCurrentAnime)
+    vm.setNative("InterfaceWindow", "CreateLevelUpMenu", [this](NativeCall&) {
+        float seconds = 2.0f;
+        std::vector<uint8_t> d;
+        Animation a;
+        if (archive_.read("btrsltlvupmenu.anim", d) && a.parse(d)) seconds = a.duration();
+        levelUpAge_ = 0, levelUpSeconds_ = seconds;
+    });
+    vm.setNative("InterfaceWindow", "CheckAliveLevelUpMenu", [this](NativeCall& c) { c.result(levelUpAge_ >= 0); });
+    // The gold key shop (InterfaceWindow.CreateFieldKeyBuyMenu - FieldBuyMenu, interface 0xcd, for
+    // GOLDKEY_MASTER_ID: a gold box tapped without a key): GetAliveFieldKeyBuyMenu true until it's done
+    // (answerKeyBuy - the viewer's -, or with askYesNo and autoPage a second after that long, nothing bought)
+    vm.setNative("InterfaceWindow", "CreateFieldKeyBuyMenu", [this](NativeCall&) { keyBuyAge_ = 0; });
+    vm.setNative("InterfaceWindow", "GetAliveFieldKeyBuyMenu", [this](NativeCall& c) { c.result(keyBuyAge_ >= 0); });
+    // Cr3System.GetPlatform (platform::GetPlatform): 1 the iOS game, 2 Android's - quest 273 says
+    // its notice by it (AnnounceField 34 or 113). The Vita's taken as iOS's
+    vm.setNative("Cr3System", "GetPlatform", [this](NativeCall& c) { c.result(archive_.kind() == MvglArchive::Kind::Android ? 2 : 1); });
+    // The cleared quest's detail (ClearQuestMenu(id): InterfaceMain::SetClearQuestDetailMenu -
+    // QuestDitailMenu as interface 0x7e, the quest's title, text and message, its clear mark):
+    // CheckAliveQuestDetailMenu true until its OK closes it (answerClearQuest - the viewer's -, or
+    // with askYesNo and autoPage a second after that long)
+    vm.setNative("InterfaceWindow", "CreateClearQuestDetailMenu", [this](NativeCall& c) { clearQuest_ = c.integer(0, 0), clearQuestAge_ = 0; });
+    vm.setNative("InterfaceWindow", "CheckAliveQuestDetailMenu", [this](NativeCall& c) { c.result(clearQuest_ > 0); });
     vm.setNative("Cr3System", "SetInputDialogText", [this](NativeCall& c) { inputText_ = c.string(0); });
     // (utils::ShowInputDialog(kind): the dialog starts with what's there - 0 the name, 1 the team, 3
     // the pet, else the food)
@@ -497,7 +560,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         message_ = c.integer(1);
         const auto own = windowText_.find(messageWindow_);
         const TextData& td = own != windowText_.end() ? own->second : text_;
-        parsed_ = parseMessage(filterMessage(td.message(message_, language)));
+        parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(td.message(message_, language)))));
         // (its voice - the text's trailer: EvtWindow::PlayVoice as its page starts, the last one stopped)
         if (const int v = td.voice(message_); v >= 0 && soundHooks().playVoice) {
             if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
@@ -507,10 +570,15 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
+    // PutParameterI / S(window, key, value): the window's next message has each key ("{next}") in it
+    // replaced by the value (EvtWindowMessage::PutParameter - "%d" for a number -, FilterMessage:
+    // after the names, then the window's parameters are gone)
+    vm.setNative("EvtWindow", "PutParameterI", [this](NativeCall& c) { parameters_[c.integer(0, Vista)].push_back({c.string(1), std::to_string(c.integer(2, 0))}); });
+    vm.setNative("EvtWindow", "PutParameterS", [this](NativeCall& c) { parameters_[c.integer(0, Vista)].push_back({c.string(1), c.string(2)}); });
     // SetMessageText(window, text): the text itself as the message (EvtWindow::SetMessage(char*))
     vm.setNative("EvtWindow", "SetMessageText", [this](NativeCall& c) {
         messageWindow_ = c.integer(0, Vista), message_ = 0x7fff;
-        parsed_ = parseMessage(filterMessage(c.string(1)));
+        parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(c.string(1)))));
         page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
@@ -532,7 +600,44 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         std::string t = (own != windowText_.end() ? own->second : announce).message(0x75, language);
         if (const size_t p = t.find("%s"); p != std::string::npos) t.replace(p, 2, itemNames_.message(id, language));
         messageWindow_ = w, message_ = 0x75, itemShown_ = id;
-        parsed_ = parseMessage(filterMessage(t));
+        parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))));
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
+        if (parsed_.pages.empty()) message_ = 0;
+        else ++messagesSet_;
+    });
+    // SetItemMessageWithCategory(window, category, id, n) (EvtWindow::SetItemMessageWithCategory -
+    // the treasure boxes' tbox_msg): AnnounceField 0x11 "{item.name}" (n under 2) or 0x13 with
+    // "{item.count}", the name item_name.mbe's - 0 ItemName .. 6 GiftName by the id -; category 10
+    // gold, 0x12 "{gold}" the id
+    vm.setNative("EvtWindow", "SetItemMessageWithCategory", [this](NativeCall& c) {
+        const int w = c.integer(0, 7), category = c.integer(1, 0), id = c.integer(2, 0), n = c.integer(3, 1);
+        if (id < 1) return;
+        const auto own = windowText_.find(w);
+        TextData announce;
+        if (own == windowText_.end()) loadText("AnnounceField", announce);
+        const TextData& from = own != windowText_.end() ? own->second : announce;
+        auto put = [](std::string& t, const std::string& key, const std::string& with) {
+            for (size_t at = t.find(key); at != std::string::npos; at = t.find(key, at + with.size())) t.replace(at, key.size(), with);
+        };
+        int message = 0x12;
+        std::string t;
+        if (category == 10) {
+            t = from.message(message, language), put(t, "{gold}", std::to_string(id));
+        } else if (category >= 0 && category <= 6) {
+            static const char* const kNames[7] = {"ItemName", "WeaponName", "ArmorName", "AccessoryName", "CheetName", "EventName", "GiftName"};
+            static MbeFile names;
+            if (names.tables().empty()) {
+                std::vector<uint8_t> d;
+                if (archive_.read("data\\item_name.mbe", d)) names.parse(d);
+            }
+            MbeFile::Row r;
+            std::string name;
+            if (names.find(kNames[category], id, "ipp", r)) name = language == 0 || r.s(2).empty() ? r.s(1) : r.s(2);
+            message = n < 2 ? 0x11 : 0x13;
+            t = from.message(message, language), put(t, "{item.name}", name), put(t, "{item.count}", std::to_string(n));
+        } else return;
+        messageWindow_ = w, message_ = message, itemShown_ = category == 10 ? -10 : category * 100000 + id;
+        parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))));
         page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
@@ -572,6 +677,23 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtSkip", "ButtonCreate", [this](NativeCall&) { skipButton_ = true; });
     vm.setNative("EvtSkip", "ButtonDelete", [this](NativeCall&) { skipButton_ = false; });
     vm.setNative("EvtSkip", "ButtonSetVisible", [this](NativeCall& c) { skipButton_ = c.boolean(0); });
+    // The fast-forward window (InterfaceWindow.CreateFastForwardWindow - FastForwardWindow, interface
+    // 0xd0: a FastForwardButton - speedUp - whose hold Cr3EvtSkipButtonCheckTouch counts as the skip
+    // button's, CheckPressFastForwardWindow): shown from SetVisibleFastForwardWindow(true) till
+    // (false) or EndDeleteFastForwardWindow - here the skip button's
+    vm.setNative("InterfaceWindow", "CreateFastForwardWindow", [this](NativeCall&) { fastWindow_ = 1; });
+    vm.setNative("InterfaceWindow", "SetVisibleFastForwardWindow", [this](NativeCall& c) {
+        if (fastWindow_) fastWindow_ = c.boolean(0) ? 2 : 1;
+    });
+    vm.setNative("InterfaceWindow", "EndDeleteFastForwardWindow", [this](NativeCall&) { fastWindow_ = 0; });
+    vm.setNative("InterfaceWindow", "GetAliveFastForwardWindow", [this](NativeCall& c) { c.result(fastWindow_ != 0); });
+    vm.setNative("InterfaceWindow", "CheckPressFastForwardWindow", [this](NativeCall& c) { c.result(fastForward && fastWindow_ == 2); });
+    // (SetVistaSkipButtonEnable(on): InterfaceMain::SetFastForwardButtonVistaMessageWindow - the
+    // vista window's own speedUp, as SetSkipButtonEnable(1, on))
+    vm.setNative("EvtWindow", "SetVistaSkipButtonEnable", [this](NativeCall& c) {
+        if (c.boolean(0)) skipOff_.erase(Vista);
+        else skipOff_.insert(Vista);
+    });
     // the sound (Cr3Sound -> utils::Sound*: soundHooks, the player's; none set - silence, GetState
     // -2): CR3's by name - PlaySE(name) / PlaySE_Repeat(name: looping) / PlaySE_Fade(name, frames
     // up, loop), StopSE(name, frames), StopSEAll(frames), PlayVoice(name), StopVoiceAll(frames),
@@ -689,6 +811,11 @@ bool EventRuntime::update(ScriptVM* vm) {
     fade_.update(), backFade_.update();
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
+    else if (choiceKind_ && choiceAnswer_ >= 0 && choiceClosing_ < 0) choiceAge_ += kTick;
+    if (choiceKind_ && choiceClosing_ >= 0 && (choiceClosing_ += kTick) >= choiceCloseSeconds_) choiceKind_ = 0, choiceClosing_ = -1;
+    if (levelUpAge_ >= 0 && (levelUpAge_ += kTick) >= levelUpSeconds_) levelUpAge_ = -1;
+    if (keyBuyAge_ >= 0 && (keyBuyAge_ += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) keyBuyAge_ = -1;
+    if (clearQuest_ > 0 && (clearQuestAge_ += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) clearQuest_ = 0; // (pages by themselves: its OK)
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
     if (geneGet_.open && (geneGet_.age += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) geneGet_.open = false; // (pages by themselves: a tap)
     for (auto& [w, t] : opened_) t += kTick;
@@ -843,12 +970,49 @@ bool EventRuntime::awaitingTap() const {
     return (typed() && !ending()) || (s && s->wait == 0);
 }
 
+std::vector<std::vector<std::string>> EventRuntime::choiceLines() const {
+    std::vector<std::vector<std::string>> out;
+    for (int id : choiceIds_) {
+        std::vector<std::string> lines;
+        const ParsedMessage m = parseMessage(filterMessage(choiceText_.message(id, language)));
+        if (!m.pages.empty())
+            for (const TextLine& l : m.pages[0].lines)
+                if (lines.size() < 2) lines.push_back(l.text);
+        out.push_back(lines);
+    }
+    return out;
+}
+
+std::string EventRuntime::takeParameters(int window, std::string text) {
+    const auto it = parameters_.find(window);
+    if (it == parameters_.end()) return text;
+    for (const auto& [key, with] : it->second)
+        if (!key.empty())
+            for (size_t at = text.find(key); at != std::string::npos; at = text.find(key, at + with.size())) text.replace(at, key.size(), with);
+    parameters_.erase(it);
+    return text;
+}
+
+std::string EventRuntime::warnKeys(std::string text) const {
+    static const bool trace = std::getenv("CR3_STUBS") != nullptr; // (tests: a key no parameter or name filled)
+    if (trace)
+        for (size_t at = text.find('{'); at != std::string::npos; at = text.find('{', at + 1))
+            if (const size_t end = text.find('}', at); end != std::string::npos) std::fprintf(stderr, "message key left: %s\n", text.substr(at, end + 1 - at).c_str());
+    return text;
+}
+
 std::string EventRuntime::filterMessage(std::string text) const {
     for (const char* key : {"name", "team", "pet", "food"}) {
         const std::string tag = std::string("{") + key + "}";
         const auto it = enteredNames.find(key);
         const std::string with = it != enteredNames.end() ? it->second : std::string();
         for (size_t at = text.find(tag); at != std::string::npos; at = text.find(tag, at + with.size())) text.replace(at, tag.size(), with);
+    }
+    if (const size_t at = text.find("{goldkey}"); at != std::string::npos) { // (iOS's: the gold keys held - GOLDKEY_MASTER_ID)
+        const int id = state_.cr3Db ? state_.cr3Db->constant("GOLDKEY_MASTER_ID", 400005) : 400005;
+        const auto held = state_.cr3Items.find(id);
+        const std::string with = std::to_string(held != state_.cr3Items.end() ? std::max(held->second, 0) : 0);
+        for (size_t p = at; p != std::string::npos; p = text.find("{goldkey}", p + with.size())) text.replace(p, 9, with);
     }
     return text;
 }

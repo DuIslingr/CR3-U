@@ -160,6 +160,20 @@ struct GameState {
     // the field's boxes opened (Cr3GimmickData.BoxOpen - Fld2OpenTreasureBox: 1) and then let go
     // (DeleteBox - Fld2DeleteTrasureBox: 2, faded out), by name ("kbox_00") - not saved
     std::map<std::string, int> fieldBoxes;
+    // the dungeon's treasure and gold boxes (Fld2TBoxList: drawn as the field is set up in a dungeon -
+    // TBoxTable's kinds for its level, TBoxItemTable's contents; the gold boxes by GBOX_PROBS' chances,
+    // their prize the dungeon's item sheet's as one is opened), the one being opened (SetOpenBox:
+    // GetOpenBoxName / GetItemType / GetItemID), a box's battle to start (TBoxBattleIn's coupling) and
+    // a gold box's sheet to show (OpenGBox(true) - Fld2Main::SM_OpenGBox) - not saved
+    struct Cr3Box {
+        int area = 0;     // (from 0)
+        std::string name; // ("tbox_00")
+        int kind = 0, type = 0, category = -1, id = -1; // (type 0 a treasure box, 1 a gold box)
+        bool opened = false;
+    };
+    std::vector<Cr3Box> cr3Boxes;
+    int cr3OpenBox = -1, cr3BoxBattle = -1;
+    bool cr3GBoxShow = false;
     std::set<std::string> switchesOn; // (Cr3GimmickData.SwitchOn: the bomb switches - Fld2PhysicalSwitch - turned on, the step switches - Fld2StepSwitch - down)
     // Cr3GimmickData.SetMove(name, end, frames) (Fld2SetMovingObjectMove): a moving object's motion
     // to start - its area's <area>p animation from 0 to that frame over those frames; the field takes them
@@ -248,6 +262,9 @@ struct GameState {
         std::string vistaFunction, vistaMap = "null";
         int battle = -1;
         int battleParty[2] = {-1, -1};
+        // (CR3's: FldUtilSetBattleParty - DAT_0141e298's three slots; with the first not -1 the
+        // battle's party is these, -1 none - BtlBootParam +0 .. +8 -, the party's own otherwise)
+        int cr3BattleParty[3] = {-1, -1, -1};
         // (CR3's BattleIn(coupling, field, level, music) / BattleIn2(.., the music after):
         // FldUtilReserveBattleIN - BtlBootParam +0x14, +0x10 the battle field (battle_field.mbe),
         // +0x18 the monsters' level, +0x1c the music; the scripts' wrappers name them cup, map,

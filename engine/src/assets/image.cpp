@@ -116,7 +116,7 @@ void decodePacked(const uint8_t* src, int w, int h, const Packed& f, bool lumAlp
         for (int k = 0; k < 4; ++k)
             if (f.bits[k]) c[k] = rep((v >> f.shift[k]) & ((1u << f.bits[k]) - 1), f.bits[k]);
         if (lumAlpha) c[1] = c[2] = c[0];
-        if (alphaOnly) c[0] = c[1] = c[2] = 255;
+        if (alphaOnly) c[0] = c[1] = c[2] = 0; // (PvrLoad2: GL_ALPHA - sampled as black, its alpha alone; the PVR3 ones the same)
         std::memcpy(o, c, 4);
     }
 }
@@ -366,7 +366,7 @@ bool decodeImg(const std::vector<uint8_t>& f, Image& out, std::string* error) {
                 uint8_t* o = &out.rgba[(size_t(y) * w + x) * 4];
                 if (bytes == 4) o[0] = s[2], o[1] = s[1], o[2] = s[0], o[3] = s[3];
                 else if (bytes == 2) o[0] = o[1] = o[2] = s[0], o[3] = s[1];
-                else o[0] = o[1] = o[2] = 255, o[3] = s[0];
+                else o[0] = o[1] = o[2] = 0, o[3] = s[0]; // (a mask: as GL_ALPHA samples it)
             }
         out.alphaOnly = bytes == 1;
         out.format = bytes == 4 ? "GXT U8U8U8U8" : bytes == 2 ? "GXT U8U8" : "GXT U8";

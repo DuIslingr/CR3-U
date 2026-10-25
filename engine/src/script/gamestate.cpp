@@ -92,6 +92,11 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SavePoint", [&state](NativeCall&) { // (utils::SavePoint: a sync)
         if (state.onSync) state.onSync();
     });
+    // utils::CheckPoint: once the event is over the field syncs (Fld2Main: state 0xd, DBSystem::SM_Sync
+    // - the offline game's save)
+    vm.setNative("Cr3System", "CheckPoint", [&state](NativeCall&) {
+        if (state.onSync) state.onSync();
+    });
     // the day's ticket: utils::CheckTicketReceived (GotTicket) - its Result -, ReceiveTicket
     vm.setNative("Cr3System", "CheckTicketReceived", [&state, &db](NativeCall&) {
         if (db) db->gotTicket(state);
@@ -220,6 +225,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SetBattleParty", [&next](NativeCall& c) {
         const int k = c.integer(0);
         if (k == 0 || k == 1) next.battleParty[k] = c.integer(1, -1);
+        if (k >= 0 && k < 3) next.cr3BattleParty[k] = c.integer(1, -1);
     });
     // the party (Cr3UtilSetActivePartyMember / Get..., SetPartyMember, CopyPartyMember)
     vm.setNative("Cr3System", "SetActivePartyMember", [&state](NativeCall& c) {
@@ -278,6 +284,20 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         else if (id >= 300000 && id < 400000) state.cr3Accessory[ch] = id - 300000;
     };
     vm.setNative("Cr3System", "ItemSet", [wear](NativeCall& c) { wear(c.integer(0), c.integer(1)); });
+    // utils::CheckWeaponFull / ArmorFull / AccessoryFull (CrxGameData::IsWeaponFull ...): more than 94
+    // kinds held besides those the seven wear - no room for one more (quest 56 cancels then)
+    auto full = [&state](int category, const std::map<int, int>& worn) {
+        int kinds = 0;
+        for (const auto& [id, n] : state.cr3Items)
+            if (id / 100000 == category && n > 0) ++kinds;
+        for (const auto& [ch, id] : worn)
+            if (ch >= 1 && ch <= 7 && id >= 0)
+                if (const auto it = state.cr3Items.find(category * 100000 + id); it != state.cr3Items.end() && it->second > 0) --kinds;
+        return kinds > 94;
+    };
+    vm.setNative("Cr3System", "CheckWeaponFull", [&state, full](NativeCall& c) { c.result(full(1, state.cr3Weapon)); });
+    vm.setNative("Cr3System", "CheckArmorFull", [&state, full](NativeCall& c) { c.result(full(2, state.cr3Armour)); });
+    vm.setNative("Cr3System", "CheckAccessoryFull", [&state, full](NativeCall& c) { c.result(full(3, state.cr3Accessory)); });
     vm.setNative("Cr3System", "ItemGetAndSet", [&state, wear](NativeCall& c) {
         const int id = c.integer(0);
         if (id >= 100000) state.cr3Items[id] = std::min(state.cr3Items[id] + 1, 99);
@@ -345,6 +365,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         for (int k = 0; k < 3; ++k) e.offset[size_t(k)] = c.number(3 + k, 0);
         state.fieldEffects.push_back(e);
     });
+    // (Cr3GimmickData.AllClearFlagMark: FldUtilAllClearFlagMark - empty in the game; Cr3System.
+    // SendFriendMessage: DBSystem::DispatchMessage, the server's - no server here)
+    vm.setNative("Cr3GimmickData", "AllClearFlagMark", [](NativeCall&) {});
+    vm.setNative("Cr3System", "SendFriendMessage", [](NativeCall&) {});
     vm.setNative("Cr3TabMenu", "AddGoodsButton", [&state](NativeCall& c) { state.goodsButtons.insert(c.integer(0)); });
     vm.setNative("Cr3TabMenu", "DelGoodsButton", [&state](NativeCall& c) { state.goodsButtons.erase(c.integer(0)); });
     vm.setNative("Cr3FieldMapEffectResident", "EffectResidentOut", [&state](NativeCall& c) {
@@ -358,7 +382,41 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         if (c.integer(1, 1)) state.switchesOn.insert(c.string(0));
         else state.switchesOn.erase(c.string(0));
     });
-    vm.setNative("Cr3GimmickData", "BoxOpen", [&state](NativeCall& c) { state.fieldBoxes[c.string(0)] = std::max(state.fieldBoxes[c.string(0)], 1); });
+    vm.setNative("Cr3GimmickData", "BoxOpen", [&state](NativeCall& c) {
+        state.fieldBoxes[c.string(0)] = std::max(state.fieldBoxes[c.string(0)], 1);
+        for (GameState::Cr3Box& b : state.cr3Boxes) // (a drawn box: not there again - Fld2Box::Create's +0x2c)
+            if (b.area == state.area && b.name == c.string(0)) b.opened = true;
+    });
+    // the box being opened (Fld2TBoxList::SetOpenBox: Fld2GetTBoxName / ItemType / ItemID)
+    auto openBox = [&state]() -> const GameState::Cr3Box* {
+        return state.cr3OpenBox >= 0 && size_t(state.cr3OpenBox) < state.cr3Boxes.size() ? &state.cr3Boxes[size_t(state.cr3OpenBox)] : nullptr;
+    };
+    vm.setNative("Cr3GimmickData", "GetOpenBoxName", [openBox](NativeCall& c) { c.result(openBox() ? openBox()->name : std::string()); });
+    vm.setNative("Cr3GimmickData", "GetItemType", [openBox](NativeCall& c) { c.result(openBox() ? openBox()->category : 0); });
+    vm.setNative("Cr3GimmickData", "GetItemID", [openBox](NativeCall& c) { c.result(openBox() ? openBox()->id : 0); });
+    vm.setNative("Cr3GimmickData", "TBoxBattleIn", [&state](NativeCall& c) { state.cr3BoxBattle = c.integer(0); }); // (Fld2TaskEncount::TBoxBattleIn)
+    // a gold box: Fld2OpenGBoxRequest - DBSystem::OpenGBox(the dungeon's sheet: its number less 6,
+    // less 7 for d16) - DBEmu::OpenItemSheet with a gold key; OpenGBox(true) the field's sheet shown
+    vm.setNative("Cr3GimmickData", "OpenGBoxRequest", [&state, &db](NativeCall&) {
+        const int sheet = state.dungeon - (state.dungeon == 20 ? 7 : 6);
+        if (db && sheet >= 0 && size_t(sheet) < db->itemSheets().size()) db->openItemSheet(state, db->itemSheets()[size_t(sheet)].id, true, 0);
+        else if (db) db->finish(kDbBad);
+    });
+    vm.setNative("Cr3GimmickData", "OpenGBox", [&state](NativeCall& c) { state.cr3GBoxShow = c.boolean(0); });
+    // utils::GetCollectCount / GetCollectMaxCount(sheet): its entries won / all with a prize
+    auto collect = [&state, &db](const std::string& sheet, bool won) {
+        int n = 0;
+        if (db)
+            for (const Cr3ItemSheet& t : db->itemSheets()) {
+                if (t.id != sheet) continue;
+                const auto p = state.cr3Sheets.find(sheet);
+                for (size_t e = 0; e < t.entries.size(); ++e)
+                    if (t.entries[e].item > 0 && (!won || (p != state.cr3Sheets.end() && e < p->second.opened.size() && p->second.opened[e] > 0))) ++n;
+            }
+        return n;
+    };
+    vm.setNative("Cr3System", "GetCollectCount", [collect](NativeCall& c) { c.result(collect(c.string(0), true)); });
+    vm.setNative("Cr3System", "GetCollectMaxCount", [collect](NativeCall& c) { c.result(collect(c.string(0), false)); });
     vm.setNative("Cr3GimmickData", "DeleteBox", [&state](NativeCall& c) {
         if (state.fieldBoxes[c.string(0)] >= 1) state.fieldBoxes[c.string(0)] = 2; // (Fld2Box::Update: an opened one fades)
     });

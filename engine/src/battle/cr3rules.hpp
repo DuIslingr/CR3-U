@@ -151,6 +151,9 @@ public:
     // what each wears (the save's: weapon, armour, accessory table ids - -1 the char_para row's, 0
     // none), by char_para id; a guest its row's always
     std::map<int, std::array<int, 3>> partyEquip;
+    // the equipment's attachments (CrxWeapon / CrxArmor / CrxAccessory +0x40: the attached item's
+    // info, its constant added to theirs), by the equipment's full id: the item attached
+    std::map<int, int> attachments;
     int teamLevel = 1; // (every character's level: CrxCharacter::initialize's DAT_014c6ab0)
     bool playerStats(const Cr3BattleTables& tables, int character, Cr3Fighter& out) const;
     // the VS mode's tallies (BtlStatus::TakeDamageToDirection: the party's damage to the monsters -
@@ -163,6 +166,13 @@ public:
     // a turn: the party's choices (a fighter's index -> command (-1 a guard), target), then the
     // monsters' own; returns the actions in order, applied
     std::vector<Cr3Action> turn(const std::vector<std::array<int, 3>>& choices);
+    // BattleStatus.RequestModeChange(unit, mode) (BtlStatusList::RequestModeChange): queued, and
+    // applied (ChangeMode, in phaseStatusEffect - before the next turn's commands) by changeMode
+    std::vector<std::pair<int, int>> modeRequests; // (fighter, mode)
+    // BtlMonsterStatus::VChangeMode: a monster's mode's MonsterCommand row - its attack command,
+    // commands and skills (initializeCommandSkill) and element (MbMonsterInfo::GetModeElement:
+    // the row's +8)
+    void changeMode(int fighter, int mode);
     // a hit's damage; crit / down: whether it was a critical hit, whether it downed the target
     int damage(const Cr3Fighter& source, const Cr3Fighter& target, const Cr3Command& c, bool* crit = nullptr, bool* down = nullptr);
     // the break gauge (BtlBreakGaugeUI: -1000 .. 1000, above 0 the party's advantage, below the

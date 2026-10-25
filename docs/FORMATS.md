@@ -1075,10 +1075,84 @@ A dungeon's town button
 goods held (GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock). Itemizing gift 600022 sets flag
 28 (DBSystem::SM_ItemizeGift: Explorer Training's step). The tutorial quests (rank 6: Explorer
 Training, Basic Combat - the Colosseum -, Using Coins - the Sp Shop's Lucky Box, not in yet) are
-among the Sub Quests.
+among the Sub Quests. Explorer Training (56, d0212): three boxes (kbox_03 .. 05 - flags 1402 ..
+1404, a weapon, armour and accessory), then all three worn by the hero (evt001 on the camp's
+closing: 1405, and the area entered again), a box again with Tom Sawyer (1406) worn (1407), a box
+with Gift: Tree of Knowledge (1408) itemised (1409), then the Microcommunicator - item 1 in the
+camp's New or Field list, asked 0x2a6, CampItemMain's 0x21 exit: Fld2Main::SM_Camp 6, the area
+script's DungeonExit - home, where the quest ends. Basic Combat (59): the Colosseum desk (`c121_00`)
+calls SetBattleParty(0, 9) and (1 / 2, -1) - FldUtilSetBattleParty's three slots, the battle's party
+where the first isn't -1 (BtlBootParam +0 .. +8) - and battle 175: Cremate (241), Electra (1768),
+then a guard - RequestModeChange(monster, 1) lets it attack; its 1122 landing on the hero with
+status effect 2 passes -, then Chocolate by J (526) and ForceVictory. A guard has no direction,
+so no Battle_Direction_End. Using Coins (79): the coin girl (`c923_00`, t0107) gives 5 coins (CoinGet,
+flag 2509); a Lucky Box opened (LuckyBoxMain 5: flag 39) - then 1402 -, Special Items bought
+(ShopBuyCoreMain: flag 38), and the quest is announced (1403). Rank 2 / 3 quests met: 137 (d0203 -
+GetAreaNum counts from 0, Fld2SaveData: GetAreaNo - 1 - its scene and battle 107), 54 (d0203's
+evt112_00: battles 168 and 169), deliveries (310: five of item 115 - item_delivery asks, takes them,
+fast_report2), Terror Cubes (234), 120 (Dorothy: item 331 delivered). A quest's title and request
+(`message\Quest_Title`, `Quest_message`) are by its id, not its `no`. 267 (Marco the Collector)
+reports at once with the three old types held (items 100012, 100112, 100212 - kept). The Nameless
+Man's Lost Name 1 .. 4 (198 .. 201, each after the one before) are Terror Cubes: d0211's cobj_51
+(battle 130), d0310's cobj_52 (131), d0405's cobj_51 through Winterborough (132), d0604's cobj_51 in
+the random-floor ruins (133) - CubeBreak's ItemGet_Msg 500040 .. 500043. The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
+`cr3tool couplings <archive> <monster>` lists where a monster is met.
+
+A save keeps the world select's level beside the dungeon (`select <dungeon> <level>`): a dungeon
+resumed meets its band's monsters (it fell back to the first band).
 
 The global work (Cr3UtilGlobalWorkGet / Set - the scripts' GetVar / SetVar) holds 100 values; 24 is
 the quest set off on.
+
+### The Sp Shop and its boxes (CR3)
+
+The field's Shop button (Fld2Main::SM_Shop - CreatePiucomTop: HeaderMenu 0x42 title 9, SShopMenu
+0x74) opens the Sp Shop's top: SshopPositon's call_SshopBg / call_SshopBox / call_SshopItem /
+call_SshopVipPanel (the VIP days - SshopVipCount and SshopVipNum's digits, 0.3 left in English -,
+or SshopVipDefault), the header's sentence 0x275. A panel tapped (+0x70: 1 the box, 2 the items, 3
+VIP) goes on through SShopMenu's table (0x11, 0xc, 4): the boxes (0x12: CreateLuckyBoxMenu,
+SetBoxNumberLuckyBoxMenu(0xc, 0x22)), Special Items (0xd: the goods - PiuComMenu's list in CR3-U),
+VIP (not in).
+
+The boxes (LuckyBoxMenu, interface 0x44; its header title 0xb) - IBox's kinds, in order: the gene
+boxes on offer (GeneBox: `cltList_gene_01`, `boxBg_gene_01`; constants GENEBOX_PRICES / _AMOUNTS,
+coins), a Lucky Box for each item sheet with any entry won (LuckyBox: `cltList_<sheet>`,
+`boxBg_<sheet>` - `boxBg_Colosseum_01` for a sheet named with e or v -; LUCKYBOX_PRICES /
+_AMOUNTS, coins) and the GP box (GpBox: `cltList_gp_01`, `boxBg_gp_01`; GPBOX_PRICES / _AMOUNTS,
+GP). mpBoxBgPositon's mpBoxBgMenu - mpBoxBg_id00's mat_boxBg_d02 the box's background,
+mpBoxName_id00's mat_cltList_d02 its name plate -, mpBoxPositon (its own animation: in from the
+right) with mpBoxMenu's three call_mpBoxImagePanel (the boxes before, in focus - 1.35 x - and after:
+mpBoxImagePanel's mpBoxImage_id00, each picture with its `..A` mask), mpBoxNumMenu (the place and
+the count: mpBoxNum_num00's mpBoxNoNum_fr digits) and mpBoxArrowMenu (looped). The box in focus
+tapped: mpBoxBuyPositon's mpBoxBuyMenu with three BoxBuyPanels (mpBoxBuyPanel: Icon_fr the amount
+- 1 / 5 / 10 frames 0 .. 2 -, Size_fr - its call_mpBoxBuyImage_id the box -, Num_num - Uni_fr the
+currency, 0 coins, 1 GP, and four PriceNum_fr digits at digit + 10 x the currency -; Tap hidden, a
+press's highlight). A panel tapped: asked 0x123; yes - LuckyBoxMain 5: DBSystem::OpenLuckyBox /
+OpenGeneBox / OpenGPBox, flag 39, com_024, the coins again, what came out told.
+`--input vs:box / goods / boxprev / boxpick / boxnext / buy<n> / item<n>`.
+
+VIP (the top's third panel, SShopMenu 4 .. 0xb): SshopVipCard over the top, the header's title 0xc,
+asked 0x316; yes - under 30 coins told 0x317, else BuyVIP (request 0x5e: VIP_PRICE coins, VIP_DAYS
+more up to VIP_DAYS_MAX), com_024. SetVipPanelControl: at 90 days or more the panel is at half and
+can't be tapped; the days' SshopVipNum digits from the ones at the first joint. `--input vs:vip`.
+
+People turn (Cr3GimmickData.ChangeDirection(name, target, frames) - Fld2ChangeNPCDirection,
+Fld2DirectionManager::SetDirection): about y toward "player" or another person (Cr3GetDirY:
+atan2(dx, dz)), slerped over that many updates.
+
+People walk about by their Field row's +0x30 (Fld2NPC::Create / Update): 4 / 5 roam the rectangle of
+their `ragdoll_npc_<name>` joint (its place and turn; its scale x 0.1 the sides) - CheckMoveRect: a
+point drawn at random, turned to over 4 updates, Fld2NPCAnimeNameTbl's ff01 / ff02 (fn01, fn02,
+ff01, ff02, 01, 02, 03); MoveRect: straight ahead at SetMoveSpeed's 0.75 / 4.5 a second (0.5 / 3.0
+for c553), set on the ground (a ray from 1 above to 1 below), there within 0.4 or after 10 s: fn01
+and a wait of 5 + (0, -1, -2, 1, 2, 2)[rand % 6] s. 2 / 3 (MovePass) follow their own joint of
+`<area>p`'s animation, run so they go that fast (SetMoveSpeed: the joint's way over the first
+second), facing the way they go. The player within the row's +0x34 (Check: +0x1f0) stops them;
+Cr3GimmickData.NPCMove(name, false) (Fld2SetNPCMove - SetMove: +0x1f1) holds them. A standing
+person whose model is in Fld2NPCIdle2Name (j001 .. j005, c112, c127), not talking, plays fn02 once
+every 10 .. 15 s (Build: +0x1e0 = 10 + 5 x rand; Update toggles +0x1e4 at 0 or at fn02's end);
+NPCIdle2Enable(name, on) - Fld2SetIdle2Enable, +0x2a4 - switches it. Met: t0101's
+c551 / c552 (4) and c553 (3), t0102's c555, t0107's three, t0302's three, t0303's c652, t0401's c559 / c560 (5).
 
 ### A town's shop (CR3)
 
@@ -1573,6 +1647,34 @@ effects aren't drawn), StopAuto (no auto battle), OpenUI / CloseUI, AddFieldObje
 and forces the win after turn 5; the ace battles (503, 506, 509, 515) triple EXP and money when
 all three fall; battle 3's defeat plays its event and ends.
 
+BattleCommand.SetId(id) / SetIdAndTarget(id, target) queue commands of no unit's
+(BtlSysStateAction::VUpdate, states 0xc and 0x12): after the defeat script, any queued are played -
+AllEndEffectToCalculation(0xb), the command manager cleared, each added with source -1 and
+calculated - instead of the defeat, and the battle goes on; after the turn-end script likewise.
+Every battle's Battle_Defeat_Base with flag 5053 (chapter 1's stretch from d02's s101_d02_00101_set
+to t01's s102_t01_00101_set) queues 72 - target 11, the party's side, power 100, taking KO (status
+effect 1) away: the party back whole, with the voice j005_338. CR3-U applies the command itself
+(KO gone, HP its power's percentage of the max; its direction isn't played).
+
+BattleCoupling.SetId(id) in a victory script brings the next wave: at the victory event's end
+(phaseVictoryEvent - its state 4) AcquireRemuneration takes the fallen monsters' EXP and money, then
+reinforceByCoupling - BtlSystem::CreateMonster: the monsters gone and the coupling's in their place;
+BtlScriptSystem::Initialize loads its script (no boot); the units aligned, the camera's size,
+FadeInNonPlayers; then phaseCallTurnEndEvent (its Battle_Turn_End) and the next turn. The party as
+it stands, the gauge and the turn carry on; one result at the end has every wave's. Battle 15
+(d05) goes on to 16, then 17. Without a next wave phaseVictoryIn plays the result's music
+(PlayResultBgm) - after the victory event, not with it.
+
+An item's battle command is item_para's +0x30 (Chocolate 511, Chocolate by J 526; -1 none - field
+items as the Microcommunicator aren't listed); +0x0c names no command. BattleStatus.
+RequestModeChange(unit, mode) is queued (BtlStatusList +0x150) and applied in phaseStatusEffect
+(BtlStatusList::ChangeMode -> BtlMonsterStatus::VChangeMode): that mode's MonsterCommand row - the
+attack command, commands, skills and its +8 element.
+
+Tests: `CR3_TRACE_NATIVES=<text>` logs every script native whose name holds the text (`.` all);
+`cr3tool event` takes `CR3_TRACE_RESULTS="Cr3Flag.Check(1401)=1;..."` to follow a branch;
+`tools/nut.py dis` disassembles a script; `cr3tool texts <release> <message file>` prints one file.
+
 ### Monster scripts, triggered skills and cooperations (CR3)
 
 Before a turn is worked out (BtlStatusList::CallMonsterScript) each living monster's
@@ -1930,6 +2032,94 @@ menus (`GetTapSelect...ChoiceMenu` -1 until tapped) and the text entry (`ShowInp
 questions as a player confirming would (`askYesNo` with `autoPage`): yes, the first choice - then
 the next each time the same menu is asked again (the quizzes) - and the text entry as given.
 
+The choice menus (`Msg_Choice2(file, a, b)` / `Msg_Choice3(file, a, b, c)` in the scripts:
+`CreateSelect<Two|Three>ChoiceMenu`, `SetTextDataSelect...ChoiceMenu(file)` - an event message
+file -, `SetTextSelect...ChoiceMenu(a, b[, c])` - its messages -, then `GetTapSelect...` each frame
+until one is tapped, kept as `GetVar(4)`; `DeleteSelect...`, then `GetAliveSelect...` until it has
+gone). `SelectTwoChoicesMenu` / `SelectThreeChoicesMenu`: `comMsgC<n>Position`, `comMsgC<n>Menu` at
+its `call_comMsgC<n>Menu` (fitted), all fading in over 0.1333 s. Each option's text is its message
+less the speaker's tag (`\d001`, 5 characters); the two-way menu splits it at `\n` into two
+lines at the menu's `typeM_L01`/`02` and `03`/`04` (size 32; a line alone 0.24 towards the middle -
+`SetTextHeadPosition`), the three-way puts one at each of `typeM_L01`..`03` (size 28); both from
+the joint plus (size / 2) / 200 right and down. The `comMsgC<n>Panel`s at `call_comMsgC<n>Panel`
+are hidden - their tap areas only (the menu's `tapAreaS0k`/`E0k` are the same rows) -, and a tapped
+option's `comBtnEffe` (at its panel's `call_comBtnEffe`) plays to its end before the menu goes
+(`SetParamNumber 2`, `Update`). No dimming. `--input` `choice:<n>` answers one (from 1); keys 1-3.
+
+Message parameters (`EvtWindow.PutParameterI(window, key, n)` / `PutParameterS(window, key, text)`
+- `EvtWindowMessage::PutParameter`, a number as `%d`): the window's next message has each key
+(`{next}`, `{count_A}` ...) replaced, after the names (`FilterMessage`), and then they're gone.
+`CR3_STUBS` also logs a `{key}` left in a message.
+
+The cleared quest's detail (the scripts' `ClearQuestMenu(id)`: `CreateClearQuestDetailMenu(id)` -
+`InterfaceMain::SetClearQuestDetailMenu`, `QuestDitailMenu` as interface 0x7e -, then
+`CheckAliveQuestDetailMenu` until it closes): the quest's detail as the Space Port shows it, its
+clear mark on (`SetParamNumber 8`); its OK closes it (`--input` `questok`, Return). The fast-forward
+window (`CreateFastForwardWindow` / `SetVisibleFastForwardWindow` / `EndDeleteFastForwardWindow`,
+interface 0xd0: a `FastForwardButton`, whose hold `Cr3EvtSkipButtonCheckTouch` counts with the
+skip button's) is the vista's skip button here; `EvtWindow.SetVistaSkipButtonEnable(on)` the
+vista window's own speedUp, as `SetSkipButtonEnable(1, on)`. `Cr3System.CheckPoint`
+(`utils::CheckPoint`): after the event the field syncs (`Fld2Main` state 0xd) - a save here.
+`Cr3FieldMapCharacter.PauseMove` holds the touches' walking for the event (`Fld2TaskTouch::
+SetIsEventPause`; the field lets it go when the event ends) - the port takes none while a script
+runs anyway. `Cr3System.GetPlatform` (`platform::GetPlatform`): 1 on iOS, 2 on Android (quest 273's
+notice: `AnnounceField` 34 or 113). `CheckWeaponFull` / `ArmorFull` / `AccessoryFull`
+(`CrxGameData::IsWeaponFull` ...): more than 94 kinds held besides those the seven wear (quest 56
+is cancelled then). `StartQuake` / `StopQuake` shake a vista as they do the field. Not modelled:
+`Cr3TabMenu.AddTabMenu` / `DelTabMenu` (`Fld2TabMenu::AddTabButton` - the encounters' and battle
+buttons, which the port's panel always has).
+
+Treasure and gold boxes (Fld2TBoxList, `Fld2Box`): drawn as the field is set up in a dungeon
+(`Fld2TBoxList::Drawing(dungeon, level - 1)`; the dungeon's number is its `dNN` + 4, d02 6).
+`data\tbox_table.mbe` TBoxTable (0x4c rows: id, flag - -1 none -, dungeon, level number -
+`MbDungeonLevelNo`, the level's index x 10 + 1 -, fourteen kinds, 30) gives the kinds; the
+dungeon's `ragdoll_tbox` rows of `field_dNN.mbe`'s Field table (all its areas, by area) are
+shuffled (a hundred swaps) and the first fourteen get one each from `data\tbox_item_table.mbe`
+TBoxItemTable (0x1c rows: id, kind, -, category, id, weight, unique - not twice in a draw), by
+weight: an item by category (0 items, 1 .. 6 weapon .. gift, 10 gold) or 8 a box of monsters (the
+id a coupling: `TBoxBattleIn`). Gold boxes: one more for each `GBOX_PROBS` constant met (rand x
+100 at or under it), the `ragdoll_gbox` rows in order. A box not drawn is not there. Tapped, a box
+is the one being opened (`SetOpenBox`: `Cr3GimmickData.GetOpenBoxName`, `GetItemType`,
+`GetItemID`) and its event runs - `OpenTBox` (the item: `GetItemWithCategory`, then
+`EvtWindow.SetItemMessageWithCategory` - AnnounceField 0x11 `{item.name}`, 0x13 with
+`{item.count}`, 0x12 `{gold}`; the name item_name.mbe's) or `OpenGBox` (a gold key, `GOLDKEY_
+MASTER_ID`: `OpenGBoxRequest` - `DBSystem::OpenGBox(dungeon - 6, d16 - 7)`, `DBEmu::OpenItemSheet`
+with the key - then `OpenGBox(true)`: the dungeon's collection shown with the prize marked,
+`Fld2Main::SM_OpenGBox`; no key: AnnounceField 47 and the key shop, `CreateFieldKeyBuyMenu` -
+`FieldBuyMenu`, interface 0xcd: AnnounceMenuName 0x23b asked (`{itemname}`, `{coin}` the coins
+held), yes - how many on `CampItemNumberSelect`'s reels with the price in coins and the keys held,
+`CreateShopBuySelectYN`'s 0x248, OK within the coins and the 99 held - then `BuyGoods` from shop
+`com_1`; `GetAliveFieldKeyBuyMenu` until it's done; `--input key:yes` / `key:no` / `key:<n>`). iOS's `utils::FilterMessage` fills `{goldkey}` with the keys held. The draw is not
+saved (the field draws again as it's set up). `GetCollectCount` / `GetCollectMaxCount(sheet)`: its
+entries won / with a prize. Window 7 in CR3 is `GetItemMenu` (`EvtItemWindow` -
+`SetGetItemWindowParameter`, interface 5): `feGetPosition`, `feGetMenu` at `call_feGetMenu` on
+`feGetMenu_in` (0 .. 0.2 s), `feGetPanel` with `feGetName_fr00`, the item's icon
+(`comListIcon_fr00`; gold 0xc2) and `feGetDeco`, the text at the panel's `tyepM_L00` (so spelled),
+size 32, dark (0.17, 0.18, 0.18). `--input check` taps the check object the player is by.
+
+The alteration shop (t01's `cobj_03` after quest 73: `ReserveReModelingMenu(cutin, talk)` -
+`CreateReModelingMenu`, `CheckEndReModelingMenu`, `CheckSelectTalkReModelingMenu`,
+`EndTalkNextReModelingMenu`, the town shop's way; `RemodelingMain`): the header's 0x1d, Talk (0x11)
+and Alter (0x29) - AnnounceMenuName 0x163 -, then Weapons / Armor / Accessories (0x16 .. 0x18,
+0x164); the slot's equipment held or worn that the footer's character can wear
+(`CreateReModelingListItem`) beside its status (`CampEquipStatusMenu`); one chosen, the items held
+whose attachment fits the slot (`CreateReModelingAttachmentListItem`: `data\attachment_para.mbe`
+Attachment, 0x1c rows - the item's id, group, the equipment it fits as bits 1 weapon 2 armour 4
+accessory, category, amount, levels, gold), the status showing it attached
+(`SetCampEquipItemAttachment`). Chosen: `GetAttachItemPattern` - 0 the equipment has none (0x314
+`{attachname}` `{itemname}`), 1 another (0x315), 2 the same, levels under 50 (0x169), 3 the same at
+50 (0x16a told) -; yes, `SetAttachment` - `DBSystem::EnforceItem(equipment, item, the item's
+levels + the same one's had, at most 50, its gold)` - and com_024, then "Equip it?" (0x20e) where
+the character doesn't wear it. An attachment's effect (`MbItemInfo::GetConstant(category)` added
+by `CrxWeapon` / `CrxArmor` / `CrxAccessory`): category 0 weight, 1 break power, 2 .. 7 a weapon's
+element e lowered (e + 1: `BtlElement`), 8 .. 13 an armour's resisted (e + 7), 14 .. 19 an
+accessory's HP, MP, attack, guard, speed, luck. Its levels never fall in the shipped game
+(`CrxCharacter::DecreaseAttachmentDurability` is empty in all three). The port keeps attachments
+by equipment kind, not by piece. `--input shop:alter`.
+
+Quests 191-197, 399 and 400 are unused: number 0, level -1, flag 6999 needed (never set) - and
+191-197's `quest_check` branches call `q191_t01_00101`, which no script has.
+
 ## Sound
 
 Files `sound\<name>.<ext>` in the sound archives (iOS `CRDBbgm_mNN` / `CRDBse_*` / `CRDBvo_*`,
@@ -2056,6 +2246,11 @@ average (each release's own lossy compression), orientation and alpha alike.
 
 PVR v3's channels of 8 bits each are stored byte by byte in order; its packed ones (4444, 5551)
 from the top bit down.
+
+Alpha-only textures (legacy PVR A8 0x1b, PVR v3 `a 8`, GXT U8 R000) decode black with their alpha:
+PvrLoad2 uploads A8 as GL_ALPHA, which samples (0, 0, 0, a). The camp top's panel masks
+(`cam_parts_02`, additive with an alpha test) so draw nothing and only write depth - each panel
+drawn right to left clips the art of the one before it.
 
 Row order: every Android PVR and all but 2 of the iPad's are stored bottom row first (the GL
 releases upload the rows as stored, so texture v = 0 is the picture's bottom); every GXT top row

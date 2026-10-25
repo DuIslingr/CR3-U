@@ -51,19 +51,27 @@ bool Cr3BattleRules::playerStats(const Cr3BattleTables& t, int character, Cr3Fig
         const auto worn = partyEquip.find(character);
         const auto equip = [&](int k) { return !guest && worn != partyEquip.end() && worn->second[size_t(k)] >= 0 ? worn->second[size_t(k)] : r.i(4 + size_t(k)); };
         MbeFile::Row e;
+        // (an attachment's constant: the category asked for, else 0 - MbItemInfo::GetConstant)
+        auto attached = [&](int slot, int category) {
+            const auto a = attachments.find((slot + 1) * 100000 + equip(slot));
+            Cr3BattleTables::Attachment at;
+            return a != attachments.end() && t.attachmentOf(a->second, at) && at.category == category ? at.amount : 0;
+        };
         if (equip(0) > 0 && t.item.find("Weapon", equip(0), kWeapon, e)) {
             f.weaponConstant = e.i(14), f.weaponHits = e.i(15), f.weaponBreak = e.i(16), f.consumption = float(e.i(17)) * 0.01f;
             f.lowerPhysical = e.i(18), f.lowerMagic = e.i(19);
-            for (size_t k = 0; k < 7; ++k) f.lowerElement[k] = e.i(20 + k);
-            f.weight += std::max(e.i(13), 0);
+            for (size_t k = 0; k < 7; ++k) f.lowerElement[k] = e.i(20 + k) + (k >= 1 ? attached(0, int(k) + 1) : 0); // (BtlElement: element e's category e + 1)
+            f.weight += std::max(e.i(13), 0) + attached(0, 0);
+            f.weaponBreak += attached(0, 1);
         }
         if (equip(1) > 0 && t.item.find("Armor", equip(1), kArmor, e)) {
             f.physical = e.i(15), f.magic = e.i(16);
-            for (size_t k = 0; k < 7; ++k) f.elementResist[k] = e.i(17 + k);
-            f.weight += std::max(e.i(14), 0);
+            for (size_t k = 0; k < 7; ++k) f.elementResist[k] = e.i(17 + k) + (k >= 1 ? attached(1, int(k) + 7) : 0); // (element e's category e + 7)
+            f.weight += std::max(e.i(14), 0) + attached(1, 0);
         }
         if (equip(2) > 0 && t.item.find("Accessory", equip(2), kAccessory, e)) {
-            f.maxHp += e.i(12), f.maxMp += e.i(13), f.attack += e.i(14), f.defence += e.i(15), f.speed += e.i(16), f.luck += e.i(17);
+            f.maxHp += e.i(12) + attached(2, 14), f.maxMp += e.i(13) + attached(2, 15), f.attack += e.i(14) + attached(2, 16);
+            f.defence += e.i(15) + attached(2, 17), f.speed += e.i(16) + attached(2, 18), f.luck += e.i(17) + attached(2, 19);
         }
         // a guest's gene (CrxGene(int): GuestGene - its gene at its level, its commands; the
         // prologue hero's row 1: gene 453 at 50, Rakshasa Lotus, Augmented Electra, Augmented
@@ -501,7 +509,26 @@ bool Cr3BattleRules::effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const
     return int(random() * 256.0f) < std::max(chance, 0);
 }
 
+void Cr3BattleRules::changeMode(int fi, int mode) {
+    if (!tables_ || fi < 0 || size_t(fi) >= fighters.size() || fighters[size_t(fi)].player) return;
+    Cr3Fighter& f = fighters[size_t(fi)];
+    const MbeFile::Table* mc = tables_->monster.table("MonsterCommand");
+    for (size_t row = 0; mc && row < mc->rows.size(); ++row) {
+        MbeFile::Row m;
+        if (!tables_->monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != f.id || m.i(1) != mode) continue;
+        f.attackCommand = m.i(5), f.element = m.i(2);
+        f.commands.clear(), f.skills.clear();
+        for (size_t c = 0; c < 8; ++c)
+            if (m.i(8 + c * 3) >= 0) f.commands.emplace_back(m.i(8 + c * 3), std::max(m.i(9 + c * 3), 0));
+        for (size_t k = 32; k < 40; ++k)
+            if (m.i(k) > 0) f.skills.push_back(m.i(k));
+        return;
+    }
+}
+
 std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>>& choices) {
+    for (const auto& [fi, mode] : modeRequests) changeMode(fi, mode);
+    modeRequests.clear();
     std::vector<Cr3Action> out;
     // the party's (their choices) and the monsters' (by their commands' ratios): the side with the
     // gauge's advantage first, the party at even

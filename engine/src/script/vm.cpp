@@ -264,6 +264,17 @@ void NativeCall::result(bool v) { sq_pushbool(v_, v ? SQTrue : SQFalse), result_
 void NativeCall::result(const std::string& v) { sq_pushstring(v_, v.c_str(), -1), result_ = true; }
 
 void ScriptVM::setNative(const std::string& table, const std::string& function, Native fn) {
+    // (CR3_TRACE_NATIVES=<text>: each call of a native whose name holds the text - "." all - on
+    // stderr with its arguments, for tests)
+    static const char* trace = std::getenv("CR3_TRACE_NATIVES");
+    const std::string name = table.empty() ? function : table + "." + function;
+    if (trace && name.find(trace) != std::string::npos)
+        fn = [name, inner = std::move(fn)](NativeCall& c) {
+            std::string line = name + "(";
+            for (int i = 0; i < c.count(); ++i) line += (i ? ", " : "") + c.text(i);
+            std::fprintf(stderr, "native: %s)\n", line.c_str());
+            inner(c);
+        };
     natives_.push_back(std::move(fn));
     sq_pushroottable(vm_);
     if (!table.empty()) {
