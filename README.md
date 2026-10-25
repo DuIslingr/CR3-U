@@ -158,10 +158,14 @@ built in), the sound with FAAD2.
 ## Field and battle speed
 
 Options (the camp's; the title's Options button, lower right - or O; a battle's get-set Options),
-Graphics (CR3-U's own tab - graphics, HD, controls - four rows at a time as the Other tab's,
-scrolled with the arrows right of them, the mouse wheel or Up / Down): **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
+Graphics (CR3-U's own tab - graphics, HD, controls - rows as the Other tab's, scrolled with the
+arrows right of them, the mouse wheel or Up / Down): **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
 field (its scenes, talk and menus as they are) and the battles that many times as fast. Kept in
 settings.ini (`field_speed`, `battle_speed`); `--field-speed n` / `--battle-speed n` for one run.
+
+On a desktop the Options' tabs and rows get smaller as the window grows, so more of the Graphics
+rows fit at once (a phone or tablet keeps the game's size and four rows). **Reset**, the round
+button left of the back (or R), asks, then puts the open tab's settings back to their defaults.
 
 ## HD textures
 

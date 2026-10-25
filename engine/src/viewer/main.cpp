@@ -459,7 +459,7 @@ struct Viewer {
         }
         rows.push_back({"VSync", onOff(s.vsync), "Each frame waits for the display's refresh: no tearing", true, [&s](int) { s.vsync = !s.vsync; }});
         rows.push_back({"Frame Rate", s.fps ? std::to_string(s.fps) : std::string("Unlimited"),
-                        "Frames drawn a second at most; the game itself runs at 20 a second, shown moving between them",
+                        "The most frames drawn a second; the game runs at 20, smoothed between them",
                         true, [&s, step](int d) { step(s.fps, {30, 60, 120, 144, 165, 240, 0}, d); }});
         {
             static const char* const kRenderer[] = {"Vulkan", "OpenGL"};
@@ -514,34 +514,31 @@ struct Viewer {
                             most > 1, [&s, step](int d) { step(s.anisotropy, {1, 2, 4, 8, 16}, d); }});
         }
         rows.push_back({"Texture Filtering", s.sharpTextures ? "Sharp" : "Smooth",
-                        "Sharp: the world's textures magnified by the nearest texel (square pixels up close); Smooth: blended",
+                        "Sharp: square texels up close; Smooth: blended",
                         true, [&s](int) { s.sharpTextures = !s.sharpTextures; }});
         {
             SDL_PathInfo info;
             const bool have = !hdDir.empty() && SDL_GetPathInfo(hdDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
             rows.push_back({"HD Textures", onOff(s.hdTextures),
-                            have ? "Upscaled textures (waifu2x / Real-ESRGAN: tools/hd_textures.py) from " + shortDir(hdDir)
-                                 : "None in " + shortDir(hdDir) + " yet: --export-textures, then tools/hd_textures.py",
+                            have ? "Upscaled textures from " + shortDir(hdDir) : "None in " + shortDir(hdDir) + " yet (the README's HD textures)",
                             true, [&s](int) { s.hdTextures = !s.hdTextures; }});
         }
         {
             SDL_PathInfo info;
             const bool have = !modelsDir.empty() && SDL_GetPathInfo(modelsDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
             rows.push_back({"HD Models", onOff(s.hdModels),
-                            have ? "Replacement models (glTF) from " + shortDir(modelsDir) + " - from the next scene on"
-                                 : "None in " + shortDir(modelsDir) + " yet: --export-models, edit, save as models/hd/<figure>.glb",
+                            have ? "Replacement models from " + shortDir(modelsDir) + ", from the next scene"
+                                 : "None in " + shortDir(modelsDir) + " yet (the README's HD models)",
                             true, [&s](int) { s.hdModels = !s.hdModels; }});
         }
         auto speed = [](int x) { return x > 1 ? std::to_string(x) + "x" : std::string("Off"); };
-        rows.push_back({"Field Speed", speed(s.fieldSpeed), "Walking the field 2 .. 5 times as fast - its scenes, talk and menus as they are", true,
+        rows.push_back({"Field Speed", speed(s.fieldSpeed), "Walking the field 2 to 5 times as fast; scenes, talk and menus as they are", true,
                         [&s](int d) { s.fieldSpeed = (s.fieldSpeed - 1 + d + 5) % 5 + 1; }});
-        rows.push_back({"Battle Speed", speed(s.battleSpeed), "The battles 2 .. 5 times as fast", true,
+        rows.push_back({"Battle Speed", speed(s.battleSpeed), "The battles 2 to 5 times as fast", true,
                         [&s](int d) { s.battleSpeed = (s.battleSpeed - 1 + d + 5) % 5 + 1; }});
         rows.push_back({"Swap \u25cb and \u00d7", onOff(s.padSwap),
-                        s.padSwap ? "A controller's \u00d7 (the bottom button) confirms, \u25cb (the right one) goes back"
-                                  : "A controller's \u25cb (the right button) confirms, \u00d7 (the bottom one) goes back - as on the Vita",
+                        s.padSwap ? "A controller's \u00d7 confirms and \u25cb goes back" : "A controller's \u25cb confirms and \u00d7 goes back, as on the Vita",
                         true, [&s](int) { s.padSwap = !s.padSwap; }});
-        rows.push_back({"Defaults", "", "Every setting here back to its default", true, [&s](int) { s = Settings(); }});
         return rows;
     }
     void settingChange(int row, int dir, bool click = true) {
@@ -2661,7 +2658,7 @@ struct Viewer {
             inputScript.pop_front(), inputWait = 0;
         if (credits.stage) return updateCredits(dt);
         if (titleMenu.stage) return updateTitle(dt);
-        if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt; // (its clock: the field's camp keeps its own)
+        if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt, campOptions.askSince += dt; // (its clock: the field's camp keeps its own)
         if (cr3Title.stage) return updateCr3Title(dt);
         // (Battle Speed, Field Speed: the battles, and the field while the player walks it - nothing
         // running or open over it -, that many times as fast)
@@ -7510,6 +7507,7 @@ struct Viewer {
         // (CR3's camp: its clock; --input camp:open / genes / row<n> / card<n> / back / field<n> - a
         // field button, 0 Open .. 6 Shop)
         cr3Camp.since += dt;
+        campOptions.askSince += dt;
         campQuests.detailSince += dt;
         campEquip.modelSince += dt;
         myPage.toldSince += dt;
@@ -11548,21 +11546,22 @@ struct Viewer {
     // `left`: from x (typeS_L: the text's left), else centred on it; `shade` its colour's
     // `maxWidth` (UI units, 0 none): narrowed to fit it (MenuText's width limit)
     // A text's width as drawUiText draws it (UI units: 0 none)
+    float uiTextScale = 1; // (the text's size times this: CR3's Options scaled to a desktop's window)
     float uiTextWidth(const std::string& text, float size, int w, int h) {
         if (text.empty() || !font.loaded()) return 0;
         const float k = std::min(float(w) / 0.96f, float(h) / 0.64f);
-        const int px = std::max(1, int(size / 1000.0f * k + 0.5f));
+        const int px = std::max(1, int(size * uiTextScale / 1000.0f * k + 0.5f));
         int tw = 0, th = 0;
         const std::string key = text + "\n" + std::to_string(px);
         if (auto it = uiTexts.find(key); it != uiTexts.end()) return it->second.w;
         font.render(text, px, tw, th);
-        return float(tw) * (size / 1000.0f / float(px));
+        return float(tw) * (size * uiTextScale / 1000.0f / float(px));
     }
     // (its width, UI units: 0 none drawn)
     float drawUiText(const std::string& text, float size, float x, float y, int w, int h, bool left = false, float shade = 1, float maxWidth = 0) {
         if (text.empty() || !font.loaded()) return 0;
         const float k = std::min(float(w) / 0.96f, float(h) / 0.64f);
-        const int px = std::max(1, int(size / 1000.0f * k + 0.5f));
+        const int px = std::max(1, int(size * uiTextScale / 1000.0f * k + 0.5f));
         const std::string key = text + "\n" + std::to_string(px);
         auto it = uiTexts.find(key);
         if (it == uiTexts.end()) {
@@ -11571,7 +11570,7 @@ struct Viewer {
             cr3::Image img = font.render(text, px, tw, th);
             if (img.rgba.empty()) return 0;
             q.tex = dev->upload(img);
-            const float unitsPerPx = size / 1000.0f / float(px);
+            const float unitsPerPx = size * uiTextScale / 1000.0f / float(px);
             q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx;
             it = uiTexts.emplace(key, q).first;
         }
@@ -15195,12 +15194,17 @@ struct Viewer {
     // left, those after it 0.076 lower
     static float cr3ListRowX(float x, int k, int focus) { return x - (k == focus ? 0.25f : 0.0f); }
     static float cr3ListRowY(float y, int k, int top, int focus) { return y - 0.76f * float(k - top) - (focus >= top && k > focus ? 0.076f : 0.0f); }
-    UiFig& cr3UiPut(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, float alpha = 1, bool loop = false) {
+    // a part placed and posed, not drawn (its joints where they'd be)
+    UiFig& cr3UiPose(const std::string& name, const std::string& anim, float t, float x, float y, bool loop = false) {
         UiFig& u = uiFig(name);
         u.fig.place = cr3::Mat34();
         u.fig.place.m[0] = u.fig.place.m[5] = u.fig.place.m[10] = cr3UiScale;
         u.fig.place.m[3] = x, u.fig.place.m[7] = y, u.fig.place.m[11] = cr3UiZ;
         poseUi(u, anim.empty() ? name : anim, t, loop);
+        return u;
+    }
+    UiFig& cr3UiPut(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, float alpha = 1, bool loop = false) {
+        UiFig& u = cr3UiPose(name, anim, t, x, y, loop);
         u.fig.tint[0] = cr3UiTint[0], u.fig.tint[1] = cr3UiTint[1], u.fig.tint[2] = cr3UiTint[2];
         u.fig.tint[3] = alpha;
         if (cr3UiAlphaSet) {
@@ -15511,7 +15515,12 @@ struct Viewer {
         const size_t nl = text.find("\\n");
         // (dark grey on the bar, as the reference video's - about 60, 60, 65 -, at 23: its line
         // "Weight: 6/Power: 34/..." as wide as the reference's, from where it starts)
-        if (nl == std::string::npos) return (void)drawUiText(text, 23, (tx - 0.03f) / 10, (ty - 0.1f) / 10, w, h, true, 0.24f);
+        if (nl == std::string::npos) { // (one too long for the bar - to the battery, 0.9 from the right -: smaller, to 18, then narrower)
+            const float k = std::min(float(w) / 9.6f, float(h) / 6.4f);
+            const float room = std::min(0.97f, (float(w) / k / 2 - 0.9f - (tx - 0.03f)) / 10);
+            const float wide = uiTextWidth(text, 23, w, h), size = wide > room ? std::max(23 * room / wide, 18.0f) : 23;
+            return (void)drawUiText(text, size, (tx - 0.03f) / 10, (ty - 0.1f + (23 - size) * 0.004f) / 10, w, h, true, 0.24f, room);
+        }
         // (two lines: the bar's height between them)
         drawUiText(text.substr(0, nl), 18, (tx + 0.075f) / 10, (ty - 0.04f) / 10, w, h, true, 0.24f);
         drawUiText(text.substr(nl + 2), 18, (tx + 0.075f) / 10, (ty - 0.27f) / 10, w, h, true, 0.24f);
@@ -16045,8 +16054,8 @@ struct Viewer {
         float tx, ty;
         if (text.empty() || !cr3UiCall(panel, joint, tx, ty)) return;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-        const float k = cr3UiFocus ? 1.1f : 1.0f;
-        drawUiText(text, 26 * k, (tx + 0.075f * k) / 10, (ty - 0.15f * k) / 10, w, h, true, cr3UiFocus ? 1.0f : cr3UiDim ? shade * 0.5f : shade);
+        const float k = cr3UiFocus ? 1.1f : 1.0f, o = k * uiTextScale;
+        drawUiText(text, 26 * k, (tx + 0.075f * o) / 10, (ty - 0.15f * o) / 10, w, h, true, cr3UiFocus ? 1.0f : cr3UiDim ? shade * 0.5f : shade);
     }
     // the picks: Enhance's (IntensificationSynthesisMenu 0xaa - mixUpMenu at mixMtrPositon's
     // call_mixUpMenu: Components, Additional EXP, Total Cost at typeM_L01 .. L03 (AnnounceMenuName
@@ -22265,6 +22274,9 @@ struct Viewer {
         int hands = 0; // (Controls: 0 two-handed, 1 one-handed)
         int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
         int top = 0;   // (Graphics: the first row shown)
+        bool asking = false; // (CR3-U's Reset: its question up)
+        int askFocus = 1;    // (0 Yes, 1 No)
+        float askSince = 0;
     } campOptions;
     // the Options screen over the title or a battle (CR3-U's: the game has it in the camp alone);
     // back, back to that
@@ -22318,27 +22330,15 @@ struct Viewer {
         campOptions.tab = 0;
         SDL_Log("camp: options");
     }
-    // a header line too wide for it as two, broken where they're most even
-    std::string cr3HeaderLine(std::string help, int w, int h) {
-        if (uiTextWidth(help, 23, w, h) > 0.97f) { // (0.97: as far as the battery)
-            size_t cut = std::string::npos;
-            float best = 1e9f;
-            for (size_t at = help.find(' '); at != std::string::npos; at = help.find(' ', at + 1)) {
-                const float wider = std::max(uiTextWidth(help.substr(0, at), 18, w, h), uiTextWidth(help.substr(at + 1), 18, w, h));
-                if (wider < best) best = wider, cut = at;
-            }
-            if (cut != std::string::npos) help = help.substr(0, cut) + "\\n" + help.substr(cut + 1);
-        }
-        return help;
-    }
     // CR3-U's fourth tab, Graphics: the game's three-tab bar (optTab_fr00) drawn twice half a tab
     // apart - the left one without its right end (bg_03, bg_06, frame_03), the right one without its
     // left (bg_01, bg_04, frame_01) -, so their dividers fall at -1, 0 and +1 tab: four tabs. The
     // chosen one's highlight (tap_*, the bar's frame its tab) from the half that has it, drawn last
     static constexpr int kOptionTabs = 4, kGraphicsRows = 4;
     static constexpr int kTapGraphicsRow = 1000, kTapGraphicsUp = 1100, kTapGraphicsDown = 1101;
+    static constexpr int kTapOptionsReset = 1200, kTapResetYes = 1201, kTapResetNo = 1202;
     void drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const Mat4& view) {
-        constexpr float kHalf = 1.095f; // (half a tab: the bar's dividers at -+1.095)
+        const float half = 1.095f * cr3UiScale; // (half a tab: the bar's dividers at -+1.095)
         UiFig& tab = uiFig("opttab_fr00");
         auto jointOf = [&](const ViewMesh& m) {
             const std::vector<uint32_t>& p = m.source.palette;
@@ -22355,7 +22355,7 @@ struct Viewer {
                            j == (right ? "frame_01" : "frame_03") || j == (right ? "tap_01" : "tap_03_02");
             }
             const int frame = !lit ? 0 : chosen == 0 ? 0 : chosen == 3 ? 2 : 1;
-            cr3UiPut("opttab_fr00", "", float(frame) / 30, x + (right ? kHalf : -kHalf), y, view);
+            cr3UiPut("opttab_fr00", "", float(frame) / 30, x + (right ? half : -half), y, view);
             for (int k = 0; k < 2; ++k) {
                 const int own = right ? k + 2 : k + 1, at = right ? k + 2 : k; // (the bar's tab 1 .. 3; ours 0 .. 3)
                 float ax, ay, bx, by;
@@ -22367,22 +22367,51 @@ struct Viewer {
         for (ViewMesh& m : tab.fig.meshes) m.hidden = false;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
         for (int k = 0; k < kOptionTabs; ++k) // (white on the tabs' blue: the chosen one's dark, the others' a lighter one - dimmed a little)
-            if (placed[k]) drawUiText(k < 3 ? menuAnnounce(0x190 + k) : std::string("Graphics"), 24, tx[k] / 10, (ty[k] - 0.12f) / 10, w, h, false, k == chosen ? 1.0f : 0.8f);
+            if (placed[k])
+                drawUiText(k < 3 ? menuAnnounce(0x190 + k) : std::string("Graphics"), 24, tx[k] / 10, (ty[k] - 0.12f * cr3UiScale) / 10, w, h, false,
+                           k == chosen ? 1.0f : 0.8f);
+    }
+    // the Options' scale (CR3-U's): on a phone or tablet the game's; on a desktop smaller as the
+    // window grows - about 78 pixels a unit at the display's scale -, so more fits (the header and
+    // the footer as they are)
+    float cr3OptionsScale(int w, int h) const {
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+        (void)w, (void)h;
+        return 1.0f;
+#else
+        const float k = std::min(float(w) / 9.6f, float(h) / 6.4f);
+        const float display = window ? std::max(SDL_GetWindowDisplayScale(window), 1.0f) : 1.0f;
+        return std::clamp(78.0f * display / std::max(k, 1.0f), 0.55f, 1.0f);
+#endif
+    }
+    // the lowest a row reaches: over the footer
+    float cr3OptionsFloor(int w, int h) const {
+        const float k = std::min(float(w) / 9.6f, float(h) / 6.4f);
+        return -float(h) / k / 2 + 0.75f;
     }
     // the Graphics tab: CR3-U's settings (settingRows) as the Other tab's Resolution - optSltLRPanel
-    // rows, the setting at typeM_L00, its value between optSltLbtn and optSltRbtn -, four shown about
-    // the focused one (tinted), arrows over and under when there are more; the focused one's help on
-    // the header's line
+    // rows, the setting at typeM_L00, its value between optSltLbtn and optSltRbtn -, as many as fit over
+    // the footer (four on a phone or tablet) about the focused one (tinted), arrows right of the first
+    // and last when there are more; the focused one's help on the header's line
     void drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& view) {
         Cr3CampOptions& co = campOptions;
         const std::vector<SettingRow> rows = settingRows();
         const int n = int(rows.size()), focus = std::clamp(settingsCursor, 0, std::max(n - 1, 0));
-        co.top = std::clamp(co.top, std::max(focus - (kGraphicsRows - 1), 0), focus);
-        float x1, y1, x2, y2, cx, cy, ax, ay, bx, by;
+        const float s = cr3UiScale;
+        float x1, y1, x2, y2, cx, cy, ax, ay, bx, by, tx, ty;
         if (!cr3UiCall(menu, "call_optSltPanel_001", x1, y1) || !cr3UiCall(menu, "call_optSltPanel_002", x2, y2)) return;
+        const float pitch = std::abs(y1 - y2);
+        int shown = kGraphicsRows;
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+        if (cr3UiCall(cr3UiPose("optsltlrpanel", "", 0, x1, y1), "typeM_C01", tx, ty) && pitch > 0)
+            shown = std::max(1 + int((ty - pitch * 0.5f - cr3OptionsFloor(w, h)) / pitch), 1);
+#endif
+        shown = std::min(shown, n);
+        co.top = std::clamp(co.top, std::max(focus - (shown - 1), 0), focus);
+        co.top = std::min(co.top, std::max(n - shown, 0));
         auto tint = [&](float r, float g, float b) { cr3UiTint[0] = r, cr3UiTint[1] = g, cr3UiTint[2] = b; };
         float firstY = 0, lastY = 0, rightX = 0; // (the value's line on the first and last rows shown; the arrows' right end)
-        for (int k = co.top; k < n && k < co.top + kGraphicsRows; ++k) {
+        for (int k = co.top; k < n && k < co.top + shown; ++k) {
             const SettingRow& r = rows[size_t(k)];
             const float px = x1 + (x2 - x1) * float(k - co.top), py = y1 + (y2 - y1) * float(k - co.top);
             if (k == focus) tint(0.82f, 0.9f, 1.0f);
@@ -22390,21 +22419,20 @@ struct Viewer {
             tint(1, 1, 1);
             if (!r.enabled) tint(0.549f, 0.549f, 0.655f); // (one that can't change now: its arrows grey, its text light)
             cr3UiLabel(panel, "typeM_L00", r.label, w, h, r.enabled ? 0.26f : 0.62f);
-            float tx, ty;
             if (cr3UiCall(panel, "typeM_C01", tx, ty)) {
                 dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                drawUiText(r.value.empty() ? std::string("Reset") : r.value, 24, tx / 10, (ty - 0.12f) / 10, w, h, false, r.enabled ? 0.26f : 0.62f, 0.25f);
-                if (k == co.top) firstY = ty - 0.12f;
-                lastY = ty - 0.12f;
+                drawUiText(r.value, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, r.enabled ? 0.26f : 0.62f, 0.25f * s);
+                if (k == co.top) firstY = ty - 0.12f * s;
+                lastY = ty - 0.12f * s;
             }
             if (cr3UiCall(panel, "call_optSltLbtn", cx, cy)) {
                 UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
                 const bool lt = cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by);
                 if (lt && r.enabled) {
-                    cr3CampTaps.push_back({ax, ay, ax + 3.0f, by, kTapGraphicsRow + k * 2 + 1}); // (the box between the arrows: on)
+                    cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, kTapGraphicsRow + k * 2 + 1}); // (the box between the arrows: on)
                     cr3CampTaps.push_back({ax, ay, bx, by, kTapGraphicsRow + k * 2});
                 }
-                UiFig& rb = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f, cy, view); // (as the Resolution's: 3 to the right)
+                UiFig& rb = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view); // (as the Resolution's: 3 to the right)
                 if (cr3UiCall(rb, "tapAreaS01", ax, ay) && cr3UiCall(rb, "tapAreaE01", bx, by)) {
                     if (r.enabled) cr3CampTaps.push_back({ax, ay, bx, by, kTapGraphicsRow + k * 2 + 1});
                     rightX = std::max(ax, bx);
@@ -22413,22 +22441,66 @@ struct Viewer {
             tint(1, 1, 1);
         }
         // (more over or under: an arrow right of the first or last row shown, a tap on it a row on)
-        const float ax0 = rightX + 0.45f, half = std::abs(y1 - y2) * 0.45f;
+        const float at = rightX + 0.45f * s, reach = pitch * 0.45f;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
         if (co.top > 0) {
-            drawUiText("\u25b2", 22, ax0 / 10, firstY / 10, w, h, false, 0.4f);
-            cr3CampTaps.push_back({ax0 - 0.3f, firstY - half, ax0 + 0.3f, firstY + half, kTapGraphicsUp});
+            drawUiText("▲", 22, at / 10, firstY / 10, w, h, false, 0.4f);
+            cr3CampTaps.push_back({at - 0.3f * s, firstY - reach, at + 0.3f * s, firstY + reach, kTapGraphicsUp});
         }
-        if (co.top + kGraphicsRows < n) {
-            drawUiText("\u25bc", 22, ax0 / 10, lastY / 10, w, h, false, 0.4f);
-            cr3CampTaps.push_back({ax0 - 0.3f, lastY - half, ax0 + 0.3f, lastY + half, kTapGraphicsDown});
+        if (co.top + shown < n) {
+            drawUiText("▼", 22, at / 10, lastY / 10, w, h, false, 0.4f);
+            cr3CampTaps.push_back({at - 0.3f * s, lastY - reach, at + 0.3f * s, lastY + reach, kTapGraphicsDown});
         }
+    }
+    // CR3-U's Reset, left of the back: the game's round button (comBtnSPanel, its comBtnBg_fr00)
+    // with comBtnIcon_fr00's circling arrows (frame 1), "Reset" under them; it asks, then puts the
+    // tab's settings back
+    void drawCr3OptionsReset(float backX, float backY, int w, int h, const Mat4& view) {
+        constexpr float kSize = 0.66f;
+        float cx, cy, ex, ey;
+        cr3UiScale = kSize;
+        UiFig& probe = cr3UiPose("combtnspanel", "", 0, 0, 0);
+        if (!cr3UiCall(probe, "tapAreaCP01", cx, cy) || !cr3UiCall(probe, "tapAreaAP01", ex, ey)) return (void)(cr3UiScale = 1);
+        const float r = std::hypot(ex - cx, ey - cy), px = backX - 0.15f - r - cx, py = backY - cy;
+        UiFig& panel = cr3UiPut("combtnspanel", "", 0, px, py, view);
+        float ix, iy;
+        if (cr3UiCall(panel, "call_comBtnBg_fr00", ix, iy)) cr3UiPut("combtnbg_fr00", "", 0, ix, iy, view);
+        if (cr3UiCall(panel, "call_comBtnIconS_fr00", ix, iy)) {
+            cr3UiScale = kSize * 0.82f;
+            cr3UiPut("combtnicon_fr00", "", 1.0f / 30, ix, iy + r * 0.2f, view);
+        }
+        cr3UiScale = 1;
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        drawUiText("Reset", 11, (px + cx) / 10, (py + cy - r * 0.5f) / 10, w, h, false, 1.0f, r * 1.3f / 10);
+        cr3CampTaps.push_back(circleTap(px + cx, py + cy, px + cx + r, py + cy, kTapOptionsReset));
+    }
+    std::string cr3OptionsResetAsk() const {
+        static const char* const kTab[kOptionTabs] = {"sound", "control", "other", "graphics"};
+        return std::string("Put the ") + kTab[std::clamp(campOptions.tab, 0, kOptionTabs - 1)] + " settings back to their defaults?";
+    }
+    void cr3OptionsReset() {
+        Cr3CampOptions& co = campOptions;
+        if (co.tab == 0) {
+            for (int& v : optionVolume) v = 100;
+            audio.setVolumes(1, 1, 1);
+        } else if (co.tab == 1) co.hands = 0;
+        else if (co.tab == 2) optionQuality = 0;
+        else {
+            settings = Settings();
+            applySettings();
+            saveSettings();
+        }
+        SDL_Log("options: tab %d reset", co.tab);
     }
     void drawCampOptions(int w, int h, const Mat4& view) {
         const float t = cr3Camp.since;
         Cr3CampOptions& co = campOptions;
         float x, y, cx, cy;
-        UiFig& top = cr3UiPut("opttoppositon", "opttoppositon_io", t, 0, 0, view);
+        // (the tabs and their settings scaled about the tabs' height: they stay under the header)
+        const float s = cr3OptionsScale(w, h);
+        constexpr float kPivot = 2.1f;
+        cr3UiScale = s, uiTextScale = s;
+        UiFig& top = cr3UiPut("opttoppositon", "opttoppositon_io", t, 0, kPivot * (1 - s), view);
         if (cr3UiCall(top, "call_optTab_fr00", x, y, w, h)) drawCr3OptionTabs(co.tab, x, y, w, h, view);
         if (co.tab == 0 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) {
             UiFig& menu = cr3UiPut("optsltmenu", "", 0, x, y, view);
@@ -22443,7 +22515,7 @@ struct Viewer {
                 float bx, by, ux, uy, lx, ly;
                 if (cr3UiCall(vol, "call_optSltBar_fr00", bx, by)) cr3UiPut("optsltbar_fr00", "", float(v) / 30, bx, by, view);
                 if (cr3UiCall(vol, "barLimitUp", ux, uy) && cr3UiCall(vol, "barLimitLow", lx, ly)) {
-                    const float from = ux + 0.23f, to = lx - 0.23f;
+                    const float from = ux + 0.23f * s, to = lx - 0.23f * s;
                     float kx, ky;
                     if (cr3UiCall(vol, "call_optSltBarCursor", kx, ky)) cr3UiPut("optsltbarcursor", "", 0, kx + (to - from) * float(v) / 100.0f, ky, view);
                     for (int step = 0; step <= 10; ++step) { // (a tap along the bar: its tenth)
@@ -22461,7 +22533,7 @@ struct Viewer {
                 float tx, ty;
                 if (cr3UiCall(hnd, "typeM_C01", tx, ty)) {
                     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(menuAnnounce(0x19b + k), 24, tx / 10, (ty - 0.12f) / 10, w, h, false, 0.26f);
+                    drawUiText(menuAnnounce(0x19b + k), 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
                 }
                 float ax, ay, bx, by;
                 if (cr3UiCall(hnd, "tapAreaS01", ax, ay) && cr3UiCall(hnd, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 500 + k});
@@ -22476,39 +22548,59 @@ struct Viewer {
                 float tx, ty;
                 if (cr3UiCall(panel, "typeM_C01", tx, ty)) {
                     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(menuAnnounce(0x22b + std::clamp(optionQuality, 0, 2)), 24, tx / 10, (ty - 0.12f) / 10, w, h, false, 0.26f);
+                    drawUiText(menuAnnounce(0x22b + std::clamp(optionQuality, 0, 2)), 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
                 }
                 if (cr3UiCall(panel, "call_optSltLbtn", cx, cy)) {
                     UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
                     float ax, ay, bx, by;
                     if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
-                        cr3CampTaps.push_back({ax, ay, ax + 3.0f, by, 601}); // (the box between the arrows: on)
+                        cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, 601}); // (the box between the arrows: on)
                         cr3CampTaps.push_back({ax, ay, bx, by, 600});
                     }
                     // (its right button over the other end: optSltRbtn, as wide)
-                    UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f, cy, view);
+                    UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
                     if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 601});
                 }
             }
         }
         if (co.tab == 3 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) drawCr3GraphicsTab(cr3UiPut("optsltmenu", "", 0, x, y, view), w, h, view);
-        // (the back)
+        cr3UiScale = 1, uiTextScale = 1;
+        // (the back, and CR3-U's Reset left of it)
         UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
         if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
             UiFig& bm = cr3UiPut("combackmenu", "", 0, x, y, view);
             float ax, ay, ex, ey;
             if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
-            if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
+            if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) {
+                cr3CampTaps.push_back({ax, ay, ex, ey, -1});
+                drawCr3OptionsReset(std::min(ax, ex), (ay + ey) / 2, w, h, view);
+            }
         }
         std::string line = co.tab < 3 ? menuAnnounce(0x19f + co.tab) : std::string("Change graphics settings.");
         if (co.tab == 3) { // (Graphics: the focused setting's help)
             const std::vector<SettingRow> rows = settingRows();
-            if (settingsCursor >= 0 && settingsCursor < int(rows.size())) line = cr3HeaderLine(rows[size_t(settingsCursor)].help, w, h);
+            if (settingsCursor >= 0 && settingsCursor < int(rows.size())) line = rows[size_t(settingsCursor)].help;
         }
         drawCr3Header(t, 7, line, w, h, view);
+        if (co.asking) { // (the Reset's question over all; its Yes / No the only taps)
+            cr3CampTaps.clear();
+            drawCr3Asked(cr3OptionsResetAsk(), co.askSince, co.askFocus, true, kTapResetYes, kTapResetNo, w, h, view);
+        }
     }
     void chooseCampOptions(int id) {
         Cr3CampOptions& co = campOptions;
+        if (co.asking) { // (the Reset's question: Yes puts the tab's settings back)
+            if (id != kTapResetYes && id != kTapResetNo && id != -1) return;
+            co.asking = false;
+            audio.playSe(id == kTapResetYes ? "com_003" : "com_004", false);
+            if (id == kTapResetYes) cr3OptionsReset();
+            return;
+        }
+        if (id == kTapOptionsReset) {
+            co.asking = true, co.askSince = 0, co.askFocus = 1; // (No first)
+            audio.playSe("com_003", false);
+            return;
+        }
         const int settingCount = int(settingRows().size());
         if (id == kTapGraphicsUp || id == kTapGraphicsDown) {
             settingsCursor = std::clamp(settingsCursor + (id == kTapGraphicsUp ? -1 : 1), 0, settingCount - 1);
@@ -22539,8 +22631,15 @@ struct Viewer {
     }
     void campOptionsKey(SDL_Keycode key) {
         Cr3CampOptions& co = campOptions;
+        if (co.asking) { // (the Reset's question: left / right Yes or No, Return that, Escape No)
+            if (key == SDLK_LEFT || key == SDLK_RIGHT) co.askFocus = key == SDLK_LEFT ? 0 : 1, audio.playSe("com_002", false);
+            else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(co.askFocus == 0 ? kTapResetYes : kTapResetNo);
+            else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCampOptions(kTapResetNo);
+            return;
+        }
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampOptions(-1);
         if (key == SDLK_TAB) return chooseCampOptions(400 + (co.tab + 1) % kOptionTabs);
+        if (key == SDLK_R) return chooseCampOptions(kTapOptionsReset);
         if (co.tab == 3) { // (Graphics: up / down a row, left / right / Return change it)
             if (key == SDLK_UP || key == SDLK_DOWN) return chooseCampOptions(key == SDLK_UP ? kTapGraphicsUp : kTapGraphicsDown);
             if (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_RETURN || key == SDLK_KP_ENTER)

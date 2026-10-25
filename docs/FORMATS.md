@@ -935,8 +935,11 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
   Resolution (`optSltLRPanel`); the volumes saved on the way out. CR3-U adds a fourth tab, Graphics: the three-tab
   bar drawn twice half a tab apart (the left one without its right end - `bg_03`, `bg_06`, `frame_03` -, the
   right one without its left), so its dividers fall at -1, 0, +1 tab, the chosen tab's highlight (`tap_*`) from
-  the half that has it; its settings as the Other tab's Resolution - `optSltLRPanel` rows, four at a time
-  (the focused one tinted, the help on the header's line - two lines when it's wider than that). The game has its Options in the camp alone; CR3-U
+  the half that has it; its settings as the Other tab's Resolution - `optSltLRPanel` rows, as many as fit over
+  the footer (four on a phone or tablet; on a desktop the tabs and rows scaled about the tabs' height to about 78
+  pixels a unit), the focused one tinted, its help on the header's line (one line, smaller to fit). A Reset left
+  of the back: comBtnSPanel's round button with comBtnIcon_fr00's circling arrows (frame 1), asking with the
+  gene lab's system window, then the open tab's settings back to their defaults. The game has its Options in the camp alone; CR3-U
   opens the same screen over the title (its own button: comBtnSPanel with comBtnIconS_fr00's Options
   frame at the lower right - or O / G -, while the title waits for the tap) and over a battle (the
   get-set menu's Options, which the game leaves to the camp), back returning there.
