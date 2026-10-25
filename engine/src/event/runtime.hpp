@@ -104,7 +104,7 @@ public:
     float windowAge(int w) const;
     bool windowClosing(int w) const { return closing_.count(w) != 0; }
     int messageWindow() const { return messageWindow_; }
-    int itemShown() const { return itemShown_; } // (window 7's item: EvtWindow::SetItemMessage)
+    int itemShown() const { return itemShown_; } // (window 7's item: EvtWindow::SetItemMessage - SetItemMessageWithCategory's by its full id, -10 gold)
     bool messageShown() const { return message_ > 0; }
     const ParsedMessage& message() const { return parsed_; }
     int page() const { return page_; }
@@ -197,7 +197,7 @@ public:
                                                     {"pet", ""},
                                                     {"food", ""}};
     // utils::FilterMessage (both message windows' SetStringData, the name too): {name}, {team},
-    // {pet}, {food} the entered names ({goldkey}, a count the port doesn't keep, stays)
+    // {pet}, {food} the entered names ({goldkey} the gold keys held - iOS's FilterMessage)
     std::string filterMessage(std::string text) const;
     std::string takeParameters(int window, std::string text); // (PutParameterI / S's, used up)
     std::string warnKeys(std::string text) const;              // (CR3_STUBS: a {key} left logged)

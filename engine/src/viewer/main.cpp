@@ -723,7 +723,11 @@ struct Viewer {
         if (cr3BattleMode) return cr3BattleTap();
         if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
             if (areaEvents->running()) areaEvents->touch();
-            else if (areaCheckNear >= 0) runAreaFunction(areaGimmicks[size_t(areaCheckNear)].function);
+            else if (areaCheckNear >= 0) {
+                const AreaGimmick& g = areaGimmicks[size_t(areaCheckNear)];
+                if (g.box >= 0) game.cr3OpenBox = g.box; // (Fld2Box::ExecOpen: Fld2TBoxList::SetOpenBox)
+                runAreaFunction(g.function);
+            }
             return;
         }
         if (cr3Title.stage) {
@@ -5664,6 +5668,8 @@ struct Viewer {
         bool shaped = false;    // (its own body in <area>p.phys - Fld2AreaChange::Create's trigger: its shape's bounds)
         cr3::Vec3 boxAt{}, boxLo{}, boxHi{};
         std::array<float, 4> boxTurn{0, 0, 0, 1};
+        int box = -1;          // (a drawn treasure / gold box: its GameState::cr3Boxes index - its function OpenTBox / OpenGBox)
+        std::string boxName;   // ("tbox_00")
     };
     std::vector<AreaGimmick> areaGimmicks;
     // the area's camera (Fld2TaskCamera::SetupCamera by the map table's type - the executable's
@@ -6349,7 +6355,8 @@ struct Viewer {
             if (model.size() < 4 || gimmick.compare(0, 8, "ragdoll_") != 0) continue;
             // (a treasure or gift box only where its dungeon's draw gave it something - Fld2Box::Create:
             // GetTBoxData - the draws come with a level from the world select: not yet)
-            if (gimmick.compare(0, 12, "ragdoll_tbox") == 0 || gimmick.compare(0, 12, "ragdoll_gbox") == 0) continue;
+            const bool drawn = drawnBox(gimmick) >= 0;
+            if ((gimmick.compare(0, 12, "ragdoll_tbox") == 0 || gimmick.compare(0, 12, "ragdoll_gbox") == 0) && !drawn) continue;
             AreaNpc npc;
             npc.name = gimmick.substr(8), npc.model = model;
             const auto it = std::find(joints.begin(), joints.end(), npc.name);
@@ -6382,7 +6389,7 @@ struct Viewer {
                 loadAnim(fig, size_t(at - fig.anims.begin()));
                 time = keep;
             }
-            npc.box = gimmick.compare(0, 12, "ragdoll_kbox") == 0;
+            npc.box = gimmick.compare(0, 12, "ragdoll_kbox") == 0 || drawn;
             npc.solid = row.i(9) != 0;
             npc.rock = gimmick.compare(0, 13, "ragdoll_krock") == 0;
             npc.bombSwitch = gimmick.compare(0, 12, "ragdoll_bswc") == 0;
@@ -6804,6 +6811,11 @@ struct Viewer {
         // (Cr3System.GetDungeonNum / GetAreaNum: the dungeon - the Field_ table's, t01 0, d01 5 - and the area from 0)
         game.dungeon = cr3::cr3DungeonNum(name);
         game.area = std::atoi(name.substr(3, 2).c_str()) - 1;
+        if (game.dungeon != lastAreaDungeon) { // (Fld2Main SM_Init / the dungeon changed: Fld2TBoxList::Drawing)
+            game.cr3Boxes.clear(), game.cr3OpenBox = -1;
+            if (game.dungeon > 4) drawCr3Boxes(name);
+        }
+        lastAreaDungeon = game.dungeon;
         areaEvents = std::make_unique<cr3::EventRuntime>(archive, game);
         areaEvents->language = optionLanguage, areaEvents->autoPage = pageSeconds, areaEvents->askYesNo = true;
         areaEvents->extraNatives = [this](cr3::ScriptVM& vm) { bindAreaNatives(vm); };
@@ -6828,6 +6840,11 @@ struct Viewer {
                         areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false, {}});
                     else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
                         areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
+                    else if (const int b = drawnBox(names[j]); b >= 0) { // (a treasure / gold box the draw filled: Fld2Box, its event OpenTBox / OpenGBox)
+                        AreaGimmick g{game.cr3Boxes[size_t(b)].type == 1 ? "OpenGBox" : "OpenTBox", false, w[j], false, {}};
+                        g.box = b, g.boxName = names[j].substr(8);
+                        areaGimmicks.push_back(g);
+                    }
                 loadAreaNpcs(name, names, w);
                 unload(areaP), areaP = ViewFigure();
                 if (std::any_of(areaNpcs.begin(), areaNpcs.end(), [](const AreaNpc& n) { return n.mover || n.wander == 2 || n.wander == 3; }) && loadFigure(name + "p.geom", areaP, &err)) {
@@ -6968,6 +6985,103 @@ struct Viewer {
     }
 
     // the area's script calling a gimmick's function (Fld2TaskGimmick::SetNextEvent -> Fld2Main::StartScript)
+    // ---- the dungeon's treasure and gold boxes (Fld2TBoxList) ----
+    // Drawn as a dungeon is entered (Fld2TBoxList::Drawing(dungeon, level)): the dungeon's
+    // ragdoll_tbox rows (field_<d>.mbe's Field table, by area) shuffled - a hundred swaps -, and the
+    // first fourteen given TBoxTable's kinds for the dungeon and its level number (level x 10 + 1;
+    // a row whose flag is -1 or set); each kind's content from TBoxItemTable (its weight; a unique
+    // one not twice in a draw) - an item by its category (0 .. 6, 10) and id, or 8 a box of monsters
+    // (the coupling). Gold boxes: one more for each GBOX_PROBS chance met (rand x 100 at or under
+    // it), the dungeon's ragdoll_gbox rows in order - their prize drawn from its item sheet as one is
+    // opened (OpenGBoxRequest). A box not drawn isn't there
+    int lastAreaDungeon = -1;
+    cr3::Rand48 boxRng;
+    int drawnBox(const std::string& joint) const {
+        if (joint.compare(0, 8, "ragdoll_") != 0) return -1;
+        for (size_t k = 0; k < game.cr3Boxes.size(); ++k)
+            if (game.cr3Boxes[k].area == game.area && game.cr3Boxes[k].name == joint.substr(8) && !game.cr3Boxes[k].opened) return int(k);
+        return -1;
+    }
+    void drawCr3Boxes(const std::string& areaName) {
+        static bool seeded = false;
+        if (!seeded) {
+            const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
+            boxRng.seed(fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) : uint32_t(SDL_GetTicks()));
+            seeded = true;
+        }
+        std::vector<uint8_t> d;
+        cr3::MbeFile field, boxes, items;
+        if (!archive.read("data\\field_" + areaName.substr(0, 3) + ".mbe", d) || !field.parse(d)) return;
+        std::vector<std::pair<int, std::string>> tboxes, gboxes; // (area, name)
+        if (const cr3::MbeFile::Table* t = field.table("Field"))
+            for (size_t r = 0; r < t->rows.size(); ++r) {
+                cr3::MbeFile::Row row;
+                if (!field.row(*t, r, "iiiiiippiiif", row)) continue;
+                const std::string g = row.s(6);
+                if (g.compare(0, 12, "ragdoll_tbox") == 0) tboxes.push_back({row.i(0), g.substr(8)});
+                else if (g.compare(0, 12, "ragdoll_gbox") == 0) gboxes.push_back({row.i(0), g.substr(8)});
+            }
+        auto byArea = [](const std::pair<int, std::string>& a, const std::pair<int, std::string>& b) { return a.first < b.first; };
+        std::stable_sort(tboxes.begin(), tboxes.end(), byArea), std::stable_sort(gboxes.begin(), gboxes.end(), byArea);
+        const int levelNo = (std::max(encountDifficulty(), 1) - 1) * 10 + 1; // (MbDungeonLevelNo)
+        cr3::MbeFile::Row kinds;
+        bool found = false;
+        if (archive.read("data\\tbox_table.mbe", d) && boxes.parse(d))
+            if (const cr3::MbeFile::Table* t = boxes.table("TBoxTable"))
+                for (size_t r = 0; r < t->rows.size() && !found; ++r)
+                    if (boxes.row(*t, r, "iiiiiiiiiiiiiiiiiii", kinds) && kinds.i(2) == game.dungeon && kinds.i(3) == levelNo && (kinds.i(1) == -1 || game.flag(kinds.i(1))))
+                        found = true;
+        std::vector<cr3::MbeFile::Row> contents;
+        if (archive.read("data\\tbox_item_table.mbe", d) && items.parse(d))
+            if (const cr3::MbeFile::Table* t = items.table("TBoxItemTable"))
+                for (size_t r = 0; r < t->rows.size(); ++r) {
+                    cr3::MbeFile::Row row;
+                    if (items.row(*t, r, "iiiiiii", row)) contents.push_back(row);
+                }
+        const int n = int(tboxes.size());
+        if (found && n > 0) {
+            std::vector<int> order(static_cast<size_t>(n));
+            for (int k = 0; k < n; ++k) order[size_t(k)] = k;
+            for (int k = 0; k < 100; ++k) std::swap(order[boxRng.next() % uint32_t(n)], order[boxRng.next() % uint32_t(n)]);
+            for (int i = 0; i < 14 && i < n; ++i) { // (DrawingOne)
+                const int kind = kinds.i(size_t(4 + i));
+                std::vector<const cr3::MbeFile::Row*> pool;
+                int total = 0;
+                for (const cr3::MbeFile::Row& c : contents) {
+                    if (c.i(1) != kind) continue;
+                    if (c.i(6) != 0 && std::any_of(game.cr3Boxes.begin(), game.cr3Boxes.end(), [&](const cr3::GameState::Cr3Box& b) {
+                            return b.type == 0 && b.kind == kind && b.category == c.i(3) && b.id == c.i(4);
+                        }))
+                        continue;
+                    pool.push_back(&c), total += c.i(5);
+                }
+                if (total <= 0) continue;
+                int roll = int(boxRng.next() % uint32_t(total)), at = 0;
+                const cr3::MbeFile::Row* pick = pool.back();
+                for (const cr3::MbeFile::Row* c : pool)
+                    if (roll < (at += c->i(5))) {
+                        pick = c;
+                        break;
+                    }
+                cr3::GameState::Cr3Box b;
+                b.area = tboxes[size_t(order[size_t(i)])].first, b.name = tboxes[size_t(order[size_t(i)])].second;
+                b.kind = kind, b.type = 0, b.category = pick->i(3), b.id = pick->i(4);
+                game.cr3Boxes.push_back(b);
+            }
+        }
+        int gold = 0; // (GBOX_PROBS: a chance in a hundred each)
+        if (const cr3::BsonValue* c = game.cr3Db ? game.cr3Db->constants() : nullptr)
+                if (const cr3::BsonValue* probs = c->get("GBOX_PROBS"); probs && probs->isArray())
+                    for (const cr3::BsonValue& p : probs->items)
+                        if (int(boxRng.unit() * 100.0f) <= p.asInt()) ++gold;
+        for (int i = 0; i < gold && i < int(gboxes.size()); ++i) {
+            cr3::GameState::Cr3Box b;
+            b.area = gboxes[size_t(i)].first, b.name = gboxes[size_t(i)].second, b.type = 1;
+            game.cr3Boxes.push_back(b);
+        }
+        SDL_Log("%s: boxes drawn for level %d - %zu (%d treasure places, %d gold of %zu)", areaName.c_str(), levelNo, game.cr3Boxes.size(), n, gold, gboxes.size());
+        for (const cr3::GameState::Cr3Box& b : game.cr3Boxes) SDL_Log("  box %s in area %d: kind %d, type %d, %d:%d", b.name.c_str(), b.area + 1, b.kind, b.type, b.category, b.id);
+    }
     void runAreaFunction(const std::string& fn) {
         if (!areaEvents) return;
         SDL_Log("area %s: %s", area.name.c_str(), fn.c_str());
@@ -7434,7 +7548,7 @@ struct Viewer {
             for (const AreaNpc& npc : areaNpcs) // (a rock, a box: by its place)
                 if (npc.name == want) near.push_back({npc.name, false, npc.place, false, {}});
             for (const AreaGimmick& g : near)
-                if (g.function == want) {
+                if (g.function == want || (!g.boxName.empty() && g.boxName == want)) {
                     const cr3::Vec3 p = areaWalker->position();
                     float dx = p[0] - g.world.m[3], dz = p[2] - g.world.m[11];
                     const float l = std::max(std::hypot(dx, dz), 1e-3f);
@@ -7460,6 +7574,12 @@ struct Viewer {
                     areaCamera.reset({q[0], q[1] - areaWalker->radius, q[2]}, areaYaw), rail.started = false;
                     SDL_Log("area %s: near %s at (%.2f %.2f %.2f)", area.name.c_str(), want.c_str(), q[0], q[1], q[2]);
                 }
+        }
+        // (--input check: tests - a tap on the check object the player is by, as the field takes it)
+        if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front() == "check" && cr3FieldIdle()) {
+            inputScript.pop_front();
+            SDL_Log("area %s: check %s", area.name.c_str(), areaCheckNear >= 0 ? areaGimmicks[size_t(areaCheckNear)].function.c_str() : "(none near)");
+            tap();
         }
         // (--input box:<event box>: tests - the player put in that box, set off as if walked in)
         if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 4, "box:") == 0) {
@@ -7526,7 +7646,8 @@ struct Viewer {
             if (g.eventBox && in && !g.inside && !scripted) runAreaFunction(g.function);
             // (a check object: near it across - Fld2TaskPlayer's gimmick ghost, a sphere of 1.0,
             // against its box; the walls keep the player from its own small one. An approximation)
-            if (!g.eventBox && game.gimmickVisible(g.function)) {
+            if (!g.eventBox && game.gimmickVisible(g.boxName.empty() ? g.function : g.boxName) &&
+                !(g.box >= 0 && size_t(g.box) < game.cr3Boxes.size() && game.cr3Boxes[size_t(g.box)].opened)) {
                 const float across = std::hypot(p[0] - g.world.m[3], p[2] - g.world.m[11]);
                 const float half = std::sqrt(g.world.m[0] * g.world.m[0] + g.world.m[4] * g.world.m[4] + g.world.m[8] * g.world.m[8]) * 0.05f;
                 if (across <= 1.0f + half + 0.3f && std::fabs(p[1] - g.world.m[7]) < 2.5f) areaCheckNear = int(k);
@@ -7560,6 +7681,17 @@ struct Viewer {
         // wait on the camp: s101_d02_00606_set, a gift merged)
         if (cr3CampWasOpen && cr3Camp.stage == 0 && !scripted) runAreaFunction("evt001");
         cr3CampWasOpen = cr3Camp.stage != 0;
+        if (game.cr3BoxBattle >= 0 && areaEvents && !areaEvents->running() && !cr3BattleRequest.active && areaWalker) { // (a box's monsters: Fld2TaskEncount, its coupling)
+            AreaEncounters::Coupling met;
+            met.id = game.cr3BoxBattle;
+            game.cr3BoxBattle = -1;
+            startEncounter(met);
+        }
+        if (game.cr3GBoxShow && areaEvents && !areaEvents->running()) { // (Fld2Main::SM_OpenGBox: the dungeon's sheet, the prize marked)
+            game.cr3GBoxShow = false;
+            const cr3::Cr3ItemSheet::Prize* won = game.cr3Db ? game.cr3Db->openedPrize() : nullptr;
+            areaEvents->collectListOpen(game.dungeon - 4, won && won->gene ? 1 : 0, won ? won->item : -1);
+        }
         if (cr3FieldIdle() && !cr3BattleRequest.active) countEncounter();
         if (cr3SavePending && cr3FieldIdle() && !cr3BattleRequest.active) cr3SavePending = false, writeCr3Save();
     }
@@ -18732,6 +18864,45 @@ struct Viewer {
         UiFig& pos = cr3UiPut("btrsltuppositon", "btrsltuppositon_in", t, 0, 0, view, std::min(t / 0.2f, 1.0f));
         if (cr3UiCall(pos, "call_btRsltLvUpMenu", x, y, w, h)) cr3UiPut("btrsltlvupmenu", "", t, x, y, view);
     }
+    // CR3's item window (window 7 - EvtItemWindow: InterfaceMain::SetGetItemWindowParameter,
+    // GetItemMenu): feGetPosition, feGetMenu at its call_feGetMenu on feGetMenu_in (0 .. 0.2 s),
+    // feGetPanel at call_feGetPanel and on it feGetName_fr00, the item's icon (comListIcon_fr00 -
+    // the item's icon by its category: gold 0xc2) and feGetDeco; the message at the panel's text
+    // joint 00, size 32, dark (0.17, 0.18, 0.18)
+    void drawCr3GetItem(cr3::EventRuntime& ev, bool withText) {
+        const int w = screenW, h = screenH;
+        if (ev.windowClosing(7)) return; // (feGetMenu's out: not drawn)
+        const float t = ev.windowAge(7);
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        float x, y, cx, cy;
+        UiFig& pos = cr3UiPut("fegetposition", "", 0, 0, 0, view);
+        if (!cr3UiCall(pos, "call_feGetMenu", x, y, w, h)) return;
+        UiFig& menu = cr3UiPut("fegetmenu", "fegetmenu_in", std::min(t, 0.2f), x, y, view);
+        if (!cr3UiCall(menu, "call_feGetPanel", x, y)) return;
+        UiFig& panel = cr3UiPut("fegetpanel", "", 0, x, y, view);
+        if (cr3UiCall(panel, "call_feGetName_fr", cx, cy)) cr3UiPut("fegetname_fr00", "", 0, cx, cy, view);
+        const int item = ev.itemShown();
+        int icon = item == -10 ? 0xc2 : -1;
+        cr3::MbeFile::Row r;
+        if (item > 0 && cr3ItemRow(item, r)) icon = r.i(3);
+        if (icon >= 0 && cr3UiCall(panel, "call_comListIcon_fr", cx, cy)) cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), icon), cx, cy, view);
+        if (cr3UiCall(panel, "call_feGetDeco", cx, cy)) cr3UiPut("fegetdeco", "", 0, cx, cy, view);
+        if (!withText || ev.message().pages.empty()) return;
+        std::string line;
+        for (const cr3::TextLine& l : ev.message().pages[size_t(std::min<int>(ev.page(), int(ev.message().pages.size()) - 1))].lines)
+            line += (line.empty() ? "" : " ") + l.text;
+        for (const std::string& j : panel.joints)
+            if (j.size() > 6 && j.compare(0, 2, "ty") == 0 && j[5] == '_' && j.compare(j.size() - 2, 2, "00") == 0 && uiJoint(panel, j, cx, cy)) { // (the file's "tyepM_L00")
+                const bool left = j[6] == 'L', centred = j[6] == 'C';
+                drawUiText(line, 28, (cx + (centred ? 0.0f : 0.08f)) / 10, (cy - 0.08f) / 10, w, h, left || !centred, 0.18f);
+                break;
+            }
+    }
     void answerClearQuest() {
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || ev->clearQuestShown() <= 0) return;
@@ -23640,7 +23811,8 @@ struct Viewer {
             float sx, sy, ex, ey;
             if (uiJoint(ff, "tapAreaS01", sx, sy) && uiJoint(ff, "tapAreaE01", ex, ey)) fastRect.id = 1, fastRect.x0 = sx, fastRect.y0 = sy, fastRect.x1 = ex, fastRect.y1 = ey;
         }
-        if (ev->windowOpen(7) || ev->windowClosing(7)) {
+        if ((ev->windowOpen(7) || ev->windowClosing(7)) && itemWindow.fig.meshes.empty()) drawCr3GetItem(*ev, message && ev->messageWindow() == 7);
+        else if (ev->windowOpen(7) || ev->windowClosing(7)) {
             drawWindow(itemWindow, message && ev->messageWindow() == 7, screenW, screenH);
             const cr3::BattleData::Item* it = ev->windowOpen(7) && ev->itemShown() > 0 ? battleData.item(ev->itemShown()) : nullptr;
             float x, y;

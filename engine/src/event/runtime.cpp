@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 
+#include "assets/mbe.hpp"
 #include "assets/skeleton.hpp"
 #include "audio/sounddata.hpp"
 
@@ -582,6 +583,43 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
+    // SetItemMessageWithCategory(window, category, id, n) (EvtWindow::SetItemMessageWithCategory -
+    // the treasure boxes' tbox_msg): AnnounceField 0x11 "{item.name}" (n under 2) or 0x13 with
+    // "{item.count}", the name item_name.mbe's - 0 ItemName .. 6 GiftName by the id -; category 10
+    // gold, 0x12 "{gold}" the id
+    vm.setNative("EvtWindow", "SetItemMessageWithCategory", [this](NativeCall& c) {
+        const int w = c.integer(0, 7), category = c.integer(1, 0), id = c.integer(2, 0), n = c.integer(3, 1);
+        if (id < 1) return;
+        const auto own = windowText_.find(w);
+        TextData announce;
+        if (own == windowText_.end()) loadText("AnnounceField", announce);
+        const TextData& from = own != windowText_.end() ? own->second : announce;
+        auto put = [](std::string& t, const std::string& key, const std::string& with) {
+            for (size_t at = t.find(key); at != std::string::npos; at = t.find(key, at + with.size())) t.replace(at, key.size(), with);
+        };
+        int message = 0x12;
+        std::string t;
+        if (category == 10) {
+            t = from.message(message, language), put(t, "{gold}", std::to_string(id));
+        } else if (category >= 0 && category <= 6) {
+            static const char* const kNames[7] = {"ItemName", "WeaponName", "ArmorName", "AccessoryName", "CheetName", "EventName", "GiftName"};
+            static MbeFile names;
+            if (names.tables().empty()) {
+                std::vector<uint8_t> d;
+                if (archive_.read("data\\item_name.mbe", d)) names.parse(d);
+            }
+            MbeFile::Row r;
+            std::string name;
+            if (names.find(kNames[category], id, "ipp", r)) name = language == 0 || r.s(2).empty() ? r.s(1) : r.s(2);
+            message = n < 2 ? 0x11 : 0x13;
+            t = from.message(message, language), put(t, "{item.name}", name), put(t, "{item.count}", std::to_string(n));
+        } else return;
+        messageWindow_ = w, message_ = message, itemShown_ = category == 10 ? -10 : category * 100000 + id;
+        parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))));
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
+        if (parsed_.pages.empty()) message_ = 0;
+        else ++messagesSet_;
+    });
     vm.setNative("EvtWindow", "CheckMessage", [this](NativeCall& c) { c.result(message_ == 0); });
     vm.setNative("EvtWindow", "ShowYesNoButton", [this](NativeCall&) { yesNoShown_ = true, yesNo_ = 0, yesNoAge_ = 0; });
     vm.setNative("EvtWindow", "HideYesNoButton", [this](NativeCall&) { yesNoShown_ = false; });
@@ -946,6 +984,12 @@ std::string EventRuntime::filterMessage(std::string text) const {
         const auto it = enteredNames.find(key);
         const std::string with = it != enteredNames.end() ? it->second : std::string();
         for (size_t at = text.find(tag); at != std::string::npos; at = text.find(tag, at + with.size())) text.replace(at, tag.size(), with);
+    }
+    if (const size_t at = text.find("{goldkey}"); at != std::string::npos) { // (iOS's: the gold keys held - GOLDKEY_MASTER_ID)
+        const int id = state_.cr3Db ? state_.cr3Db->constant("GOLDKEY_MASTER_ID", 400005) : 400005;
+        const auto held = state_.cr3Items.find(id);
+        const std::string with = std::to_string(held != state_.cr3Items.end() ? std::max(held->second, 0) : 0);
+        for (size_t p = at; p != std::string::npos; p = text.find("{goldkey}", p + with.size())) text.replace(p, 9, with);
     }
     return text;
 }

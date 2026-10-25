@@ -2069,6 +2069,31 @@ is cancelled then). `StartQuake` / `StopQuake` shake a vista as they do the fiel
 `Cr3TabMenu.AddTabMenu` / `DelTabMenu` (`Fld2TabMenu::AddTabButton` - the encounters' and battle
 buttons, which the port's panel always has).
 
+Treasure and gold boxes (Fld2TBoxList, `Fld2Box`): drawn as the field is set up in a dungeon
+(`Fld2TBoxList::Drawing(dungeon, level - 1)`; the dungeon's number is its `dNN` + 4, d02 6).
+`data\tbox_table.mbe` TBoxTable (0x4c rows: id, flag - -1 none -, dungeon, level number -
+`MbDungeonLevelNo`, the level's index x 10 + 1 -, fourteen kinds, 30) gives the kinds; the
+dungeon's `ragdoll_tbox` rows of `field_dNN.mbe`'s Field table (all its areas, by area) are
+shuffled (a hundred swaps) and the first fourteen get one each from `data\tbox_item_table.mbe`
+TBoxItemTable (0x1c rows: id, kind, -, category, id, weight, unique - not twice in a draw), by
+weight: an item by category (0 items, 1 .. 6 weapon .. gift, 10 gold) or 8 a box of monsters (the
+id a coupling: `TBoxBattleIn`). Gold boxes: one more for each `GBOX_PROBS` constant met (rand x
+100 at or under it), the `ragdoll_gbox` rows in order. A box not drawn is not there. Tapped, a box
+is the one being opened (`SetOpenBox`: `Cr3GimmickData.GetOpenBoxName`, `GetItemType`,
+`GetItemID`) and its event runs - `OpenTBox` (the item: `GetItemWithCategory`, then
+`EvtWindow.SetItemMessageWithCategory` - AnnounceField 0x11 `{item.name}`, 0x13 with
+`{item.count}`, 0x12 `{gold}`; the name item_name.mbe's) or `OpenGBox` (a gold key, `GOLDKEY_
+MASTER_ID`: `OpenGBoxRequest` - `DBSystem::OpenGBox(dungeon - 6, d16 - 7)`, `DBEmu::OpenItemSheet`
+with the key - then `OpenGBox(true)`: the dungeon's collection shown with the prize marked,
+`Fld2Main::SM_OpenGBox`; no key: AnnounceField 47 and the key shop, `CreateFieldKeyBuyMenu` - not
+here yet). iOS's `utils::FilterMessage` fills `{goldkey}` with the keys held. The draw is not
+saved (the field draws again as it's set up). `GetCollectCount` / `GetCollectMaxCount(sheet)`: its
+entries won / with a prize. Window 7 in CR3 is `GetItemMenu` (`EvtItemWindow` -
+`SetGetItemWindowParameter`, interface 5): `feGetPosition`, `feGetMenu` at `call_feGetMenu` on
+`feGetMenu_in` (0 .. 0.2 s), `feGetPanel` with `feGetName_fr00`, the item's icon
+(`comListIcon_fr00`; gold 0xc2) and `feGetDeco`, the text at the panel's `tyepM_L00` (so spelled),
+size 32, dark (0.17, 0.18, 0.18). `--input check` taps the check object the player is by.
+
 Quests 191-197, 399 and 400 are unused: number 0, level -1, flag 6999 needed (never set) - and
 191-197's `quest_check` branches call `q191_t01_00101`, which no script has.
 
