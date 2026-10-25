@@ -9868,7 +9868,8 @@ struct Viewer {
         }
         if (event->messageShown() != messageLogged) {
             messageLogged = event->messageShown();
-            if (messageLogged) SDL_Log("frame %d: a message, %zu pages", event->frame(), event->message().pages.size());
+            if (messageLogged) SDL_Log("frame %d: a message, %zu pages (window %d, %s)", event->frame(), event->message().pages.size(), event->messageWindow(),
+                                       event->windowOpen(event->messageWindow()) ? "open" : "not open");
         }
         syncEventFigures(*event);
     }

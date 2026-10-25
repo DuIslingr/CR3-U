@@ -298,7 +298,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
         parsed_ = parseMessage(filterMessage(tutorialTexts_.message(c.integer(0), language)));
         messageWindow_ = TutorialMenu, message_ = parsed_.pages.empty() ? 0 : c.integer(0);
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
         tutorialMenuOpen_ = message_ > 0, tutorialMenuPicture_ = 0;
         if (message_ > 0) ++messagesSet_;
     });
@@ -308,7 +308,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("Cr3System", "SetDungeonLevel", [this](NativeCall& c) { dungeonLevel = c.integer(0); });
     vm.setNative("Cr3System", "GetDungeonLevel", [this](NativeCall& c) { c.result(dungeonLevel); });
     vm.setNative("InterfaceWindow", "SetPictureTutorialMenu", [this](NativeCall& c) { tutorialMenuPicture_ = c.integer(0); });
-    vm.setNative("InterfaceWindow", "EndCheckTutorialMenu", [this](NativeCall& c) { c.result(!(message_ > 0 && messageWindow_ == TutorialMenu)); });
+    vm.setNative("InterfaceWindow", "EndCheckTutorialMenu", [this](NativeCall& c) { c.result(!(message_ > 0 && !ended_ && messageWindow_ == TutorialMenu)); });
     vm.setNative("InterfaceWindow", "EndTutorialMenu", [this](NativeCall&) {
         tutorialMenuOpen_ = false;
         if (messageWindow_ == TutorialMenu) message_ = 0;
@@ -566,7 +566,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
             if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
             soundHooks().playVoice(v);
         }
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
@@ -579,7 +579,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtWindow", "SetMessageText", [this](NativeCall& c) {
         messageWindow_ = c.integer(0, Vista), message_ = 0x7fff;
         parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(c.string(1)))));
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
@@ -601,7 +601,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (const size_t p = t.find("%s"); p != std::string::npos) t.replace(p, 2, itemNames_.message(id, language));
         messageWindow_ = w, message_ = 0x75, itemShown_ = id;
         parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))));
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
@@ -638,11 +638,16 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         } else return;
         messageWindow_ = w, message_ = message, itemShown_ = category == 10 ? -10 : category * 100000 + id;
         parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))));
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0;
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
-    vm.setNative("EvtWindow", "CheckMessage", [this](NativeCall& c) { c.result(message_ == 0); });
+    vm.setNative("EvtWindow", "CheckMessage", [this](NativeCall& c) { c.result(message_ == 0 || ended_); });
+    // ClearMessage(window): its page gone (Cr3EvtWindowClearMessage: EvtWindow::ClearMessage and
+    // ClearNameTag - Msg_Clear's, after a \* message that stayed on screen once it ended)
+    vm.setNative("EvtWindow", "ClearMessage", [this](NativeCall& c) {
+        if (c.integer(0, Vista) == messageWindow_) message_ = 0, page_ = 0, ended_ = false;
+    });
     vm.setNative("EvtWindow", "ShowYesNoButton", [this](NativeCall&) { yesNoShown_ = true, yesNo_ = 0, yesNoAge_ = 0; });
     vm.setNative("EvtWindow", "HideYesNoButton", [this](NativeCall&) { yesNoShown_ = false; });
     vm.setNative("EvtWindow", "CheckYesNoButton", [this](NativeCall& c) {
@@ -750,7 +755,7 @@ void EventRuntime::reset() {
     cutIns_ = {}, cutInImages_.clear();
     geneLab_ = GeneLab();
     lunch_ = Lunch();
-    messageWindow_ = Vista, message_ = page_ = revealed_ = 0, pageTime_ = stopTime_ = 0, stop_ = 0;
+    messageWindow_ = Vista, message_ = page_ = revealed_ = 0, pageTime_ = stopTime_ = 0, stop_ = 0, ended_ = false;
     execution_ = false;
     terminated_ = drawSkip_ = false;
     wait_ = frame_ = 0;
@@ -809,7 +814,7 @@ bool EventRuntime::update(ScriptVM* vm) {
         if (const TextStop* s = held(); !s) revealed_ += 2;
         else if (s->wait > 0 && (stopTime_ += kTick) * 30 >= float(s->wait)) ++stop_, stopTime_ = 0; // (\w: its n in 30ths of a second)
         else if (s->wait == 0 && autoPage > 0 && !voiceSpeaking() && (pageTime_ += kTick) >= autoPage) advance(); // (a tap mark: as a page)
-    } else if (message_ > 0 && ending()) message_ = 0, page_ = 0; // (\*: its end by itself)
+    } else if (message_ > 0 && ending()) ended_ = true; // (\*: its end by itself - the script's CheckMessage, the page still shown till ClearMessage, the next or Close)
     else if ((message_ > 0 || execution_) && autoPage > 0 && !voiceSpeaking() && (pageTime_ += kTick) >= autoPage) advance(); // (its voice heard out first)
     fade_.update(), backFade_.update();
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
@@ -928,7 +933,7 @@ void EventRuntime::advance() {
         execution_ = false;
         return;
     }
-    if (message_ <= 0) return;
+    if (message_ <= 0 || ended_) return;
     if (!typed()) {
         const std::vector<TextStop>& stops = parsed_.pages[size_t(page_)].stops;
         if (const TextStop* s = held()) { // (at a tap mark: the page's next part; a timed one reads no tap)
@@ -939,6 +944,10 @@ void EventRuntime::advance() {
         while (stop_ < stops.size() && stops[stop_].wait > 0) ++stop_;
         if (stop_ < stops.size()) revealed_ = std::max(revealed_, stops[stop_].at), stopTime_ = 0;
         else showWhole();
+        return;
+    }
+    if (ending()) { // (\*: as by itself)
+        ended_ = true;
         return;
     }
     if (pageSendOff_.count(messageWindow_)) return; // (SetWaitButtonEnable false: the script's to end)
