@@ -7151,6 +7151,7 @@ struct Viewer {
             else if (want == "shop") chooseVs(2);
             else if (want == "box") chooseVs(1000); // (the Sp Shop's: the boxes, the goods)
             else if (want == "goods") chooseVs(1001);
+            else if (want == "vip") chooseVs(1002);
             else if (want.compare(0, 4, "item") == 0) chooseVs(700 + std::atoi(want.c_str() + 4)); // (the goods' row n: focused, then asked)
             else if (want == "boxprev" || want == "boxpick" || want == "boxnext") chooseVs(want == "boxprev" ? 1100 : want == "boxpick" ? 1101 : 1102);
             else if (want.compare(0, 3, "buy") == 0) chooseVs(1110 + std::atoi(want.c_str() + 3));
@@ -21666,8 +21667,12 @@ struct Viewer {
             if (cr3UiCall(pos, "call_SshopBg", x, y)) cr3UiPut("sshopbg", "", t, x, y, view);
             if (cr3UiCall(pos, "call_SshopBox", x, y)) spTap(cr3UiPut("sshopbox", "", t, x, y, view), x, y, 2.5f, 2.0f, 1000);
             if (cr3UiCall(pos, "call_SshopItem", x, y)) spTap(cr3UiPut("sshopitem", "", t, x, y, view), x, y, 2.5f, 2.0f, 1001);
+            // (SetVipPanelControl: 90 days or more - the panel at half, not tappable)
+            const bool vipOn = game.cr3VipDays < 90;
             if (cr3UiCall(pos, "call_SshopVipPanel", x, y)) {
+                if (!vipOn) cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 0.5f;
                 UiFig& vip = cr3UiPut("sshopvippanel", "", t, x, y, view);
+                if (vipOn) spTap(vip, x, y, 2.5f, 1.0f, 1002);
                 if (game.cr3VipDays <= 0) {
                     if (cr3UiCall(vip, "call_SshopDefault", cx, cy)) cr3UiPut("sshopvipdefault", "", t, cx, cy, view);
                 } else if (cr3UiCall(vip, "call_SshopVipCount", cx, cy)) {
@@ -21675,15 +21680,25 @@ struct Viewer {
                     UiFig& count = cr3UiPut("sshopvipcount", "", t, cx, cy, view);
                     const int days = std::min(game.cr3VipDays, 999);
                     const int digits = days >= 100 ? 3 : days >= 10 ? 2 : 1;
-                    for (int k = 0; k < digits; ++k) { // (the hundreds first, at the joints in turn)
+                    for (int k = 0; k < digits; ++k) { // (SShopMenu::Pose: the ones at the first joint, the tens, the hundreds)
                         float nx, ny;
                         int d = days;
-                        for (int s2 = digits - 1 - k; s2 > 0; --s2) d /= 10;
+                        for (int s2 = k; s2 > 0; --s2) d /= 10;
                         if (cr3UiCallNth(count, "call_SshopVipNum", k, nx, ny)) cr3UiPut("sshopvipnum", "", float(d % 10) / 30, nx - (optionLanguage != 0 ? 0.3f : 0.0f), ny, view);
                     }
                 }
+                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             }
             drawCr3Header(t, 9, menuAnnounce(0x275), w, h, view);
+            return;
+        }
+        if (vs.screen == 12) { // (SShopMenu 5: SshopVipCard over the shop, the header's title 0xc, asked 0x316)
+            vs.screen = 10; // (the top under it, as it stands)
+            drawSpShop(w, h, view);
+            vs.screen = 12;
+            dev->clearDepth();
+            cr3UiPut("sshopvipcard", "", t, 0, 0, view);
+            drawCr3Header(t, 0xc, std::string(), w, h, view);
             return;
         }
         // the boxes
@@ -22209,7 +22224,7 @@ struct Viewer {
         dev->clearDepth();
         const float t = vs.since;
         float x, y, cx, cy;
-        if (vs.screen == 10 || vs.screen == 11) {
+        if (vs.screen >= 10 && vs.screen <= 12) {
             drawSpShop(w, h, view);
             UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
             if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
@@ -22218,7 +22233,7 @@ struct Viewer {
                 if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
                 if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) vsTaps.push_back({ax, ay, ex, ey, -1});
             }
-            if (vs.ask) drawCr3Asked(menuAnnounce(0x123), vs.since, 0, true, 600, 601, w, h, view, &vsTaps);
+            if (vs.ask) drawCr3Asked(menuAnnounce(vs.ask == 5 ? 0x316 : 0x123), vs.since, 0, true, 600, 601, w, h, view, &vsTaps);
             if (!vs.told.empty()) drawCr3Told(vs.told, vs.toldSince, 602, w, h, view, &vsTaps);
             return;
         }
@@ -22507,14 +22522,17 @@ struct Viewer {
             return;
         }
         if (vs.ask) {
-            if (id == 601 || id == -1) vs.ask = 0, audio.playSe("com_004", false);
+            if (id == 601 || id == -1) {
+                if (vs.ask == 5) vs.screen = 10, vs.since = 0; // (SShopMenu 8: no - the card away)
+                vs.ask = 0, audio.playSe("com_004", false);
+            }
             else if (id == 600) vsAnswered();
             return;
         }
         if (id == -1) {
             audio.playSe("com_004", false);
             if (vs.screen == 11 && vs.boxBuy) return (void)(vs.boxBuy = false, vs.since = 0);
-            vs.screen = vs.screen == 4 ? 3 : vs.screen == 3 ? 2 : vs.screen == 2 ? 1 : vs.screen == 8 ? (vs.shopOnly ? 10 : 1) : vs.screen == 11 ? 10 : 0, vs.since = 0;
+            vs.screen = vs.screen == 4 ? 3 : vs.screen == 3 ? 2 : vs.screen == 2 ? 1 : vs.screen == 8 ? (vs.shopOnly ? 10 : 1) : vs.screen == 11 || vs.screen == 12 ? 10 : 0, vs.since = 0;
             if (vs.screen == 0) SDL_Log("vs: closed");
             return;
         }
@@ -22522,6 +22540,7 @@ struct Viewer {
         audio.playSe("com_003", false);
         if (vs.screen == 10 && id == 1000) openSpBoxes();
         else if (vs.screen == 10 && id == 1001) vs.screen = 8, vs.since = 0, vs.row = 0, SDL_Log("shop: the goods");
+        else if (vs.screen == 10 && id == 1002 && game.cr3VipDays < 90) vs.screen = 12, vs.since = 0, vs.ask = 5, SDL_Log("shop: VIP");
         else if (vs.screen == 11 && id >= 1100 && id < 1103) { // (LuckyBoxMenu: a neighbour turned to; the one in focus - its buy panels)
             const int n = std::max(int(spBoxes().size()), 1);
             if (id == 1101) vs.boxBuy = true, vs.boxPanel = 0, vs.since = 0;
@@ -22571,6 +22590,14 @@ struct Viewer {
         vs.ask = 0;
         audio.playSe("com_003", false);
         if (ask == 4) return openSpBox();
+        if (ask == 5) { // (SShopMenu 7: yes - under 30 coins told 0x317, else BuyVIP (request 0x5e) and com_024)
+            const int r = game.cr3Db->buyVIP(game);
+            if (r == cr3::kDbOk) audio.playSe("com_024", false);
+            else vs.told = menuAnnounce(0x317), vs.toldSince = 0;
+            SDL_Log("shop: VIP bought -> %d (%d days)", r, game.cr3VipDays);
+            vs.screen = 10, vs.since = 0;
+            return;
+        }
         if (ask == 2) {
             const int r = game.cr3Db->buyMP(game);
             if (r == cr3::kDbOk) game.cr3Mp.clear(); // (the party's MP full)
@@ -22637,7 +22664,7 @@ struct Viewer {
         }
         if (vs.screen == 9) return enter ? (chooseVs(301), true) : true;
         if (vs.screen == 10) {
-            if (key == SDLK_1 || key == SDLK_2) chooseVs(key == SDLK_1 ? 1000 : 1001);
+            if (key == SDLK_1 || key == SDLK_2 || key == SDLK_3) chooseVs(key == SDLK_1 ? 1000 : key == SDLK_2 ? 1001 : 1002);
             else if (enter) chooseVs(1000);
             else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(-1);
             return true;
