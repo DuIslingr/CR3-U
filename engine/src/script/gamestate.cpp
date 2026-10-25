@@ -568,6 +568,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "cr3records " << static_cast<long long>(r.playSeconds) << ' ' << r.kills << ' ' << r.maxDamage << ' ' << r.vsMatches << ' ' << r.genesObtained << ' '
       << r.merges << ' ' << r.fusions << '\n';
     o << "cr3team " << cr3TeamLevel << ' ' << cr3ProfileValue << '\n';
+    for (const auto& [k, v] : cr3Names) o << "cr3name " << k << ' ' << v << '\n'; // (the rest of the line the name)
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
     return o.str();
 }
@@ -711,6 +712,11 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             for (int id; l >> id;) cr3Vs.cleared.insert(id);
         } else if (key == "cr3mp") {
             for (int ch, mp; l >> ch >> mp;) cr3Mp[ch] = mp;
+        } else if (key == "cr3name") {
+            std::string k;
+            l >> k;
+            const size_t at = line.find(' ', line.find(k, 8));
+            cr3Names[k] = at == std::string::npos ? std::string() : line.substr(at + 1);
         } else if (key == "cr3team") {
             l >> cr3TeamLevel >> cr3ProfileValue;
             cr3TeamLevel = std::max(cr3TeamLevel, 1);

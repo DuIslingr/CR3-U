@@ -160,6 +160,13 @@ struct GameState {
     // the field's boxes opened (Cr3GimmickData.BoxOpen - Fld2OpenTreasureBox: 1) and then let go
     // (DeleteBox - Fld2DeleteTrasureBox: 2, faded out), by name ("kbox_00") - not saved
     std::map<std::string, int> fieldBoxes;
+    // the names entered ("name", "team", "pet", "food" -> text: utils::SetDefaultName /
+    // SetDefaultTeamName - "プレイヤー", "ケイオスチーム" in every release and language -, the pet's
+    // and food's empty till entered; Cr3System.Set...FromInputDialogText) - CrxGameData's, saved
+    std::map<std::string, std::string> cr3Names{{"name", "\u30d7\u30ec\u30a4\u30e4\u30fc"},
+                                                {"team", "\u30b1\u30a4\u30aa\u30b9\u30c1\u30fc\u30e0"},
+                                                {"pet", ""},
+                                                {"food", ""}};
     // the dungeon's treasure and gold boxes (Fld2TBoxList: drawn as the field is set up in a dungeon -
     // TBoxTable's kinds for its level, TBoxItemTable's contents; the gold boxes by GBOX_PROBS' chances,
     // their prize the dungeon's item sheet's as one is opened), the one being opened (SetOpenBox:

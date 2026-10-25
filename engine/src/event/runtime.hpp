@@ -194,10 +194,7 @@ public:
     // ("name", "team", "pet", "food" -> text): GameMain::SM_Startup's utils::SetDefaultName /
     // SetDefaultTeamName - "プレイヤー", "ケイオスチーム" in every release and language -, the
     // pet's and food's empty till entered
-    std::map<std::string, std::string> enteredNames{{"name", "\u30d7\u30ec\u30a4\u30e4\u30fc"},
-                                                    {"team", "\u30b1\u30a4\u30aa\u30b9\u30c1\u30fc\u30e0"},
-                                                    {"pet", ""},
-                                                    {"food", ""}};
+    std::map<std::string, std::string>& enteredNames; // (GameState::cr3Names: kept with the game, not the area)
     // utils::FilterMessage (both message windows' SetStringData, the name too): {name}, {team},
     // {pet}, {food} the entered names ({goldkey} the gold keys held - iOS's FilterMessage)
     std::string filterMessage(std::string text) const;

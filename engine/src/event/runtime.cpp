@@ -36,7 +36,7 @@ void EventFade::update() {
     else if (alpha > target) alpha = std::max(alpha - step, target);
 }
 
-EventRuntime::EventRuntime(const MvglArchive& archive, GameState& state) : archive_(archive), state_(state) {}
+EventRuntime::EventRuntime(const MvglArchive& archive, GameState& state) : enteredNames(state.cr3Names), archive_(archive), state_(state) {}
 
 bool EventRuntime::loadText(const std::string& name, TextData& into) {
     std::vector<uint8_t> d;

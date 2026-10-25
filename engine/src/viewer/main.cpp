@@ -10634,7 +10634,7 @@ struct Viewer {
     // out (ttlLogoPositon_out) and, a first game's, on through white into the prologue
     // (TitleMain: t01's Login, then the new game's first vista - s000_t01_00101_evt)
     struct Cr3Title {
-        int stage = 0;  // 0 off, 1 fading in, 2 waiting for a tap, 3 leaving
+        int stage = 0;  // 0 off, 1 fading in, 2 waiting for a tap, 3 the logo away, 4 the save files, 5 on into the game
         float clock = 0, stageClock = 0;
         int shot = 0;
         float shotClock = 0;
@@ -10682,13 +10682,16 @@ struct Viewer {
         if (t.stage == 1 && t.stageClock >= 1.0f) t.stage = 2, t.stageClock = 0; // (Cr3FadeIn(1, 30): in over 30 frames)
         if (t.stage == 2 && t.stageClock > 0.5f && !inputScript.empty() && inputScript.front() == "title:tap") inputScript.pop_front(), cr3TitleTap(); // (tests)
         if (t.stage == 2 && t.stageClock > 0.5f && !inputScript.empty() && inputScript.front() == "title:options") inputScript.pop_front(), openCr3OptionsFrom(1); // (tests)
-        if (t.stage == 3 && t.stageClock >= 1.0f) { // (out, then the game: a new one's prologue)
+        if (t.stage == 3 && t.stageClock >= 0.5f) t.stage = 4, t.stageClock = 0, openSaveMenu(); // (TitleMenuMain 3: CreateSaveFileMenu)
+        if (t.stage == 4) stepSaveMenu(dt);
+        if (t.stage == 5 && t.stageClock >= 0.4f) { // (out - Cr3FadeOut(1, 10) -, then the file: its field, or a new game's prologue)
             t.stage = 0;
             for (ViewFigure& f : t.maps) unload(f);
             unload(t.logo.position), unload(t.logo.fig);
             resetGame();
             cr3Playing = true;
-            if (!cr3SavedArea().empty() && loadCr3Save()) return; // (TitleMain: the save loaded, its field)
+            if (!cr3SavedArea().empty() && loadCr3Save()) return; // (TitleMain: the file loaded, its field)
+            SDL_Log("title: file %d - a new game", cr3SaveSlot);
             SDL_Log("title: a new game");
             // (TitleMain::Init: Cr3FieldData 0x700000000 - town 0, area 7: the field t0108, whose evt000
             // finds flag 2001 clear there - s000_t01_00101_set: flags 33, 702, 2001, 7, 8, 12 - and
@@ -10729,8 +10732,10 @@ struct Viewer {
 
     void drawCr3TitleUi() {
         Cr3Title& t = cr3Title;
-        drawCr3Part(t.logo, screenW, screenH, t.clock, 1);
+        if (t.stage <= 2) drawCr3Part(t.logo, screenW, screenH, t.clock, 1);
+        else if (t.stage == 3) drawCr3Part(t.logo, screenW, screenH, t.clock, 1 - std::min(t.stageClock * 2, 1.0f)); // (ttlLogoPositon_out)
         drawCr3TitleOptions();
+        if (t.stage == 4 || t.stage == 5) drawSaveMenu(screenW, screenH);
         // the shots' fades, then the title's own (in from black; out to white)
         const DemoShot& sh = kDemoShots[t.shot];
         float a = 0, c = 0;
@@ -10740,7 +10745,7 @@ struct Viewer {
             const float b = 1 - std::min(t.stageClock, 1.0f);
             a = std::max(a, b), c = a > b ? c : 0;
         }
-        if (t.stage == 3) a = std::min(t.stageClock * 2, 1.0f), c = 1;
+        if (t.stage == 5) a = std::min(t.stageClock * 3, 1.0f), c = 1;
         if (a > 0 && white.id) {
             static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
             const Mat4 id = cr3::mat4Identity();
@@ -12535,6 +12540,8 @@ struct Viewer {
     // SM_Init / SM_ChangeArea / SM_TownMove, back from a battle, the scripts' Sync and SavePoint -,
     // once the area's script is done and the field is idle)
     bool cr3Playing = false, cr3SavePending = false;
+    int cr3SaveSlot = 1; // (the file played - utils::LoadData(n): save<n>.txt, 1 .. 3)
+    std::string cr3SaveFile(int slot = 0) const { return "save" + std::to_string(slot > 0 ? slot : cr3SaveSlot) + ".txt"; }
     bool writeCr3Save() {
         if (!areaMode || !areaWalker) return false;
         std::map<std::string, std::string> extra;
@@ -12546,7 +12553,7 @@ struct Viewer {
         extra["playtime"] = std::to_string(static_cast<long>(playSeconds * 20.0));
         extra["options"] = std::to_string(optionLanguage) + " " + std::to_string(optionQuality) + " " + std::to_string(optionVolume[0]) + " " +
                            std::to_string(optionVolume[1]) + " " + std::to_string(optionVolume[2]);
-        const std::string text = game.save(extra), path = savePath();
+        const std::string text = game.save(extra), path = savePath(cr3SaveFile().c_str());
         std::FILE* f = std::fopen(path.c_str(), "wb");
         const bool ok = f && std::fwrite(text.data(), 1, text.size(), f) == text.size();
         if (f) std::fclose(f);
@@ -12554,9 +12561,9 @@ struct Viewer {
         if (ok) writeSystem();
         return ok;
     }
-    std::string readSaveText() {
+    std::string readSaveText(int slot = 0) {
         std::string text;
-        if (std::FILE* f = std::fopen(savePath().c_str(), "rb")) {
+        if (std::FILE* f = std::fopen(savePath(cr3SaveFile(slot).c_str()).c_str(), "rb")) {
             char buf[4096];
             for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
             std::fclose(f);
@@ -12575,7 +12582,7 @@ struct Viewer {
         std::map<std::string, std::string> extra;
         std::string err;
         if (!game.load(readSaveText(), &extra, &err) || extra["area"].empty())
-            return SDL_Log("continue: %s (%s)", err.empty() ? "no area saved" : err.c_str(), savePath().c_str()), false;
+            return SDL_Log("continue: %s (%s)", err.empty() ? "no area saved" : err.c_str(), savePath(cr3SaveFile().c_str()).c_str()), false;
         int o[5] = {optionLanguage, optionQuality, optionVolume[0], optionVolume[1], optionVolume[2]};
         if (std::sscanf(extra["options"].c_str(), "%d %d %d %d %d", &o[0], &o[1], &o[2], &o[3], &o[4]) == 5)
             optionLanguage = o[0], optionQuality = o[1], optionVolume[0] = o[2], optionVolume[1] = o[3], optionVolume[2] = o[4];
@@ -17182,7 +17189,7 @@ struct Viewer {
                     if (cr3UiCall(num, "call_comFtrNum_fr00_00" + std::to_string(k + 1), dx, dy)) cr3UiPut("comftrnum_fr00", "", float(digit[k]) / 30, dx, dy, view);
                 }
             }
-            const std::string name = areaEvents ? areaEvents->filterMessage("{team}") : std::string();
+            const std::string name = game.cr3Names["team"];
             float tx, ty;
             if (cr3UiCall(team, "typeM_L01", tx, ty)) {
                 dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
@@ -18941,6 +18948,313 @@ struct Viewer {
             if (r.id == 500 && ux >= std::min(r.x0, r.x1) && ux <= std::max(r.x0, r.x1) && uy >= std::min(r.y0, r.y1) && uy <= std::max(r.y0, r.y1)) answerClearQuest();
         return true; // (it holds the screen)
     }
+    // ---- CR3's save files (TitleMenuMain 3 .. 0x1a: CreateSaveFileMenu - SaveFileMenu) ----
+    // Over the title's reel: ttlDataPositon on its _in; at its call_ttlDataFile the three files
+    // (ttlDataSave01 .. 03: frame 1 the one picked - ttlDataOk on it, 0 the copy's source -, 0 a
+    // file, 2 none; ttlDataTxt - "File %d" 0x312 at typeM_L01, 0x2c7 at L02, the play time "%4d:%02d"
+    // at R03, the hero's name at C04, ttlDataStar_fr00 at its call -, half lit where it can't be
+    // picked), ttlDataCopy and ttlDatadelete (frame 1 while theirs); at call_ttlDataParty the picked
+    // file's chapter (ttlDataTitle01 .. 05 at call_ttlDataTitle, its frame) and its party's three
+    // (VsModeCharaPanel at call_VsMainParty_01 .. 03). The header 0x26 (the file's coins and ML), its
+    // line 0x311 / 0x309 / 0x30a / 0x30c; the footer the file's team level and name, the back. The
+    // chapter and stars: MbSaveFileInfo's table (the executable's) - the last of flags 701 .. 733
+    // set, the chapter 0 .. 32 and the stars 0 .. 4; 6458, five. A file tapped is picked (com_002),
+    // tapped again asked (0x308 "{number}") - yes, it's played (utils::LoadData: none there, a new
+    // game in it). Copy: a file, then an empty one, asked (0x30b) - copied (com_011); Delete: a
+    // file, asked (0x30d) and again (0x30e) - deleted (com_012). Back: the title again
+    struct Cr3SaveSlotInfo {
+        bool exists = false;
+        cr3::GameState state;
+        long seconds = 0;
+        int hp[3] = {}, mp[3] = {}; // (the party's: CrxCharacter::GetMaxHp, its MP now)
+    };
+    struct Cr3SaveMenu {
+        int mode = 0;     // 0 a file to play, 1 copy - the source, 2 copy - where to, 3 delete
+        int focus = 3;    // (+0x79460: 3 none)
+        int source = -1;  // (copy: the file copied)
+        int ask = 0;      // 0 none, 1 play, 2 copy there, 3 delete, 4 delete - surely
+        int askSlot = 0;
+        float since = 0, askSince = 0;
+        std::array<Cr3SaveSlotInfo, 3> slots;
+    } saveMenu;
+    std::vector<Cr3GeneLabTap> saveTaps;
+    static constexpr int kTapSaveFile = 1300, kTapSaveCopy = 1310, kTapSaveDelete = 1311, kTapSaveYes = 1312, kTapSaveNo = 1313;
+    void loadSaveSlots() {
+        for (int k = 0; k < 3; ++k) {
+            Cr3SaveSlotInfo& i = saveMenu.slots[size_t(k)];
+            i = Cr3SaveSlotInfo();
+            std::map<std::string, std::string> extra;
+            i.exists = i.state.load(readSaveText(k + 1), &extra) && !extra["area"].empty();
+            i.seconds = std::atol(extra["playtime"].c_str()) / 20;
+            if (!i.exists) continue;
+            i.state.cr3Db = game.cr3Db;
+            std::swap(game, i.state); // (its party's numbers, as the game's own)
+            for (int j = 0; j < 3; ++j) {
+                cr3::Cr3Fighter f;
+                if (game.cr3Party[j] > 0 && cr3CharaStats(game.cr3Party[j], f)) i.hp[j] = f.maxHp, i.mp[j] = cr3CharaMp(game.cr3Party[j], f.maxMp);
+            }
+            std::swap(game, i.state);
+        }
+    }
+    void openSaveMenu() {
+        loadSaveSlots();
+        saveMenu.mode = 0, saveMenu.focus = 3, saveMenu.source = -1, saveMenu.ask = 0, saveMenu.since = 0;
+        SDL_Log("title: the save files (%d %d %d)", saveMenu.slots[0].exists, saveMenu.slots[1].exists, saveMenu.slots[2].exists);
+    }
+    // (SaveFilePanel::Enable: those to be picked - all for playing, those with a game to copy or
+    // delete, the empty ones to copy into)
+    bool saveSlotOn(int k) const {
+        const Cr3SaveMenu& m = saveMenu;
+        const bool has = m.slots[size_t(k)].exists;
+        return m.mode == 0 || (m.mode == 2 ? !has : has);
+    }
+    static void saveChapter(const cr3::GameState& st, int& title, int& stars) { // (MbSaveFileInfo: flag, chapter, stars)
+        title = 0, stars = 0;
+        for (int k = 0; k < 33; ++k)
+            if (st.flag(701 + k)) title = k, stars = k < 9 ? 0 : k < 17 ? 1 : k < 22 ? 2 : k < 32 ? 3 : 4;
+        if (st.flag(6458)) title = 32, stars = 5;
+    }
+    void chooseSave(int id) {
+        Cr3SaveMenu& m = saveMenu;
+        if (m.ask) {
+            if (id == kTapSaveYes) {
+                if (m.ask == 1) { // (5: utils::LoadData - its field, or a new game in it)
+                    audio.playSe("com_001", false);
+                    m.ask = 0, cr3SaveSlot = m.askSlot + 1;
+                    cr3Title.stage = 5, cr3Title.stageClock = 0;
+                    SDL_Log("title: file %d", cr3SaveSlot);
+                    return;
+                }
+                if (m.ask == 3) return audio.playSe("com_003", false), (void)(m.ask = 4), (void)(m.askSince = 0);
+                if (m.ask == 2) { // (utils::CopyData)
+                    audio.playSe("com_011", false);
+                    const std::string text = readSaveText(m.source + 1);
+                    if (std::FILE* f = std::fopen(savePath(cr3SaveFile(m.askSlot + 1).c_str()).c_str(), "wb")) std::fwrite(text.data(), 1, text.size(), f), std::fclose(f);
+                    SDL_Log("title: file %d copied to %d", m.source + 1, m.askSlot + 1);
+                } else { // (utils::DeleteData)
+                    audio.playSe("com_012", false);
+                    std::remove(savePath(cr3SaveFile(m.askSlot + 1).c_str()).c_str());
+                    SDL_Log("title: file %d deleted", m.askSlot + 1);
+                }
+                return openSaveMenu();
+            }
+            if (id == kTapSaveNo || id == -1) {
+                audio.playSe("com_004", false);
+                const int was = m.ask;
+                m.ask = 0;
+                if (was >= 3) m.mode = 3, m.focus = 3; // (OnSelectDelete)
+                return;
+            }
+            return;
+        }
+        if (id == -1) { // (the back: the title again - or, choosing, the files)
+            audio.playSe("com_004", false);
+            if (m.mode != 0) return void((m.mode = 0, m.focus = 3, m.source = -1));
+            cr3Title.stage = 2, cr3Title.stageClock = 0;
+            audio.playBgm(33, 10);
+            return;
+        }
+        const int files = int(std::count_if(m.slots.begin(), m.slots.end(), [](const Cr3SaveSlotInfo& i) { return i.exists; }));
+        if (id == kTapSaveCopy) {
+            if (m.mode == 1 || m.mode == 2 || files == 0 || files == 3) return;
+            return audio.playSe("com_003", false), (void)(m.mode = 1), (void)(m.focus = 3);
+        }
+        if (id == kTapSaveDelete) {
+            if (m.mode == 3 || files == 0) return;
+            return audio.playSe("com_003", false), (void)(m.mode = 3), (void)(m.focus = 3), (void)(m.source = -1);
+        }
+        if (id < kTapSaveFile || id >= kTapSaveFile + 3) return;
+        const int k = id - kTapSaveFile;
+        if (!saveSlotOn(k)) return;
+        if (m.mode == 2) { // (0xb: where to - asked)
+            if (k == m.source) return;
+            audio.playSe("com_003", false);
+            m.ask = 2, m.askSlot = k, m.askSince = 0;
+            return;
+        }
+        if (k != m.focus) return audio.playSe("com_002", false), (void)(m.focus = k);
+        audio.playSe("com_003", false);
+        if (m.mode == 0) m.ask = 1, m.askSlot = k, m.askSince = 0;
+        else if (m.mode == 1) m.source = k, m.mode = 2, m.focus = k; // (OnDecideSource)
+        else m.ask = 3, m.askSlot = k, m.askSince = 0;
+    }
+    void stepSaveMenu(float dt) {
+        Cr3SaveMenu& m = saveMenu;
+        m.since += dt, m.askSince += dt;
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && uiClock >= inputNext) { // (--input wait:<s> here too)
+            inputNext = uiClock + float(std::atof(inputScript.front().c_str() + 5));
+            inputScript.pop_front();
+        }
+        if (!inputScript.empty() && inputScript.front().compare(0, 5, "save:") != 0 && inputScript.front().compare(0, 5, "wait:") != 0 && !m.ask) {
+            m.askSlot = 0, m.ask = 1; // (--input going on past the title without save: tokens - file 1 played, as before the save files)
+            return chooseSave(kTapSaveYes);
+        }
+        if (inputScript.empty() || inputScript.front().compare(0, 5, "save:") != 0 || m.since < 0.6f || uiClock < inputNext) return;
+        const std::string t = inputScript.front().substr(5); // (--input save:<1 .. 3> / copy / delete / yes / no / back)
+        inputScript.pop_front();
+        inputNext = uiClock + 0.4f;
+        if (t == "copy") chooseSave(kTapSaveCopy);
+        else if (t == "delete") chooseSave(kTapSaveDelete);
+        else if (t == "yes") chooseSave(kTapSaveYes);
+        else if (t == "no") chooseSave(kTapSaveNo);
+        else if (t == "back") chooseSave(-1);
+        else chooseSave(kTapSaveFile + std::clamp(std::atoi(t.c_str()) - 1, 0, 2));
+    }
+    bool saveMenuKey(SDL_Keycode k) {
+        if (cr3Title.stage != 4) return false;
+        Cr3SaveMenu& m = saveMenu;
+        if (m.ask) {
+            if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE || k == SDLK_Y) chooseSave(kTapSaveYes);
+            else if (k == SDLK_ESCAPE || k == SDLK_BACKSPACE || k == SDLK_N) chooseSave(kTapSaveNo);
+            return true;
+        }
+        if (k == SDLK_UP || k == SDLK_DOWN) { // (the next file that can be picked)
+            for (int step = 1; step <= 3; ++step) {
+                const int at = ((m.focus > 2 ? (k == SDLK_DOWN ? -1 : 3) : m.focus) + (k == SDLK_DOWN ? step : 3 - step)) % 3;
+                if (saveSlotOn(at) && !(m.mode == 2 && at == m.source)) {
+                    if (m.mode == 2) m.askSlot = at;
+                    m.focus = at, audio.playSe("com_002", false);
+                    break;
+                }
+            }
+        } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) {
+            if (m.focus <= 2) chooseSave(kTapSaveFile + m.focus);
+        } else if (k == SDLK_ESCAPE || k == SDLK_BACKSPACE) chooseSave(-1);
+        else if (k == SDLK_C) chooseSave(kTapSaveCopy);
+        else if (k == SDLK_DELETE || k == SDLK_D) chooseSave(kTapSaveDelete);
+        return true;
+    }
+    bool saveMenuClick(float fx, float fy) {
+        if (cr3Title.stage != 4) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = saveTaps.rbegin(); it != saveTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                chooseSave(it->id);
+                break;
+            }
+        return true;
+    }
+    void drawSaveMenu(int w, int h) {
+        saveTaps.clear();
+        Cr3SaveMenu& m = saveMenu;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        float x, y, cx, cy, ax, ay, bx, by;
+        UiFig& pos = cr3UiPut("ttldatapositon", "ttldatapositon_in", m.since, 0, 0, view);
+        Cr3SaveSlotInfo* picked = m.focus <= 2 && m.slots[size_t(m.focus)].exists ? &m.slots[size_t(m.focus)] : nullptr;
+        if (cr3UiCall(pos, "call_ttlDataParty", x, y)) {
+            UiFig& party = cr3UiPut("ttldataparty", "", 0, x, y, view);
+            if (picked) {
+                int title = 0, stars = 0;
+                saveChapter(picked->state, title, stars);
+                if (cr3UiCall(party, "call_ttlDataTitle", cx, cy))
+                    for (int k = 1; k <= 5; ++k) cr3UiPut("ttldatatitle0" + std::to_string(k), "", float(title) / 30, cx, cy, view);
+                for (int k = 0; k < 3; ++k) { // (VsModeCharaPanel: the gene's card, its level, HP, MP)
+                    if (!cr3UiCall(party, "call_VsMainParty_0" + std::to_string(k + 1), cx, cy)) continue;
+                    const int ch = picked->state.cr3Party[k];
+                    if (ch <= 0) continue;
+                    UiFig& card = cr3UiPut("vsmainparty", "", 0, cx, cy, view);
+                    float gx, gy;
+                    // (VsModeCharaPanel::Pose: the gene's CardModel - 4.6 x - at call_VsMainPC, the face's
+                    // VsMainPC at call_GeneCard)
+                    const int gk = picked->state.wornGene(ch);
+                    if (gk >= 0 && game.cr3Db && cr3UiCall(card, "call_VsMainPC", gx, gy)) {
+                        dev->clearDepth();
+                        drawCr3Card(picked->state.cr3Genes[size_t(gk)].master, gx, gy, 1.0f, 4.6f, view);
+                    }
+                    if (cr3UiCall(card, "call_GeneCard", gx, gy)) cr3UiPut("vsmainpc", "", float(ch - 1) / 30, gx, gy, view); // (SetCharacterFace)
+                    if (gk < 0 || !game.cr3Db) continue;
+                    const cr3::Cr3Gene& g = picked->state.cr3Genes[size_t(gk)];
+                    for (const auto& [joint, fig, value, places] :
+                         {std::tuple<const char*, const char*, int, int>{"call_camTopLv_num00", "camtoplv_num00", game.cr3Db->geneLevel(g), 3},
+                          {"call_camTopHp_num00", "camtophp_num00", picked->hp[k], 5}, {"call_camTopMp_num00", "camtopmp_num00", picked->mp[k], 4}}) {
+                        if (!cr3UiCall(card, joint, gx, gy)) continue;
+                        UiFig& num = cr3UiPut(fig, "", 0, gx, gy, view);
+                        const bool lv = std::strcmp(fig, "camtoplv_num00") == 0;
+                        cr3UiNumber(num, lv ? "call_camTopNumLv_fr00" : "call_camTopNum_fr00", lv ? "camtopnumlv_fr00" : "camtopnum_fr00", value, places, 0, view);
+                    }
+                }
+            }
+        }
+        if (cr3UiCall(pos, "call_ttlDataFile", x, y)) {
+            UiFig& file = cr3UiPut("ttldatafile", "", 0, x, y, view);
+            for (int k = 0; k < 3; ++k) {
+                const std::string n = "0" + std::to_string(k + 1);
+                if (!cr3UiCall(file, "call_ttlDataSave" + n, cx, cy)) continue;
+                const Cr3SaveSlotInfo& i = m.slots[size_t(k)];
+                const bool active = k == m.focus || (m.mode == 2 && k == m.source) || (m.ask == 2 && k == m.askSlot);
+                const float alpha = saveSlotOn(k) || active ? 1.0f : 0.5f;
+                UiFig& panel = cr3UiPut("ttldatasave" + n, "", float(active ? 1 : i.exists ? 0 : 2) / 30, cx, cy, view, alpha);
+                if (active && cr3UiCall(panel, "call_ttlDataOk", ax, ay))
+                    cr3UiPut("ttldataok", "", float(m.mode == 2 && k == m.source ? 1 : m.ask == 2 && k == m.askSlot ? 2 : 0) / 30, ax, ay, view, alpha);
+                if (cr3UiCall(panel, "call_ttlDataTxt", ax, ay)) {
+                    UiFig& txt = cr3UiPut("ttldatatxt", "", 0, ax, ay, view, alpha);
+                    std::string head = menuAnnounce(0x312);
+                    char num[8];
+                    std::snprintf(num, sizeof num, "%02d", k + 1);
+                    if (const size_t at = head.find("%02d"); at != std::string::npos) head.replace(at, 4, num);
+                    else if (const size_t at2 = head.find("%d"); at2 != std::string::npos) head.replace(at2, 2, std::to_string(k + 1));
+                    auto label = [&](const char* joint, const std::string& text) { // (SaveFileText: size 0x18)
+                        float tx, ty;
+                        if (text.empty() || !cr3UiCall(txt, joint, tx, ty)) return;
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        drawUiText(text, 22, (tx + 0.063f) / 10, (ty - 0.127f) / 10, w, h, true, alpha * 0.25f);
+                    };
+                    if (i.exists || active) label("typeM_L01", head);
+                    if (i.exists) {
+                        int title = 0, stars = 0;
+                        saveChapter(i.state, title, stars);
+                        if (cr3UiCall(txt, "call_ttlDataStar_fr00", bx, by)) cr3UiPut("ttldatastar_fr00", "", float(stars) / 30, bx, by, view, alpha);
+                        label("typeM_L02", menuAnnounce(0x2c7));
+                        char tm[32];
+                        std::snprintf(tm, sizeof tm, "%ld:%02ld", i.seconds / 3600, i.seconds % 3600 / 60); // ("%4d:%02d": right-aligned)
+                        float tx, ty;
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        if (cr3UiCall(txt, "typeM_R03", tx, ty)) drawUiText(tm, 22, (tx - 0.063f) / 10 - uiTextWidth(tm, 22, w, h), (ty - 0.127f) / 10, w, h, true, alpha * 0.25f);
+                        const auto nm = i.state.cr3Names.find("name");
+                        if (nm != i.state.cr3Names.end() && cr3UiCall(txt, "typeM_C04", tx, ty)) drawUiText(nm->second, 22, tx / 10, (ty - 0.127f) / 10, w, h, false, alpha * 0.25f);
+                    }
+                }
+                if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) saveTaps.push_back({ax, ay, bx, by, kTapSaveFile + k});
+            }
+            for (const auto& [joint, fig, id, on] : {std::tuple<const char*, const char*, int, bool>{"call_ttlDataCopy", "ttldatacopy", kTapSaveCopy, m.mode == 1 || m.mode == 2},
+                                                     {"call_ttlDatadelete", "ttldatadelete", kTapSaveDelete, m.mode == 3}}) {
+                if (!cr3UiCall(file, joint, cx, cy)) continue;
+                UiFig& b = cr3UiPut(fig, "", float(on ? 1 : 0) / 30, cx, cy, view);
+                if (cr3UiCall(b, "tapAreaS01", ax, ay) && cr3UiCall(b, "tapAreaE01", bx, by)) saveTaps.push_back({ax, ay, bx, by, id});
+            }
+        }
+        // (the header's coins and ML, the footer's team level and name: the picked file's - SetHeaderCOIN ..)
+        const auto keepCoins = game.cr3Coins;
+        const auto keepMoney = game.cr3Money;
+        const int keepLevel = game.cr3TeamLevel;
+        const std::string keepTeam = game.cr3Names["team"];
+        game.cr3Coins = picked ? picked->state.cr3Coins : 0, game.cr3Money = picked ? picked->state.cr3Money : 0;
+        game.cr3TeamLevel = picked ? picked->state.cr3TeamLevel : 0;
+        const auto tn = picked ? picked->state.cr3Names.find("team") : game.cr3Names.end();
+        game.cr3Names["team"] = picked && tn != picked->state.cr3Names.end() ? tn->second : std::string();
+        drawCr3Header(m.since, 0x26, menuAnnounce(m.mode == 0 ? 0x311 : m.mode == 1 ? 0x309 : m.mode == 2 ? 0x30a : 0x30c), w, h, view);
+        std::vector<Cr3GeneLabTap> keep;
+        keep.swap(cr3CampTaps);
+        drawCr3CampFooter(w, h, view);
+        for (const Cr3GeneLabTap& t : cr3CampTaps) saveTaps.push_back(t);
+        keep.swap(cr3CampTaps);
+        game.cr3Coins = keepCoins, game.cr3Money = keepMoney, game.cr3TeamLevel = keepLevel, game.cr3Names["team"] = keepTeam;
+        if (m.ask) { // (SetBasicYNChoiceWindow: 0x308 / 0x30b / 0x30d / 0x30e, "{number}" the file's two digits)
+            std::string ask = menuAnnounce(m.ask == 1 ? 0x308 : m.ask == 2 ? 0x30b : m.ask == 3 ? 0x30d : 0x30e);
+            char nb[8];
+            std::snprintf(nb, sizeof nb, "%02d", m.askSlot + 1);
+            if (const size_t at = ask.find("{number}"); at != std::string::npos) ask.replace(at, 8, nb);
+            saveTaps.clear();
+            drawCr3Asked(ask, m.askSince, 0, true, kTapSaveYes, kTapSaveNo, w, h, view, &saveTaps);
+        }
+    }
+
     // ---- the world select (EventRuntime::WorldSelect: WorldSelectMenu 0x2b) ----
     // The planet - t0100star01 (the earth, its cloud and earth_eff: SetJointWorldTransform'd scale
     // 2.3 x the zoom, turned by the pitch about X after the yaw about Y; the cloud by its own yaw
@@ -23086,10 +23400,11 @@ struct Viewer {
                     if (k < int(members.size())) {
                         const int gk = game.wornGene(members[size_t(k)]);
                         float gx, gy;
-                        if (gk >= 0 && cr3UiCall(party, "call_GeneCard", gx, gy)) {
+                        if (gk >= 0 && cr3UiCall(party, "call_VsMainPC", gx, gy)) { // (VsModeCharaPanel::Pose: the card - 4.6 x - at call_VsMainPC, the face at call_GeneCard)
                             dev->clearDepth();
-                            drawCr3Card(game.cr3Genes[size_t(gk)].master, gx, gy, 1.0f, 2.5f, view);
+                            drawCr3Card(game.cr3Genes[size_t(gk)].master, gx, gy, 1.0f, 4.6f, view);
                         }
+                        if (cr3UiCall(party, "call_GeneCard", gx, gy)) cr3UiPut("vsmainpc", "", float(members[size_t(k)] - 1) / 30, gx, gy, view);
                         if (gk >= 0 && game.cr3Db) {
                             const cr3::Cr3Gene& g = game.cr3Genes[size_t(gk)];
                             const std::array<int, 6> st = game.cr3Db->geneStats(g);
@@ -25074,6 +25389,7 @@ int main(int argc, char** argv) {
                         v.cr3CampKey(k);
                         continue;
                     }
+                    if (v.saveMenuKey(k)) continue; // (CR3's save files)
                     if (v.cr3Title.stage == 2 && v.cr3Camp.stage == 0 && (k == SDLK_O || k == SDLK_G)) { // (the title's Options)
                         v.openCr3OptionsFrom(1);
                         continue;
@@ -25232,6 +25548,8 @@ int main(int argc, char** argv) {
                     screenFraction(e.button.x, e.button.y, fx, fy);
                     if (v.overFast(fx, fy)) v.fastHeld = true; // (the fast-forward button: held, not a tap)
                     else if (v.cr3OptionsClick(fx, fy)) {} // (CR3-U's Options over the title or a battle; the title's button)
+                    else if (v.saveMenuClick(fx, fy)) {} // (CR3's save files)
+                    else if (v.cr3Title.stage == 2) v.tap(); // (CR3's title: a click anywhere is its tap)
                     else if (v.titleMenu.stage) v.titleClick(fx, fy);
                     else if (v.geneGetTap()) {}
                     else if (v.collectClick(fx, fy)) {}

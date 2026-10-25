@@ -168,6 +168,27 @@ left from a field goes back to that field (Fld2Main::SM_Init: Cr3FieldData, as F
 only a pop point or a map jump changes it), whatever map the vista used: quest 76's last scene is
 in e0007f but the field it returns to is d1008, whose evt000 then announces the quest.
 
+The save files (TitleMenuMain 3, CreateSaveFileMenu - SaveFileMenu, after every tap - the port has
+no news or mode select there yet): three files over the reel - `ttlDataPositon` on its `_in`; at
+`call_ttlDataFile` `ttlDataSave01`..`03` (frame 1 the one picked, `ttlDataOk` on it - frame 1 a
+copy's source, 2 where to -; 0 a file, 2 none, its own art "NEW GAME"), their `ttlDataTxt` ("File
+%02d" 0x312 at `typeM_L01`, 0x2c7 at L02, the play time `%4d:%02d` at R03, the hero's name at C04,
+size 0x18; `ttlDataStar_fr00` the stars), `ttlDataCopy` and `ttlDatadelete` (frame 1 while
+theirs); at `call_ttlDataParty` the picked file's chapter (`ttlDataTitle01`..`05` at
+`call_ttlDataTitle`, that frame) and its party's three (VsModeCharaPanel at
+`call_VsMainParty_01`..`03`: the gene's CardModel, 4.6 x, at `call_VsMainPC` - the face `VsMainPC`
+at `call_GeneCard`, the names the other way round -, the gene's level, the character's most HP and
+its MP). The header 0x26 with the picked file's coins and ML, its line 0x311 (0x309 / 0x30a copying,
+0x30c deleting); the footer the file's team level and name, the back - the title again. The chapter
+and stars: MbSaveFileInfo (a table in the executable, 34 rows: id, flag, chapter, stars) - flags
+701 .. 733 the chapters 0 .. 32 (stars 0 for 701 .. 709, 1 to 717, 2 to 722, 3 to 732, 4), 6458
+five. Tapped, a file is picked (`com_002`); again, asked (0x308 `{number}`), yes - played
+(`utils::LoadData(n)`: none there, a new game in it, saved there - CR3-U's `save<n>.txt`). Copy: a
+file, then an empty one (0x30b; `com_011`); Delete: a file (0x30d, then 0x30e; `com_012`). The
+names entered (hero, team, pet, food) are the game's - CrxGameData's, saved with it (`cr3name`
+lines). `--input save:<1..3>` / `copy` / `delete` / `yes` / `no` / `back`; a script going on past
+`title:tap` without them plays file 1.
+
 The prologue's story on (part 1 of the reference, 354 - 712 s): d0102's event box `evt101_00`
 (flag 2001 on, 2002 off: sets 2002) plays `s000_d01_00401_evt` - the first battle, then
 `00601_evt`; SetVistaToField (Cr3System.SetComeFromVistaToField: Cr3FieldData +0x10 = 2) puts the
