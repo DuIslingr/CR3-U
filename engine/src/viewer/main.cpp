@@ -2584,6 +2584,7 @@ struct Viewer {
                     break;
                 }
         }
+        stepKeyBuy(dt);
         if (!inputScript.empty() && inputScript.front() == "questok" && clearQuestShown() && activeEvents()->clearQuestAge() > 0.5f) { // (--input: the cleared quest's OK)
             answerClearQuest();
             inputScript.pop_front();
@@ -22647,6 +22648,148 @@ struct Viewer {
         }
         return out;
     }
+    // The gold key shop (EventRuntime::keyBuyShown - FieldBuyMenu, interface 0xcd): asked first
+    // (SetBasicYNChoiceWindow: AnnounceMenuName 0x23b - {itemname} the key's, {coin} the coins held);
+    // yes, how many (CampItemNumberSelect's reels, the price in coins for them and the keys held -
+    // up to what's held room for, GetBuyCanItemNumbers - with CreateShopBuySelectYN's question 0x248),
+    // OK only within the coins; yes, BuyGoods(shop "com_1", the key's goods, n) and com_024; no or
+    // back, closed - nothing bought
+    struct Cr3KeyBuy {
+        int stage = 0; // 0 none, 1 asked, 2 how many
+        float since = 0;
+        int amount = 1;
+        bool wasShown = false;
+    } keyBuy;
+    std::vector<Cr3GeneLabTap> keyBuyTaps;
+    static constexpr int kTapKeyYes = 1201, kTapKeyNo = 1202, kTapKeyReel = 1210;
+    bool keyGoods(VsGoods& out) {
+        const int key = game.cr3Db ? game.cr3Db->constant("GOLDKEY_MASTER_ID", 400005) : 400005;
+        for (const VsGoods& g : vsShopGoods())
+            if (g.item == key) return out = g, true;
+        return false;
+    }
+    int keysRoom() const {
+        const int key = game.cr3Db ? game.cr3Db->constant("GOLDKEY_MASTER_ID", 400005) : 400005;
+        const auto held = game.cr3Items.find(key);
+        return std::max(99 - (held != game.cr3Items.end() ? held->second : 0), 0);
+    }
+    void stepKeyBuy(float dt) {
+        cr3::EventRuntime* ev = activeEvents();
+        const bool shown = ev && ev->keyBuyShown();
+        if (shown && !keyBuy.wasShown) keyBuy = Cr3KeyBuy{1, 0, 1, true};
+        if (!shown) keyBuy.stage = 0;
+        keyBuy.wasShown = shown;
+        if (keyBuy.stage) keyBuy.since += dt;
+        if (keyBuy.stage && !inputScript.empty() && keyBuy.since > 0.5f) { // (--input key:yes / key:no / key:<n>)
+            const std::string t = inputScript.front();
+            if (t == "key:yes") inputScript.pop_front(), chooseKeyBuy(kTapKeyYes);
+            else if (t == "key:no") inputScript.pop_front(), chooseKeyBuy(kTapKeyNo);
+            else if (t.compare(0, 4, "key:") == 0 && keyBuy.stage == 2) inputScript.pop_front(), keyBuy.amount = std::clamp(std::atoi(t.c_str() + 4), 0, 99);
+        }
+    }
+    void chooseKeyBuy(int id) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || !keyBuy.stage) return;
+        VsGoods g;
+        const bool have = keyGoods(g);
+        if (id >= kTapKeyReel && id < kTapKeyReel + 4) { // (a reel: tens or ones, up or down)
+            const int step = (id - kTapKeyReel) / 2 == 0 ? 10 : 1;
+            keyBuy.amount = std::clamp(keyBuy.amount + ((id - kTapKeyReel) % 2 == 0 ? step : -step), 0, 99);
+            audio.playSe("com_002", false);
+            return;
+        }
+        if (id == kTapKeyNo) {
+            audio.playSe("com_004", false);
+            ev->answerKeyBuy();
+            return;
+        }
+        if (id != kTapKeyYes) return;
+        if (keyBuy.stage == 1) {
+            audio.playSe("com_003", false);
+            keyBuy.stage = 2, keyBuy.since = 0, keyBuy.amount = 1;
+            return;
+        }
+        const int n = keyBuy.amount;
+        if (!have || n < 1 || n > keysRoom() || long(g.coin) * n > game.cr3Coins) return void(audio.playSe("com_004", false));
+        const int shop = game.cr3Db ? game.cr3Db->findShop("com_1") : -1;
+        const int r = shop >= 0 ? game.cr3Db->buyGoods(game, shop, g.id, n) : -1;
+        if (r == cr3::kDbOk) audio.playSe("com_024", false);
+        SDL_Log("key shop: %d gold keys -> %d", n, r);
+        ev->answerKeyBuy();
+    }
+    void drawKeyBuy(int w, int h) {
+        keyBuyTaps.clear();
+        if (!keyBuy.stage) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        VsGoods g;
+        const bool have = keyGoods(g);
+        const std::string name = cr3ItemText(have ? g.item : 400005, false);
+        if (keyBuy.stage == 1) {
+            std::string ask = menuAnnounce(0x23b);
+            for (const auto& [key, value] : {std::pair<const char*, std::string>{"{itemname}", name}, {"{coin}", std::to_string(game.cr3Coins)}})
+                if (const size_t at = ask.find(key); at != std::string::npos) ask.replace(at, std::strlen(key), value);
+            drawCr3Asked(ask, keyBuy.since, 0, true, kTapKeyYes, kTapKeyNo, w, h, view, &keyBuyTaps);
+            return;
+        }
+        float x, y, cx, cy, ax, ay, bx, by;
+        UiFig& pos = cr3UiPut("camitemposition", "camitemposition_io", keyBuy.since, 0, 0, view);
+        if (cr3UiCall(pos, "ragdoll_call_camItemReelMenu", x, y, w, h)) {
+            UiFig& reel = uiFig("camitemreelmenu");
+            reel.fig.place = cr3::Mat34();
+            reel.fig.place.m[3] = x, reel.fig.place.m[7] = y;
+            poseUi(reel, "camitemreelmenu", 0);
+            reel.fig.tint[3] = 1;
+            const int digits[2] = {keyBuy.amount / 10 % 10, keyBuy.amount % 10};
+            for (int c = 0; c < 2; ++c) { // (the reels' numbers: their UV scrolled to the digit)
+                float v = 0.14f * float(2 - digits[c]);
+                while (v > 0.7f) v -= 1.4f;
+                while (v <= -0.7f) v += 1.4f;
+                const std::string a = "mat_num_0" + std::to_string(1 + 2 * c), b = "mat_num_0" + std::to_string(2 + 2 * c);
+                for (ViewMesh& vm : reel.fig.meshes) {
+                    const uint32_t mi = vm.source.material;
+                    if (mi >= reel.materials.size()) continue;
+                    if (reel.materials[mi] == a) vm.material.params[0x5e] = {0.0f, v};
+                    if (reel.materials[mi] == b) vm.material.params[0x5e] = {0.13f, v < 0 ? v + 0.7f : v - 0.7f};
+                }
+            }
+            drawFigure(reel.fig, view.data());
+            for (int c = 0; c < 2; ++c) {
+                if (!cr3UiCall(reel, "tapAreaS0" + std::to_string(c + 1), ax, ay) || !cr3UiCall(reel, "tapAreaE0" + std::to_string(c + 1), bx, by)) continue;
+                const float mid = (ay + by) / 2;
+                keyBuyTaps.push_back({ax, ay, bx, mid, kTapKeyReel + 2 * c});
+                keyBuyTaps.push_back({ax, mid, bx, by, kTapKeyReel + 1 + 2 * c});
+            }
+        }
+        if (cr3UiCall(pos, "ragdoll_call_camItemStockPriceMenu", x, y, w, h)) {
+            UiFig& sp = cr3UiPut("camitemstockpricemenu", "", 0, x, y, view);
+            if (cr3UiCall(sp, "call_camItemPrice_num00", cx, cy))
+                cr3UiDigits(cr3UiPut("camitemprice_num00", "", 0, cx, cy, view), "call_camItemNum_fr00", "camitemnum_fr00", long(g.coin) * keyBuy.amount, 7, 0, view);
+            if (cr3UiCall(sp, "call_camItemStock_num00", cx, cy))
+                cr3UiDigits(cr3UiPut("camitemstock_num00", "", 0, cx, cy, view), "call_camItemNum_fr00", "camitemnum_fr00", 99 - keysRoom(), 3, 0, view);
+        }
+        std::string ask = menuAnnounce(0x248);
+        for (const auto& [key, value] : {std::pair<const char*, std::string>{"{itemname}", name}, {"{currency}", menuAnnounce(0x249)},
+                                         {"{num}", std::to_string(keyBuy.amount)}, {"{price}", std::to_string(long(g.coin) * keyBuy.amount)}})
+            if (const size_t at = ask.find(key); at != std::string::npos) ask.replace(at, std::strlen(key), value);
+        const bool yesOn = have && keyBuy.amount >= 1 && keyBuy.amount <= keysRoom() && long(g.coin) * keyBuy.amount <= game.cr3Coins;
+        drawCr3Asked(ask, keyBuy.since, 0, yesOn, kTapKeyYes, kTapKeyNo, w, h, view, &keyBuyTaps);
+    }
+    bool keyBuyClick(float fx, float fy) {
+        if (!keyBuy.stage) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = keyBuyTaps.rbegin(); it != keyBuyTaps.rend(); ++it)
+            if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
+                chooseKeyBuy(it->id);
+                break;
+            }
+        return true;
+    }
     void drawVsShop(int w, int h, const Mat4& view) {
         float x, y, cx, cy;
         const std::vector<VsGoods> goods = vsShopGoods();
@@ -23709,7 +23852,7 @@ struct Viewer {
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)
             Viewer* v; cr3::EventRuntime* ev;
-            ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawLevelUp(*ev, v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
+            ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawLevelUp(*ev, v->screenW, v->screenH), v->drawKeyBuy(v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
         } yesNoLast{this, ev};
         if (ev->effectLine) { // (BattleEffectTypeBMenu: radiate_loop, scaled aspect / 1.5 - or 1.5 / aspect - across)
             Mat4 camera = cr3::mat4Identity();
@@ -24784,6 +24927,13 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     if (v.cr3BattleMode && v.cr3BattleKey(k)) continue; // (CR3's battle menus)
+                    if (v.keyBuy.stage) { // (the gold key shop: Return yes, Backspace no, up / down one more or less)
+                        if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_Y) v.chooseKeyBuy(v.kTapKeyYes);
+                        else if (k == SDLK_BACKSPACE || k == SDLK_ESCAPE || k == SDLK_N) v.chooseKeyBuy(v.kTapKeyNo);
+                        else if (k == SDLK_UP) v.chooseKeyBuy(v.kTapKeyReel + 2);
+                        else if (k == SDLK_DOWN) v.chooseKeyBuy(v.kTapKeyReel + 3);
+                        continue;
+                    }
                     if (v.clearQuestShown()) { // (the cleared quest's detail: Return its OK)
                         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) v.answerClearQuest();
                         continue;
@@ -24892,6 +25042,7 @@ int main(int argc, char** argv) {
                     else if (v.yesNoClick(fx, fy)) {}
                     else if (v.choiceClick(fx, fy)) {}
                     else if (v.clearQuestClick(fx, fy)) {}
+                    else if (v.keyBuyClick(fx, fy)) {}
                     else if (v.lunchClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
                     else if (v.spacePortClick(fx, fy)) {}

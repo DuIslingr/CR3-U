@@ -492,6 +492,11 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         levelUpAge_ = 0, levelUpSeconds_ = seconds;
     });
     vm.setNative("InterfaceWindow", "CheckAliveLevelUpMenu", [this](NativeCall& c) { c.result(levelUpAge_ >= 0); });
+    // The gold key shop (InterfaceWindow.CreateFieldKeyBuyMenu - FieldBuyMenu, interface 0xcd, for
+    // GOLDKEY_MASTER_ID: a gold box tapped without a key): GetAliveFieldKeyBuyMenu true until it's done
+    // (answerKeyBuy - the viewer's -, or with askYesNo and autoPage a second after that long, nothing bought)
+    vm.setNative("InterfaceWindow", "CreateFieldKeyBuyMenu", [this](NativeCall&) { keyBuyAge_ = 0; });
+    vm.setNative("InterfaceWindow", "GetAliveFieldKeyBuyMenu", [this](NativeCall& c) { c.result(keyBuyAge_ >= 0); });
     // Cr3System.GetPlatform (platform::GetPlatform): 1 the iOS game, 2 Android's - quest 273 says
     // its notice by it (AnnounceField 34 or 113). The Vita's taken as iOS's
     vm.setNative("Cr3System", "GetPlatform", [this](NativeCall& c) { c.result(archive_.kind() == MvglArchive::Kind::Android ? 2 : 1); });
@@ -792,6 +797,7 @@ bool EventRuntime::update(ScriptVM* vm) {
     else if (choiceKind_ && choiceAnswer_ >= 0 && choiceClosing_ < 0) choiceAge_ += kTick;
     if (choiceKind_ && choiceClosing_ >= 0 && (choiceClosing_ += kTick) >= choiceCloseSeconds_) choiceKind_ = 0, choiceClosing_ = -1;
     if (levelUpAge_ >= 0 && (levelUpAge_ += kTick) >= levelUpSeconds_) levelUpAge_ = -1;
+    if (keyBuyAge_ >= 0 && (keyBuyAge_ += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) keyBuyAge_ = -1;
     if (clearQuest_ > 0 && (clearQuestAge_ += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) clearQuest_ = 0; // (pages by themselves: its OK)
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
     if (geneGet_.open && (geneGet_.age += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) geneGet_.open = false; // (pages by themselves: a tap)

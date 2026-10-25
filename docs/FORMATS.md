@@ -2085,8 +2085,11 @@ is the one being opened (`SetOpenBox`: `Cr3GimmickData.GetOpenBoxName`, `GetItem
 `{item.count}`, 0x12 `{gold}`; the name item_name.mbe's) or `OpenGBox` (a gold key, `GOLDKEY_
 MASTER_ID`: `OpenGBoxRequest` - `DBSystem::OpenGBox(dungeon - 6, d16 - 7)`, `DBEmu::OpenItemSheet`
 with the key - then `OpenGBox(true)`: the dungeon's collection shown with the prize marked,
-`Fld2Main::SM_OpenGBox`; no key: AnnounceField 47 and the key shop, `CreateFieldKeyBuyMenu` - not
-here yet). iOS's `utils::FilterMessage` fills `{goldkey}` with the keys held. The draw is not
+`Fld2Main::SM_OpenGBox`; no key: AnnounceField 47 and the key shop, `CreateFieldKeyBuyMenu` -
+`FieldBuyMenu`, interface 0xcd: AnnounceMenuName 0x23b asked (`{itemname}`, `{coin}` the coins
+held), yes - how many on `CampItemNumberSelect`'s reels with the price in coins and the keys held,
+`CreateShopBuySelectYN`'s 0x248, OK within the coins and the 99 held - then `BuyGoods` from shop
+`com_1`; `GetAliveFieldKeyBuyMenu` until it's done; `--input key:yes` / `key:no` / `key:<n>`). iOS's `utils::FilterMessage` fills `{goldkey}` with the keys held. The draw is not
 saved (the field draws again as it's set up). `GetCollectCount` / `GetCollectMaxCount(sheet)`: its
 entries won / with a prize. Window 7 in CR3 is `GetItemMenu` (`EvtItemWindow` -
 `SetGetItemWindowParameter`, interface 5): `feGetPosition`, `feGetMenu` at `call_feGetMenu` on
