@@ -1,6 +1,7 @@
 #include "assets/release.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -62,16 +63,28 @@ std::vector<std::string> filesIn(const std::string& dir) {
 
 std::string resolveArchive(const std::string& path) { return path; } // (Database::open finds the release in it)
 
+// a game folder something was put in (the release's own come with a README.txt each - those
+// alone, or a dot file, are none)
+static bool holdsCopy(const std::string& dir) {
+    std::error_code ec;
+    for (const fs::directory_entry& e : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
+        std::string n = e.path().filename().string();
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (n != "readme.txt" && !n.empty() && n[0] != '.') return true;
+    }
+    return false;
+}
+
 std::string defaultArchive(const std::vector<std::string>& places) {
     std::error_code ec;
     if (const char* env = std::getenv("CR3_DATA"); env && *env) return env;
-    // vita/, then android/, then ios/ in each game folder (Database::open finds the release under
-    // it, however deep), then the older places
+    // vita/, then android/, then ios/ in each game folder - the first with a copy in it
+    // (Database::open finds the release under it, however deep) -, then the older places
     for (const char* kind : {"vita", "android", "ios"})
         for (std::string base : places) {
             if (base.empty()) continue;
             if (base.back() != '/' && base.back() != '\\') base += '/';
-            if (fs::is_directory(base + kind, ec)) return base + kind;
+            if (fs::is_directory(base + kind, ec) && holdsCopy(base + kind)) return base + kind;
         }
     for (std::string base : places) {
         if (base.empty()) continue;
