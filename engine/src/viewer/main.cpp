@@ -24903,15 +24903,16 @@ int main(int argc, char** argv) {
     if (data.empty()) { // (CR3_DATA, else a copy in a game folder: vita/, android/, ios/ ...)
         searched = dataPlaces();
         data = cr3::defaultArchive(searched);
-        if (data.empty()) data = storedSetting("data="); // (the first start's setup's: an Android or Vita copy where it lies)
+        if (data.empty()) data = storedSetting("data="); // (an older setup's: an Android or Vita copy where it lay)
     }
     data = cr3::resolveArchive(data); // (a folder: the OBB or the CRDB.*.mvgl in it, a Vita copy's PCSG00498 ...)
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
-    if (data.empty() && argc <= 1 && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp)
+    if (data.empty() && (argc <= 1 || cr3::setupScripted()) && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp)
         SDL_Init(SDL_INIT_VIDEO); // (its message boxes and the system's dialogs)
         cr3::SetupGame setup;
         setup.title = "Chaos Rings III", setup.port = "CR3-U", setup.vitaId = "PCSG00500", setup.trilogyDir = "CR3";
         setup.obbHint = "asset packs (the .apks has them all)";
+        setup.package = "com.square_enix.chaosrings3gp";
         setup.oneRelease = true; // (one copy is the game)
         auto releaseIs = [](const std::string& p, cr3::Database::Kind kind) {
             cr3::Database db;
@@ -24925,14 +24926,14 @@ int main(int argc, char** argv) {
             return db.addOverlay(p);
         };
         std::string profile;
-        if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = std::string(pref) + "ios/", SDL_free(pref);
+        if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = pref, SDL_free(pref);
         cr3::SetupResult got;
-        if (!cr3::runSetup(setup, searched.empty() ? profile : searched.front() + "ios/", profile, got)) return 0;
-        const std::string pick = !got.ios.empty() ? got.ios : !got.android.empty() ? got.android : got.vita;
-        if (got.ios.empty()) storeSetting("data=", pick); // (the .ipa's is found in ios/ again; the others where they are)
-        storeSetting("patch=", got.patch);
-        data = cr3::resolveArchive(pick);
-        SDL_Log("setup: %s%s", data.c_str(), got.patch.empty() ? "" : (" with " + got.patch).c_str());
+        if (!cr3::runSetup(setup, searched.empty() ? profile : searched.front(), profile, got)) return 0;
+        // (copied into the game folder - ios/, android/, vita/, translation/ -: found as on any start)
+        data = cr3::resolveArchive(cr3::defaultArchive(dataPlaces()));
+        SDL_Log("setup: iOS %s, Android %s, Vita %s, its translation %s - the game: %s", got.ios.c_str(), got.android.c_str(), got.vita.c_str(),
+                got.patch.c_str(), data.c_str());
+        if (cr3::setupScripted()) return data.empty() ? 1 : 0; // (a test's: the setup alone)
     }
 #endif
     if (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
@@ -24980,6 +24981,7 @@ int main(int argc, char** argv) {
         if (!hdFolder.empty() && hdFolder.back() != '/' && hdFolder.back() != '\\') hdFolder += '/';
         // the fan translation (--patch, else translation/ in the game folder: its rePatch/ or PCSG00500/ - for the Vita release)
         if (patch.empty() && isDir(gameFolder + "translation")) patch = gameFolder + "translation", patchFound = true;
+        if (patch.empty() && isDir(Viewer::savePath("translation"))) patch = Viewer::savePath("translation"), patchFound = true; // (the profile folder's: the setup's, where the game folder can't be written)
         if (patch.empty() && !(patch = storedSetting("patch=")).empty()) patchFound = true; // (the first start's setup's)
     }
     Viewer v;

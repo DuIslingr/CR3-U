@@ -80,19 +80,21 @@ An encrypted Vita dump (NoNpDrm, still PFS-encrypted) has to be installed first 
 
 ## Your copy
 
-The easiest way: just start the program. With no copy found, it asks where yours is (one copy is
-the game: the first given is used) - pick it in the window it opens, and it takes the files from there:
+The easiest way: just start the program. With no copy found, it asks where yours is - pick it in
+the window it opens, and the files the port needs are **copied into the game folder** (the profile
+folder's if that one can't be written), the same layout as putting them there by hand (below):
 
-- **iOS** - the `.ipa` (or any file in its unpacked `.app`): unpacked into `ios/` in the game folder
-  (the profile folder's if that one can't be written), found there from then on;
-- **Android** - the `.apks` (or the `base.apk` with its asset packs): read where it is;
-- **Vita** - Vita3K's folder (its own, the folder its `config.yml` names as `pref-path`, or `ux0`)
-  or the game's own `PCSG00500` folder (the Prequel Trilogy's `PCSG00457` too): read where it is -
-  then its fan translation (the `rePatch` folder): Vita3K's `ux0/rePatch/PCSG00500` by itself, else
-  asked for, or left out.
+- **iOS** - the `.ipa` (or any file in its unpacked `.app`): unpacked into `ios/`;
+- **Android** - the `.apks` (or the `base.apk` with its asset packs, all at once): copied into `android/`
+  (an APK beside them that carries the game's package goes along; another game's is refused);
+- **Vita** - Vita3K's folder with the game installed (its own, the folder its `config.yml` names as
+  `pref-path`, or `ux0`), or the game's own `PCSG00500` folder: copied into `vita/PCSG00500/` as Vita3K installs
+  it (`eboot.bin`, `sce_sys/`, the game's folder); the Prequel Trilogy's `PCSG00457` too (into `vita/PCSG00457/`,
+  without the other games) - then its fan translation (the `rePatch` folder: Vita3K's
+  `ux0/rePatch/PCSG00500` by itself, else asked for, or left out) into `translation/PCSG00500/`.
 
-The Android and Vita copies and the translation are remembered in `settings.ini` (in the profile
-folder: `data=`, `patch=`). (Windows, Linux and macOS; on Android, copy the files over USB as below.)
+One copy is the game: the first given starts it. Nothing is read where it was chosen, so the folder it came from can go
+afterwards. (Windows, Linux and macOS; on Android, copy the files over USB as below.)
 
 Or, as before, nothing given on the command line: put your copy in the **game folder** and start
 the program - it finds it by itself. The game folder is:
