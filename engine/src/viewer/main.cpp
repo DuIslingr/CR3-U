@@ -10768,8 +10768,7 @@ struct Viewer {
     bool cr3TitleTap() {
         Cr3Title& t = cr3Title;
         if (t.stage != 2) return true;
-        audio.playSe("com_001", false);
-        audio.stopBgm(15); // (TitleMain: StopBgm 0.5 s)
+        audio.playSe("com_001", false); // (TitleMenuMain 2: the SE alone - the music plays on over the save files)
         t.stage = 3, t.stageClock = 0;
         return true;
     }
@@ -19107,6 +19106,7 @@ struct Viewer {
                     audio.playSe("com_001", false);
                     m.ask = 0, cr3SaveSlot = m.askSlot + 1;
                     cr3Title.stage = 5, cr3Title.stageClock = 0;
+                    audio.stopBgm(15); // (TitleMain: StopBgm 0.5 s - the title's music out as the game starts)
                     SDL_Log("title: file %d", cr3SaveSlot);
                     return;
                 }
@@ -24995,6 +24995,7 @@ int main(int argc, char** argv) {
         if (capture.empty() && !exportTextures && !exportModels) {
             v.settingsPersist = true;
             v.loadSettings();
+            if (!given("--page")) page = 0; // (played: a page waits for a tap, as the game's - --page n turns them by themselves, its voice heard out)
             if (!given("--renderer")) renderer = s.renderer ? "opengl" : "vulkan";
             if (!given("--fps")) fps = s.fps;
             if (!given("--resolution")) resW = kResolutions[s.resolution][0], resH = kResolutions[s.resolution][1];

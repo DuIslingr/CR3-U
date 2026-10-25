@@ -172,6 +172,7 @@ struct SoundHooks {
     std::function<int(const std::string& name)> playVoiceNamed;
     std::function<bool(const std::string& name)> playingNamed;
     std::function<int()> bgmNo;
+    std::function<bool()> voicePlaying; // (a voice still speaking: a page turning by itself waits for it)
 };
 SoundHooks& soundHooks();
 

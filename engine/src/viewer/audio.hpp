@@ -31,6 +31,7 @@ public:
     int playSe(const std::string& name, bool loop, int fadeInFrames = 0);
     void stopSe(const std::string& name, int fadeFrames); // (every slot playing it)
     bool playingNamed(const std::string& name) const;  // (an effect or a voice)
+    bool voicePlaying() const;                          // (any voice still speaking - silent ones by their length)
     int playVoice(const std::string& name);
     void close();
     // every frame: the music's stream topped up, fades on by `dt`, finished clips freed

@@ -63,6 +63,7 @@ bool AudioPlayer::openCr3(const Cr3Sound& sound, bool device, std::string* error
     h.playVoiceNamed = [this](const std::string& n) { return playVoice(n); };
     h.playingNamed = [this](const std::string& n) { return playingNamed(n); };
     h.bgmNo = [this] { return bgmPlaying_ ? track_ : -1; };
+    h.voicePlaying = [this] { return voicePlaying(); };
     return ok;
 }
 
@@ -80,6 +81,7 @@ bool AudioPlayer::open(const std::string& archivePath, bool device, std::string*
     h.stopAllSe = [this](int f) { stopAllSe(f); };
     h.playVoice = [this](int c) { return playVoice(c); };
     h.stopAllVoices = [this](int f) { stopAllVoices(f); };
+    h.voicePlaying = [this] { return voicePlaying(); };
     return true;
 }
 
@@ -247,6 +249,12 @@ void AudioPlayer::stopSe(const std::string& name, int fadeFrames) {
         if (slots_[size_t(k)].active && slots_[size_t(k)].name == name) stopSe(k, fadeFrames);
 }
 
+bool AudioPlayer::voicePlaying() const {
+    for (const Voice& v : slots_)
+        if (v.active && v.voice && !v.loop) return true;
+    return false;
+}
+
 bool AudioPlayer::playingNamed(const std::string& name) const {
     for (const Voice& v : slots_)
         if (v.active && v.name == name) return true;
@@ -260,6 +268,7 @@ int AudioPlayer::playVoice(const std::string& name) {
     Cr3Sound::Clip c;
     std::string err;
     if (!cr3_->voice(name, c, &err)) return SDL_Log("sound: voice %s - %s", name.c_str(), err.c_str()), -1;
+    SDL_LogDebug(SDL_LOG_CATEGORY_AUDIO, "sound: voice %s %.2f s", name.c_str(), c.rate && c.channels ? double(c.pcm.size()) / c.rate / c.channels : 0.0);
     for (int k = kEffectSlots; k < kEffectSlots + kVoiceSlots; ++k)
         if (!slots_[size_t(k)].active) {
             startPcm(slots_[size_t(k)], std::move(c.pcm), c.rate, c.channels, false, true);

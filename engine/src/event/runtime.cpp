@@ -792,6 +792,9 @@ std::string EventRuntime::where() const { return vm_ ? vm_->where() : std::strin
 
 bool EventRuntime::tick() { return update(vm_.get()); }
 
+// a page's voice still speaking (a page turning by itself waits for it - the game's wait for a tap)
+static bool voiceSpeaking() { return soundHooks().voicePlaying && soundHooks().voicePlaying(); }
+
 bool EventRuntime::update(ScriptVM* vm) {
     ++frame_;
     scene_.update(kTick);
@@ -805,9 +808,9 @@ bool EventRuntime::update(ScriptVM* vm) {
     } else if (message_ > 0 && !typed()) { // (ProvisionalMenuText::Step: speed 1 a drawn frame - the game's 60 a second, two of our updates' worth; the page's time counts once it's typed)
         if (const TextStop* s = held(); !s) revealed_ += 2;
         else if (s->wait > 0 && (stopTime_ += kTick) * 30 >= float(s->wait)) ++stop_, stopTime_ = 0; // (\w: its n in 30ths of a second)
-        else if (s->wait == 0 && autoPage > 0 && (pageTime_ += kTick) >= autoPage) advance(); // (a tap mark: as a page)
+        else if (s->wait == 0 && autoPage > 0 && !voiceSpeaking() && (pageTime_ += kTick) >= autoPage) advance(); // (a tap mark: as a page)
     } else if (message_ > 0 && ending()) message_ = 0, page_ = 0; // (\*: its end by itself)
-    else if ((message_ > 0 || execution_) && autoPage > 0 && (pageTime_ += kTick) >= autoPage) advance();
+    else if ((message_ > 0 || execution_) && autoPage > 0 && !voiceSpeaking() && (pageTime_ += kTick) >= autoPage) advance(); // (its voice heard out first)
     fade_.update(), backFade_.update();
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
