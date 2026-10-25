@@ -2046,6 +2046,32 @@ are hidden - their tap areas only (the menu's `tapAreaS0k`/`E0k` are the same ro
 option's `comBtnEffe` (at its panel's `call_comBtnEffe`) plays to its end before the menu goes
 (`SetParamNumber 2`, `Update`). No dimming. `--input` `choice:<n>` answers one (from 1); keys 1-3.
 
+Message parameters (`EvtWindow.PutParameterI(window, key, n)` / `PutParameterS(window, key, text)`
+- `EvtWindowMessage::PutParameter`, a number as `%d`): the window's next message has each key
+(`{next}`, `{count_A}` ...) replaced, after the names (`FilterMessage`), and then they're gone.
+`CR3_STUBS` also logs a `{key}` left in a message.
+
+The cleared quest's detail (the scripts' `ClearQuestMenu(id)`: `CreateClearQuestDetailMenu(id)` -
+`InterfaceMain::SetClearQuestDetailMenu`, `QuestDitailMenu` as interface 0x7e -, then
+`CheckAliveQuestDetailMenu` until it closes): the quest's detail as the Space Port shows it, its
+clear mark on (`SetParamNumber 8`); its OK closes it (`--input` `questok`, Return). The fast-forward
+window (`CreateFastForwardWindow` / `SetVisibleFastForwardWindow` / `EndDeleteFastForwardWindow`,
+interface 0xd0: a `FastForwardButton`, whose hold `Cr3EvtSkipButtonCheckTouch` counts with the
+skip button's) is the vista's skip button here; `EvtWindow.SetVistaSkipButtonEnable(on)` the
+vista window's own speedUp, as `SetSkipButtonEnable(1, on)`. `Cr3System.CheckPoint`
+(`utils::CheckPoint`): after the event the field syncs (`Fld2Main` state 0xd) - a save here.
+`Cr3FieldMapCharacter.PauseMove` holds the touches' walking for the event (`Fld2TaskTouch::
+SetIsEventPause`; the field lets it go when the event ends) - the port takes none while a script
+runs anyway. `Cr3System.GetPlatform` (`platform::GetPlatform`): 1 on iOS, 2 on Android (quest 273's
+notice: `AnnounceField` 34 or 113). `CheckWeaponFull` / `ArmorFull` / `AccessoryFull`
+(`CrxGameData::IsWeaponFull` ...): more than 94 kinds held besides those the seven wear (quest 56
+is cancelled then). `StartQuake` / `StopQuake` shake a vista as they do the field. Not modelled:
+`Cr3TabMenu.AddTabMenu` / `DelTabMenu` (`Fld2TabMenu::AddTabButton` - the encounters' and battle
+buttons, which the port's panel always has).
+
+Quests 191-197, 399 and 400 are unused: number 0, level -1, flag 6999 needed (never set) - and
+191-197's `quest_check` branches call `q191_t01_00101`, which no script has.
+
 ## Sound
 
 Files `sound\<name>.<ext>` in the sound archives (iOS `CRDBbgm_mNN` / `CRDBse_*` / `CRDBvo_*`,

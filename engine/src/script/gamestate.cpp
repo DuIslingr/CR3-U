@@ -92,6 +92,11 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SavePoint", [&state](NativeCall&) { // (utils::SavePoint: a sync)
         if (state.onSync) state.onSync();
     });
+    // utils::CheckPoint: once the event is over the field syncs (Fld2Main: state 0xd, DBSystem::SM_Sync
+    // - the offline game's save)
+    vm.setNative("Cr3System", "CheckPoint", [&state](NativeCall&) {
+        if (state.onSync) state.onSync();
+    });
     // the day's ticket: utils::CheckTicketReceived (GotTicket) - its Result -, ReceiveTicket
     vm.setNative("Cr3System", "CheckTicketReceived", [&state, &db](NativeCall&) {
         if (db) db->gotTicket(state);
@@ -279,6 +284,20 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         else if (id >= 300000 && id < 400000) state.cr3Accessory[ch] = id - 300000;
     };
     vm.setNative("Cr3System", "ItemSet", [wear](NativeCall& c) { wear(c.integer(0), c.integer(1)); });
+    // utils::CheckWeaponFull / ArmorFull / AccessoryFull (CrxGameData::IsWeaponFull ...): more than 94
+    // kinds held besides those the seven wear - no room for one more (quest 56 cancels then)
+    auto full = [&state](int category, const std::map<int, int>& worn) {
+        int kinds = 0;
+        for (const auto& [id, n] : state.cr3Items)
+            if (id / 100000 == category && n > 0) ++kinds;
+        for (const auto& [ch, id] : worn)
+            if (ch >= 1 && ch <= 7 && id >= 0)
+                if (const auto it = state.cr3Items.find(category * 100000 + id); it != state.cr3Items.end() && it->second > 0) --kinds;
+        return kinds > 94;
+    };
+    vm.setNative("Cr3System", "CheckWeaponFull", [&state, full](NativeCall& c) { c.result(full(1, state.cr3Weapon)); });
+    vm.setNative("Cr3System", "CheckArmorFull", [&state, full](NativeCall& c) { c.result(full(2, state.cr3Armour)); });
+    vm.setNative("Cr3System", "CheckAccessoryFull", [&state, full](NativeCall& c) { c.result(full(3, state.cr3Accessory)); });
     vm.setNative("Cr3System", "ItemGetAndSet", [&state, wear](NativeCall& c) {
         const int id = c.integer(0);
         if (id >= 100000) state.cr3Items[id] = std::min(state.cr3Items[id] + 1, 99);
@@ -346,6 +365,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         for (int k = 0; k < 3; ++k) e.offset[size_t(k)] = c.number(3 + k, 0);
         state.fieldEffects.push_back(e);
     });
+    // (Cr3GimmickData.AllClearFlagMark: FldUtilAllClearFlagMark - empty in the game; Cr3System.
+    // SendFriendMessage: DBSystem::DispatchMessage, the server's - no server here)
+    vm.setNative("Cr3GimmickData", "AllClearFlagMark", [](NativeCall&) {});
+    vm.setNative("Cr3System", "SendFriendMessage", [](NativeCall&) {});
     vm.setNative("Cr3TabMenu", "AddGoodsButton", [&state](NativeCall& c) { state.goodsButtons.insert(c.integer(0)); });
     vm.setNative("Cr3TabMenu", "DelGoodsButton", [&state](NativeCall& c) { state.goodsButtons.erase(c.integer(0)); });
     vm.setNative("Cr3FieldMapEffectResident", "EffectResidentOut", [&state](NativeCall& c) {

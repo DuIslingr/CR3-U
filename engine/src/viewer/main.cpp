@@ -2580,6 +2580,10 @@ struct Viewer {
                     break;
                 }
         }
+        if (!inputScript.empty() && inputScript.front() == "questok" && clearQuestShown() && activeEvents()->clearQuestAge() > 0.5f) { // (--input: the cleared quest's OK)
+            answerClearQuest();
+            inputScript.pop_front();
+        }
         if (!inputScript.empty() && inputScript.front().compare(0, 7, "choice:") == 0 && choiceShown() && activeEvents()->choiceAge() > 0.5f) { // (--input: an event's choice, from 1)
             answerChoice(std::atoi(inputScript.front().c_str() + 7) - 1);
             inputScript.pop_front();
@@ -6451,6 +6455,24 @@ struct Viewer {
         for (int a = 0; a < 3; ++a) c.eye[a] += (c.toEye[a] - c.eye[a]) * k, c.at[a] += (c.toAt[a] - c.at[a]) * k;
         c.left -= dt;
     }
+    // (StartQuake / StopQuake: the field's, and a vista's - QuakeControlTask shakes whatever's drawn)
+    void bindQuakeNatives(cr3::ScriptVM& vm) {
+        vm.setNative("Cr3System", "StartQuake", [this](cr3::NativeCall& c) {
+            fieldQuake.on = true, fieldQuake.width = float(c.number(0)), fieldQuake.from = float(c.number(1)), fieldQuake.to = float(c.number(2));
+            fieldQuake.seconds = std::max(float(c.number(3)), 1.0f) / 30.0f, fieldQuake.time = 0;
+        });
+        vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; });
+    }
+    // (QuakeControlTask::Render: the layer's offset, 640 high - each frame the other way)
+    void applyQuake(Mat4& proj) {
+        if (!fieldQuake.on) return;
+        const float k = fieldQuake.from + (fieldQuake.to - fieldQuake.from) * std::min(fieldQuake.time / std::max(fieldQuake.seconds, 1e-3f), 1.0f);
+        Mat4 shift{};
+        shift[0] = shift[5] = shift[10] = shift[15] = 1;
+        shift[13] = (fieldQuake.parity ? 1.0f : -1.0f) * fieldQuake.width * k * 2.0f / 640.0f;
+        proj = cr3::mat4Multiply(shift, proj);
+        fieldQuake.parity ^= 1;
+    }
     void bindAreaNatives(cr3::ScriptVM& vm) {
         vm.setNative("Cr3FieldMapCamera", "SetScriptCamera", [this](cr3::NativeCall& c) {
             areaScriptCamera({float(c.number(0)), float(c.number(1)), float(c.number(2))}, {float(c.number(3)), float(c.number(4)), float(c.number(5))},
@@ -6465,11 +6487,7 @@ struct Viewer {
                              float(c.number(3)));
         });
         vm.setNative("Cr3FieldMapCamera", "ResetScriptCamera", [this](cr3::NativeCall&) { areaScriptCam = AreaScriptCam(); });
-        vm.setNative("Cr3System", "StartQuake", [this](cr3::NativeCall& c) {
-            fieldQuake.on = true, fieldQuake.width = float(c.number(0)), fieldQuake.from = float(c.number(1)), fieldQuake.to = float(c.number(2));
-            fieldQuake.seconds = std::max(float(c.number(3)), 1.0f) / 30.0f, fieldQuake.time = 0;
-        });
-        vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; });
+        bindQuakeNatives(vm);
         vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { areaMotions[c.string(0)] = c.string(1); });
         vm.setNative("Cr3GimmickData", "NPCIdle2Enable", [this](cr3::NativeCall& c) { // (Fld2SetIdle2Enable)
             for (AreaNpc& npc : areaNpcs)
@@ -7544,14 +7562,7 @@ struct Viewer {
         dev->setCamera(areaCamera.zNear, areaCamera.zFar, fov);
         const Mat4 world = cr3::mat4FromMat34(cw);
         Mat4 proj = perspective(fov, float(w) / float(std::max(h, 1)), areaCamera.zNear, areaCamera.zFar);
-        if (fieldQuake.on) { // (QuakeControlTask::Render: the layer's offset, 640 high)
-            const float k = fieldQuake.from + (fieldQuake.to - fieldQuake.from) * std::min(fieldQuake.time / std::max(fieldQuake.seconds, 1e-3f), 1.0f);
-            Mat4 shift{};
-            shift[0] = shift[5] = shift[10] = shift[15] = 1;
-            shift[13] = (fieldQuake.parity ? 1.0f : -1.0f) * fieldQuake.width * k * 2.0f / 640.0f;
-            proj = cr3::mat4Multiply(shift, proj);
-            fieldQuake.parity ^= 1;
-        }
+        applyQuake(proj);
         const Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
         cr3::SceneLighting l = lighting;
         l.camera[0] = e[0], l.camera[1] = e[1], l.camera[2] = e[2];
@@ -9442,6 +9453,7 @@ struct Viewer {
         vistaMapTime = 0;
         event = std::make_unique<cr3::EventRuntime>(archive, game);
         event->autoPage = pageSeconds, event->askYesNo = true;
+        event->extraNatives = [this](cr3::ScriptVM& vm) { bindQuakeNatives(vm); };
         event->language = optionLanguage; // (the release's language's slot: the Vita's Japanese is 0)
         // CR3: an area script's event, "<script>:<function>" (t01:s000_t01_00101_evt)
         // - a bare one (the next vista's: BranchAfterVista) in the script eventScriptOf finds
@@ -9542,6 +9554,7 @@ struct Viewer {
     // one of the game's updates, the figures following the scene's models
     void stepEvent() {
         if (eventEnded) return;
+        if (fieldQuake.on && (fieldQuake.time += cr3::EventRuntime::kTick) >= fieldQuake.seconds) fieldQuake.on = false; // (the field's own steps it outside a vista)
         if (!event->tick()) {
             SDL_Log("event: %s", event->error().c_str());
             eventEnded = true;
@@ -9757,8 +9770,9 @@ struct Viewer {
             lastCamera = cw;
             dev->setCamera(zn, zf, fov * 3.14159265f / 180);
             const Mat4 world = cr3::mat4FromMat34(cw);
-            const Mat4 vp = cr3::mat4Multiply(perspective(fov * 3.14159265f / 180, float(w) / float(std::max(h, 1)), zn, zf),
-                                              cr3::mat4RigidInverse(world));
+            Mat4 proj = perspective(fov * 3.14159265f / 180, float(w) / float(std::max(h, 1)), zn, zf);
+            applyQuake(proj);
+            const Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
             lastEventVP = vp, lastEventVPSet = true; // (a lunch's balloons: placed through it)
             // VistaMain::Draw: the vista light figure's lights for the map and the models
             cr3::SceneLighting l = lighting;
@@ -18595,7 +18609,7 @@ struct Viewer {
     // the flick arrows (spQstArrow on its _loop at the position's ragdoll_call_spQstArrow -
     // SetQuestDetailMenuChangeButton). Taps: 500 OK (only enabled - CheckOkButtonPermit), 501 / 502
     // the arrows
-    void drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, float t, int w, int h, const Mat4& view, bool okOn = true) {
+    void drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, float t, int w, int h, const Mat4& view, bool okOn = true, bool cleared = false) {
         float x, y, cx, cy, ax, ay, bx, by;
         UiFig& pos = cr3UiPut("spqstposition", "", t, 0, 0, view);
         if (count > 1 && cr3UiCall(pos, "ragdoll_call_spQstArrow", x, y, w, h)) {
@@ -18653,13 +18667,55 @@ struct Viewer {
             UiFig& bar = cr3UiPut("spqstbar", "", 0, cx, cy, view);
             if (cr3UiCall(bar, "call_spQstCursor", cx, cy)) cr3UiPut("spqstcursor", "", 0, cx, cy, view);
         }
-        if (game.cr3Quests.ended.count(q.id) && cr3UiCall(menu, "call_spQstClear", cx, cy)) cr3UiPut("spqstclear", "spqstclear_loop", uiClock, cx, cy, view, 1, true);
+        if ((cleared || game.cr3Quests.ended.count(q.id)) && cr3UiCall(menu, "call_spQstClear", cx, cy)) cr3UiPut("spqstclear", "spqstclear_loop", uiClock, cx, cy, view, 1, true);
         if (cr3UiCall(menu, "call_spQstBtn", cx, cy)) {
             if (!okOn) cr3UiTint[0] = cr3UiTint[1] = 0.549f, cr3UiTint[2] = 0.655f; // (ControlQuestDetailMenuOkButton(false))
             UiFig& btn = cr3UiPut("spqstbtn", "", 0, cx, cy, view);
             cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             if (okOn && cr3UiCall(btn, "tapAreaS01", ax, ay) && cr3UiCall(btn, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 500});
         }
+    }
+    // The cleared quest's detail (EventRuntime::clearQuestShown - ClearQuestMenu): the detail as the
+    // Space Port shows it, its clear mark on, over the event (the script faded the screen out under
+    // it); its OK closes it
+    std::vector<Cr3GeneLabTap> clearQuestTaps;
+    void drawClearQuest(cr3::EventRuntime& ev, int w, int h) {
+        clearQuestTaps.clear();
+        const int id = ev.clearQuestShown();
+        if (id <= 0 || !game.cr3Db) return;
+        const auto& quests = game.cr3Db->quests();
+        const auto q = std::find_if(quests.begin(), quests.end(), [id](const cr3::Cr3OfflineDb::Quest& r) { return r.id == id; });
+        if (q == quests.end()) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        std::vector<Cr3GeneLabTap> keep;
+        keep.swap(cr3CampTaps);
+        drawCr3QuestDetail(*q, 1, std::min(ev.clearQuestAge(), 1.0f), w, h, view, true, true);
+        clearQuestTaps.swap(cr3CampTaps);
+        keep.swap(cr3CampTaps);
+    }
+    void answerClearQuest() {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!ev || ev->clearQuestShown() <= 0) return;
+        audio.playSe("com_003", false);
+        ev->answerClearQuest();
+        SDL_Log("quest clear: OK");
+    }
+    bool clearQuestShown() {
+        cr3::EventRuntime* ev = activeEvents();
+        return ev && ev->clearQuestShown() > 0;
+    }
+    bool clearQuestClick(float fx, float fy) {
+        if (!clearQuestShown()) return false;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (const Cr3GeneLabTap& r : clearQuestTaps)
+            if (r.id == 500 && ux >= std::min(r.x0, r.x1) && ux <= std::max(r.x0, r.x1) && uy >= std::min(r.y0, r.y1) && uy <= std::max(r.y0, r.y1)) answerClearQuest();
+        return true; // (it holds the screen)
     }
     // ---- the world select (EventRuntime::WorldSelect: WorldSelectMenu 0x2b) ----
     // The planet - t0100star01 (the earth, its cloud and earth_eff: SetJointWorldTransform'd scale
@@ -23448,7 +23504,7 @@ struct Viewer {
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)
             Viewer* v; cr3::EventRuntime* ev;
-            ~YesNoLast() { v->dev->clearDepth(), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
+            ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
         } yesNoLast{this, ev};
         if (ev->effectLine) { // (BattleEffectTypeBMenu: radiate_loop, scaled aspect / 1.5 - or 1.5 / aspect - across)
             Mat4 camera = cr3::mat4Identity();
@@ -24522,6 +24578,10 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     if (v.cr3BattleMode && v.cr3BattleKey(k)) continue; // (CR3's battle menus)
+                    if (v.clearQuestShown()) { // (the cleared quest's detail: Return its OK)
+                        if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) v.answerClearQuest();
+                        continue;
+                    }
                     if (v.choiceShown()) { // (an event's choice: 1, 2 or 3)
                         if (k >= SDLK_1 && k <= SDLK_3) v.answerChoice(int(k - SDLK_1));
                         else if (k >= SDLK_KP_1 && k <= SDLK_KP_3) v.answerChoice(int(k - SDLK_KP_1));
@@ -24625,6 +24685,7 @@ int main(int argc, char** argv) {
                     else if (v.collectClick(fx, fy)) {}
                     else if (v.yesNoClick(fx, fy)) {}
                     else if (v.choiceClick(fx, fy)) {}
+                    else if (v.clearQuestClick(fx, fy)) {}
                     else if (v.lunchClick(fx, fy)) {}
                     else if (v.geneLabClick(fx, fy)) {}
                     else if (v.spacePortClick(fx, fy)) {}

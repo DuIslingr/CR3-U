@@ -152,8 +152,8 @@ public:
     // is always on): from ButtonCreate till ButtonDelete, unless ButtonSetVisible(false). Held
     // (CheckButtonTouch: TestApp::onUpdate's), the game runs five updates a frame, the scripts'
     // PlaySE stays quiet and the pages race as the windows' button makes them
-    bool skipButtonShown() const { return skipButton_; }
-    bool skipHeld() const { return fastForward && skipButton_; }
+    bool skipButtonShown() const { return skipButton_ || fastWindow_ == 2; }
+    bool skipHeld() const { return fastForward && skipButtonShown(); }
     bool fastForwardShown() const {
         return message_ > 0 && messageWindow_ >= 0 && messageWindow_ <= 6 && !skipOff_.count(messageWindow_) && !parsed_.noSkip;
     }
@@ -169,6 +169,9 @@ public:
     // Its texts: SetTextDataSelect...Menu's message file, SetTextSelect...Menu's messages in it, a
     // line or two each (SetParamNumber 7: the speaker's tag left out, Cr3UtilNPrint's \n). Once
     // DeleteSelect...Menu is called it stays up - closing - while the tapped button's comBtnEffe plays
+    int clearQuestShown() const { return clearQuest_; } // (CreateClearQuestDetailMenu's quest; 0 none)
+    float clearQuestAge() const { return clearQuestAge_; }
+    void answerClearQuest() { clearQuest_ = 0; }
     int choiceShown() const { return choiceKind_; } // 0 none, 2 or 3 options
     int choiceAnswer() const { return choiceAnswer_; }
     float choiceAge() const { return choiceAge_; }   // (since it opened; once answered, since then)
@@ -195,6 +198,8 @@ public:
     // utils::FilterMessage (both message windows' SetStringData, the name too): {name}, {team},
     // {pet}, {food} the entered names ({goldkey}, a count the port doesn't keep, stays)
     std::string filterMessage(std::string text) const;
+    std::string takeParameters(int window, std::string text); // (PutParameterI / S's, used up)
+    std::string warnKeys(std::string text) const;              // (CR3_STUBS: a {key} left logged)
     int language = 1; // (Cr3UtilOptionLanguage: 1 English)
 
     // The cut-ins' portraits (EvtFace over InterfaceMain's CutInWindowMenus): five layouts -
@@ -377,6 +382,7 @@ private:
     std::set<int> skipOff_; // (SetSkipButtonEnable false)
     std::set<int> pageSendOff_; // (SetWaitButtonEnable false)
     bool skipButton_ = false;
+    int fastWindow_ = 0; // (the fast-forward window: 0 none, 1 made, 2 shown)
     bool touched_ = false;
     float touchWait_ = 0;
     std::map<int, float> opened_, closing_; // (window -> seconds since)
@@ -391,7 +397,10 @@ private:
     int giftEffectEnd_ = -1;
     int choiceKind_ = 0, choiceAnswer_ = -1, choicesAsked_ = 0;
     float choiceAge_ = 0, choiceClosing_ = -1, choiceCloseSeconds_ = 0;
+    int clearQuest_ = 0;
+    float clearQuestAge_ = 0;
     TextData choiceText_;
+    std::map<int, std::vector<std::pair<std::string, std::string>>> parameters_; // (by window)
     std::vector<int> choiceIds_;
     bool inputOpen_ = false, inputOk_ = true;
     float inputAge_ = 0;
