@@ -217,6 +217,7 @@ int events(const char* path, const char* only, int seconds) {
             while (ok && rt.running() && rt.frame() < 20 * seconds) {
                 if (rt.frame() == 20 * seconds - 20) before = rt.stubCalls();
                 ok = rt.tick();
+                state.moviePlaying = false; // (no player here: a movie over at once)
             }
             std::string why;
             if (!ok) {
@@ -766,6 +767,7 @@ int playEvent(const cr3::MvglArchive& a, const std::string& event, bool quiet, s
     const int maxFrames = 20 * 60 * 20;
     while (ok && rt.running() && rt.frame() < maxFrames) {
         ok = rt.tick();
+        state.moviePlaying = false; // (no player here: a movie over at once)
         if (quiet) continue;
         const double t = rt.frame() * cr3::EventRuntime::kTick;
         const int msg = rt.messageShown() ? 1 : 0;
