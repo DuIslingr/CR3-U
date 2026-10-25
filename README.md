@@ -92,6 +92,8 @@ folder's if that one can't be written), the same layout as putting them there by
   it (`eboot.bin`, `sce_sys/`, the game's folder); the Prequel Trilogy's `PCSG00457` too (into `vita/PCSG00457/`,
   without the other games) - then its fan translation (the `rePatch` folder: Vita3K's
   `ux0/rePatch/PCSG00500` by itself, else asked for, or left out) into `translation/PCSG00500/`.
+  A **NoNpDrm dump** (its files encrypted, `sce_sys/package/work.bin` its licence) - its folder, or packed as
+  `.rar`, `.7z`, `.zip` or `.vpk` - is decrypted as Vita3K's install does, this game's parts alone.
 
 One copy is the game: the first given starts it. Nothing is read where it was chosen, so the folder it came from can go
 afterwards. (Windows, Linux and macOS; on Android, copy the files over USB as below.)
