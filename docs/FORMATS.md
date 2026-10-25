@@ -1090,7 +1090,8 @@ flag 2509); a Lucky Box opened (LuckyBoxMain 5: flag 39) - then 1402 -, Special 
 (ShopBuyCoreMain: flag 38), and the quest is announced (1403). Rank 2 / 3 quests met: 137 (d0203 -
 GetAreaNum counts from 0, Fld2SaveData: GetAreaNo - 1 - its scene and battle 107), 54 (d0203's
 evt112_00: battles 168 and 169), deliveries (310: five of item 115 - item_delivery asks, takes them,
-fast_report2), Terror Cubes (234). The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
+fast_report2), Terror Cubes (234), 120 (Dorothy: item 331 delivered). 267 asks for a weapon worn
+(100012 / 100112) from the Nameless Man's chain. The hunts (rank 4: 416, 425) count kills (KilledSet) in their dungeon -
 `cr3tool couplings <archive> <monster>` lists where a monster is met.
 
 A save keeps the world select's level beside the dungeon (`select <dungeon> <level>`): a dungeon
@@ -1126,9 +1127,25 @@ press's highlight). A panel tapped: asked 0x123; yes - LuckyBoxMain 5: DBSystem:
 OpenGeneBox / OpenGPBox, flag 39, com_024, the coins again, what came out told.
 `--input vs:box / goods / boxprev / boxpick / boxnext / buy<n> / item<n>`.
 
+VIP (the top's third panel, SShopMenu 4 .. 0xb): SshopVipCard over the top, the header's title 0xc,
+asked 0x316; yes - under 30 coins told 0x317, else BuyVIP (request 0x5e: VIP_PRICE coins, VIP_DAYS
+more up to VIP_DAYS_MAX), com_024. SetVipPanelControl: at 90 days or more the panel is at half and
+can't be tapped; the days' SshopVipNum digits from the ones at the first joint. `--input vs:vip`.
+
 People turn (Cr3GimmickData.ChangeDirection(name, target, frames) - Fld2ChangeNPCDirection,
 Fld2DirectionManager::SetDirection): about y toward "player" or another person (Cr3GetDirY:
 atan2(dx, dz)), slerped over that many updates.
+
+People walk about by their Field row's +0x30 (Fld2NPC::Create / Update): 4 / 5 roam the rectangle of
+their `ragdoll_npc_<name>` joint (its place and turn; its scale x 0.1 the sides) - CheckMoveRect: a
+point drawn at random, turned to over 4 updates, Fld2NPCAnimeNameTbl's ff01 / ff02 (fn01, fn02,
+ff01, ff02, 01, 02, 03); MoveRect: straight ahead at SetMoveSpeed's 0.75 / 4.5 a second (0.5 / 3.0
+for c553), set on the ground (a ray from 1 above to 1 below), there within 0.4 or after 10 s: fn01
+and a wait of 5 + (0, -1, -2, 1, 2, 2)[rand % 6] s. 2 / 3 (MovePass) follow their own joint of
+`<area>p`'s animation, run so they go that fast (SetMoveSpeed: the joint's way over the first
+second), facing the way they go. The player within the row's +0x34 (Check: +0x1f0) stops them;
+Cr3GimmickData.NPCMove(name, false) (Fld2SetNPCMove - SetMove: +0x1f1) holds them. Met: t0101's
+c551 / c552 (4) and c553 (3), t0102's c555, t0107's three, t0302's four, t0401's c559 / c560 (5).
 
 ### A town's shop (CR3)
 
