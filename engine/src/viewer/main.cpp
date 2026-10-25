@@ -6269,6 +6269,11 @@ struct Viewer {
         bool stepSwitch = false;        // (Fld2StepSwitch: ragdoll_fswc_.. - stood on, it goes down - its _n01 -, then its function)
         bool eventMotion = false;       // (Cr3GimmickData.SetMotion: its own animation, from motionAt)
         float turnFrom = 0, turnTo = 0;  // (Cr3GimmickData.ChangeDirection - Fld2DirectionManager: its yaw from, to)
+        int wander = 0;                 // (the Field row's +0x30: 4 / 5 walks / runs about its rectangle)
+        cr3::Mat34 rect;                // (ragdoll_npc_<name>: its place and turn, the sides apart)
+        float rectW = 0, rectD = 0, talkRange = 0, walkSpeed = 0, wait = 0, walkTime = 0;
+        bool walking = false, held = false; // (held: NPCMove false)
+        std::array<float, 3> target{};
         int turnStep = 0, turnFrames = 0; // (updates done, of how many)
         float motionAt = 0;
         int stepState = 0;              // 0 up, 1 going down, 2 down (done: once)
@@ -6385,7 +6390,21 @@ struct Viewer {
                         time = keep;
                     }
             if (npc.bombSwitch && model.size() > 2) loadFigure(model.substr(0, model.size() - 2) + "03.geom", npc.alt, &err);
-            npc.blastRadius = row.f(11);
+            npc.blastRadius = npc.talkRange = row.f(11);
+            npc.wander = row.i(10);
+            if (npc.wander >= 4 && npc.wander <= 5) {
+                const auto rj = std::find(joints.begin(), joints.end(), "ragdoll_npc_" + npc.name);
+                if (rj != joints.end() && size_t(rj - joints.begin()) < world.size()) {
+                    cr3::Mat34 r = world[size_t(rj - joints.begin())];
+                    float sc[3];
+                    for (int c = 0; c < 3; ++c) { // (GetScaleFromFigure x 0.1: the sides; the turn alone kept)
+                        sc[c] = std::sqrt(r.m[c] * r.m[c] + r.m[4 + c] * r.m[4 + c] + r.m[8 + c] * r.m[8 + c]);
+                        if (sc[c] > 1e-6f) r.m[c] /= sc[c], r.m[4 + c] /= sc[c], r.m[8 + c] /= sc[c];
+                    }
+                    npc.rect = r, npc.rectW = sc[0] * 0.1f, npc.rectD = sc[2] * 0.1f;
+                }
+                npc.walkSpeed = (npc.wander == 5 ? 4.5f : 0.75f) * (model.compare(0, 4, "c553") == 0 ? 2.0f / 3.0f : 1.0f);
+            }
             npc.broken = npc.rock && game.brokenRocks.count(name + ":" + npc.name);
             npc.phase = float(areaNpcs.size()) * 0.37f;
             areaNpcs.push_back(std::move(npc));
@@ -6442,6 +6461,10 @@ struct Viewer {
         });
         vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; });
         vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { areaMotions[c.string(0)] = c.string(1); });
+        vm.setNative("Cr3GimmickData", "NPCMove", [this](cr3::NativeCall& c) { // (Fld2SetNPCMove - Fld2NPC::SetMove: false holds it where it is)
+            for (AreaNpc& npc : areaNpcs)
+                if (npc.name == c.string(0)) npc.held = !c.boolean(1), npc.wait = 0;
+        });
         // (ChangeDirection(name, target, frames) - Fld2ChangeNPCDirection, Fld2DirectionManager::
         // SetDirection: the person turned about y toward "player" or another person - Cr3GetDirY,
         // atan2(dx, dz) -, slerped over that many updates)
@@ -6492,6 +6515,128 @@ struct Viewer {
                 m.m[4] = 0, m.m[5] = sc, m.m[6] = 0;
                 m.m[8] = -sn, m.m[9] = 0, m.m[10] = c;
             }
+    }
+    // a person's or object's animation by its motion's name (its own, <model>_, <base>_), from now
+    bool setNpcAnim(AreaNpc& npc, const std::string& motion) {
+        bool found = false;
+        for (ViewFigure* fp : {&npc.body, &npc.head}) {
+            ViewFigure& f = *fp;
+            if (f.meshes.empty()) continue;
+            const std::string base = motionBase(f.name.substr(0, f.name.size() - 5));
+            for (const std::string& want : {motion + ".anim", npc.model + "_" + motion + ".anim", base + "_" + motion + ".anim"}) {
+                const auto at = std::find(f.anims.begin(), f.anims.end(), want);
+                if (at == f.anims.end()) continue;
+                const float keep = time;
+                loadAnim(f, size_t(at - f.anims.begin()));
+                time = keep;
+                found = true;
+                break;
+            }
+        }
+        npc.motionAt = areaClock, npc.eventMotion = found;
+        return found;
+    }
+    // The people who walk about (Fld2NPC: the Field row's +0x30 - 4 walking, 5 running, within the
+    // rectangle of their ragdoll_npc_<name> joint - its place, turn and scale x 0.1 the sides -;
+    // MoveRect / CheckMoveRect): a point drawn in it at random, turned to over 4 updates
+    // (Fld2DirectionManager) with ff01 / ff02 (Fld2NPCAnimeNameTbl 2 / 3), walked to straight ahead
+    // at 0.75 / 4.5 a second (0.5 / 3 for c553) - SetMoveSpeed's table -, set on the ground; there
+    // (within 0.4) or after 10 s: fn01 and a wait of 3 .. 7 s (5 + 0, -1, -2, 1, 2, 2 by rand % 6).
+    // The player within the row's +0x34 (Check: +0x1f0) or Cr3GimmickData.NPCMove(name, false)
+    // (SetMove: +0x1f1) stops them where they are
+    // (+0x30 2 / 3 - MovePass: on its own joint of <area>p - Cr3GetPositionFromFigure -, the
+    // animation run so it goes 0.75 / 4.5 a second - SetMoveSpeed: the joint's way over the
+    // animation's first second -, looped; set on the ground, turned to the way it goes; the player
+    // near, or NPCMove false: fn01, held at that time - CheckMovePass goes on from there)
+    bool areaPassJoint(AreaNpc& npc, float t, std::array<float, 3>& at) {
+        if (!areaP.animLoaded) return false;
+        areaP.place = cr3::Mat34();
+        pose(areaP, t, true);
+        cr3::Mat34 r;
+        if (!jointWorld(areaP, npc.name, r) && !jointWorld(areaP, "ragdoll_" + npc.name, r)) return false;
+        at = {r.m[3], r.m[7], r.m[11]};
+        return true;
+    }
+    void stepAreaPassers(float dt, const cr3::Vec3& pp) {
+        for (AreaNpc& npc : areaNpcs) {
+            if (npc.wander < 2 || npc.wander > 3) continue;
+            if (npc.walkSpeed <= 0) { // (SetMoveSpeed, once)
+                std::array<float, 3> a, b;
+                if (!areaPassJoint(npc, 0, a) || !areaPassJoint(npc, 1, b)) {
+                    npc.wander = 0;
+                    continue;
+                }
+                const float d = std::sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]) + (b[2] - a[2]) * (b[2] - a[2]));
+                const float speed = (npc.wander == 3 ? 4.5f : 0.75f) * (npc.model.compare(0, 4, "c553") == 0 ? 2.0f / 3.0f : 1.0f);
+                npc.walkSpeed = d > 1e-4f ? speed / d : 1.0f;
+            }
+            const float px = pp[0] - npc.place.m[3], py = pp[1] - areaWalker->radius - npc.place.m[7], pz = pp[2] - npc.place.m[11];
+            const bool stop = std::sqrt(px * px + py * py + pz * pz) <= npc.talkRange || npc.held;
+            if (stop) {
+                if (npc.walking) npc.walking = false, setNpcAnim(npc, "fn01");
+                continue;
+            }
+            if (!npc.walking) npc.walking = true, setNpcAnim(npc, npc.wander == 3 ? "ff02" : "ff01");
+            npc.walkTime += npc.walkSpeed * dt;
+            std::array<float, 3> at;
+            if (!areaPassJoint(npc, npc.walkTime, at)) continue;
+            cr3::CollisionWorld::Hit hit;
+            if (area.walls.sweep({at[0], at[1] + 1.0f, at[2]}, {at[0], at[1] - 1.0f, at[2]}, 0.01f, {0, 1, 0}, 0.0f, hit)) at[1] = at[1] + 1.0f - 2.0f * hit.fraction;
+            const float dx = at[0] - npc.place.m[3], dz = at[2] - npc.place.m[11];
+            if (std::hypot(dx, dz) > 1e-4f) {
+                const float yaw = std::atan2(dx, dz), sc = std::max(std::hypot(npc.place.m[0], npc.place.m[8]), 1e-6f);
+                cr3::Mat34& m = npc.place;
+                m.m[0] = std::cos(yaw) * sc, m.m[2] = std::sin(yaw) * sc, m.m[8] = -std::sin(yaw) * sc, m.m[10] = std::cos(yaw) * sc;
+            }
+            npc.place.m[3] = at[0], npc.place.m[7] = at[1], npc.place.m[11] = at[2];
+        }
+    }
+    void stepAreaWanderers(float dt) {
+        if (!areaWalker) return;
+        const cr3::Vec3 pp = areaWalker->position();
+        stepAreaPassers(dt, pp);
+        for (AreaNpc& npc : areaNpcs) {
+            if (npc.wander < 4 || npc.wander > 5 || npc.rectW <= 0) continue;
+            const float px = pp[0] - npc.place.m[3], py = pp[1] - areaWalker->radius - npc.place.m[7], pz = pp[2] - npc.place.m[11];
+            const bool near = std::sqrt(px * px + py * py + pz * pz) <= npc.talkRange;
+            if (npc.walking) {
+                if (near || npc.held) {
+                    npc.walking = false;
+                    setNpcAnim(npc, "fn01");
+                    continue;
+                }
+                npc.walkTime += dt;
+                const float step = npc.walkSpeed * dt;
+                const float sc = std::max(std::hypot(npc.place.m[0], npc.place.m[8]), 1e-6f);
+                float x = npc.place.m[3] + step * npc.place.m[2] / sc, y = npc.place.m[7], z = npc.place.m[11] + step * npc.place.m[10] / sc;
+                cr3::CollisionWorld::Hit hit; // (HitTestFast down from 1 above to 1 below, the floor's group)
+                if (area.walls.sweep({x, y + 1.0f, z}, {x, y - 1.0f, z}, 0.01f, {0, 1, 0}, 0.0f, hit)) y = y + 1.0f - 2.0f * hit.fraction;
+                npc.place.m[3] = x, npc.place.m[7] = y, npc.place.m[11] = z;
+                if (std::hypot(npc.target[0] - x, npc.target[2] - z) <= 0.4f || npc.walkTime > 10.0f) {
+                    npc.walking = false;
+                    setNpcAnim(npc, "fn01");
+                    static const float kWait[6] = {5, 4, 3, 6, 7, 7};
+                    npc.wait = kWait[std::rand() % 6], npc.walkTime = 0;
+                }
+                continue;
+            }
+            if (npc.wait > 0) {
+                npc.wait = std::max(npc.wait - dt, 0.0f);
+                continue;
+            }
+            if (near || npc.held) continue;
+            const float u = (float(std::rand()) / float(RAND_MAX) - 0.5f) * npc.rectW, v = (float(std::rand()) / float(RAND_MAX) - 0.5f) * npc.rectD;
+            const cr3::Mat34& r = npc.rect;
+            float tx = r.m[3] + r.m[0] * u + r.m[2] * v, ty = npc.place.m[7], tz = r.m[11] + r.m[8] * u + r.m[10] * v;
+            cr3::CollisionWorld::Hit hit;
+            if (area.walls.sweep({tx, ty + 1.0f, tz}, {tx, ty - 1.0f, tz}, 0.01f, {0, 1, 0}, 0.0f, hit)) ty = ty + 1.0f - 2.0f * hit.fraction;
+            npc.target = {tx, ty, tz};
+            npc.turnFrom = std::atan2(npc.place.m[2], npc.place.m[0]);
+            npc.turnTo = std::atan2(tx - npc.place.m[3], tz - npc.place.m[11]);
+            npc.turnFrames = 4, npc.turnStep = 0;
+            setNpcAnim(npc, npc.wander == 5 ? "ff02" : "ff01");
+            npc.walking = true, npc.walkTime = 0;
+        }
     }
     void stepAreaMotions() {
         for (const auto& [name, motion] : areaMotions) {
@@ -6616,7 +6761,7 @@ struct Viewer {
                         areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
                 loadAreaNpcs(name, names, w);
                 unload(areaP), areaP = ViewFigure();
-                if (std::any_of(areaNpcs.begin(), areaNpcs.end(), [](const AreaNpc& n) { return n.mover; }) && loadFigure(name + "p.geom", areaP, &err)) {
+                if (std::any_of(areaNpcs.begin(), areaNpcs.end(), [](const AreaNpc& n) { return n.mover || n.wander == 2 || n.wander == 3; }) && loadFigure(name + "p.geom", areaP, &err)) {
                     areaP.absolute = true; // (CrxSimpleModel: its own animation)
                     for (size_t k = 0; k < areaP.anims.size(); ++k)
                         if (areaP.anims[k] == name + "p.anim") {
@@ -7004,6 +7149,7 @@ struct Viewer {
         stepAreaScriptCam(dt);
         stepAreaMotions();
         stepAreaTurns(dt);
+        stepAreaWanderers(dt);
         if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
             const bool wasRunning = areaEvents->running();
             areaEventClock = std::min(areaEventClock + dt, 0.25f);
