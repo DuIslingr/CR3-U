@@ -6455,6 +6455,7 @@ struct Viewer {
         for (int a = 0; a < 3; ++a) c.eye[a] += (c.toEye[a] - c.eye[a]) * k, c.at[a] += (c.toAt[a] - c.at[a]) * k;
         c.left -= dt;
     }
+    std::map<int, int> bonusMpBefore; // (RecoverBonusMPPreparation's: each member's most MP)
     // (StartQuake / StopQuake: the field's, and a vista's - QuakeControlTask shakes whatever's drawn)
     void bindQuakeNatives(cr3::ScriptVM& vm) {
         vm.setNative("Cr3System", "StartQuake", [this](cr3::NativeCall& c) {
@@ -6488,6 +6489,25 @@ struct Viewer {
         });
         vm.setNative("Cr3FieldMapCamera", "ResetScriptCamera", [this](cr3::NativeCall&) { areaScriptCam = AreaScriptCam(); });
         bindQuakeNatives(vm);
+        // (RecoverBonusMPPreparation / RecoverBonusMP - InterfaceMain's: the camp's members' most MP
+        // kept, then each whose most grew - the team level's - has its MP that much more, saved)
+        vm.setNative("InterfaceWindow", "RecoverBonusMPPreparation", [this](cr3::NativeCall&) {
+            bonusMpBefore.clear();
+            cr3::Cr3Fighter cf;
+            for (int ch : cr3PartyMembers())
+                if (cr3CharaStats(ch, cf)) bonusMpBefore[ch] = cf.maxMp;
+        });
+        vm.setNative("InterfaceWindow", "RecoverBonusMP", [this](cr3::NativeCall&) {
+            cr3::Cr3Fighter cf;
+            for (const auto& [ch, before] : bonusMpBefore)
+                if (cr3CharaStats(ch, cf) && cf.maxMp > before) {
+                    const int mp = std::min(cr3CharaMp(ch, before) + cf.maxMp - before, cf.maxMp);
+                    if (mp >= cf.maxMp) game.cr3Mp.erase(ch);
+                    else game.cr3Mp[ch] = mp;
+                    SDL_Log("bonus MP: %d %d -> %d / %d", ch, before, mp, cf.maxMp);
+                }
+            bonusMpBefore.clear();
+        });
         vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { areaMotions[c.string(0)] = c.string(1); });
         vm.setNative("Cr3GimmickData", "NPCIdle2Enable", [this](cr3::NativeCall& c) { // (Fld2SetIdle2Enable)
             for (AreaNpc& npc : areaNpcs)
@@ -18698,6 +18718,20 @@ struct Viewer {
         clearQuestTaps.swap(cr3CampTaps);
         keep.swap(cr3CampTaps);
     }
+    // The team's level-up banner (EventRuntime::levelUpShown - LevelUpMenu)
+    void drawLevelUp(cr3::EventRuntime& ev, int w, int h) {
+        const float t = ev.levelUpShown();
+        if (t < 0) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        dev->clearDepth();
+        float x, y;
+        UiFig& pos = cr3UiPut("btrsltuppositon", "btrsltuppositon_in", t, 0, 0, view, std::min(t / 0.2f, 1.0f));
+        if (cr3UiCall(pos, "call_btRsltLvUpMenu", x, y, w, h)) cr3UiPut("btrsltlvupmenu", "", t, x, y, view);
+    }
     void answerClearQuest() {
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || ev->clearQuestShown() <= 0) return;
@@ -23504,7 +23538,7 @@ struct Viewer {
         if (!ev || !eventDrawingReady) return;
         struct YesNoLast { // (the buttons over everything else the event shows)
             Viewer* v; cr3::EventRuntime* ev;
-            ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
+            ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawLevelUp(*ev, v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH); }
         } yesNoLast{this, ev};
         if (ev->effectLine) { // (BattleEffectTypeBMenu: radiate_loop, scaled aspect / 1.5 - or 1.5 / aspect - across)
             Mat4 camera = cr3::mat4Identity();

@@ -480,6 +480,17 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         });
         vm.setNative("InterfaceWindow", "GetAliveSelect" + n + "ChoiceMenu", [this, kind](NativeCall& c) { c.result(choiceKind_ == kind); });
     }
+    // The team's level-up banner (InterfaceWindow.CreateLevelUpMenu - LevelUpMenu, interface 0xb6:
+    // btRsltUpPositon on its _in, faded in over 0.2 s, btRsltLvUpMenu at its call_btRsltLvUpMenu):
+    // CheckAliveLevelUpMenu true until btRsltLvUpMenu's animation ends (Update: IsEndCurrentAnime)
+    vm.setNative("InterfaceWindow", "CreateLevelUpMenu", [this](NativeCall&) {
+        float seconds = 2.0f;
+        std::vector<uint8_t> d;
+        Animation a;
+        if (archive_.read("btrsltlvupmenu.anim", d) && a.parse(d)) seconds = a.duration();
+        levelUpAge_ = 0, levelUpSeconds_ = seconds;
+    });
+    vm.setNative("InterfaceWindow", "CheckAliveLevelUpMenu", [this](NativeCall& c) { c.result(levelUpAge_ >= 0); });
     // Cr3System.GetPlatform (platform::GetPlatform): 1 the iOS game, 2 Android's - quest 273 says
     // its notice by it (AnnounceField 34 or 113). The Vita's taken as iOS's
     vm.setNative("Cr3System", "GetPlatform", [this](NativeCall& c) { c.result(archive_.kind() == MvglArchive::Kind::Android ? 2 : 1); });
@@ -742,6 +753,7 @@ bool EventRuntime::update(ScriptVM* vm) {
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
     else if (choiceKind_ && choiceAnswer_ >= 0 && choiceClosing_ < 0) choiceAge_ += kTick;
     if (choiceKind_ && choiceClosing_ >= 0 && (choiceClosing_ += kTick) >= choiceCloseSeconds_) choiceKind_ = 0, choiceClosing_ = -1;
+    if (levelUpAge_ >= 0 && (levelUpAge_ += kTick) >= levelUpSeconds_) levelUpAge_ = -1;
     if (clearQuest_ > 0 && (clearQuestAge_ += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) clearQuest_ = 0; // (pages by themselves: its OK)
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
     if (geneGet_.open && (geneGet_.age += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) geneGet_.open = false; // (pages by themselves: a tap)

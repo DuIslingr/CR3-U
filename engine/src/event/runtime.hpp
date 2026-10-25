@@ -169,6 +169,7 @@ public:
     // Its texts: SetTextDataSelect...Menu's message file, SetTextSelect...Menu's messages in it, a
     // line or two each (SetParamNumber 7: the speaker's tag left out, Cr3UtilNPrint's \n). Once
     // DeleteSelect...Menu is called it stays up - closing - while the tapped button's comBtnEffe plays
+    float levelUpShown() const { return levelUpAge_; } // (the level-up banner's time; -1 none)
     int clearQuestShown() const { return clearQuest_; } // (CreateClearQuestDetailMenu's quest; 0 none)
     float clearQuestAge() const { return clearQuestAge_; }
     void answerClearQuest() { clearQuest_ = 0; }
@@ -397,6 +398,7 @@ private:
     int giftEffectEnd_ = -1;
     int choiceKind_ = 0, choiceAnswer_ = -1, choicesAsked_ = 0;
     float choiceAge_ = 0, choiceClosing_ = -1, choiceCloseSeconds_ = 0;
+    float levelUpAge_ = -1, levelUpSeconds_ = 0;
     int clearQuest_ = 0;
     float clearQuestAge_ = 0;
     TextData choiceText_;
