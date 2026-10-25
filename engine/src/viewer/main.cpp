@@ -22393,7 +22393,8 @@ struct Viewer {
                 float tx, ty;
                 if (cr3UiCall(tab, "typeM_C0" + std::to_string(k + 1), tx, ty)) {
                     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(menuAnnounce(0x190 + k), 24, tx / 10, (ty - 0.12f) / 10, w, h, false, k == co.tab ? 1.0f : 0.3f);
+                    // (white on the tabs' blue: the chosen one's dark, the others' a lighter one - dimmed a little)
+                    drawUiText(menuAnnounce(0x190 + k), 24, tx / 10, (ty - 0.12f) / 10, w, h, false, k == co.tab ? 1.0f : 0.8f);
                 }
                 float ax, ay, bx, by;
                 if (cr3UiCall(tab, "tapAreaS0" + std::to_string(k + 1), ax, ay) && cr3UiCall(tab, "tapAreaE0" + std::to_string(k + 1), bx, by))
@@ -22470,10 +22471,12 @@ struct Viewer {
                 if (cr3UiCall(panel, "call_optSltLbtn", cx, cy)) {
                     float ax, ay, bx, by;
                     UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
-                    if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 650});
+                    if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
+                        cr3CampTaps.push_back({ax, ay, bx, by, 650});
+                        cr3CampTaps.push_back({ax, ay, ax + 3.0f, by, 650}); // (the box between the arrows, as high as they are)
+                    }
                     UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f, cy, view);
                     if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 650});
-                    cr3CampTaps.push_back({cx, cy - 0.3f, cx + 3.0f, cy + 0.3f, 650}); // (the panel between them)
                 }
             }
         }
