@@ -91,6 +91,7 @@
 #include "script/gamesave.hpp"
 #include "event/runtime.hpp"
 #include "viewer/audio.hpp"
+#include "viewer/mobile_input.hpp"
 #include "viewer/setup.hpp"
 
 std::string storedSetting(const char* key); // (settings.ini's data= / patch=: below)
@@ -314,6 +315,7 @@ struct Viewer {
         bool hdSet = false;       // (settings.ini says which: else on when there are HD textures)
         bool hdModels = false;    // replacement models from models/hd (what loads next)
         int smoothModels = 0;     // smoothed models (assets/smooth.hpp): 0 off, 2 / 3 the PN triangles' level (what loads next)
+        bool lockOrientation = false, landscapeFlipped = false;
         bool padSwap = false;     // a controller's: × (south) confirms, ○ (east) goes back - else as the Vita
         int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
         int battleSpeed = 1;      // the battles, this many times as fast: 1, 2 .. 5
@@ -323,6 +325,7 @@ struct Viewer {
     SDL_Window* window = nullptr;
     int appliedDisplay = -1, appliedMsaa = -1;
     bool appliedVsync = true, vsyncApplied = false;
+    bool orientationApplied = false, appliedLock = false, appliedFlip = false;
 
     static const char* settingsFile() { return "settings.ini"; }
     void loadSettings() {
@@ -349,6 +352,8 @@ struct Viewer {
             else if (k == "hd_textures") s.hdTextures = v != 0, s.hdSet = true;
             else if (k == "hd_models") s.hdModels = v != 0;
             else if (k == "smooth_models") s.smoothModels = v == 2 || v == 3 ? v : 0;
+            else if (k == "lock_orientation") s.lockOrientation = v != 0;
+            else if (k == "landscape_flipped") s.landscapeFlipped = v != 0;
             else if (k == "pad_swap") s.padSwap = v != 0;
             else if (k == "field_speed") s.fieldSpeed = std::clamp(v, 1, 5);
             else if (k == "battle_speed") s.battleSpeed = std::clamp(v, 1, 5);
@@ -367,6 +372,7 @@ struct Viewer {
                      s.display, s.resolution, s.vsync ? 1 : 0, s.fps, s.renderer, s.upscaler, s.quality, s.sharpness, s.msaa,
                      s.anisotropy, s.sharpTextures ? 1 : 0, s.hdTextures ? 1 : 0, s.hdModels ? 1 : 0, s.smoothModels, s.padSwap ? 1 : 0, s.fieldSpeed,
                      s.battleSpeed);
+        std::fprintf(f, "lock_orientation=%d\nlandscape_flipped=%d\n", int(s.lockOrientation), int(s.landscapeFlipped));
         if (!keepData.empty()) std::fprintf(f, "data=%s\n", keepData.c_str());
         if (!keepPatch.empty()) std::fprintf(f, "patch=%s\n", keepPatch.c_str());
         std::fclose(f);
@@ -403,6 +409,10 @@ struct Viewer {
         }
         if (s.hdTextures != hdTextures) hdTextures = s.hdTextures, reloadTextures();
         if (hdModels != s.hdModels) hdReplacedCache.clear();
+        if (!orientationApplied || appliedLock != s.lockOrientation || appliedFlip != s.landscapeFlipped) {
+            mobile::orientation(window, s.lockOrientation, s.landscapeFlipped);
+            appliedLock = s.lockOrientation, appliedFlip = s.landscapeFlipped, orientationApplied = true;
+        }
         hdModels = s.hdModels; // (from the next figure loaded)
     }
     // Every cached texture again (HD Textures turned on or off): in place, so what holds one sees the new
@@ -546,6 +556,12 @@ struct Viewer {
                                 s.smoothModels = kOrder[(i + (d < 0 ? 2 : 1)) % 3];
                             }});
         }
+        rows.push_back({"Lock Orientation", onOff(s.lockOrientation),
+                        "Hold the current landscape direction and restore it on restart", true, [this, &s](int) {
+                            s.lockOrientation = !s.lockOrientation;
+                            mobile::orientation(window, s.lockOrientation, s.landscapeFlipped, s.lockOrientation);
+                            orientationApplied = false;
+                        }});
         auto speed = [](int x) { return x > 1 ? std::to_string(x) + "x" : std::string("Off"); };
         rows.push_back({"Field Speed", speed(s.fieldSpeed), "Walking the field 2 to 5 times as fast; scenes, talk and menus as they are", true,
                         [&s](int d) { s.fieldSpeed = (s.fieldSpeed - 1 + d + 5) % 5 + 1; }});
@@ -2578,7 +2594,59 @@ struct Viewer {
     bool fastHeld = false;
     float fastUntil = -1;
     // a press on the screen at (fx, fy) - fractions of it, from the top left: what's over it takes it
+    struct MenuList { int* cursor = nullptr; int count = 0, context = 0; };
+    mobile::MenuSwipe menuSwipe;
+    MenuList menuList() {
+        if (saveImport.active() || inputDialog.open) return {};
+        if (settingsOpen) return {&settingsCursor, int(settingRows().size()), 1};
+        if (cr3Camp.stage == 9 && campOptions.tab == 3 && !campOptions.asking)
+            return {&settingsCursor, int(settingRows().size()), 2};
+        if (cr3Camp.stage == 3) return {&cr3Camp.focus, int(cr3Camp.genes.size()), 3};
+        if (cr3Camp.stage == 4 && campItems.told.empty()) {
+            if (campItems.step == 0) return {&campItems.row, int(campItems.rows.size()), 100 + campItems.category};
+            if (campItems.step == 2) return {&cr3Camp.focus, int(cr3Camp.genes.size()), 4};
+        }
+        if (cr3Camp.stage == 5 && !campEquip.model)
+            return campEquip.step == 0 ? MenuList{&campEquip.slot, 3, 5} : MenuList{&campEquip.row, int(campEquip.rows.size()), 6 + campEquip.slot};
+        if (auto* ev = activeEvents(); ev && ev->geneLab().open && !ev->geneLab().talking && geneMenu.alert.empty()) {
+            if (geneMenu.screen == 2) return {&geneMenu.focus, int(geneMenu.genes.size()), 10};
+            if (geneMenu.screen == 3) return {&geneMenu.row, int(geneMenu.rows.size()), 11};
+            if (geneMenu.screen == 7) return {&geneMenu.row, int(geneMenu.pickRows.size()), 12};
+        }
+        return {};
+    }
+    bool menuScroll(int rows) {
+        const MenuList list = menuList();
+        if (!list.cursor || list.count <= 0) return false;
+        const int old = *list.cursor;
+        *list.cursor = mobile::scrollCursor(old, list.count, rows);
+        if (*list.cursor != old && audio.opened()) audio.playSe("com_002", false);
+        return true;
+    }
+    bool menuPointerDown(float x, float y) {
+        const MenuList list = menuList();
+        if (!list.cursor || list.count <= 0 || x < 0.1f || x > 0.98f || y < 0.12f || y > 0.88f) return false;
+        menuSwipe.begin(x, y, list.context);
+        return true;
+    }
+    void menuPointerMove(float x, float y) {
+        if (!menuSwipe.down) return;
+        const auto list = menuList();
+        if (!list.cursor || list.context != menuSwipe.context) { menuSwipe = {}; return; }
+        menuScroll(menuSwipe.move(x, y));
+    }
+    bool menuPointerUp(float x, float y) {
+        if (!menuSwipe.down) return false;
+        menuPointerMove(x, y);
+        const auto gesture = menuSwipe;
+        menuSwipe = {};
+        if (gesture.down && !gesture.moved) pointerActivate(x, y);
+        return true;
+    }
     void pointerDown(float fx, float fy) {
+        if (!menuPointerDown(fx, fy)) pointerActivate(fx, fy);
+    }
+    void pointerActivate(float fx, float fy) {
         if (inputDialogClick(fx, fy)) {} // (CR3's text entry: over everything)
         else if (overFast(fx, fy)) fastHeld = true; // (the fast-forward button: held, not a tap)
         else if (cr3OptionsClick(fx, fy)) {} // (CR3-U's Options over the title or a battle; the title's button)
@@ -2621,6 +2689,7 @@ struct Viewer {
         inputNext = uiClock + 0.4f;
         SDL_Log("click at %.3f %.3f", fx, fy);
         pointerDown(fx, fy);
+        menuPointerUp(fx, fy);
         areaDragEnd(), fastHeld = false;
     }
     bool overFast(float fx, float fy) const {
@@ -25227,6 +25296,7 @@ void storeSetting(const char* key, const std::string& value) {
 }
 
 int main(int argc, char** argv) {
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
     std::string data, model, capture, animName, renderer = "vulkan", lights = "d0101c", fieldName, at = "defaultPos", binary;
     // --patch: a fan translation over the release (Database::addOverlay); --language ja | en | fan-en
     std::string patch, languageArg;
@@ -26296,6 +26366,9 @@ int main(int argc, char** argv) {
                     v.pointerDown(fx, fy);
                 }
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                    float fx, fy;
+                    screenFraction(e.button.x, e.button.y, fx, fy);
+                    if (v.menuPointerUp(fx, fy)) { dragging = false; continue; }
                     v.areaDragEnd();
                     v.worldSel.dragging = false; // (the planet let go: spun on)
                     v.town.dragging = false;    // (the town map let go)
@@ -26312,6 +26385,11 @@ int main(int argc, char** argv) {
                         screenFraction(e.button.x, e.button.y, fx, fy);
                         v.aimPointer(fx, fy, 2);
                     }
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && v.menuSwipe.down) {
+                    float fx, fy;
+                    screenFraction(e.motion.x, e.motion.y, fx, fy);
+                    v.menuPointerMove(fx, fy);
+                } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.menuScroll(e.wheel.y > 0 ? -1 : e.wheel.y < 0 ? 1 : 0)) {
                 } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.areaDrag.on) {
                     float fx, fy;
                     screenFraction(e.motion.x, e.motion.y, fx, fy);

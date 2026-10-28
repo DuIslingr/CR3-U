@@ -1,14 +1,15 @@
-# CR3-U v0.2.0
+# CR3-U v0.2.1
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **New Game Plus:** completed saves are marked CLEARED. Open one and choose Continue, New Game Plus, or Back. New Game Plus lets you choose an empty destination slot, keeps the original save, and carries levels, genes, equipment, items, currency, collections and records into a new story run. Story, quests and VS progression restart; the protagonist keeps the equipped outfit from the opening tower scene onward.
-- **12 save slots:** four pages of three native file panels, with Copy and Delete across pages. Page controls sit centered below the save buttons.
-- **Save-menu readability:** restored the native silver NEW GAME panels for empty slots and improved the text on existing saves, including the added slots.
-- **Vita save importing:** import decrypted Vita saves from title-screen Options → Other → Vita Saves → Import. Automatic backups, an optional command-line converter and instructions are included.
-- Save/load fixes preserve each slot's story flags, encounter setting, treasure-box state and field position.
+- **Menu scrolling:** swipe or use the mouse wheel in camp item, Gene Swap, equipment, gene-lab and graphics lists. Swipes move the selection without activating it.
+- **Dialogue audio:** advancing past a completed message stops its voice, and a new story voice replaces the previous one. Revealing text keeps its voice playing.
+- **Orientation:** the Graphics tab now offers Lock Orientation, which applies on Android and remembers its landscape direction on restart.
+- **Vita audio:** fix ATRAC9 bit operations and compressed-frame lookahead bounds. Added input, dialogue and decoder regression tests.
+
+Checked with Android, iOS and Vita game data. Physical Android touch and rotation testing remains pending; the reported early crystal-room crash has not been confirmed.
 
 Later parts of the story remain untested end to end, and some battle effects are still missing.
 

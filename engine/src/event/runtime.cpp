@@ -735,6 +735,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (soundHooks().stopAllSe) soundHooks().stopAllSe(c.integer(0));
     });
     vm.setNative("Cr3Sound", "PlayVoice", [](NativeCall& c) {
+        if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
         if (soundHooks().playVoiceNamed) c.result(soundHooks().playVoiceNamed(c.string(0)));
         else c.result(soundHooks().playVoice ? soundHooks().playVoice(c.integer(0)) : -1);
     });
@@ -946,13 +947,17 @@ void EventRuntime::advance() {
         else showWhole();
         return;
     }
-    if (ending()) { // (\*: as by itself)
+    if (ending()) { // (\*: explicitly skipped by the reader)
+        if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
         ended_ = true;
         return;
     }
     if (pageSendOff_.count(messageWindow_)) return; // (SetWaitButtonEnable false: the script's to end)
     revealed_ = 0, stop_ = 0, stopTime_ = 0;
-    if (++page_ >= int(parsed_.pages.size())) message_ = 0, page_ = 0;
+    if (++page_ >= int(parsed_.pages.size())) {
+        message_ = 0, page_ = 0;
+        if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
+    }
 }
 
 bool EventRuntime::typed() const {
