@@ -41,6 +41,8 @@ add_library(cr3core STATIC
     src/assets/gltf_figure.cpp
     src/assets/addons.cpp
     src/assets/text.cpp
+    src/assets/card_art.cpp
+    src/assets/card_art_text.cpp
     src/assets/language.cpp
     src/assets/spark.cpp
     src/assets/movie.cpp
@@ -456,6 +458,9 @@ if(NOT ANDROID AND NOT IOS)
     add_executable(vita-import-tests tools/vita_import_test.cpp)
     target_link_libraries(vita-import-tests PRIVATE cr3core SDL3::SDL3)
     add_test(NAME vita-import COMMAND vita-import-tests)
+    add_executable(card-art-tests tools/card_art_test.cpp)
+    target_link_libraries(card-art-tests PRIVATE cr3core)
+    add_test(NAME card-art COMMAND card-art-tests)
     add_executable(mobile-input-tests tools/mobile_input_test.cpp)
     target_link_libraries(mobile-input-tests PRIVATE cr3core SDL3::SDL3)
     target_compile_definitions(mobile-input-tests PRIVATE TEST_NAMESPACE=cr3 TEST_CR3=1)

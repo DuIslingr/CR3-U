@@ -147,6 +147,37 @@ To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `C
 (`~/.local/share/DuIslingr/CR3-U/` on Linux; the same folders under `%APPDATA%\` on Windows and
 `~/Library/Application Support/` on macOS), not the game folder. All four ports (CR1:U, CRO-U, CR2-U, CR3-U) look for their copies the same way.
 
+## Original card artwork
+
+**Options → Graphics → Original Card Art** switches the Gene Index entries **80, 81 and 86**
+to their original artwork in menus, gene icons and full-screen card views, with matching
+names and N/R/SR profiles: **Little Red Riding Hood, Aphrodite and Adam**. English and
+fan-English modes use English translations of the Japanese-only originals; Japanese mode
+keeps their original Japanese text. Only cards whose original artwork is available receive
+the matching text. Turning the setting Off restores the selected release's art and text.
+The setting is Off by default, takes effect immediately, and is remembered between sessions.
+Gene IDs, stats, rarities and save data stay the same.
+
+Vita already uses the originals. iOS retains all three originals in its files. Android retains
+the originals for 80 and 81; with Android alone the option shows **On (2/3)** and keeps card 86's
+release artwork until its original is available.
+
+For the missing artwork, copy **both** card archives from your decrypted Vita or iOS copy into
+`artwork/` beside the game's `ios/`, `android/` and `vita/` folders:
+
+- Vita: `CRDBcard01.psp2.mvgl` and `CRDBcardhd.psp2.mvgl`.
+- iOS: `CRDBcard01.ios.mvgl` and `CRDBcardhd.ios.mvgl`.
+
+Subfolders are accepted. Existing Vita/iOS copies in the normal game folders are checked too.
+These files supply pictures only; putting them in `artwork/` keeps the selected gameplay release.
+If the game is already running when you copy the files, turn the option Off and On to refresh it.
+No artwork is included with the port. On Android, `artwork/` belongs under
+`Android/data/local.preservation.chaosrings3/files/`.
+
+For files elsewhere, `--original-art-source <folder>` or `CR3_ORIGINAL_ART` points to the card
+archives or a complete Vita/iOS release. `--original-art` / `--release-art` override the toggle
+for a run (also useful for captures).
+
 ## Movies
 
 The story's movies play as in the game: full screen, with their sound at the music's volume and

@@ -91,3 +91,45 @@ transaction writer installs the new save before the ordinary title load starts
 `t0108` at its default spawn; no source file is changed. Installation failures
 show a native alert and leave the menu available for retry. `new-game-plus-tests`
 covers carryover, resets, source preservation, serialization and repeated runs.
+
+## Original card art selection
+
+`assets/card_art` selects texture/full-screen pairs without editing gene_para or collection
+records. The mobile display series 131 and 124 use retained 42 and 49; mobile series 119 uses
+retained iOS series 160, or a local Vita 119 / iOS 160 pair from the two card archives.
+Only exact `card_NNN` texture names are intercepted, so rarity, element and other UI atlases
+are untouched. The normal texture cache and HD texture lookup use the selected image's pixels.
+Changing the toggle refreshes cached textures in place and reopens an active full-screen card.
+
+The default is `original_card_art=0` in settings.ini. A partial source keeps the release's
+picture in both views. Assets are decoded as a pair before use; missing/corrupt donor archives
+are skipped. Asset-only MvglFile readers preserve the primary release's animation layout,
+language, scripts and database. No game assets are written or bundled.
+
+`ctest --test-dir engine/build --output-on-failure -R card-art` uses generated color swatches
+in synthetic MDB1 archives: immediate On/Off, partial sources, nested Vita/iOS donors,
+malformed assets, source preference, re-enabling after files are copied, untouched primary
+data and both card views. Real-data checks use the developer's copies separately.
+
+Verified with the available Android 1.1.3, iOS 1.2.2 and Vita files: Android alone (2/3), Android
+with only the two Vita card archives (3/3), Android with iOS archives (3/3), iOS alone (3/3),
+and Vita alone (3/3). The original selection matches the expected decoded menu atlas and exact
+full-screen image bytes; gene parameters and the primary animation layout stay unchanged.
+Borrowed textures are converted to the primary release's row order before upload.
+
+Headless viewer checks exercised the native settings row and 16 card captures: all three cards
+in menu and full-screen views, plus live On/Off for card 86 after GPU textures were already
+loaded. Live changes matched starting with the corresponding option in both views. Persistence,
+Linux and Android arm64 builds, the full native test suite, and ASan/UBSan checks passed.
+Physical Android interaction remains untested.
+
+The same option also selects the original identities: gene IDs 328–330 (Little Red Riding
+Hood), 349–351 (Aphrodite), and 448–450 (Adam). Names are intercepted in the viewer's shared
+GeneName lookup; N/R/SR profiles are selected before the existing Gene Index line parser.
+`card_art_text.cpp` preserves the unpatched Japanese PCSG00457 wording and supplies English
+translations, since slot 1 contains name placeholders rather than translated profiles. The
+fan-English Vita files reuse the mobile identities, so their labels are not used as originals.
+Language follows LanguageChoice::id, including FanEnglish at message slot 0. This avoids
+mistaking a fan translation's slot number for Japanese. Text switches only when the matching
+original atlas/picture pair is available; Android alone retains Gilgamesh's name/profile for
+card 86. Other names, messages, stats and saves stay with the selected gameplay release.

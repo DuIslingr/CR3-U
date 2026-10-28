@@ -1,17 +1,26 @@
-# CR3-U v0.2.1
+# CR3-U v0.2.2
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **Menu scrolling:** swipe or use the mouse wheel in camp item, Gene Swap, equipment, gene-lab and graphics lists. Swipes move the selection without activating it.
-- **Dialogue audio:** advancing past a completed message stops its voice, and a new story voice replaces the previous one. Revealing text keeps its voice playing.
-- **Orientation:** the Graphics tab now offers Lock Orientation, which applies on Android and remembers its landscape direction on restart.
-- **Vita audio:** fix ATRAC9 bit operations and compressed-frame lookahead bounds. Added input, dialogue and decoder regression tests.
+- **Original Card Art:** a saved toggle in **Options → Graphics** restores the original artwork for Gene Index entries **80, 81 and 86**, in menu cards, gene icons and full-screen views. It is Off by default and applies immediately.
+- **Matching names and profiles:** restored cards use **Little Red Riding Hood, Aphrodite and Adam**, with their original N/R/SR descriptions. English and fan-English modes use English translations of the Japanese originals; Japanese mode retains the original text. Turning the option Off restores the selected release's art and text.
+- **Local artwork sources:** iOS and Vita already contain all three originals. Android contains the originals for 80 and 81 and shows **On (2/3)** until card 86's original is supplied. Missing art keeps its release name and profile too.
+- **Cross-platform artwork:** correct the row order when borrowing Vita textures for mobile data, refresh cached cards when toggling, and fit the longer original name within its native profile banner. Gene IDs, stats, rarities and saves remain unchanged.
 
-Checked with Android, iOS and Vita game data. Physical Android touch and rotation testing remains pending; the reported early crystal-room crash has not been confirmed.
+### Supplying card 86's original for Android
 
-Later parts of the story remain untested end to end, and some battle effects are still missing.
+Copy both card archives from your own decrypted Vita or iOS copy into the game's `artwork/` folder:
+
+- Vita: `CRDBcard01.psp2.mvgl` and `CRDBcardhd.psp2.mvgl`.
+- iOS: `CRDBcard01.ios.mvgl` and `CRDBcardhd.ios.mvgl`.
+
+Subfolders work; no main archive is required. These files supply pictures without switching the gameplay release. On Android, use `Android/data/local.preservation.chaosrings3/files/artwork/`. If the game is running, turn the option Off and On after copying. **No game artwork is included in the port.**
+
+Checked with Android, iOS and Vita data, including Japanese and fan-English text, live art switching, missing/corrupt sources and saved settings. Desktop and Android native builds and regression tests pass locally. Physical Android interaction remains untested.
+
+Resolves [issue #1](https://github.com/DuIslingr/CR3-U/issues/1). Later parts of the story remain untested end to end, and some battle effects are still missing.
 
 ## Downloads
 

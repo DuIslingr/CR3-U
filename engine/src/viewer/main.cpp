@@ -74,6 +74,7 @@
 #include "assets/maptable.hpp"
 #include "assets/release.hpp"
 #include "assets/language.hpp"
+#include "assets/card_art.hpp"
 #include "assets/mvgl.hpp"
 #include "assets/skeleton.hpp"
 #include "assets/spark.hpp"
@@ -315,6 +316,7 @@ struct Viewer {
         bool hdSet = false;       // (settings.ini says which: else on when there are HD textures)
         bool hdModels = false;    // replacement models from models/hd (what loads next)
         int smoothModels = 0;     // smoothed models (assets/smooth.hpp): 0 off, 2 / 3 the PN triangles' level (what loads next)
+        bool originalCardArt = false;
         bool lockOrientation = false, landscapeFlipped = false;
         bool padSwap = false;     // a controller's: × (south) confirms, ○ (east) goes back - else as the Vita
         int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
@@ -352,6 +354,7 @@ struct Viewer {
             else if (k == "hd_textures") s.hdTextures = v != 0, s.hdSet = true;
             else if (k == "hd_models") s.hdModels = v != 0;
             else if (k == "smooth_models") s.smoothModels = v == 2 || v == 3 ? v : 0;
+            else if (k == "original_card_art") s.originalCardArt = v != 0;
             else if (k == "lock_orientation") s.lockOrientation = v != 0;
             else if (k == "landscape_flipped") s.landscapeFlipped = v != 0;
             else if (k == "pad_swap") s.padSwap = v != 0;
@@ -373,6 +376,7 @@ struct Viewer {
                      s.anisotropy, s.sharpTextures ? 1 : 0, s.hdTextures ? 1 : 0, s.hdModels ? 1 : 0, s.smoothModels, s.padSwap ? 1 : 0, s.fieldSpeed,
                      s.battleSpeed);
         std::fprintf(f, "lock_orientation=%d\nlandscape_flipped=%d\n", int(s.lockOrientation), int(s.landscapeFlipped));
+        std::fprintf(f, "original_card_art=%d\n", int(s.originalCardArt));
         if (!keepData.empty()) std::fprintf(f, "data=%s\n", keepData.c_str());
         if (!keepPatch.empty()) std::fprintf(f, "patch=%s\n", keepPatch.c_str());
         std::fclose(f);
@@ -407,7 +411,9 @@ struct Viewer {
             SDL_SetWindowFullscreen(window, s.display != 0);
             appliedDisplay = s.display;
         }
-        if (s.hdTextures != hdTextures) hdTextures = s.hdTextures, reloadTextures();
+        const bool artChanged = cardArtwork.setEnabled(s.originalCardArt);
+        if (s.hdTextures != hdTextures || artChanged) hdTextures = s.hdTextures, reloadTextures();
+        if (artChanged && cardView.gene) openCr3CardView(cardView.gene);
         if (hdModels != s.hdModels) hdReplacedCache.clear();
         if (!orientationApplied || appliedLock != s.lockOrientation || appliedFlip != s.landscapeFlipped) {
             mobile::orientation(window, s.lockOrientation, s.landscapeFlipped);
@@ -556,6 +562,11 @@ struct Viewer {
                                 s.smoothModels = kOrder[(i + (d < 0 ? 2 : 1)) % 3];
                             }});
         }
+        rows.push_back({"Original Card Art", s.originalCardArt && cardArtwork.available() < 3 ? "On (" + std::to_string(cardArtwork.available()) + "/3)" : onOff(s.originalCardArt),
+                        s.originalCardArt && cardArtwork.available() < 3
+                            ? "Some originals are missing. Add Vita or iOS card archives to artwork/."
+                            : "Original art, names and profiles for cards 80, 81 and 86.",
+                        true, [&s](int) { s.originalCardArt = !s.originalCardArt; }});
         rows.push_back({"Lock Orientation", onOff(s.lockOrientation),
                         "Hold the current landscape direction and restore it on restart", true, [this, &s](int) {
                             s.lockOrientation = !s.lockOrientation;
@@ -1441,8 +1452,11 @@ struct Viewer {
     // GameSystem::InitLang: a language other than Japanese adds the texture folder images_eng,
     // looked in before images (the iPhone's and Android's English interface: 314 of them)
     bool englishTextures = false;
+    cr3::CardArtwork cardArtwork;
+    bool originalTextJapanese = false; // the language choice, not the fan translation's slot number
     bool decode(const std::string& name, cr3::Image& img) {
         if (auto it = modelImages.find(name); it != modelImages.end()) return img = it->second, true; // (an HD model's own)
+        if (cardArtwork.decodeTexture(cr3::CardArtwork::textureSeries(name), img)) return true;
         std::vector<uint8_t> data;
         std::string err;
         if (englishTextures && archive.read("images_eng\\" + name + ".img", data) && cr3::decodeImg(data, img)) return true;
@@ -9112,6 +9126,10 @@ struct Viewer {
     bool cr3ListItems = false;
     int cr3ChosenCommand = -1, cr3ChosenItem = 0;
     std::string cr3NameOf(const char* file, const char* table, int id) {
+        if (std::strcmp(file, "gene_name.mbe") == 0) {
+            const std::string original = cardArtwork.originalName(id, originalTextJapanese);
+            if (!original.empty()) return original;
+        }
         static std::map<std::string, cr3::MbeFile> files;
         cr3::MbeFile& f = files[file];
         if (!f.table(table)) {
@@ -22293,7 +22311,8 @@ struct Viewer {
         for (size_t k = 0; k < book.size() && !entry; ++k)
             for (const int g : book[k].genes)
                 if (g == gene) entry = int(k) + 1;
-        const std::string text = announceText("collection_book" + std::to_string(rarity + 1), entry);
+        std::string text = cardArtwork.originalDescription(gene, rarity, originalTextJapanese);
+        if (text.empty()) text = announceText("collection_book" + std::to_string(rarity + 1), entry);
         std::string line;
         for (size_t k = 0; k < text.size() && out.size() < 12; ++k) {
             if (text[k] == '\\') out.push_back(line), line.clear(), ++k; // (Cr3UtilNPrint: a \ and the one after it end the line)
@@ -22392,7 +22411,7 @@ struct Viewer {
                     const std::string label = menuAnnounce(0x21e);
                     drawUiText(label, 24, (tx - 0.06f) / 10 - uiTextWidth(label, 24, w, h), (ty - 0.12f) / 10, w, h, true, 1.0f);
                 }
-                if (cr3UiCall(menu, "typeM_C01", tx, ty)) drawUiText(cr3NameOf("gene_name.mbe", "GeneName", mp.profile), 22, tx / 10, (ty - 0.12f) / 10, w, h, false, 0.25f);
+                if (cr3UiCall(menu, "typeM_C01", tx, ty)) drawUiText(cr3NameOf("gene_name.mbe", "GeneName", mp.profile), 22, tx / 10, (ty - 0.12f) / 10, w, h, false, 0.25f, 0.19f);
                 const std::vector<std::string> lines = geneProfileLines(mp.profile, mp.rarity);
                 for (size_t k = 0; k < lines.size(); ++k) {
                     char joint[16];
@@ -22450,7 +22469,8 @@ struct Viewer {
         for (int k = 0; k < 3; ++k) {
             std::vector<uint8_t> data;
             std::string err;
-            if (!archive.read(names[k], data, &err) || !cr3::decodePicture(data, img[k], &err)) {
+            const bool read = k == 0 && cardArtwork.readPicture(gi->series, data);
+            if ((!read && !archive.read(names[k], data, &err)) || !cr3::decodePicture(data, img[k], &err)) {
                 SDL_Log("gene card %d: %s: %s", gene, names[k], err.c_str());
                 return;
             }
@@ -25303,6 +25323,8 @@ int main(int argc, char** argv) {
     std::string bgmArg, seArg, voiceArg; // --bgm m01, --se bt_001, --voice <name>: played at the start
     float walkX = 0, walkY = 0, walkSeconds = 0; // --walk: the field's character runs first (captures)
     bool tapAfter = false, mute = false, forceAudio = false;
+    int originalArtArg = -1;
+    std::string originalArtSource;
     int hdArg = -1;        // --hd-textures / --no-hd-textures (-1: the settings')
     int speedArg[2] = {0, 0}; // --field-speed / --battle-speed n (0: the settings')
     int smoothArg = -1;       // --smooth-models 0 | 2 | 3 (-1: the settings')
@@ -25450,6 +25472,9 @@ int main(int argc, char** argv) {
         else if (a == "--font" && next) fontPath = next, ++i;
         else if (a == "--tap") tapAfter = true;
         else if (a == "--mute") mute = true;
+        else if (a == "--original-art") originalArtArg = 1;
+        else if (a == "--release-art") originalArtArg = 0;
+        else if (a == "--original-art-source" && next) originalArtSource = next, ++i;
         else if (a == "--hd-textures") hdArg = 1;
         else if (a == "--no-hd-textures") hdArg = 0;
         else if (a == "--field-speed" && next) speedArg[0] = std::clamp(std::atoi(next), 1, 5), ++i;
@@ -25600,6 +25625,7 @@ int main(int argc, char** argv) {
             if (!given("--sharpness")) upscale.sharpness = float(s.sharpness) / 100.0f;
             if (hdArg < 0) hdArg = s.hdSet ? (s.hdTextures ? 1 : 0) : hdBundled ? 1 : 0;
         }
+        if (originalArtArg >= 0) s.originalCardArt = originalArtArg != 0;
         // (what runs, as the list shows it)
         s.renderer = renderer == "opengl" ? 1 : 0;
         s.fps = fps;
@@ -25643,11 +25669,21 @@ int main(int argc, char** argv) {
         if (!languageArg.empty() && !cr3::parseLanguage(languageArg, want)) SDL_Log("--language %s: ja, en or fan-en", languageArg.c_str());
         const cr3::LanguageChoice l = cr3::applyLanguage(v.archive, want);
         v.optionLanguage = l.slot;
+        v.originalTextJapanese = l.id == cr3::Language::Japanese;
         if (!movieArg.empty()) v.game.movieRequest = movieArg, v.game.moviePlaying = true;
         v.englishTextures = l.slot == 1; // (the release's own English: its images_eng)
         v.japaneseText = l.slot == 0 && !l.overlay;
         SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
                 l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
+    }
+    {
+        std::vector<std::string> sources;
+        if (!originalArtSource.empty()) sources.push_back(originalArtSource);
+        if (const char* env = SDL_getenv("CR3_ORIGINAL_ART"); env && *env) sources.push_back(env);
+        for (const auto& place : dataPlaces())
+            for (const char* sub : {"artwork/", "vita/", "ios/", "ipad/"}) sources.push_back(place + sub);
+        v.cardArtwork.configure(v.archive, std::move(sources));
+        v.cardArtwork.setEnabled(v.settings.originalCardArt);
     }
     v.hdDir = hdFolder;
     { // (movies/: cNN.mp4 the release lacks - the iPad's c04..c11 - from another; CR3_MOVIES elsewhere)
