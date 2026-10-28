@@ -469,6 +469,55 @@ void bindGameState(ScriptVM& vm, GameState& state) {
 
 namespace cr3 {
 
+bool GameState::makeNewGamePlus(GameState& out, std::string* error) const {
+    if (!canNewGamePlus()) {
+        if (error) *error = "Complete the main story before starting New Game Plus.";
+        return false;
+    }
+    // Begin with fresh story, quest, party, field and script state. Copy earned
+    // progression explicitly so new transient fields also get their defaults.
+    GameState fresh;
+    fresh.cr3Db = cr3Db;
+    fresh.onSync = onSync;
+    fresh.cr3NewGamePlus = std::clamp(cr3NewGamePlus, 0, 9998) + 1;
+    // PartyEquip uses these kit-initialization flags at each hero's introduction.
+    // Keeping them prevents the tower scene from replacing carried outfits/genes.
+    for (int ch = 1; ch <= 5; ++ch)
+        if (flag(1020 + ch) || cr3Armour.count(ch) || cr3Weapon.count(ch) || cr3Accessory.count(ch) || cr3GeneOf.count(ch))
+            fresh.setFlag(1020 + ch, true);
+    fresh.cr3TeamLevel = cr3TeamLevel;
+    fresh.cr3ProfileValue = cr3ProfileValue;
+    fresh.cr3Items = cr3Items;
+    fresh.cr3Weapon = cr3Weapon;
+    fresh.cr3Armour = cr3Armour;
+    fresh.cr3Accessory = cr3Accessory;
+    fresh.cr3Attachments = cr3Attachments;
+    fresh.cr3GeneOf = cr3GeneOf;
+    fresh.cr3Genes = cr3Genes;
+    fresh.cr3GeneUid = cr3GeneUid;
+    fresh.cr3GeneBook = cr3GeneBook;
+    fresh.cr3GeneSeen = cr3GeneSeen;
+    fresh.cr3GeneStock = cr3GeneStock;
+    fresh.cr3Sheets = cr3Sheets;
+    fresh.cr3Presents = cr3Presents;
+    fresh.cr3Records = cr3Records;
+    fresh.cr3Money = cr3Money;
+    fresh.cr3Coins = cr3Coins;
+    fresh.cr3CoinsSpent = cr3CoinsSpent;
+    fresh.cr3GP = cr3GP;
+    fresh.cr3GPSpent = cr3GPSpent;
+    fresh.cr3Names = cr3Names;
+    // Login rewards remain claimed; New Game Plus is not a new daily login.
+    fresh.cr3Daily = cr3Daily;
+    fresh.cr3VipDays = cr3VipDays;
+    fresh.cr3VipTrial = cr3VipTrial;
+    fresh.cr3LastLogin = cr3LastLogin;
+    fresh.cr3Cheer = cr3Cheer;
+    fresh.cr3Vs.boosts = cr3Vs.boosts; // keep held items, restart the tournaments
+    out = std::move(fresh); // also safe when out is this object
+    return true;
+}
+
 std::string GameState::save(const std::map<std::string, std::string>& extra) const {
     std::ostringstream o;
     o << "CR3-U save 1\n";
@@ -477,7 +526,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
         if (flags[k]) o << ' ' << k;
     o << '\n';
     o << "party " << party[0] << ' ' << party[1] << '\n';
-    o << "active " << active << ' ' << int(changeEnable) << ' ' << int(tabEnable) << '\n';
+    o << "active " << active << ' ' << int(changeEnable) << ' ' << int(tabEnable) << ' ' << int(encountEnable) << '\n';
     for (int s = 0; s < 3; ++s) o << "pairs " << s << ' ' << partySets[s][0] << ' ' << partySets[s][1] << '\n';
     for (int id = 1; id < 300; ++id)
         if (itemCount[id]) o << "item " << id << ' ' << itemCount[id] << '\n';
@@ -510,6 +559,8 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     for (const auto& [c, a] : cr3Accessory) o << "cr3accessory " << c << ' ' << a << '\n';
     for (const auto& [c, a] : cr3GeneOf) o << "cr3geneof " << c << ' ' << a << '\n';
     o << "cr3geneuid " << cr3GeneUid << '\n';
+    for (const Cr3Box& b : cr3Boxes)
+        o << "cr3box " << b.area << ' ' << b.name << ' ' << b.kind << ' ' << b.type << ' ' << b.category << ' ' << b.id << ' ' << int(b.opened) << '\n';
     for (const auto& [id, a] : cr3Attachments) o << "cr3attach " << id << ' ' << a.first << ' ' << a.second << '\n';
     o << "cr3money " << cr3Money << ' ' << cr3Coins << ' ' << cr3CoinsSpent << ' ' << cr3GP << ' ' << cr3GPSpent << ' ' << cr3GeneStock << '\n';
     o << "cr3days " << cr3Daily << ' ' << cr3VipDays << ' ' << int(cr3VipTrial) << ' ' << cr3LastLogin << ' ' << cr3Cheer << '\n';
@@ -567,6 +618,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     const Cr3Records& r = cr3Records;
     o << "cr3records " << static_cast<long long>(r.playSeconds) << ' ' << r.kills << ' ' << r.maxDamage << ' ' << r.vsMatches << ' ' << r.genesObtained << ' '
       << r.merges << ' ' << r.fusions << '\n';
+    o << "cr3ngplus " << cr3NewGamePlus << '\n';
     o << "cr3team " << cr3TeamLevel << ' ' << cr3ProfileValue << '\n';
     for (const auto& [k, v] : cr3Names) o << "cr3name " << k << ' ' << v << '\n'; // (the rest of the line the name)
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
@@ -584,7 +636,8 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
     cr3Items.clear(), cr3Armour.clear(), cr3Attachments.clear(), cr3Genes.clear(), cr3GeneBook.clear(), cr3GeneSeen.clear();
     cr3Weapon.clear(), cr3Accessory.clear(), cr3GeneOf.clear(), cr3Mp.clear(), cr3GeneUid = 0;
     cr3Records = Cr3Records();
-    cr3TeamLevel = 1, cr3ProfileValue = 0;
+    cr3Boxes.clear();
+    cr3TeamLevel = 1, cr3ProfileValue = 0, cr3NewGamePlus = 0;
     cr3Sheets.clear(), cr3Presents.clear(), cr3Quests = Cr3Quests(), cr3Vs = Cr3Vs();
     auto readGene = [](std::istringstream& l, Cr3Gene& g) {
         int locked = 0, stocked = 0, fresh = 0;
@@ -609,9 +662,10 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
         } else if (key == "party") {
             l >> party[0] >> party[1];
         } else if (key == "active") {
-            int e = 1, t = 1;
+            int e = 1, t = 1, encounters = 1;
             l >> active >> e >> t;
-            active = active == 1 ? 1 : 0, changeEnable = e != 0, tabEnable = t != 0;
+            if (!(l >> encounters)) encounters = 1; // saves before encounter state was kept
+            active = active == 1 ? 1 : 0, changeEnable = e != 0, tabEnable = t != 0, encountEnable = encounters != 0;
         } else if (key == "pairs") {
             int s = -1;
             if (l >> s && s >= 0 && s < 3) l >> partySets[s][0] >> partySets[s][1];
@@ -656,6 +710,13 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             int c = 0, a = 0;
             std::map<int, int>& m = key == "cr3armour" ? cr3Armour : key == "cr3weapon" ? cr3Weapon : key == "cr3accessory" ? cr3Accessory : cr3GeneOf;
             if (l >> c >> a) m[c] = a;
+        } else if (key == "cr3box") {
+            Cr3Box b;
+            int opened = 0;
+            if (l >> b.area >> b.name >> b.kind >> b.type >> b.category >> b.id >> opened) {
+                b.opened = opened != 0;
+                cr3Boxes.push_back(b);
+            }
         } else if (key == "cr3geneuid") {
             l >> cr3GeneUid;
         } else if (key == "cr3attach") {
@@ -717,6 +778,9 @@ bool GameState::load(const std::string& text, std::map<std::string, std::string>
             l >> k;
             const size_t at = line.find(' ', line.find(k, 8));
             cr3Names[k] = at == std::string::npos ? std::string() : line.substr(at + 1);
+        } else if (key == "cr3ngplus") {
+            l >> cr3NewGamePlus;
+            cr3NewGamePlus = std::clamp(cr3NewGamePlus, 0, 9999);
         } else if (key == "cr3team") {
             l >> cr3TeamLevel >> cr3ProfileValue;
             cr3TeamLevel = std::max(cr3TeamLevel, 1);

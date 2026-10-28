@@ -1,25 +1,16 @@
-# CR3-U v0.1.0
+# CR3-U v0.2.0
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
-**First release.**
 
-## What's in it
+## What's new
 
-- **Playable from the title screen** through the prologue, the first chapter and the first
-  dungeons: story scenes with voices, towns and dungeons, battles, the camp, the gene lab, shops,
-  quests and the VS mode.
-- **Online features work offline.** CR3-U never contacts Square Enix's servers.
-- **Any one release is enough:** iOS 1.2.2, Android 1.1.3, or the Vita (`PCSG00500`, or the
-  Prequel Trilogy's `PCSG00457`). On the Japanese Vita release, the fan translation can be added
-  as an English language option.
-- **Easy first start:** with no game found, it asks for your copy (an iOS `.ipa`, an Android
-  `.apks`, or a Vita / Vita3K folder, including NoNpDrm dumps) and copies what it needs next to
-  the program.
-- **Options:** a Graphics tab (resolution, frame rate, FSR 3.1 / MetalFX upscaling, MSAA, texture
-  filtering), Field Speed and Battle Speed (2x to 5x), Smooth Models, HD textures and models, and
-  the add-on outfits and weapons.
+- **New Game Plus:** completed saves are marked CLEARED. Open one and choose Continue, New Game Plus, or Back. New Game Plus lets you choose an empty destination slot, keeps the original save, and carries levels, genes, equipment, items, currency, collections and records into a new story run. Story, quests and VS progression restart; the protagonist keeps the equipped outfit from the opening tower scene onward.
+- **12 save slots:** four pages of three native file panels, with Copy and Delete across pages. Page controls sit centered below the save buttons.
+- **Save-menu readability:** restored the native silver NEW GAME panels for empty slots and improved the text on existing saves, including the added slots.
+- **Vita save importing:** import decrypted Vita saves from title-screen Options → Other → Vita Saves → Import. Automatic backups, an optional command-line converter and instructions are included.
+- Save/load fixes preserve each slot's story flags, encounter setting, treasure-box state and field position.
 
-**Not done yet:** later parts of the story are untested, and some battle effects are missing.
+Later parts of the story remain untested end to end, and some battle effects are still missing.
 
 ## Downloads
 

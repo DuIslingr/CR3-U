@@ -50,6 +50,11 @@ struct GameState {
     // CrxCharacter::initialize; raised by the lab clerk's c115_TeamLvCheck to the collection count
     // + 1) and the profile value Invoke(4) / Invoke2(5, n) keep
     int cr3TeamLevel = 1, cr3ProfileValue = 0;
+    // Port feature: each restart keeps earned progression and starts the story again.
+    int cr3NewGamePlus = 0;
+    bool canNewGamePlus() const { return flag(6016); } // MainQuestClear(16), after the final battle
+    bool makeNewGamePlus(GameState& out, std::string* error = nullptr) const;
+
     struct Cr3Records {
         double playSeconds = 0;
         int kills = 0, maxDamage = 0, vsMatches = 0, genesObtained = 0, merges = 0, fusions = 0;

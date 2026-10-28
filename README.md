@@ -171,6 +171,32 @@ On a desktop the Options' tabs and rows get smaller as the window grows, so more
 rows fit at once (a phone or tablet keeps the game's size and four rows). **Reset**, the round
 button left of the back (or R), asks, then puts the open tab's settings back to their defaults (Graphics keeps the window's type and resolution).
 
+## Save slots
+
+The native title-screen save menu has **12 slots**, shown three at a time across
+four pages. Use the on-screen arrows, Left/Right, Page Up/Page Down, or controller
+L/R to change pages. Up/Down moves between slots. Copy and Delete work across pages;
+playing a slot keeps manual saves and autosaves in that slot.
+
+## New Game Plus
+
+Cleared saves are marked **CLEARED**. Open one in the title's save menu to choose
+**Continue**, **New Game Plus**, or **Back**. New Game Plus asks for an empty
+slot on any page, then confirms. The original save stays intact.
+
+This port feature carries team level, genes and their upgrades, equipment, items,
+currency, collections, names and records into a new prologue. The protagonist keeps
+the equipped outfit from the opening tower scene onward. Story flags, quests,
+VS progression and party recruitment restart; MP is restored. Playtime accumulates,
+and daily rewards keep their claim history. Clear the story again to begin another run.
+
+## Vita save importing
+
+Import decrypted Vita saves from title-screen **Options**, using **Other → Vita Saves → Import**.
+Choose the exported save folder and confirm; existing saves are backed up automatically.
+No Python is needed. See [Vita save importing](docs/VITA_SAVES.md) for supported state,
+profile locations and the optional command-line converter.
+
 ## HD textures
 
 Upscaled textures you make yourself, from your own copy - waifu2x or Real-ESRGAN, drawn in place of

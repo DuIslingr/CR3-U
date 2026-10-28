@@ -48,3 +48,46 @@ system's), `-DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-x86_64.cmake` (Windows from 
 | `tools/re_setup.sh` | Ghidra groundwork in `re/` (never committed): the Android library (x86 and armv7, named), the iPad and Vita builds named from it |
 | `tools/vita_self.py` | the Vita's eboot (a fake-signed SELF) to an ELF plus its imports |
 | `tools/ghidra/` | headless scripts: export decompilation and features, match functions across builds, apply names |
+
+### CR3 save slots
+
+The title's native save screen offers 12 slots (`save1.txt` through `save12.txt`),
+with three panels per page. Left/Right, Page Up/Page Down, the native arrow buttons,
+and controller L/R change pages; Up/Down crosses page boundaries and wraps around.
+Copy can take a source on one page and an empty destination on another. Delete still
+asks twice. Selecting a slot for a new or existing game makes all subsequent manual
+saves and autosaves use that slot. `--continue` defaults to slot 1.
+
+For capture automation, `--input "title:tap save:12 save:12 save:yes"` loads slot 12;
+`save:next` / `save:prev` change pages, and `save:up` / `save:down` / `save:enter`
+exercise keyboard navigation. Importing Vita saves fills the original slots 1–3.
+
+### New Game Plus
+
+A save with main-story clear flag 6016 is marked CLEARED. Opening it adds a
+New Game Plus choice alongside Continue and Back. Chapter/epilogue flag 733 alone
+does not qualify. With an empty destination available, New Game Plus takes that
+cleared file as its source and asks for a slot on any page. `save:plus` chooses the
+option only while the cleared-file choices are open; for example,
+`--input "title:tap save:1 save:1 save:plus save:12 save:yes"` creates a run from
+completed slot 1 in empty slot 12. The final confirmation defaults to No.
+
+`GameState::makeNewGamePlus` starts from fresh state and explicitly copies earned
+progression: team level, genes/UIDs/equipment links/skills/upgrades and storage,
+equipment and attachments, all held items, currency, gene collections, treasure
+sheets, presents, names and records. Daily reward claims, VIP state and login date
+survive; normal date-based login processing still runs. Held VS boosts survive,
+but standings, tournaments and missions restart. Story/global-work flags (except equipment initialization),
+quests, party membership, MP overrides and field transients reset. The prologue
+recruits the party normally; MP starts full. Source playtime and options carry.
+The `PartyEquip` kit-initialization flags 1021–1025 survive for initialized heroes:
+otherwise the opening tower's `PartyEquip(1)` replaces the carried outfit, weapon,
+accessory and gene with starter gear. Field, battle and vista models continue to
+resolve the carried armour through the normal native model tables.
+
+The source is reread and eligibility rechecked when confirming. Existing files,
+including invalid saves, cannot be chosen as destinations. The native importer
+transaction writer installs the new save before the ordinary title load starts
+`t0108` at its default spawn; no source file is changed. Installation failures
+show a native alert and leave the menu available for retry. `new-game-plus-tests`
+covers carryover, resets, source preservation, serialization and repeated runs.

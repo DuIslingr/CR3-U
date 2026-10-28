@@ -169,11 +169,11 @@ only a pop point or a map jump changes it), whatever map the vista used: quest 7
 in e0007f but the field it returns to is d1008, whose evt000 then announces the quest.
 
 The save files (TitleMenuMain 3, CreateSaveFileMenu - SaveFileMenu, after every tap - the port has
-no news or mode select there yet): three files over the reel - `ttlDataPositon` on its `_in`; at
+no news or mode select there yet): twelve files in four pages of three over the reel - `ttlDataPositon` on its `_in`; at
 `call_ttlDataFile` `ttlDataSave01`..`03` (frame 1 the one picked, `ttlDataOk` on it - frame 1 a
 copy's source, 2 where to -; 0 a file, 2 none, its own art "NEW GAME"), their `ttlDataTxt` ("File
 %02d" 0x312 at `typeM_L01`, 0x2c7 at L02, the play time `%4d:%02d` at R03, the hero's name at C04,
-size 0x18; `ttlDataStar_fr00` the stars), `ttlDataCopy` and `ttlDatadelete` (frame 1 while
+size 0x18 for the header/time, 0x20 for the hero’s name; `ttlDataStar_fr00` the stars), `ttlDataCopy` and `ttlDatadelete` (frame 1 while
 theirs); at `call_ttlDataParty` the picked file's chapter (`ttlDataTitle01`..`05` at
 `call_ttlDataTitle`, that frame) and its party's three (VsModeCharaPanel at
 `call_VsMainParty_01`..`03`: the gene's CardModel, 4.6 x, at `call_VsMainPC` - the face `VsMainPC`
@@ -186,8 +186,23 @@ five. Tapped, a file is picked (`com_002`); again, asked (0x308 `{number}`), yes
 (`utils::LoadData(n)`: none there, a new game in it, saved there - CR3-U's `save<n>.txt`). Copy: a
 file, then an empty one (0x30b; `com_011`); Delete: a file (0x30d, then 0x30e; `com_012`). The
 names entered (hero, team, pet, food) are the game's - CrxGameData's, saved with it (`cr3name`
-lines). `--input save:<1..3>` / `copy` / `delete` / `yes` / `no` / `back`; a script going on past
+lines). The original three panel figures are reused per page, with actual slot numbers
+01–12. Native option arrows, Left/Right, Page Up/Page Down and controller L/R change
+pages; Up/Down crosses page boundaries. Copy, Delete, and the loaded game use global
+slot numbers. `--input save:<1..12>` / `next` / `prev` / `copy` / `delete` / `yes` /
+`no` / `back` (`up` / `down` / `enter` for keyboard checks); a script going on past
 `title:tap` without them plays file 1.
+
+`SaveFilePanel::Deactivate` / `Activate` (Vita `8123a1d4` / `8123a276`, iOS
+`100189698` / `1001895dc`) choose pattern 2 for an empty idle slot, pattern 0 for an
+existing idle save, and pattern 1 when selected. Empty idle slots hide the generated
+text: the silver panel already includes its centered file number and NEW GAME.
+For slots 4–12 the port reuses that native art, replacing only the baked number’s
+UV region with a blank silver strip and drawing the actual slot number. It composes
+the translucent panel once, including its original alpha mask.
+`SaveFileText::Set` (iOS `1001e6994`, Vita `8123adda`) uses ProvisionalMenuText type 1:
+white text with an eight-direction black outline. The port uses that style for the
+slot label, play time and character name instead of dark text on the blue panels.
 
 The prologue's story on (part 1 of the reference, 354 - 712 s): d0102's event box `evt101_00`
 (flag 2001 on, 2002 off: sets 2002) plays `s000_d01_00401_evt` - the first battle, then
@@ -321,7 +336,7 @@ DBSystem::Sync writes the game's data. The title (TitleMain) loads it - CrxGameD
 yet, the prologue. The game also syncs - so saves - by
 itself: entering a field and changing areas (Fld2Main::SM_Init / SM_ChangeArea / SM_TownMove), after
 a battle (BattleSession::SM_Sync), and at the scripts' Cr3System.Sync / Sync2 / SavePoint
-(utils::Sync, SavePoint::SM_Sync). CR3-U writes its own save, `save1.txt` in the profile folder
+(utils::Sync, SavePoint::SM_Sync). CR3-U writes its own save, `save<n>.txt` (the selected slot, 1–12) in the profile folder
 (GameState::save with the area and place), on the Save button and - in a game played from the
 title - at those points, once the area's script is done and the field idle; a tap on the title
 resumes it, else starts a new game. `cr3view` with nothing asked for opens the title (the release's launch).
@@ -2894,3 +2909,13 @@ the effects (`Sound/sndeff`) and the voices (`Sound/voice`).
   first four characters ("j001", "m309") x 1000 kinds -, the kind one of three at random from
   battledata's voice records (+0x2c, +0x46 of them: BtlSound::PlayVoiceFromData). The menus' own:
   0xb4 decide, 0xb5 back.
+
+## Port New Game Plus marker
+
+Native CR3-U saves include `cr3ngplus N`, a run count from 0 to 9999. Older saves
+without it load as 0. Creating New Game Plus increments the count (saturating at
+9999), preserves equipment-initialization flags 1021–1025, clears story completion, and writes `area t0108` without the previous
+`place`, so the normal prologue spawn and scripts run. Eligibility uses main-quest
+16's clear flag 6016, set after the main story's final battle. This is a port
+extension, not a field in the original Vita save format. Carryover and reset rules
+are documented in ENGINE.md.

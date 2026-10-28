@@ -52,3 +52,17 @@ CalcPlayerMoveDir): press on the field and drag - the finger's offset from where
 controller (`feConMove01` .. `03`) showing once it moves or after half a second. Let go without
 having moved and it is a tap (a message's page, the check object at hand). The keys, the d-pad and
 the left stick walk as before.
+
+## CR3's save files
+
+The native title-screen save menu has 12 slots across four pages of three.
+Use Left/Right, Page Up/Page Down, the on-screen arrows, or controller L/R to
+change pages. Up/Down selects a slot and crosses page boundaries; confirm opens
+its prompt. C starts Copy, D or Delete starts Delete, and Back cancels. Copy
+can select its source and empty destination on different pages.
+
+Completed saves show CLEARED. Opening one offers Continue, New Game Plus and Back.
+Click the labeled option or select it with Up/Down and Enter (controller d-pad
+and confirm). New Game Plus then asks for an empty destination on any page.
+The final confirmation defaults to No; arrows change the choice and Enter confirms
+it. Back cancels. There is no global New Game Plus button or shortcut.
