@@ -25665,6 +25665,9 @@ int sessionUiViewerSelfTest() {
     return problems ? 1 : 0;
 }
 
+// (a game's saves, CR3's title's too - which has no --play; a capture writes none)
+static bool gameSaves(bool played, bool resumed, bool captured) { return (played || resumed) && !captured; }
+
 int newSessionSelfTest() {
     if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
     int problems = 0;
@@ -25697,6 +25700,9 @@ int newSessionSelfTest() {
             !v.game.onSync || v.campOptions.hands != 1) {
             ++problems; std::puts("new session FAILED: native CR3 reset or persistent controls");
         }
+    }
+    if (!gameSaves(true,false,false) || gameSaves(true,false,true) || gameSaves(false,false,false)) {
+        ++problems; std::puts("new session FAILED: a game from the title does not save its options");
     }
     SDL_Quit();
     std::printf("new session: %d problems\n",problems);
@@ -26299,7 +26305,7 @@ int main(int argc, char** argv) {
     const bool cr3Title = titleScreen && v.archive.contains("ttlLogoMenu.geom"); // (CR3's title: its own flow, into the prologue)
     if (titleScreen && playFrom.empty() && !cr3Title) playFrom = "d1020"; // (the title's New Game: --play's start)
     if (!playFrom.empty()) fieldName = playFrom, v.playMode = true;
-    v.scriptSaves = (!playFrom.empty() || continueSave) && capture.empty();
+    v.scriptSaves = gameSaves(!playFrom.empty() || cr3Title, continueSave, !capture.empty());
     if (continueSave && !cr3Continue && fieldName.empty()) fieldName = "d1020"; // (the windows and fonts set up for the field)
     v.skipBattles = skipBattlesOpt; // (a new game: every flag clear)
     if (!fieldName.empty() || !eventName.empty() || battleId > 0 || cr3Title || cr3Continue || !areaName.empty()) {

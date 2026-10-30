@@ -103,3 +103,8 @@ in CR3 and no crash or hang.
 None of CR3's 388 scripts reserves the pub, so that menu is out of a player's reach.
 
 Limits: each save key was sampled, not tried in full.
+
+Options closed at the title were not written: CR3's own title has no `--play`, so the
+game counted as not saving until the next autosave. A controller Back on the title's
+Options wrote no `system.txt` before the fix and writes it now. `viewer-new-session`
+holds the rule (`gameSaves`).
