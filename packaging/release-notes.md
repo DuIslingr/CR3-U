@@ -1,26 +1,15 @@
-# CR3-U v0.2.2
+# CR3-U v0.2.3
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **Original Card Art:** a saved toggle in **Options → Graphics** restores the original artwork for Gene Index entries **80, 81 and 86**, in menu cards, gene icons and full-screen views. It is Off by default and applies immediately.
-- **Matching names and profiles:** restored cards use **Little Red Riding Hood, Aphrodite and Adam**, with their original N/R/SR descriptions. English and fan-English modes use English translations of the Japanese originals; Japanese mode retains the original text. Turning the option Off restores the selected release's art and text.
-- **Local artwork sources:** iOS and Vita already contain all three originals. Android contains the originals for 80 and 81 and shows **On (2/3)** until card 86's original is supplied. Missing art keeps its release name and profile too.
-- **Cross-platform artwork:** correct the row order when borrowing Vita textures for mobile data, refresh cached cards when toggling, and fit the longer original name within its native profile banner. Gene IDs, stats, rarities and saves remain unchanged.
+- **Options:** changes made from the title screen are now saved straight away, instead of being lost if you quit before the next save.
+- **Saves:** written safely and loaded all or nothing. A save cut short is refused, unreadable slots are kept, and damaged numbers, including the team level and worn items, are held in range.
+- **Controller:** a button held while the window loses focus, or as a session ends, does nothing until it's let go.
+- **Windows:** a PC without Vulkan no longer refuses to start the game; it goes on to OpenGL.
 
-### Supplying card 86's original for Android
-
-Copy both card archives from your own decrypted Vita or iOS copy into the game's `artwork/` folder:
-
-- Vita: `CRDBcard01.psp2.mvgl` and `CRDBcardhd.psp2.mvgl`.
-- iOS: `CRDBcard01.ios.mvgl` and `CRDBcardhd.ios.mvgl`.
-
-Subfolders work; no main archive is required. These files supply pictures without switching the gameplay release. On Android, use `Android/data/local.preservation.chaosrings3/files/artwork/`. If the game is running, turn the option Off and On after copying. **No game artwork is included in the port.**
-
-Checked with Android, iOS and Vita data, including Japanese and fan-English text, live art switching, missing/corrupt sources and saved settings. Desktop and Android native builds and regression tests pass locally. Physical Android interaction remains untested.
-
-Resolves [issue #1](https://github.com/DuIslingr/CR3-U/issues/1). Later parts of the story remain untested end to end, and some battle effects are still missing.
+Every chapter jump and all 200 maps were checked, but the story still hasn't been played through end to end. A real Windows PC without Vulkan and physical Android devices are still untested.
 
 ## Downloads
 
