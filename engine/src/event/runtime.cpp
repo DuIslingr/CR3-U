@@ -746,6 +746,32 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
 }
 
 void EventRuntime::reset() {
+    // Reusing a runtime for another room must act like fresh vista/window objects.
+    // Keep the host's playback policy, language and manual selection, but no old input/UI.
+    mapAnimPaused = effectLine = fastForward = false;
+    skipButton_ = touched_ = false;
+    touchWait_ = yesNoAge_ = 0;
+    skipOff_.clear(), pageSendOff_.clear();
+    itemShown_ = messagesSet_ = 0;
+    parsed_ = ParsedMessage();
+    executionEnd_ = false;
+    error_.clear();
+    secondMap.clear(), mapChanged = false;
+    spacePort_ = SpacePort(), worldSelect_ = WorldSelect();
+    shop_ = Shop(), geneGet_ = GeneGet(), collectList_ = CollectList();
+    fastWindow_ = 0;
+    fieldCameraX_ = fieldCameraY_ = 0;
+    giftEffectEnd_ = -1;
+    choiceKind_ = choicesAsked_ = 0, choiceAnswer_ = -1;
+    choiceAge_ = choiceCloseSeconds_ = 0, choiceClosing_ = -1;
+    choiceText_ = TextData(), choiceIds_.clear();
+    parameters_.clear();
+    levelUpAge_ = keyBuyAge_ = -1, levelUpSeconds_ = 0;
+    clearQuest_ = 0, clearQuestAge_ = 0;
+    inputOpen_ = false, inputOk_ = true;
+    inputKind_ = 0, inputAge_ = 0, inputText_.clear();
+    tutorialMenuOpen_ = false, tutorialMenuPicture_ = 0;
+    mapName_ = -1, mapNameLevel_ = 0, mapNameAge_ = 0;
     scene_ = EventScene();
     fade_ = EventFade(), backFade_ = EventFade();
     faces_.clear();

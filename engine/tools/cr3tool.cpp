@@ -856,6 +856,12 @@ int play(const char* path, const char* event) {
     std::printf("  stub natives reached (calls):");
     for (const auto& [k, c] : stubs) std::printf(" %s %d", k.c_str(), c);
     std::printf("\n");
+    if (n == 0) {
+        std::fprintf(stderr, "No standalone _evt scripts found. CR3 keeps events inside area scripts; "
+                             "use 'cr3tool events <release>' to enumerate them, or "
+                             "'cr3tool play <release> <script>:<function>' to replay one.\n");
+        return 1;
+    }
     return ended == n ? 0 : 1;
 }
 

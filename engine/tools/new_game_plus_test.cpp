@@ -139,11 +139,11 @@ int main() {
                   target.popPoint2.empty() && target.encountEnable && !target.next.title && target.next.battle == -1,
               "Field/script state leaked");
         cr3::GameState loaded;
-        check(loaded.load(target.save()) && loaded.save() == target.save(), "NG+ save round trip failed");
+        check(loaded.load(target.save({{"area", "t0108"}})) && loaded.save() == target.save(), "NG+ save round trip failed");
         loaded.setFlag(6016, true);
         check(loaded.makeNewGamePlus(loaded) && loaded.cr3NewGamePlus == 2 && loaded.cr3Genes[0].uid == 12,
               "Repeated/aliased NG+ failed");
-        check(loaded.load("CR3-U save 1\n") && loaded.cr3NewGamePlus == 0, "Older save inherited NG+ marker");
+        check(loaded.load("CR3-U save 1\narea t0108\n") && loaded.cr3NewGamePlus == 0, "Older save inherited NG+ marker");
         std::cout << "New Game Plus: eligibility, carryover, story reset, source preservation, round trip and repeat "
                      "passed\n";
         return 0;
