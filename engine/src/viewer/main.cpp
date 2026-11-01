@@ -105,6 +105,7 @@ std::string storedSetting(const char* key); // (settings.ini's data= / patch=: b
 #include "field/fieldscript.hpp"
 #include "gfx/material.hpp"
 #include "gfx/render_device.hpp"
+#include "gfx/cache_trim.hpp"
 #include "gfx/text.hpp"
 
 namespace {
@@ -426,23 +427,24 @@ struct Viewer {
         }
         hdModels = s.hdModels; // (from the next figure loaded)
     }
+    void reloadTexture(const std::string& name, cr3::Texture& t) {
+        cr3::Image img;
+        if (!decode(name, img)) return;
+        if (hdTextures && !hdDir.empty()) {
+            cr3::Image hd;
+            if (cr3::loadHdImage(hdDir, img, hd)) hd.logicalW = img.width, hd.logicalH = img.height, img = std::move(hd), ++hdLoaded;
+            else ++hdMissing;
+        }
+        img.mipmaps = textureMips.count(name) ? textureMips[name] : true;
+        cr3::Texture old = t;
+        t = dev->upload(img);
+        dev->destroy(old);
+    }
     // Every cached texture again (HD Textures turned on or off): in place, so what holds one sees the new
     void reloadTextures() {
         hdLoaded = hdMissing = 0;
-        for (auto& [name, t] : textures) {
-            if (!t.id) continue;
-            cr3::Image img;
-            if (!decode(name, img)) continue;
-            if (hdTextures && !hdDir.empty()) {
-                cr3::Image hd;
-                if (cr3::loadHdImage(hdDir, img, hd)) hd.logicalW = img.width, hd.logicalH = img.height, img = std::move(hd), ++hdLoaded;
-                else ++hdMissing;
-            }
-            img.mipmaps = textureMips.count(name) ? textureMips[name] : true;
-            cr3::Texture old = t;
-            t = dev->upload(img);
-            dev->destroy(old);
-        }
+        for (auto& [name, t] : textures)
+            if (t.id) reloadTexture(name, t);
         SDL_Log("hd textures %s: %d replaced, %d without one", hdTextures ? "on" : "off", hdLoaded, hdMissing);
     }
 
@@ -1562,6 +1564,21 @@ struct Viewer {
         return base.size() >= 7 && base[0] == 'j' && base[4] == 'b' ? base.substr(0, 4) + "b01" : base; // (an add-on's j001b101 too)
     }
 
+    // An HD model's pictures as its figure loads: figures being drawn hold these textures by their
+    // address, so the entry stays - as it is for the same picture, its texture replaced for a new one
+    void takeModelPictures(std::vector<std::pair<std::string, cr3::Image>>& pictures) {
+        for (auto& [k, img] : pictures) {
+            const auto known = modelImages.find(k);
+            if (known != modelImages.end() && known->second.width == img.width && known->second.height == img.height && known->second.rgba == img.rgba)
+                continue;
+            modelImages[k] = std::move(img);
+            const auto t = textures.find(k);
+            if (t == textures.end()) continue;
+            if (t->second.id) reloadTexture(k, t->second);
+            else textures.erase(t); // (none could be made before: tried again when asked for)
+        }
+    }
+
     // HD Models: models/hd/<figure>.glb (or .gltf) in place of the figure's meshes - its skeleton,
     // animations and materials kept (assets/gltf_figure.hpp)
     void replaceFigure(const std::string& name, cr3::Geom& g) {
@@ -1577,10 +1594,7 @@ struct Viewer {
             std::string why;
             cr3::GltfStats st;
             if (cr3::applyFigureReplacement(g, sk, path, "gltf\\" + base + "\\", pictures, &why, &st)) {
-                for (auto& [k, img] : pictures) {
-                    modelImages[k] = std::move(img);
-                    textures.erase(k); // (a new picture of the same name: decoded again)
-                }
+                takeModelPictures(pictures);
                 ++hdModelsLoaded;
                 SDL_Log("%s: replaced by %s (%d meshes, %d triangles%s)", name.c_str(), path.c_str(), st.meshes, st.triangles,
                         pictures.empty() ? "" : ", pictures of its own");
@@ -1609,10 +1623,7 @@ struct Viewer {
         std::string why;
         cr3::GltfStats st;
         if (cr3::applyFigureReplacement(g, sk, a->model, "addon\\" + a->figure + "\\", pictures, &why, &st)) {
-            for (auto& [k, img] : pictures) {
-                modelImages[k] = std::move(img);
-                textures.erase(k);
-            }
+            takeModelPictures(pictures);
             SDL_Log("%s: add-on %s (%d meshes, %d triangles)", name.c_str(), a->model.c_str(), st.meshes, st.triangles);
         } else {
             SDL_Log("%s: add-on %s left out: %s", name.c_str(), a->model.c_str(), why.c_str());
@@ -10255,6 +10266,7 @@ struct Viewer {
         int from = -1;                    // the page's characters before it (-1: shown whole - the name)
         std::string joint;                // (its place: the joint's as the window's animation has it, + dx, dy)
         float dx = 0, dy = 0;
+        uint64_t used = 0;                // (uiTexts: when last drawn)
         float border = 0;                 // (a black outline this wide, UI units: ProvisionalMenuText type 2's SetBordering)
         float below = 0;                  // (the bitmap's rows under the line's box: its descenders, UI units)
         bool shadow = false;              // (a drop shadow: ProvisionalMenuText type 3's copy at (0.01, -0.0172), its back colour)
@@ -11802,7 +11814,10 @@ struct Viewer {
         return out;
     }
     // a line of text at a UI place (centred), made once
+    // (every string at every size: past the limit the ones not drawn for longest go, their textures with them)
+    static constexpr size_t kUiTextLimit = 1024;
     std::map<std::string, TextQuad> uiTexts;
+    uint64_t uiTextUses = 0;
     // `left`: from x (typeS_L: the text's left), else centred on it; `shade` its colour's
     // `maxWidth` (UI units, 0 none): narrowed to fit it (MenuText's width limit)
     // A text's width as drawUiText draws it (UI units: 0 none)
@@ -11834,6 +11849,8 @@ struct Viewer {
             q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx, q.below = float(img.height - th) * unitsPerPx;
             it = uiTexts.emplace(key, q).first;
         }
+        it->second.used = ++uiTextUses;
+        cr3::trimLeastUsed(uiTexts, kUiTextLimit, [this](TextQuad& t) { dev->destroy(t.tex); });
         const TextQuad& q = it->second;
         const float qw = maxWidth > 0 ? std::min(q.w, maxWidth) : q.w;
         const float x0 = left ? x : x - qw / 2, x1 = x0 + qw, y0 = y - q.h / 2 - q.below, y1 = y + q.h / 2;
@@ -25704,6 +25721,33 @@ int newSessionSelfTest() {
     if (!gameSaves(true,false,false) || gameSaves(true,false,true) || gameSaves(false,false,false)) {
         ++problems; std::puts("new session FAILED: a game from the title does not save its options");
     }
+    {
+        struct Entry { uint64_t used = 0; };
+        std::map<int, Entry> cache;
+        for (int k = 0; k < 20; ++k) cache[k].used = uint64_t(k + 1);
+        cache[0].used = 99; // (the oldest, drawn just now)
+        int freed = 0;
+        cr3::trimLeastUsed(cache, 16, [&](Entry&) { ++freed; });
+        if (freed != 8 || cache.size() != 12 || !cache.count(0) || cache.count(1) || !cache.count(19)) {
+            ++problems; std::puts("new session FAILED: the text cache's limit");
+        }
+        cr3::trimLeastUsed(cache, 16, [&](Entry&) { ++freed; });
+        if (freed != 8) { ++problems; std::puts("new session FAILED: a cache within its limit was trimmed"); }
+    }
+    {
+        Viewer v;
+        cr3::Image picture;
+        picture.width = picture.height = 1, picture.rgba = {1, 2, 3, 4};
+        v.modelImages["p"] = picture;
+        cr3::Texture& held = v.textures["p"];
+        held.id = 7;
+        std::vector<std::pair<std::string, cr3::Image>> again{{"p", picture}};
+        v.takeModelPictures(again);
+        const auto it = v.textures.find("p");
+        if (it == v.textures.end() || &it->second != &held || held.id != 7) {
+            ++problems; std::puts("new session FAILED: an HD model's reload took a texture still held");
+        }
+    }
     SDL_Quit();
     std::printf("new session: %d problems\n",problems);
     return problems ? 1 : 0;
@@ -27154,6 +27198,7 @@ int main(int argc, char** argv) {
     for (ViewFigure& g : v.eventFigures) v.unload(g);
     if (v.white.id) dev->destroy(v.white);
     for (ViewFigure& g : v.gimmicks) v.unload(g);
+    for (auto& [k, q] : v.uiTexts) dev->destroy(q.tex);
     for (auto& [k, t] : v.textures) dev->destroy(t);
     dev->shutdown();
     SDL_DestroyWindow(win);
