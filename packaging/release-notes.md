@@ -1,15 +1,14 @@
-# CR3-U v0.2.3
+# CR3-U v0.2.4
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **Options:** changes made from the title screen are now saved straight away, instead of being lost if you quit before the next save.
-- **Saves:** written safely and loaded all or nothing. A save cut short is refused, unreadable slots are kept, and damaged numbers, including the team level and worn items, are held in range.
-- **Controller:** a button held while the window loses focus, or as a session ends, does nothing until it's let go.
-- **Windows:** a PC without Vulkan no longer refuses to start the game; it goes on to OpenGL.
+- **HD models:** a model with pictures of its own could crash the game when it loaded again; it no longer does, and its old textures no longer pile up on the GPU.
+- **Menu text:** the text cache no longer grows for the whole session.
+- **HD textures:** `--export-textures` now writes ordinary PNGs and the game reads PNG replacements, so any upscaler or editor works without a converter. A replacement that doesn't keep its picture's shape is skipped and named in the log, instead of breaking the menus.
 
-Every chapter jump and all 200 maps were checked, but the story still hasn't been played through end to end. A real Windows PC without Vulkan and physical Android devices are still untested.
+The story still hasn't been played through end to end. Physical Android devices and a real Windows PC without Vulkan are still untested.
 
 ## Downloads
 
