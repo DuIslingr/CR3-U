@@ -1,14 +1,17 @@
-# CR3-U v0.2.4
+# CR3-U v0.2.5
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **HD models:** a model with pictures of its own could crash the game when it loaded again; it no longer does, and its old textures no longer pile up on the GPU.
-- **Menu text:** the text cache no longer grows for the whole session.
-- **HD textures:** `--export-textures` now writes ordinary PNGs and the game reads PNG replacements, so any upscaler or editor works without a converter. A replacement that doesn't keep its picture's shape is skipped and named in the log, instead of breaking the menus.
+- **Battles:** the results of a won battle no longer stay on screen over the next one (the same bug
+  [metastigma](https://github.com/metastigma) reported in CR2-U). Battle announcements and the names in them show the right text: they
+  were read as if the game had 8 languages, not 2, so most came out wrong or as "dummy".
+- **Windows:** settings, saves and the first-start setup work with a folder or user name in another
+  alphabet - a Cyrillic user name on a Russian Windows, for example.
 
-The story still hasn't been played through end to end. Physical Android devices and a real Windows PC without Vulkan are still untested.
+The story still hasn't been played through end to end. Physical Android devices and a real Windows
+PC without Vulkan are still untested.
 
 ## Downloads
 
