@@ -3338,6 +3338,11 @@ struct Viewer {
             if (fx.fig) unload(*fx.fig);
         scene = SceneState(), sceneCameras.clear(), battleFade = BattleFade(), battleMapHidden = false, mapColour = Ramp();
         glass = cr3::GlassFragments(), glassPending = false;
+        // (the last battle's result goes with it: left at its "over" stage it kept the HUD's place -
+        // drawBattleHudMain draws the result window from stage 3 on - and posed that window at
+        // battleClock - its old windowStart, before its start: the next battle's HUD gone, the
+        // result's panels coming in over the fight until the clock caught up - CR2-U issue #1)
+        result = BattleResultShow();
         std::string log;
         auto add = [&](const cr3::BattleSetup::Unit& su) {
             BattleUnit u;
@@ -4379,7 +4384,7 @@ struct Viewer {
     } result;
     static constexpr float kTransfer = 2.0f; // (ProcessLvup's 60 frames at 30 a second)
     // the battle's announcements (BtlAnnounceData, message\announcebattle.dat: u32 the records'
-    // offset, the texts', the count; a record 0x20 bytes - eight languages' text offsets)
+    // offset, the texts', the count; a record 4 bytes a language - CR3's 2 (Japanese, English), CR2's 7 / 8)
     // - and the names', the same: message\\charaname, sopianame, commandname, autoskillname,
     // itemname (by number, from 1)
     std::map<std::string, std::vector<uint8_t>> messageFiles;
@@ -4389,7 +4394,12 @@ struct Viewer {
         if (d.empty() && !archive.read("message\\" + file + ".dat", d)) return {};
         auto u32 = [&](size_t o) { return o + 4 <= d.size() ? uint32_t(d[o] | d[o + 1] << 8 | d[o + 2] << 16 | uint32_t(d[o + 3]) << 24) : 0u; };
         if (id < 1 || uint32_t(id) > u32(8)) return {};
-        const size_t o = size_t(u32(4)) + u32(size_t(u32(0)) + size_t(id - 1) * 0x20 + 4u * size_t(std::clamp(optionLanguage, 0, 7))); // (the option's language: English the second)
+        // (4 bytes a language - CR3's copies have 2, Japanese and English; read from the records' size)
+        const uint32_t records = u32(0), strings = u32(4), n = u32(8);
+        size_t langs = n && strings > records && (strings - records) % n == 0 ? (strings - records) / n / 4 : 8;
+        if (langs < 1 || langs > 8) langs = 8;
+        const size_t want = size_t(std::clamp(optionLanguage, 0, 7)), lang = want < langs ? want : (langs > 1 ? 1 : 0); // (else English)
+        const size_t o = size_t(strings) + u32(size_t(records) + size_t(id - 1) * 4 * langs + 4u * lang);
         std::string s;
         for (size_t k = o; k < d.size() && d[k]; ++k) s += char(d[k]);
         return s;
