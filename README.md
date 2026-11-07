@@ -45,9 +45,11 @@ or, with a save, carries on from it. What works today:
   ~236 `CR3/resources/**.psp2.mvgl`; every file, texture, mesh, skeleton and animation of all three
   decodes (`cr3tool check`, `images`, `models`, `animations`)
 - **Languages**: Japanese and English on iOS / Android; the Vita's Japanese - and the **fan
-  translation** ([Chaos Rings III Translation Project](https://gbatemp.net/threads/chaos-rings-iii-translation-project.443742/))
-  as an *option*: given its `rePatch` folder next to an unpatched Vita copy, "English (fan
-  translation)" is a language of its own (`--patch`, `assets/language.hpp`)
+  translations** ([Chaos Rings III Translation Project](https://gbatemp.net/threads/chaos-rings-iii-translation-project.443742/)'s
+  English, Joseas's Spanish) as *options*: each one given next to an unpatched Vita copy is a
+  language of its own, both at once too. The in-game Options' Language switches between them live
+  (the text, the pictures they translate, the Spanish one's font) and the choice is kept
+  (`--patch`, once for each; `assets/language.hpp`)
 - **Scripts**: all 194 of CR3's compiled scripts in the game's own Squirrel 2.2.4, with its 600
   natives bound; every one of its 4,127 events plays through to its end (`cr3tool events`)
 
@@ -74,7 +76,7 @@ folder you start it from - as `vita/`, `android/` or `ios/` ([Your copy](#your-c
 | iPhone / iPad 1.2.2 | the unpacked `.ipa` (or its `Payload/ChaosRings3_FINAL_ENG.app`) |
 | Android 1.1.3 (`com.square_enix.chaosrings3gp`) | the `.apk` / `.apks`, or a folder with the APK unpacked; the asset packs (`CRDB{bgm,voice,se,mov}.android.mvgl`) anywhere under it. An `.apks` that holds them compressed (a repacked one) has them unpacked once into `assetpacks/` beside it: about 1.3 GB |
 | PS Vita PCSG00500 / PCSG00457 | the installed (decrypted) title's folder, or its `CR3/resources` |
-| + the fan translation | `cr3tool --patch <its rePatch folder> ...` over an unpatched Vita copy (`cr3view`: `translation/` in the game folder) |
+| + a fan translation | `cr3tool --patch <its rePatch folder> ...` over an unpatched Vita copy (`cr3view`: `translation/` in the game folder): the Translation Project's English, or Joseas's Spanish (`CR3_ES`, with its own font for á, ñ, ¿, ¡); either one patched into the Vita copy itself is read as it is too |
 
 An encrypted Vita dump (NoNpDrm, still PFS-encrypted) has to be installed first for `cr3tool` (Vita3K does it);
 `cr3view` decrypts one put in `vita/` itself (Your copy).
@@ -92,7 +94,7 @@ folder's if that one can't be written), the same layout as putting them there by
   `pref-path`, or `ux0`), or the game's own `PCSG00500` folder: copied into `vita/PCSG00500/` as Vita3K installs
   it (`eboot.bin`, `sce_sys/`, the game's folder); the Prequel Trilogy's `PCSG00457` too (into `vita/PCSG00457/`,
   without the other games) - then its fan translation (the `rePatch` folder: Vita3K's
-  `ux0/rePatch/PCSG00500` by itself, else asked for, or left out) into `translation/PCSG00500/`.
+  `ux0/rePatch/PCSG00500` by itself, else asked for, or left out) into `translation/en/` or `translation/es/` (its language's).
   A **NoNpDrm dump** (its files encrypted, `sce_sys/package/work.bin` its licence) - its folder, or packed as
   `.rar`, `.7z`, `.zip` or `.vpk` - is decrypted as Vita3K's install does, this game's parts alone.
 
@@ -123,8 +125,9 @@ the program - it finds it by itself. The game folder is:
 ├── vita/
 │   └── PCSG00500/                      the installed title: CR3/resources/**.psp2.mvgl (or the Prequel Trilogy's PCSG00457)
 ├── translation/
-│   └── rePatch/                        the fan translation's rePatch folder (rePatch/PCSG00500/CR3/resources/*.psp2.mvgl):
-│                                       laid over an unpatched Vita copy as the language "English (fan translation)"
+│   ├── en/                             a fan translation, a folder each (its rePatch/PCSG00500/CR3/resources/*.psp2.mvgl - or
+│   └── es/                             the .rar / .zip / .7z, unpacked into en/ or es/): over an unpatched Vita copy,
+│                                       "English (fan translation)" and "Spanish (fan translation)" in the Options' Language
 ├── movies/                          cNN.mp4 your release lacks, from another (the iPad lacks c04..c11): "Movies"
 └── textures/
     ├── export/                         written by --export-textures: the pictures to upscale (<hash>.png)

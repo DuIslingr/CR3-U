@@ -180,6 +180,9 @@ public:
     float choiceAge() const { return choiceAge_; }   // (since it opened; once answered, since then)
     float choiceClosing() const { return choiceClosing_; } // (-1 not; else since)
     std::vector<std::vector<std::string>> choiceLines() const;
+    // the message files read so far read again (the language changed: the fan translation over the
+    // release another, or none) - the page shown kept, the next as the new files have it
+    void reloadTexts();
     void answerChoice(int index) {
         if (choiceKind_ && choiceAnswer_ < 0 && index >= 0 && index < choiceKind_) choiceAnswer_ = index, choiceAge_ = 0;
     }
@@ -361,6 +364,7 @@ public:
 
 private:
     bool loadText(const std::string& name, TextData& into);
+    std::map<TextData*, std::string> textSources_; // (each TextData's file: reloadTexts')
     const MvglArchive& archive_;
     GameState& state_;
     std::unique_ptr<ScriptVM> vm_;

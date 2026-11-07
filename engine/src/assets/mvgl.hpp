@@ -80,17 +80,22 @@ public:
     const std::vector<std::string>& unpackFailed() const { return unpackFailed_; }
     const MvglFile& archive(size_t i) const { return *files_[i]; }
 
-    // a fan translation over the release (the Vita's: its rePatch folder, PCSG00500 or
-    // CR3/resources under it, or the archives' folder): its archives and loose files, used in
-    // place of the release's own while overlayActive()
+    // fan translations over the release (the Vita's: a rePatch folder, PCSG00500 or CR3/resources
+    // under it, or the archives' folder): each its archives and loose files, kept apart - the two
+    // translations ship the same files -, the active one's used in place of the release's own
     bool addOverlay(const std::string& path, std::string* error = nullptr);
-    bool hasOverlay() const { return !overlay_.empty(); }
-    void setOverlayActive(bool on) { overlayActive_ = on && hasOverlay(); }
-    bool overlayActive() const { return overlayActive_; }
-    const std::string& overlayPath() const { return overlayPath_; }
+    bool hasOverlay() const { return !overlays_.empty(); }
+    size_t overlayCount() const { return overlays_.size(); }
+    void setActiveOverlay(int i) { activeOverlay_ = i >= 0 && size_t(i) < overlays_.size() ? i : -1; }
+    int activeOverlay() const { return activeOverlay_; }
+    void setOverlayActive(bool on) { setActiveOverlay(on ? 0 : -1); } // (the first)
+    bool overlayActive() const { return activeOverlay_ >= 0; }
+    // (the given one's, else the active one's, else the first's: "" none)
+    const std::string& overlayPath(int i = -1) const;
 
     // every name once (an overlay's replace, never add)
     const std::vector<Entry>& entries() const { return entries_; }
+    const std::vector<Entry>& overlayEntries(size_t i = 0) const; // (an overlay's own, active or not)
     // by name, case-insensitive, '/' or '\' alike - the overlay's first while it is active
     const Entry* find(const std::string& name) const;
     bool contains(const std::string& name) const { return find(name) != nullptr; }
@@ -114,14 +119,20 @@ private:
     void addLoose(const std::string& path, const std::string& name, bool overlay);
 
     Kind kind_ = Kind::None;
-    std::string path_, root_, overlayPath_;
+    std::string path_, root_;
     std::vector<std::unique_ptr<MvglFile>> files_;
     std::vector<std::string> loose_; // loose files' paths
     std::vector<std::string> unpackFailed_; // (asset packs an .apks held deflated that couldn't be unpacked)
-    std::vector<Entry> entries_, overlay_;
-    std::unordered_map<std::string, size_t> byName_, overlayByName_;
+    std::vector<Entry> entries_;
+    std::unordered_map<std::string, size_t> byName_;
+    struct Overlay {
+        std::string path;
+        std::vector<Entry> entries;
+        std::unordered_map<std::string, size_t> byName;
+    };
+    std::vector<Overlay> overlays_; // (addArchive / addLoose's `overlay`: into the last)
     std::unordered_map<std::string, Edit> edits_;
-    bool overlayActive_ = false;
+    int activeOverlay_ = -1;
 };
 
 // The release opened last is a 64-bit build's (iOS, Android): its animations' headers (EA04)

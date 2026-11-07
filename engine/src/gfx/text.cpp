@@ -7,7 +7,11 @@
 #ifdef CR3_HAVE_FREETYPE
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_TRUETYPE_TABLES_H
+#include FT_TRUETYPE_TAGS_H
 #endif
+
+#include <unordered_map>
 
 namespace cr3 {
 
@@ -37,6 +41,53 @@ struct TextRasterizer::Impl {
     FT_Face face = nullptr;
     std::vector<FT_Face> fallbacks;
     std::vector<uint8_t> bytes; // (a face from memory reads them while it lives)
+    // A TrueType glyph without hinting code of its own in a font that hints the rest - the fan
+    // translations' accented letters, added to the Vita's Gothic - is drawn unhinted: the font's
+    // control program alone squashes the accent away at small sizes (í a dotless i at 22 px)
+    struct Hints {
+        std::vector<uint8_t> loca;
+        bool longLoca = false, active = false;
+        std::unordered_map<FT_UInt, bool> bare;
+    };
+    std::unordered_map<FT_Face, Hints> hints;
+    FT_Int32 loadFlags(FT_Face f, FT_UInt g) {
+        auto it = hints.find(f);
+        if (it == hints.end()) {
+            Hints h;
+            FT_ULong fp = 0, pr = 0, n = 0;
+            const TT_Header* head = static_cast<const TT_Header*>(FT_Get_Sfnt_Table(f, FT_SFNT_HEAD));
+            const bool program = !FT_Load_Sfnt_Table(f, TTAG_fpgm, 0, nullptr, &fp) || !FT_Load_Sfnt_Table(f, TTAG_prep, 0, nullptr, &pr);
+            if (head && program && !FT_Load_Sfnt_Table(f, TTAG_loca, 0, nullptr, &n) && n) {
+                h.loca.resize(n);
+                h.longLoca = head->Index_To_Loc_Format != 0;
+                h.active = !FT_Load_Sfnt_Table(f, TTAG_loca, 0, h.loca.data(), &n);
+            }
+            it = hints.emplace(f, std::move(h)).first;
+        }
+        Hints& h = it->second;
+        if (!h.active) return FT_LOAD_DEFAULT;
+        auto known = h.bare.find(g);
+        if (known != h.bare.end()) return known->second ? FT_LOAD_NO_HINTING : FT_LOAD_DEFAULT;
+        auto at = [&](size_t i) -> FT_ULong {
+            const uint8_t* b = h.loca.data();
+            if (h.longLoca) return i * 4 + 4 <= h.loca.size() ? FT_ULong(b[i * 4]) << 24 | FT_ULong(b[i * 4 + 1]) << 16 | FT_ULong(b[i * 4 + 2]) << 8 | b[i * 4 + 3] : 0;
+            return i * 2 + 2 <= h.loca.size() ? (FT_ULong(b[i * 2]) << 8 | b[i * 2 + 1]) * 2 : 0;
+        };
+        bool bare = false;
+        const FT_ULong from = at(g), to = at(size_t(g) + 1);
+        uint8_t hd[10];
+        FT_ULong len = sizeof hd;
+        if (to > from + sizeof hd && !FT_Load_Sfnt_Table(f, TTAG_glyf, from, hd, &len)) {
+            const int contours = int16_t(uint16_t(hd[0] << 8 | hd[1]));
+            uint8_t il[2];
+            FT_ULong two = 2;
+            // (a simple glyph: its end points, then the length of its instructions)
+            if (contours > 0 && !FT_Load_Sfnt_Table(f, TTAG_glyf, from + 10 + FT_ULong(contours) * 2, il, &two))
+                bare = (il[0] << 8 | il[1]) == 0;
+        }
+        h.bare.emplace(g, bare);
+        return bare ? FT_LOAD_NO_HINTING : FT_LOAD_DEFAULT;
+    }
     ~Impl() {
         if (face) FT_Done_Face(face);
         for (FT_Face f : fallbacks) FT_Done_Face(f);
@@ -61,6 +112,7 @@ bool TextRasterizer::load(const std::string& path, std::string* error) {
         return false;
     }
     if (impl_->face) FT_Done_Face(impl_->face);
+    impl_->hints.clear();
     impl_->face = f;
     impl_->bytes.clear();
     path_ = path;
@@ -78,6 +130,7 @@ bool TextRasterizer::loadMemory(std::vector<uint8_t> bytes, const std::string& n
         return false;
     }
     if (impl_->face) FT_Done_Face(impl_->face);
+    impl_->hints.clear();
     impl_->face = f;
     impl_->bytes = std::move(bytes);
     path_ = name;
@@ -134,7 +187,7 @@ Image TextRasterizer::render(const std::string& utf8, int sizePx, int& width, in
         }
         glyphs.push_back({gf, g, advance});
         if (penX) penX->push_back(advance);
-        if (!FT_Load_Glyph(gf, g, FT_LOAD_DEFAULT)) advance += float(gf->glyph->advance.x) / 64.0f;
+        if (!FT_Load_Glyph(gf, g, impl_->loadFlags(gf, g))) advance += float(gf->glyph->advance.x) / 64.0f;
         prev = g, prevFace = gf;
     }
     if (penX) penX->push_back(advance);
@@ -148,7 +201,7 @@ Image TextRasterizer::render(const std::string& utf8, int sizePx, int& width, in
     for (size_t p = 0; p < img.rgba.size(); p += 4) img.rgba[p] = img.rgba[p + 1] = img.rgba[p + 2] = 255;
     for (const Glyph& gl : glyphs) {
         FT_Face gf = gl.face;
-        if (FT_Load_Glyph(gf, gl.index, FT_LOAD_DEFAULT) || FT_Render_Glyph(gf->glyph, FT_RENDER_MODE_NORMAL)) continue;
+        if (FT_Load_Glyph(gf, gl.index, impl_->loadFlags(gf, gl.index)) || FT_Render_Glyph(gf->glyph, FT_RENDER_MODE_NORMAL)) continue;
         const FT_Bitmap& b = gf->glyph->bitmap;
         const int ox = int(std::floor(gl.pen)) + gf->glyph->bitmap_left, oy = baseline - gf->glyph->bitmap_top;
         for (unsigned y = 0; y < b.rows; ++y)

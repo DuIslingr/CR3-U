@@ -40,7 +40,16 @@ EventRuntime::EventRuntime(const MvglArchive& archive, GameState& state) : enter
 
 bool EventRuntime::loadText(const std::string& name, TextData& into) {
     std::vector<uint8_t> d;
+    textSources_[&into] = name;
     return archive_.read("message\\" + lower(name) + ".dat", d) && into.parse(d);
+}
+
+void EventRuntime::reloadTexts() {
+    for (const auto& [into, name] : textSources_) {
+        std::vector<uint8_t> d;
+        TextData t;
+        if (archive_.read("message\\" + lower(name) + ".dat", d) && t.parse(d)) *into = std::move(t);
+    }
 }
 
 void EventRuntime::bindNatives(ScriptVM& vm) {
@@ -259,7 +268,10 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (!c.string(0).empty() || c.count() < 2) loadText(c.string(0), text_);
         else loadText(c.string(1), windowText_[c.integer(0)]);
     });
-    vm.setNative("EvtWindow", "UnloadData", [this](NativeCall& c) { windowText_.erase(c.integer(0, -1)); });
+    vm.setNative("EvtWindow", "UnloadData", [this](NativeCall& c) {
+        const auto it = windowText_.find(c.integer(0, -1));
+        if (it != windowText_.end()) textSources_.erase(&it->second), windowText_.erase(it);
+    });
     // the tutorials' pictures (TutorialPicture)
     auto pictureAdd = [this](NativeCall& c) {
         if (tutorialPicture_.images.size() < 5) tutorialPicture_.images.push_back(c.string(0));
@@ -776,6 +788,7 @@ void EventRuntime::reset() {
     fade_ = EventFade(), backFade_ = EventFade();
     faces_.clear();
     text_ = TextData(), names_ = TextData();
+    for (auto& [n, t] : windowText_) textSources_.erase(&t);
     windowText_.clear(), tutorialPicture_ = TutorialPicture();
     openWindows_.clear(), opened_.clear(), closing_.clear();
     yesNoShown_ = false, yesNo_ = 0;

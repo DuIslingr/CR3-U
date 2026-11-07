@@ -333,21 +333,22 @@ const char* Database::kindName() const {
 
 void Database::close() {
     kind_ = Kind::None;
-    path_.clear(), root_.clear(), overlayPath_.clear();
+    path_.clear(), root_.clear();
     files_.clear();
     loose_.clear(), unpackFailed_.clear();
-    entries_.clear(), overlay_.clear();
-    byName_.clear(), overlayByName_.clear();
+    entries_.clear(), overlays_.clear();
+    byName_.clear();
     edits_.clear();
-    overlayActive_ = false;
+    activeOverlay_ = -1;
 }
 
 bool Database::addArchive(const std::string& path, uint64_t base, bool overlay, std::string* error) {
     auto f = std::make_unique<MvglFile>();
     if (!f->open(path, error, base)) return false;
     const int16_t index = int16_t(files_.size());
-    auto& list = overlay ? overlay_ : entries_;
-    auto& names = overlay ? overlayByName_ : byName_;
+    if (overlay && overlays_.empty()) return false;
+    auto& list = overlay ? overlays_.back().entries : entries_;
+    auto& names = overlay ? overlays_.back().byName : byName_;
     for (const MvglFile::Entry& e : f->entries()) {
         const std::string k = key(e.name);
         if (names.count(k)) continue; // (the first archive's: the main one, then by name)
@@ -361,9 +362,9 @@ bool Database::addArchive(const std::string& path, uint64_t base, bool overlay, 
 void Database::addLoose(const std::string& path, const std::string& name, bool overlay) {
     std::error_code ec;
     const uint64_t size = fs::file_size(path, ec);
-    if (ec || size > 0xffffffffu) return;
-    auto& list = overlay ? overlay_ : entries_;
-    auto& names = overlay ? overlayByName_ : byName_;
+    if (ec || size > 0xffffffffu || (overlay && overlays_.empty())) return;
+    auto& list = overlay ? overlays_.back().entries : entries_;
+    auto& names = overlay ? overlays_.back().byName : byName_;
     const std::string k = key(name);
     if (names.count(k)) return;
     names[k] = list.size();
@@ -482,25 +483,41 @@ bool Database::addOverlay(const std::string& path, std::string* error) {
         if (depth < best) best = depth, at = fs::path(f).parent_path().string();
     }
     if (at.empty()) return fail(error, path + ": no translation archives (*.psp2.mvgl) in it");
-    const size_t before = overlay_.size();
+    overlays_.push_back({path, {}, {}});
     for (const std::string& f : walk(at, 3)) {
         if (endsWith(f, ".psp2.mvgl")) {
             std::string why;
             if (!addArchive(f, 0, true, &why) && error) *error = why;
         } else if (endsWith(f, ".srt") || endsWith(f, ".mp4")) {
             addLoose(f, baseName(f), true);
+        } else if (fs::path(f).parent_path().filename() == "font" && (endsWith(lower(f), ".ttc") || endsWith(lower(f), ".ttf") || endsWith(lower(f), ".otf"))) {
+            addLoose(f, "font\\" + baseName(f), true); // (its own font - the Spanish one's: TBGB_0KP.TTC with á, ñ, ¿, ¡ ... - over the release's)
         }
     }
-    if (overlay_.size() == before) return fail(error, path + ": its archives hold nothing");
-    overlayPath_ = path;
+    if (overlays_.back().entries.empty()) {
+        overlays_.pop_back();
+        return fail(error, path + ": its archives hold nothing");
+    }
     return true;
+}
+
+const std::string& Database::overlayPath(int i) const {
+    static const std::string none;
+    if (i < 0) i = activeOverlay_ >= 0 ? activeOverlay_ : 0;
+    return size_t(i) < overlays_.size() ? overlays_[size_t(i)].path : none;
+}
+
+const std::vector<Database::Entry>& Database::overlayEntries(size_t i) const {
+    static const std::vector<Entry> none;
+    return i < overlays_.size() ? overlays_[i].entries : none;
 }
 
 const Database::Entry* Database::find(const std::string& name) const {
     const std::string k = key(name);
-    if (overlayActive_) {
-        const auto o = overlayByName_.find(k);
-        if (o != overlayByName_.end()) return &overlay_[o->second];
+    if (activeOverlay_ >= 0) {
+        const Overlay& ov = overlays_[size_t(activeOverlay_)];
+        const auto o = ov.byName.find(k);
+        if (o != ov.byName.end()) return &ov.entries[o->second];
     }
     const auto it = byName_.find(k);
     return it == byName_.end() ? nullptr : &entries_[it->second];
@@ -545,19 +562,22 @@ void Database::setEdit(const std::string& name, Edit edit) {
 
 bool Database::addAlias(const std::string& name, const std::string& of) {
     const std::string k = key(name), o = key(of);
-    if (byName_.count(k) || overlayByName_.count(k)) return false;
+    if (byName_.count(k)) return false;
+    for (const Overlay& ov : overlays_)
+        if (ov.byName.count(k)) return false;
     const auto it = byName_.find(o);
     if (it == byName_.end()) return false;
     Entry e = entries_[it->second];
     e.name = name;
     byName_.emplace(k, entries_.size());
     entries_.push_back(e);
-    if (const auto ov = overlayByName_.find(o); ov != overlayByName_.end()) {
-        Entry v = overlay_[ov->second];
-        v.name = name;
-        overlayByName_.emplace(k, overlay_.size());
-        overlay_.push_back(v);
-    }
+    for (Overlay& ov : overlays_)
+        if (const auto at = ov.byName.find(o); at != ov.byName.end()) {
+            Entry v = ov.entries[at->second];
+            v.name = name;
+            ov.byName.emplace(k, ov.entries.size());
+            ov.entries.push_back(v);
+        }
     return true;
 }
 

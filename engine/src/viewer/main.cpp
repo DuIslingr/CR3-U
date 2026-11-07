@@ -325,6 +325,7 @@ struct Viewer {
         bool padSwap = false;     // a controller's: × (south) confirms, ○ (east) goes back - else as the Vita
         int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
         int battleSpeed = 1;      // the battles, this many times as fast: 1, 2 .. 5
+        int language = 0;         // the options' language: cr3::Language + 1 (0: none picked yet)
     } settings;
     bool settingsPersist = false;
     int rendererInUse = 0;        // (the device that started: the Renderer row's "next start")
@@ -364,6 +365,7 @@ struct Viewer {
             else if (k == "pad_swap") s.padSwap = v != 0;
             else if (k == "field_speed") s.fieldSpeed = std::clamp(v, 1, 5);
             else if (k == "battle_speed") s.battleSpeed = std::clamp(v, 1, 5);
+            else if (k == "language") s.language = std::clamp(v, 0, 4);
         }
         std::fclose(f);
     }
@@ -382,6 +384,7 @@ struct Viewer {
         SDL_free(serialized);
         text += "lock_orientation=" + std::to_string(int(s.lockOrientation)) + "\nlandscape_flipped=" + std::to_string(int(s.landscapeFlipped)) + "\n";
         text += "original_card_art=" + std::to_string(int(s.originalCardArt)) + "\n";
+        if (s.language) text += "language=" + std::to_string(s.language) + "\n";
         if (!keepData.empty()) text += "data=" + keepData + "\n";
         if (!keepPatch.empty()) text += "patch=" + keepPatch + "\n";
         std::string error;
@@ -2882,6 +2885,9 @@ struct Viewer {
     int loggedTeamLevel = 1; // (the team level as last logged)
     void advance(float dt, float sx, float sy, bool run) {
         uiClock += dt;
+        // (tests: --input's language@s - the options' language one on at s seconds, as its arrow)
+        if (!inputScript.empty() && inputScript.front().compare(0, 9, "language@") == 0 && uiClock >= float(std::atof(inputScript.front().c_str() + 9)))
+            inputScript.pop_front(), optionTap(3106);
         testClick();
         stepMovie(dt);
         if (areaMode || cr3BattleMode) game.cr3Records.playSeconds += dt; // (My Page's play time)
@@ -3387,7 +3393,7 @@ struct Viewer {
         }
         if (systemOptions[0] >= 0)
             optionLanguage = systemOptions[0], optionQuality = systemOptions[1], optionVolume[0] = systemOptions[2],
-            optionVolume[1] = systemOptions[3], optionVolume[2] = systemOptions[4];
+            optionVolume[1] = systemOptions[3], optionVolume[2] = systemOptions[4], languageFromSlot();
         if (systemOptions[5] == 0 || systemOptions[5] == 1) campOptions.hands = systemOptions[5];
     }
     void writeSystem() {
@@ -7542,6 +7548,8 @@ struct Viewer {
         }
         if (name.size() < 5 || name[0] != 'd') return;
         static cr3::MbeFile enc, mon, ace;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) enc = cr3::MbeFile(), mon = cr3::MbeFile(), ace = cr3::MbeFile(), readIn = textGeneration;
         if (!enc.table("Encounter")) {
             std::vector<uint8_t> d;
             if (archive.read("data\\enc.mbe", d)) enc.parse(d);
@@ -9212,6 +9220,8 @@ struct Viewer {
     }
     void spawnCr3Effect(int id, const std::array<float, 3>& at, float scale) {
         static cr3::MbeFile table;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) table = cr3::MbeFile(), readIn = textGeneration;
         if (!table.table("Effect")) {
             std::vector<uint8_t> d;
             if (archive.read("data\\effect.mbe", d)) table.parse(d);
@@ -9358,6 +9368,8 @@ struct Viewer {
             if (!original.empty()) return original;
         }
         static std::map<std::string, cr3::MbeFile> files;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) files = std::map<std::string, cr3::MbeFile>(), readIn = textGeneration;
         cr3::MbeFile& f = files[file];
         if (!f.table(table)) {
             std::vector<uint8_t> d;
@@ -12317,6 +12329,87 @@ struct Viewer {
     // Japanese, 1 English, 2 French, 3 German, 4 Spanish, 5 / 6 simplified / traditional Chinese,
     // 7 Korean) and the quality (+0x11, SetOffScreenMode: 0 High, 1 Middle, 2 Low - labels 143..145)
     int optionLanguage = 1, optionQuality = 0;
+    // The languages to pick from (cr3::releaseLanguages: the release's own, then each fan
+    // translation over it - English's, Spanish's) and the one in use. The Vita's had no language
+    // option: CR3-U's steps through these, the options' slots (two in the iPhone's and Android's
+    // messages, one in the Vita's - the translations' all in its 0) not one by one
+    std::vector<cr3::LanguageChoice> languages;
+    size_t languageIndex = 0;
+    int textGeneration = 0;   // (a language changed: the name tables kept read again)
+    std::string archiveFont;  // (the font the release - or a translation over it - has: font\TBGB_0KP.TTC, F0001.bin; "" another)
+    std::string archiveFontFrom;
+    void stepLanguage(int by) {
+        if (languages.size() < 2) return;
+        const size_t n = languages.size();
+        useLanguage((languageIndex + n + size_t(by % int(n) + int(n))) % n, true);
+        settings.language = int(languages[languageIndex].id) + 1; // (kept for the next start)
+        saveSettings();
+    }
+    // the save's slot (the options it stores): the language with it, the one in use if it has it
+    void languageFromSlot() {
+        if (languages.empty()) return;
+        if (languages[languageIndex].slot == optionLanguage) return;
+        for (size_t i = 0; i < languages.size(); ++i)
+            if (languages[i].slot == optionLanguage) return useLanguage(i, dev != nullptr);
+        optionLanguage = languages[languageIndex].slot; // (a slot it hasn't: as it was)
+    }
+    // A language in use: its fan translation over the release (or none), the messages' slot it
+    // reads; `live`, the game running - what was read in the one before read again (the events'
+    // message files, the name tables, the font, the pictures a translation changes)
+    void useLanguage(size_t i, bool live) {
+        if (languages.empty()) return;
+        i = std::min(i, languages.size() - 1);
+        const cr3::LanguageChoice l = languages[i];
+        const int before = archive.activeOverlay();
+        languageIndex = i;
+        optionLanguage = l.slot;
+        originalTextJapanese = l.id == cr3::Language::Japanese;
+        japaneseText = l.slot == 0 && l.overlay < 0;
+        if (before == l.overlay) {
+            archive.setActiveOverlay(l.overlay);
+            if (live) setEventLanguage();
+            return;
+        }
+        std::vector<std::string> changed; // (the cached pictures the other translation has otherwise: in place)
+        if (live)
+            for (auto& [name, t] : textures) {
+                if (!t.id) continue;
+                std::vector<uint8_t> a, b;
+                archive.setActiveOverlay(before);
+                const bool ra = archive.read(name, a);
+                archive.setActiveOverlay(l.overlay);
+                const bool rb = archive.read(name, b);
+                if (ra != rb || a != b) changed.push_back(name);
+            }
+        archive.setActiveOverlay(l.overlay);
+        if (!live) return;
+        for (const std::string& name : changed) reloadTexture(name, textures[name]);
+        ++textGeneration;
+        messageFiles.clear();
+        for (auto& [k, q] : uiTexts) dev->destroy(q.tex);
+        uiTexts.clear();
+        for (TextQuad& q : textQuads) dev->destroy(q.tex);
+        for (TextQuad& q : nameQuads) dev->destroy(q.tex);
+        textQuads.clear(), nameQuads.clear(), shownText.clear(), nameText.clear();
+        if (!archiveFont.empty()) { // (the Spanish translation's own font - its á, ñ, ¿ - while it's in use)
+            std::vector<uint8_t> bytes;
+            std::string err;
+            const std::string from = archive.sourceOf(archiveFont);
+            if (from != archiveFontFrom && archive.read(archiveFont, bytes) && font.loadMemory(std::move(bytes), from, &err, 1)) archiveFontFrom = from;
+            else if (!err.empty()) SDL_Log("font: %s", err.c_str());
+        }
+        for (cr3::EventRuntime* ev : {event.get(), areaEvents.get(), cr3BattleEvents.get(), titleEvents.get(), manualEvents.get(),
+                                      script ? &script->events() : nullptr, battleScript ? &battleScript->events() : nullptr})
+            if (ev) ev->reloadTexts();
+        setEventLanguage();
+        SDL_Log("language: %s%s (%zu pictures changed)", l.label, l.overlay >= 0 ? (" over " + archive.overlayPath(l.overlay)).c_str() : "",
+                changed.size());
+    }
+    void setEventLanguage() {
+        for (cr3::EventRuntime* ev : {event.get(), areaEvents.get(), cr3BattleEvents.get(), titleEvents.get(), manualEvents.get(),
+                                      script ? &script->events() : nullptr, battleScript ? &battleScript->events() : nullptr})
+            if (ev) ev->language = optionLanguage;
+    }
     // the Title Screen's question (BattleOptionMenu::Update 3, 5, 6: the window closed, a system
     // window with announcebattle 0x6d, choice_io's Yes / No - yes to the title, no back)
     bool optionsAsk = false, toTitle = false, optionsWasOpen = false;
@@ -12336,8 +12429,8 @@ struct Viewer {
         case 3110: openSettings(); break; // (CR3-U's Display & Graphics)
         case 3103: optionQuality = (optionQuality + 2) % 3; break;
         case 3104: case 4098: optionQuality = (optionQuality + 1) % 3; break;
-        case 3105: optionLanguage = (optionLanguage + 7) % 8; break;
-        case 3106: case 4099: optionLanguage = (optionLanguage + 1) % 8; break;
+        case 3105: stepLanguage(-1); break;
+        case 3106: case 4099: stepLanguage(1); break;
         case 3201: // (8: the music stopped, InterfaceMain to the title, 0x1d)
             optionsAsk = false, toTitle = true;
             SDL_Log("options: to the title screen");
@@ -12497,7 +12590,8 @@ struct Viewer {
                 // UpdateLanguageButton: 0x534750's 41 Japanese, 42 English, ...)
                 const int n = std::atoi(j.c_str() + 17);
                 static const int kLanguageFrame[8] = {41, 42, 44, 45, 46, 47, 48, 40}; // (0x534728)
-                poseUi(c, "circlebtn_fr", float(n == 99 ? kLanguageFrame[std::clamp(optionLanguage, 0, 7)] : n == 98 ? 0 : n) / 20.0f); // (98, the quality's: frame 0, its text over it)
+                const int picture = languages.empty() ? optionLanguage : cr3::pictureSlot(languages[languageIndex].id); // (a fan translation's own language's)
+                poseUi(c, "circlebtn_fr", float(n == 99 ? kLanguageFrame[std::clamp(picture, 0, 7)] : n == 98 ? 0 : n) / 20.0f); // (98, the quality's: frame 0, its text over it)
                 drawFigure(c.fig, view.data());
                 float sx, sy, ex, ey;
                 if ((n == 98 || n == 99) && uiJoint(c, "tapAreaS01", sx, sy) && uiJoint(c, "tapAreaE01", ex, ey)) tapRects.push_back({4000 + n, sx, sy, ex, ey});
@@ -13098,7 +13192,7 @@ struct Viewer {
             return SDL_Log("continue: %s (%s)", err.empty() ? "no area saved" : err.c_str(), savePath(cr3SaveFile().c_str()).c_str()), false;
         int o[5] = {optionLanguage, optionQuality, optionVolume[0], optionVolume[1], optionVolume[2]};
         if (std::sscanf(extra["options"].c_str(), "%d %d %d %d %d", &o[0], &o[1], &o[2], &o[3], &o[4]) == 5)
-            optionLanguage = o[0], optionQuality = o[1], optionVolume[0] = o[2], optionVolume[1] = o[3], optionVolume[2] = o[4];
+            optionLanguage = o[0], optionQuality = o[1], optionVolume[0] = o[2], optionVolume[1] = o[3], optionVolume[2] = o[4], languageFromSlot();
         // CR3 keeps story flags in each slot; system.txt may belong to a different slot.
         applySystem(false);
         playSeconds = double(std::atol(extra["playtime"].c_str())) / 20.0;
@@ -13156,7 +13250,7 @@ struct Viewer {
         if (!game.load(text, &extra, &err)) return SDL_Log("continue: %s (%s)", err.c_str(), savePath().c_str()), false;
         int o[5] = {optionLanguage, optionQuality, optionVolume[0], optionVolume[1], optionVolume[2]};
         if (std::sscanf(extra["options"].c_str(), "%d %d %d %d %d", &o[0], &o[1], &o[2], &o[3], &o[4]) == 5)
-            optionLanguage = o[0], optionQuality = o[1], optionVolume[0] = o[2], optionVolume[1] = o[3], optionVolume[2] = o[4];
+            optionLanguage = o[0], optionQuality = o[1], optionVolume[0] = o[2], optionVolume[1] = o[3], optionVolume[2] = o[4], languageFromSlot();
         applySystem(); // (the system data's flags and options over the save's)
         const std::string map = extra["map"].empty() ? "d1020" : extra["map"];
         playSeconds = double(std::atol(extra["playtime"].c_str())) / 20.0;
@@ -13640,6 +13734,91 @@ struct Viewer {
     // (SetAllAlpha); the options' comMsgC<n>Panels at its
     // call_comMsgC<n>Panel are hidden - only their tap areas -, comBtnEffe at a tapped one's
     // call_comBtnEffe plays until the menu closes
+    // A flat menu quad cut in three across - its ends as drawn, the middle between them - so it can
+    // be widened without its corners and border stretching: the fan translations' choices (a
+    // bubble a long line needs wider on a screen wider than 3:2). `widen` its ends moved out, each
+    // that far in the quad's own units; the quad's columns (left, cut, cut, right) kept to move from
+    struct SlicedQuad { bool sliced = false; float x[4] = {0, 0, 0, 0}; std::vector<int> column; float widen = 0; };
+    std::map<std::string, SlicedQuad> slicedQuads;
+    // (the quad's width in its own units: 0 when it isn't one)
+    float sliceUiQuad(const std::string& name, ViewFigure& f, float cap) {
+        SlicedQuad& sq = slicedQuads[name];
+        if (sq.sliced && f.meshes.size() == 1 && f.meshes[0].source.vertexCount == 8) return sq.x[3] - sq.x[0];
+        sq = SlicedQuad(); // (first seen, or its figure loaded again)
+        sq.sliced = true;
+        if (f.meshes.size() != 1 || f.meshes[0].source.vertexCount != 4) return 0;
+        ViewMesh& vm = f.meshes[0];
+        cr3::GeomMesh& m = vm.source;
+        float lo = m.position[0], hi = m.position[0];
+        for (int i = 0; i < 4; ++i) lo = std::min(lo, m.position[size_t(i) * 3]), hi = std::max(hi, m.position[size_t(i) * 3]);
+        if (hi - lo <= 0) return 0;
+        std::vector<int> left, right;
+        for (int i = 0; i < 4; ++i) (m.position[size_t(i) * 3] < (lo + hi) / 2 ? left : right).push_back(i);
+        if (left.size() != 2 || right.size() != 2) return 0;
+        auto yOf = [&](int i) { return m.position[size_t(i) * 3 + 1]; };
+        if (std::fabs(yOf(right[0]) - yOf(left[0])) > std::fabs(yOf(right[1]) - yOf(left[0]))) std::swap(right[0], right[1]); // (each row's left with its right)
+        const std::vector<uint32_t> was = m.triangles();
+        auto winding = [](const std::vector<float>& pos, uint32_t a, uint32_t b, uint32_t c) {
+            const float* A = &pos[a * 3]; const float* B = &pos[b * 3]; const float* C = &pos[c * 3];
+            return (B[0] - A[0]) * (C[1] - A[1]) - (B[1] - A[1]) * (C[0] - A[0]);
+        };
+        const bool ccw = was.size() >= 3 && winding(m.position, was[0], was[1], was[2]) > 0;
+        cr3::GeomMesh out = m;
+        out.vertexCount = 8;
+        const float ts[4] = {0, cap, 1 - cap, 1};
+        auto lerpInto = [](std::vector<float>& to, const std::vector<float>& from, int n, int a, int b, float t) {
+            if (from.empty()) return;
+            for (int k = 0; k < n; ++k) to.push_back(from[size_t(a * n + k)] + (from[size_t(b * n + k)] - from[size_t(a * n + k)]) * t);
+        };
+        out.position.clear(), out.normal.clear(), out.tangent.clear(), out.binormal.clear(), out.uv.clear(), out.uv1.clear(), out.colour.clear();
+        out.positionW.clear(), out.weights.clear(), out.joints.clear();
+        sq.column.clear();
+        for (int r = 0; r < 2; ++r)
+            for (int c = 0; c < 4; ++c) { // (vertex r * 4 + c)
+                const int a = left[size_t(r)], b = right[size_t(r)];
+                lerpInto(out.position, m.position, 3, a, b, ts[c]);
+                lerpInto(out.normal, m.normal, 3, a, b, ts[c]);
+                lerpInto(out.tangent, m.tangent, 3, a, b, ts[c]);
+                lerpInto(out.binormal, m.binormal, 3, a, b, ts[c]);
+                lerpInto(out.uv, m.uv, 2, a, b, ts[c]);
+                lerpInto(out.uv1, m.uv1, 2, a, b, ts[c]);
+                lerpInto(out.colour, m.colour, 4, a, b, ts[c]);
+                lerpInto(out.positionW, m.positionW, 1, a, b, 0);
+                lerpInto(out.weights, m.weights, 4, a, b, 0);
+                for (size_t k = 0; k < 4 && !m.joints.empty(); ++k) out.joints.push_back(m.joints[size_t(a) * 4 + k]);
+                sq.column.push_back(c);
+            }
+        out.list = true, out.strip.clear();
+        for (uint32_t c = 0; c < 3; ++c) {
+            uint32_t q[6] = {c, c + 1, c + 5, c, c + 5, c + 4};
+            if ((winding(out.position, q[0], q[1], q[2]) > 0) != ccw) std::swap(q[1], q[2]), std::swap(q[4], q[5]);
+            out.strip.insert(out.strip.end(), q, q + 6);
+        }
+        for (int c = 0; c < 4; ++c) sq.x[c] = out.position[size_t(c) * 3];
+        m = out;
+        static const float kWhite[4] = {1, 1, 1, 1}, kZero[3] = {0, 0, 0}, kNoUv[2] = {0, 0};
+        vm.vertices.assign(size_t(8) * cr3::kVertexStride, 0);
+        for (uint32_t i = 0; i < 8; ++i) {
+            auto at3 = [&](const std::vector<float>& v) { return v.empty() ? kZero : &v[size_t(i) * 3]; };
+            packVertex(&vm.vertices[size_t(i) * cr3::kVertexStride], &m.position[size_t(i) * 3], at3(m.normal),
+                       m.uv.empty() ? kNoUv : &m.uv[size_t(i) * 2], m.colour.empty() ? kWhite : &m.colour[size_t(i) * 4],
+                       at3(m.tangent), at3(m.binormal), m.uv1.empty() ? kNoUv : &m.uv1[size_t(i) * 2]);
+        }
+        const int tex = vm.gpu.texture;
+        dev->destroy(vm.gpu);
+        vm.gpu = dev->upload(vm.vertices, m.triangles(), tex);
+        return sq.x[3] - sq.x[0];
+    }
+    void widenUiQuad(const std::string& name, ViewFigure& f, float widen) {
+        SlicedQuad& sq = slicedQuads[name];
+        if (!sq.sliced || sq.column.size() != 8 || f.meshes.size() != 1 || f.meshes[0].source.vertexCount != 8 || sq.widen == widen) return;
+        sq.widen = widen;
+        std::vector<float>& pos = f.meshes[0].source.position;
+        for (size_t i = 0; i < 8; ++i) {
+            const int c = sq.column[i];
+            pos[i * 3] = sq.x[c] + (c < 2 ? -widen : widen);
+        }
+    }
     std::vector<YesNoRect> choiceRects; // (yes: unused; their order the options')
     void drawChoice(cr3::EventRuntime& ev, int w, int h) {
         choiceRects.clear();
@@ -13656,10 +13835,20 @@ struct Viewer {
         float x, y;
         UiFig& pos = cr3UiPut("commsg" + lc + "position", "", 0, 0, 0, view, a);
         if (!cr3UiCall(pos, "call_comMsg" + c + "Menu", x, y, w, h)) return;
-        UiFig& menu = cr3UiPut("commsg" + lc + "menu", "", 0, x, y, view, a);
+        const std::string menuName = "commsg" + lc + "menu";
+        UiFig& menu = cr3UiPose(menuName, "", 0, x, y); // (its joints first: the bubble widened, then drawn)
         const std::vector<std::vector<std::string>> lines = ev.choiceLines();
+        const float size = n == 2 ? 32.0f : 28.0f, off = size / 2 / 200; // (CreateText: SetTextRender 0x20 / 0x1c, (s / 2) / 200 right and down)
+        struct Placed { std::string text; float x, y, width; };
+        struct Option { bool row = false; float left = 0, right = 0, top = 0, bottom = 0; std::vector<Placed> placed; };
+        std::vector<Option> options(static_cast<size_t>(n));
         for (int k = 0; k < n; ++k) {
+            Option& o = options[size_t(k)];
             const std::vector<std::string> two = k < int(lines.size()) ? lines[size_t(k)] : std::vector<std::string>();
+            float ax, ay, bx, by; // (the menu's tapAreaS0k / E0k: each option's row - the panels' own the same)
+            const std::string kk = std::to_string(k + 1);
+            o.row = cr3UiCall(menu, "tapAreaS0" + kk, ax, ay) && cr3UiCall(menu, "tapAreaE0" + kk, bx, by);
+            if (o.row) o.left = std::min(ax, bx) / 10, o.right = std::max(ax, bx) / 10, o.top = ay / 10, o.bottom = by / 10;
             for (int l = 0; l < (n == 2 ? 2 : 1); ++l) {
                 std::string line = l < int(two.size()) ? two[size_t(l)] : std::string();
                 if (n == 3)
@@ -13676,21 +13865,58 @@ struct Viewer {
                     }
                 if (!found) continue;
                 if (n == 2 && two.size() == 1) ty -= 0.24f; // (SetTextHeadPosition: the line alone towards the middle)
-                const float size = n == 2 ? 32.0f : 28.0f, off = size / 2 / 200; // (CreateText: SetTextRender 0x20 / 0x1c, (s / 2) / 200 right and down)
-                drawUiText(line, size - 4, (tx + off) / 10, (ty - off) / 10, w, h, true, a); // (typeM_L: from the left)
+                o.placed.push_back({line, (tx + off) / 10, (ty - off) / 10, uiTextWidth(line, size - 4, w, h)}); // (typeM_L: from the left)
             }
+        }
+        // The original draws a line whole from its joint, and a long one - the fan translations' -
+        // runs past its bubble. Its room: the row less as much at the right end as the text starts
+        // from the left. A menu with a line wider than that is widened: the bubble cut in three, its
+        // ends moved out as far as the widest line needs (its text with its left end), only as far
+        // as the screen leaves (0.02 clear of its edges). What is still too wide - a 3:2 or 4:3
+        // screen's - has its option's lines centred, 4% of the row clear at each end, and narrowed
+        // to that
+        float need = 0, extent = 0;
+        for (const Option& o : options) {
+            if (!o.row || o.placed.empty()) continue;
+            const float room = o.right - o.placed[0].x - (o.placed[0].x - o.left);
+            for (const Placed& q : o.placed) need = std::max(need, q.width - room);
+            extent = std::max({extent, o.right, -o.left});
+        }
+        const float k = std::min(float(w) / 0.96f, float(h) / 0.64f), half = float(w) / (2 * k);
+        float widen = std::clamp(std::min(need / 2, half - 0.02f - extent), 0.0f, 1.0f);
+        const float quadWidth = sliceUiQuad(menuName, menu.fig, 0.12f);
+        float rowWidth = 0;
+        for (const Option& o : options)
+            if (o.row) rowWidth = std::max(rowWidth, o.right - o.left);
+        if (quadWidth <= 0 || rowWidth <= 0) widen = 0;
+        widenUiQuad(menuName, menu.fig, quadWidth > 0 && rowWidth > 0 ? widen * quadWidth / rowWidth : 0);
+        cr3UiPut(menuName, "", 0, x, y, view, a);
+        for (int kk = 0; kk < n; ++kk) {
+            Option& o = options[size_t(kk)];
+            if (o.row) {
+                o.left -= widen, o.right += widen;
+                for (Placed& q : o.placed) q.x -= widen;
+                if (!o.placed.empty()) {
+                    const float room = o.right - o.placed[0].x - (o.placed[0].x - o.left);
+                    float widest = 0;
+                    for (const Placed& q : o.placed) widest = std::max(widest, q.width);
+                    if (widest > room + 0.0005f) {
+                        const float inner = (o.right - o.left) * 0.92f, middle = (o.left + o.right) / 2;
+                        for (Placed& q : o.placed) q.width = std::min(q.width, inner), q.x = middle - q.width / 2;
+                    }
+                }
+            }
+            for (const Placed& q : o.placed) drawUiText(q.text, size - 4, q.x, q.y, w, h, true, a, q.width);
             float px, py;
-            if (!cr3UiCallNth(menu, "call_comMsg" + c + "Panel", k, px, py)) continue;
+            if (!cr3UiCallNth(menu, "call_comMsg" + c + "Panel", kk, px, py)) continue;
             UiFig& panel = uiFig("commsg" + lc + "panel");
             panel.fig.place = cr3::Mat34();
             panel.fig.place.m[0] = panel.fig.place.m[5] = panel.fig.place.m[10] = cr3UiScale;
             panel.fig.place.m[3] = px, panel.fig.place.m[7] = py, panel.fig.place.m[11] = cr3UiZ;
             poseUi(panel, "commsg" + lc + "panel", 0);
-            float ax, ay, bx, by; // (the menu's tapAreaS0k / E0k: each option's row - the panels' own the same)
-            const std::string kk = std::to_string(k + 1);
-            if (cr3UiCall(menu, "tapAreaS0" + kk, ax, ay) && cr3UiCall(menu, "tapAreaE0" + kk, bx, by)) choiceRects.push_back({false, ax / 10, ay / 10, bx / 10, by / 10});
+            if (o.row) choiceRects.push_back({false, o.left, o.top, o.right, o.bottom});
             float ex, ey;
-            if (k == ev.choiceAnswer() && cr3UiCall(panel, "call_comBtnEffe", ex, ey)) cr3UiPut("combtneffe", "", std::max(ev.choiceClosing(), 0.0f) + (closing ? 0.0f : ev.choiceAge()), ex, ey, view);
+            if (kk == ev.choiceAnswer() && cr3UiCall(panel, "call_comBtnEffe", ex, ey)) cr3UiPut("combtneffe", "", std::max(ev.choiceClosing(), 0.0f) + (closing ? 0.0f : ev.choiceAge()), ex, ey, view);
         }
     }
     void answerChoice(int index) {
@@ -15888,6 +16114,8 @@ struct Viewer {
         cr3::MbeFile::Row r;
         std::vector<uint8_t> d;
         static cr3::MbeFile names;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) names = cr3::MbeFile(), readIn = textGeneration;
         static bool loaded = false;
         if (!loaded) loaded = archive.read("data\\mon_name.mbe", d) && names.parse(d);
         if (!names.find("MonsterName", id, "ipp", r)) return {};
@@ -18354,6 +18582,8 @@ struct Viewer {
         if (group < 0 || group >= 7) return {};
         if (help && group >= 1 && group <= 3) return cr3EquipHelp(id); // (GetItemHelp: SetEquipHelp's)
         static std::map<std::string, cr3::MbeFile> files;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) files = std::map<std::string, cr3::MbeFile>(), readIn = textGeneration;
         const char* file = help ? "item_help.mbe" : "item_name.mbe";
         cr3::MbeFile& f = files[file];
         if (f.tables().empty()) {
@@ -18370,6 +18600,8 @@ struct Viewer {
     // an Item's field effect k (field_item.mbe's FieldItem: the id, then four (kind, value))
     std::pair<int, int> cr3FieldEffect(int id, int k = 0) {
         static cr3::MbeFile f;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) f = cr3::MbeFile(), readIn = textGeneration;
         if (f.tables().empty()) {
             std::vector<uint8_t> d;
             if (archive.read("data\\field_item.mbe", d)) f.parse(d);
@@ -24121,6 +24353,8 @@ struct Viewer {
     }
     std::string vsBoostName(int id) {
         static cr3::MbeFile f;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) f = cr3::MbeFile(), readIn = textGeneration;
         if (f.tables().empty()) {
             std::vector<uint8_t> d;
             if (archive.read("data\\boost.mbe", d)) f.parse(d);
@@ -24143,6 +24377,8 @@ struct Viewer {
     }
     int vsBoostBonusPercent(int n) {
         static cr3::MbeFile f;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) f = cr3::MbeFile(), readIn = textGeneration;
         if (f.tables().empty()) {
             std::vector<uint8_t> d;
             if (archive.read("data\\boost.mbe", d)) f.parse(d);
@@ -24221,6 +24457,8 @@ struct Viewer {
     };
     bool vsWildCard(int id, VsWildCard& out) {
         static cr3::MbeFile f;
+        static int readIn = -1; // (the language it was read in: textGeneration)
+        if (readIn != textGeneration) f = cr3::MbeFile(), readIn = textGeneration;
         if (f.tables().empty()) {
             std::vector<uint8_t> d;
             if (archive.read("data\\wildcard.mbe", d)) f.parse(d);
@@ -25753,6 +25991,36 @@ std::vector<std::string> dataPlaces() {
 #endif
     return out;
 }
+// The fan translations in a folder - a folder each (translation/en/, translation/es/, a download's
+// extracted/ ...), else the folder one itself - over the release, each once (a folder already
+// over it, the same one by another way, left). `loud`: a folder that holds none said
+void addTranslations(cr3::Database& db, const std::string& dir, bool loud) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto known = [&](const std::string& p) {
+        for (size_t i = 0; i < db.overlayCount(); ++i)
+            if (fs::equivalent(db.overlayPath(int(i)), p, ec)) return true;
+        return false;
+    };
+    std::vector<std::string> subs;
+    if (fs::is_directory(dir, ec))
+        for (const fs::directory_entry& e : fs::directory_iterator(dir, ec)) {
+            const std::string n = e.path().filename().string();
+            if (e.is_directory(ec) && !n.empty() && n[0] != '.' && !(n.size() > 5 && n.compare(n.size() - 5, 5, ".part") == 0))
+                subs.push_back(e.path().string()); // (a .part: a copy the setup didn't finish)
+        }
+    std::sort(subs.begin(), subs.end());
+    bool any = false;
+    for (const std::string& p : subs) {
+        if (known(p)) { any = true; continue; }
+        if (db.addOverlay(p)) any = true, SDL_Log("fan translation: %s", p.c_str());
+    }
+    std::string err;
+    if (any || known(dir)) return;
+    if (db.addOverlay(dir, &err)) SDL_Log("fan translation: %s", dir.c_str());
+    else if (loud) SDL_Log("fan translation: %s", err.c_str());
+}
+
 // settings.ini's line `key` (data=, patch= - the first start's setup's: a copy read where it lies, the
 // Vita release's fan translation): its value; and set, the other lines kept
 static std::string settingsIni() {
@@ -26125,6 +26393,12 @@ static cr3::SetupGame cr3SetupGame() {
         cr3::Database db;
         return db.addOverlay(p);
     };
+    setup.patchName = [](const std::string& p) { // (translation/en/, translation/es/: its language's)
+        cr3::Database db;
+        if (!db.addOverlay(p)) return std::string();
+        const std::string key = cr3::languageKey(cr3::overlayLanguage(db, 0)); // ("fan-en", "fan-es")
+        return key.compare(0, 4, "fan-") == 0 ? key.substr(4) : key;
+    };
     setup.untranslated = [](const std::string& p) { // (a Vita copy without the fan translation installed into it)
         cr3::Database db;
         return db.open(p) && db.kind() == cr3::Database::Kind::Vita && !cr3::fanPatchedInPlace(db);
@@ -26142,8 +26416,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--selftest-input-cancel") == 0) return inputCancelViewerSelfTest();
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
     std::string data, model, capture, animName, renderer = "vulkan", lights = "d0101c", fieldName, at = "defaultPos", binary;
-    // --patch: a fan translation over the release (Database::addOverlay); --language ja | en | fan-en
-    std::string patch, languageArg;
+    // --patch: a fan translation over the release (Database::addOverlay; once for each); --language ja | en | fan-en | fan-es
+    std::vector<std::string> patches; // (--patch, each; else translation/'s)
+    std::string languageArg;
     std::string bgmArg, seArg, voiceArg; // --bgm m01, --se bt_001, --voice <name>: played at the start
     float walkX = 0, walkY = 0, walkSeconds = 0; // --walk: the field's character runs first (captures)
     bool tapAfter = false, mute = false, forceAudio = false;
@@ -26201,7 +26476,7 @@ int main(int argc, char** argv) {
         const std::string a = argv[i];
         const char* next = i + 1 < argc ? argv[i + 1] : nullptr;
         if (a == "--data" && next) data = next, ++i;
-        else if (a == "--patch" && next) patch = next, ++i;
+        else if (a == "--patch" && next) patches.push_back(next), ++i;
         else if (a == "--bgm" && next) bgmArg = next, ++i;
         else if (a == "--se" && next) seArg = next, ++i;
         else if (a == "--voice" && next) voiceArg = next, ++i;
@@ -26424,10 +26699,15 @@ int main(int argc, char** argv) {
         else hdFolder = hd, hdBundled = false;
         if (!hdFolder.empty() && hdFolder.back() != '/' && hdFolder.back() != '\\') hdFolder += '/';
         // the fan translation (--patch, else translation/ in the game folder: its rePatch/ or PCSG00500/ - for the Vita release)
-        if (patch.empty()) cr3::installDroppedPatch(cr3SetupGame(), gameFolder, !capture.empty()); // (its .rar / .zip copied into translation/: unpacked)
-        if (patch.empty() && isDir(gameFolder + "translation")) patch = gameFolder + "translation", patchFound = true;
-        if (patch.empty() && isDir(Viewer::savePath("translation"))) patch = Viewer::savePath("translation"), patchFound = true; // (the profile folder's: the setup's, where the game folder can't be written)
-        if (patch.empty() && !(patch = storedSetting("patch=")).empty()) patchFound = true; // (the first start's setup's)
+        // (each in a folder of its own there - en/, es/ -: the English one and the Spanish one both)
+        if (patches.empty()) cr3::installDroppedPatch(cr3SetupGame(), gameFolder, !capture.empty()); // (a .rar / .zip / .7z copied into translation/: unpacked)
+        if (patches.empty()) {
+            if (isDir(gameFolder + "translation")) patches.push_back(gameFolder + "translation");
+            if (isDir(Viewer::savePath("translation"))) patches.push_back(Viewer::savePath("translation")); // (the profile folder's: the setup's, where the game folder can't be written)
+            const std::string stored = storedSetting("patch="); // (the first start's setup's)
+            if (!stored.empty()) patches.push_back(stored);
+            patchFound = !patches.empty();
+        }
     }
     Viewer v;
     { // CR3-U's settings (settings.ini; not for captures and exports), the command line's flags over them
@@ -26470,8 +26750,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     SDL_Log("data: %s", data.c_str());
-    if (patchFound && v.archive.kind() != cr3::MvglArchive::Kind::Vita) patch.clear(); // (the others are in English already)
-    if (!patch.empty() && !v.archive.addOverlay(patch, &err) && !patchFound) SDL_Log("fan translation: %s", err.c_str());
+    if (patchFound && v.archive.kind() != cr3::MvglArchive::Kind::Vita) patches.clear(); // (the others are in English already)
+    for (const std::string& p : patches) addTranslations(v.archive, p, !patchFound);
     { // the add-ons: models/addons/ in the game folder (CR3_ADDONS elsewhere) - before anything reads the tables
         const char* env = SDL_getenv("CR3_ADDONS");
         std::string dir = env && *env ? std::string(env) : gameFolder + "models/addons/";
@@ -26489,16 +26769,21 @@ int main(int argc, char** argv) {
     {
         // the language: --language, else English where the release has one (the iPhone's, Android's,
         // the fan translation's), else Japanese
+        // (else the one the options last picked)
         cr3::Language want = cr3::Language::FanEnglish;
-        if (!languageArg.empty() && !cr3::parseLanguage(languageArg, want)) SDL_Log("--language %s: ja, en or fan-en", languageArg.c_str());
+        if (!languageArg.empty() && !cr3::parseLanguage(languageArg, want)) SDL_Log("--language %s: ja, en, fan-en or fan-es", languageArg.c_str());
+        else if (languageArg.empty() && v.settings.language > 0) want = cr3::Language(v.settings.language - 1);
         const cr3::LanguageChoice l = cr3::applyLanguage(v.archive, want);
-        v.optionLanguage = l.slot;
-        v.originalTextJapanese = l.id == cr3::Language::Japanese;
+        v.languages = cr3::releaseLanguages(v.archive);
+        for (size_t i = 0; i < v.languages.size(); ++i)
+            if (v.languages[i].id == l.id) v.useLanguage(i, false);
         if (!movieArg.empty()) v.game.movieRequest = movieArg, v.game.moviePlaying = true;
         v.englishTextures = l.slot == 1; // (the release's own English: its images_eng)
-        v.japaneseText = l.slot == 0 && !l.overlay;
+        std::string offered;
+        for (const cr3::LanguageChoice& c : v.languages) offered += (offered.empty() ? "" : ", ") + std::string(c.label);
+        if (v.languages.size() > 1) SDL_Log("languages: %s", offered.c_str());
         SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
-                l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
+                l.overlay >= 0 ? (" over " + v.archive.overlayPath(l.overlay)).c_str() : "");
     }
     if (!v.archive.unpackFailed().empty()) { // (an .apks' asset packs that couldn't be unpacked beside it: no room, no access)
         std::string names;
@@ -26726,6 +27011,7 @@ int main(int argc, char** argv) {
             for (const char* f : {"F0001.bin", "font\\TBGB_0KP.TTC"})
                 if (v.archive.read(f, apkFont)) {
                     apkFontFrom = v.archive.sourceOf(f), fontFace = 1;
+                    v.archiveFont = f, v.archiveFontFrom = apkFontFrom; // (a language changed: its translation's own, if it has one)
                     break;
                 }
         if (fp.empty() && apkFont.empty() && cr3::androidFile(data, "assets/F0001.bin", apkFont, &apkFontFrom))
@@ -27534,7 +27820,9 @@ int main(int argc, char** argv) {
             }
             if (!v.paused) v.time += dt;
             if (!v.paused && v.battleMode && !v.fieldMode && !v.eventMode) v.advance(dt, 0, 0, false);
-            if (!v.paused && (v.eventMode || v.fieldMode || v.areaMode || v.credits.stage || v.titleMenu.stage || v.cr3Title.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
+            // (CR3's battles too: one an event or an encounter starts turns the field and the event off,
+            // and without this nothing advanced it - the screen's glass held, Battle_Start_Base never run)
+            if (!v.paused && (v.eventMode || v.fieldMode || v.areaMode || v.cr3BattleMode || v.credits.stage || v.titleMenu.stage || v.cr3Title.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
                 const bool* keys = SDL_GetKeyboardState(nullptr);
                 if (keys[SDL_SCANCODE_F] || (livePad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST))) v.fastHeld = true; // (F or □ held: the fast-forward button's)
                 else if (!(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK)) v.fastHeld = false;

@@ -15,23 +15,32 @@
 
 namespace cr3 {
 
-enum class Language { Japanese, English, FanEnglish };
+// A fan translation - an overlay, or patched into the release in place - is told apart by its
+// text: Spanish (Joseas's "Traducción al español", its own font with á, ñ, ¿, ¡ ...) where its
+// slot 0 has Spanish's letters, else English (gbatemp's Translation Project)
+enum class Language { Japanese, English, FanEnglish, FanSpanish };
+bool fanLanguage(Language l); // (FanEnglish, FanSpanish)
+// an overlay's language (its slot 0's: FanSpanish or FanEnglish)
+Language overlayLanguage(const Database& db, size_t overlay);
+// the options' language picture for it (circlebtn_fr's languages in the messages' order: 0
+// Japanese, 1 English, 4 Spanish)
+int pictureSlot(Language l);
 
 struct LanguageChoice {
     Language id;
-    const char* label; // "Japanese", "English", "English (fan translation)"
+    const char* label; // "Japanese", "English", "English (fan translation)", "Spanish (fan translation)"
     int slot;          // the messages' slot
-    bool overlay;      // the overlay on
+    int overlay;       // the overlay on for it (Database::setActiveOverlay), -1 none
 };
 
-// the release's languages (its own, then the overlay's)
+// the release's languages (its own, then each overlay's)
 std::vector<LanguageChoice> releaseLanguages(const Database& db);
 // the release's own text is the fan translation (patched in place: slot 0 English)
 bool fanPatchedInPlace(const Database& db);
-// `want` if the release has it, else its first; the overlay on or off for it. The slot it reads
+// `want` if the release has it, else its first; its overlay on (or none). The slot it reads
 LanguageChoice applyLanguage(Database& db, Language want);
 
-const char* languageKey(Language l); // "ja", "en", "fan-en" (settings, --language)
+const char* languageKey(Language l); // "ja", "en", "fan-en", "fan-es" (settings, --language)
 bool parseLanguage(const std::string& key, Language& out);
 
 } // namespace cr3
