@@ -1,14 +1,21 @@
-# CR3-U v0.2.5
+# CR3-U v0.3.0
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **Battles:** the results of a won battle no longer stay on screen over the next one (the same bug
-  [metastigma](https://github.com/metastigma) reported in CR2-U). Battle announcements and the names in them show the right text: they
-  were read as if the game had 8 languages, not 2, so most came out wrong or as "dummy".
-- **Windows:** settings, saves and the first-start setup work with a folder or user name in another
-  alphabet - a Cyrillic user name on a Russian Windows, for example.
+- **Camera:** the field's camera can be turned again, as in the iPad and Android releases. On a touch
+  screen, Two-Handed (the default) walks on the left half and turns the camera on the right;
+  One-Handed walks on the bottom and turns on the top, both at once with two fingers, with the
+  game's camera pad. On a PC, hold the right mouse button. The Options' Controls choice now does
+  this and is remembered.
+- **Minimap:** dungeons show the game's minimap at the top left: the area's map, its warps and
+  objects, where you are and which way the camera looks.
+- **Field buttons:** they start folded behind the top-right button, as in the game; tap it (or Tab,
+  the controller's triangle) to open them. Battle and the encounters' switch show in dungeons once
+  the story gives them.
+- **Fixed:** the Camp button opened the Special Shop, and My Page and SpShop were swapped the same
+  way - the game's names for those three buttons don't match their pictures.
 
 The story still hasn't been played through end to end. Physical Android devices and a real Windows
 PC without Vulkan are still untested.
