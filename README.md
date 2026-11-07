@@ -76,7 +76,8 @@ folder you start it from - as `vita/`, `android/` or `ios/` ([Your copy](#your-c
 | PS Vita PCSG00500 / PCSG00457 | the installed (decrypted) title's folder, or its `CR3/resources` |
 | + the fan translation | `cr3tool --patch <its rePatch folder> ...` over an unpatched Vita copy (`cr3view`: `translation/` in the game folder) |
 
-An encrypted Vita dump (NoNpDrm, still PFS-encrypted) has to be installed first (Vita3K does it).
+An encrypted Vita dump (NoNpDrm, still PFS-encrypted) has to be installed first for `cr3tool` (Vita3K does it);
+`cr3view` decrypts one put in `vita/` itself (Your copy).
 
 ## Your copy
 
@@ -133,8 +134,11 @@ the program - it finds it by itself. The game folder is:
 A release's folder may hold the release itself or have it one or two folders down, as above
 (`ios/Payload/....app`, `vita/PCSG00xxx/`), so a copy can be dropped in as it was unpacked or
 installed; the names of the folders below `ios/`, `android/` and `vita/` don't matter. A Vita copy
-has to be the installed, decrypted title (an encrypted NoNpDrm dump: install it first, e.g. with
-Vita3K). The release downloads come with these folders made, each with a `README.txt` saying what
+is the installed, decrypted title - or a NoNpDrm dump's folder as it was dumped, still encrypted (its
+`app/`, and `addcont/` beside it for the Prequel Trilogy's add-on): the next start decrypts it into
+`vita/` (on a phone too; it needs the space for the decrypted copy), and the dump can be deleted then.
+A dump packed in an archive has to be unpacked first there (the first start's setup on a PC does both).
+The release downloads come with these folders made, each with a `README.txt` saying what
 goes in it.
 
 CR3-U plays one release at a time: with several, **the first of `vita/`, `android/`, `ios/`** (the

@@ -26085,6 +26085,28 @@ int saveSlotSafetySelfTest() {
     return problems ? 1 : 0;
 }
 
+// The game as the setup (viewer/setup.hpp) knows it: the first start's on a PC, a Vita dump copied
+// into vita/ on any start
+static cr3::SetupGame cr3SetupGame() {
+    cr3::SetupGame setup;
+    setup.title = "Chaos Rings III", setup.port = "CR3-U", setup.vitaId = "PCSG00500", setup.trilogyDir = "CR3";
+    setup.obbHint = "asset packs (the .apks has them all)";
+    setup.package = "com.square_enix.chaosrings3gp";
+    setup.oneRelease = true; // (one copy is the game)
+    auto releaseIs = [](const std::string& p, cr3::Database::Kind kind) {
+        cr3::Database db;
+        return db.open(p) && db.kind() == kind;
+    };
+    setup.iosOk = [releaseIs](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Ios); };
+    setup.androidOk = [releaseIs](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Android); };
+    setup.vitaOk = [releaseIs](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Vita); };
+    setup.patchOk = [](const std::string& p) {
+        cr3::Database db;
+        return db.addOverlay(p);
+    };
+    return setup;
+}
+
 int main(int argc, char** argv) {
     if (argc>1 && std::strcmp(argv[1],"--selftest-save-slots")==0) return saveSlotSafetySelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-new-session")==0) return newSessionSelfTest();
@@ -26300,6 +26322,10 @@ int main(int argc, char** argv) {
     std::vector<std::string> searched; // (where a copy was looked for: the message if none)
     if (data.empty()) { // (CR3_DATA, else a copy in a game folder: vita/, android/, ios/ ...)
         searched = dataPlaces();
+        for (const std::string& place : searched) { // (a Vita dump copied into vita/ - a phone's way -, its files encrypted: decrypted into place)
+            cr3::SetupResult got;
+            if (cr3::installDroppedVita(cr3SetupGame(), place, got, !capture.empty())) break;
+        }
         data = cr3::defaultArchive(searched);
         if (data.empty()) data = storedSetting("data="); // (an older setup's: an Android or Vita copy where it lay)
     }
@@ -26307,22 +26333,7 @@ int main(int argc, char** argv) {
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
     if (data.empty() && (argc <= 1 || cr3::setupScripted()) && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp)
         SDL_Init(SDL_INIT_VIDEO); // (its message boxes and the system's dialogs)
-        cr3::SetupGame setup;
-        setup.title = "Chaos Rings III", setup.port = "CR3-U", setup.vitaId = "PCSG00500", setup.trilogyDir = "CR3";
-        setup.obbHint = "asset packs (the .apks has them all)";
-        setup.package = "com.square_enix.chaosrings3gp";
-        setup.oneRelease = true; // (one copy is the game)
-        auto releaseIs = [](const std::string& p, cr3::Database::Kind kind) {
-            cr3::Database db;
-            return db.open(p) && db.kind() == kind;
-        };
-        setup.iosOk = [&](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Ios); };
-        setup.androidOk = [&](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Android); };
-        setup.vitaOk = [&](const std::string& p) { return releaseIs(p, cr3::Database::Kind::Vita); };
-        setup.patchOk = [](const std::string& p) {
-            cr3::Database db;
-            return db.addOverlay(p);
-        };
+        const cr3::SetupGame setup = cr3SetupGame();
         std::string profile;
         if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = pref, SDL_free(pref);
         cr3::SetupResult got;
@@ -26343,7 +26354,8 @@ int main(int argc, char** argv) {
         msg += searched.empty() ? std::string("(no folder)") : searched.front();
         msg += "\n\n  ios/      the iOS ChaosRings3_FINAL_ENG.app (or the unpacked .ipa)"
                "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
-               "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457)\n\nAlso looked in:";
+               "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump's folder"
+               "\n            (decrypted here on the next start)\n\nAlso looked in:";
         for (size_t k = 1; k < searched.size(); ++k) msg += "\n" + searched[k];
         msg += "\n\nThe README's \"Your copy\" has the details.";
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", msg.c_str(), nullptr);
