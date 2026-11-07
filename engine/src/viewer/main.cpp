@@ -26104,6 +26104,10 @@ static cr3::SetupGame cr3SetupGame() {
         cr3::Database db;
         return db.addOverlay(p);
     };
+    setup.untranslated = [](const std::string& p) { // (a Vita copy without the fan translation installed into it)
+        cr3::Database db;
+        return db.open(p) && db.kind() == cr3::Database::Kind::Vita && !cr3::fanPatchedInPlace(db);
+    };
     return setup;
 }
 
@@ -26330,15 +26334,24 @@ int main(int argc, char** argv) {
         if (data.empty()) data = storedSetting("data="); // (an older setup's: an Android or Vita copy where it lay)
     }
     data = cr3::resolveArchive(data); // (a folder: the OBB or the CRDB.*.mvgl in it, a Vita copy's PCSG00498 ...)
-#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
-    if (data.empty() && (argc <= 1 || cr3::setupScripted()) && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp)
+#if !defined(SDL_PLATFORM_IOS)
+    if (data.empty() && (argc <= 1 || cr3::setupScripted()) && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp - a phone's too)
         SDL_Init(SDL_INIT_VIDEO); // (its message boxes and the system's dialogs)
         const cr3::SetupGame setup = cr3SetupGame();
         std::string profile;
-        if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = pref, SDL_free(pref);
+#ifdef SDL_PLATFORM_ANDROID
+        if (!searched.empty()) // (the folders made, to be seen over USB)
+            for (const char* f : {"ios", "android", "vita"}) SDL_CreateDirectory((searched.front() + f).c_str());
+#else
+        if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = pref, SDL_free(pref); // (a phone's game folder is always its own: no other)
+#endif
         cr3::SetupResult got;
         if (!cr3::runSetup(setup, searched.empty() ? profile : searched.front(), profile, got)) return 0;
-        // (copied into the game folder - ios/, android/, vita/, translation/ -: found as on any start)
+        // (copied into the game folder - ios/, android/, vita/, translation/ -: found as on any start; a dump copied in meanwhile decrypted)
+        for (const std::string& place : dataPlaces()) {
+            cr3::SetupResult dropped;
+            if (cr3::installDroppedVita(setup, place, dropped, !capture.empty())) break;
+        }
         data = cr3::resolveArchive(cr3::defaultArchive(dataPlaces()));
         SDL_Log("setup: iOS %s, Android %s, Vita %s, its translation %s - the game: %s", got.ios.c_str(), got.android.c_str(), got.vita.c_str(),
                 got.patch.c_str(), data.c_str());
@@ -26390,6 +26403,7 @@ int main(int argc, char** argv) {
         else hdFolder = hd, hdBundled = false;
         if (!hdFolder.empty() && hdFolder.back() != '/' && hdFolder.back() != '\\') hdFolder += '/';
         // the fan translation (--patch, else translation/ in the game folder: its rePatch/ or PCSG00500/ - for the Vita release)
+        if (patch.empty()) cr3::installDroppedPatch(cr3SetupGame(), gameFolder, !capture.empty()); // (its .rar / .zip copied into translation/: unpacked)
         if (patch.empty() && isDir(gameFolder + "translation")) patch = gameFolder + "translation", patchFound = true;
         if (patch.empty() && isDir(Viewer::savePath("translation"))) patch = Viewer::savePath("translation"), patchFound = true; // (the profile folder's: the setup's, where the game folder can't be written)
         if (patch.empty() && !(patch = storedSetting("patch=")).empty()) patchFound = true; // (the first start's setup's)
