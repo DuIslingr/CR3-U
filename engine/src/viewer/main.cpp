@@ -10391,6 +10391,7 @@ struct Viewer {
         ViewFigure fig;
         std::vector<std::string> joints;
         bool stretch = false; // (across a wide screen)
+        float span = 0;       // (its panel's width over a 3:2 screen's: on a screen wider than that, stretched to it - 0 never)
         bool nameTag = false; // (the name in slot 0, a page's lines from slot 1)
         int linesPerPage = 2; // (with a name tag: slots 1.. the lines, the centred ones after them)
         std::vector<std::string> slots; // slot -> the joint's number
@@ -10489,7 +10490,10 @@ struct Viewer {
             // (typeM_L01) by comMsgVNamePosition, shown while someone speaks
             loadWindow(vistaWindow, "commsgvmenu");
             vistaWindow.slots = {"01", "02"};
-            vistaWindow.uiUnit = vistaName.uiUnit = 10; // (its panel spans 12 units: wider than 16:9's, not stretched)
+            vistaWindow.uiUnit = vistaName.uiUnit = 10; // (its panel spans 12 units: wider than 16:9's, not stretched there)
+            // (a phone wider than 1.875:1 - 19.5:9, 20:9 - would leave its ends short of the screen's
+            // while the speaker's name keeps to the edge: the panel stretched to the screen there)
+            vistaWindow.span = 1.25f;
             loadPosition(vistaWindow, "commsgvposition", "call_comMsgVMenu", -0.03f);
             vistaWindow.lineSize = 32, vistaWindow.blockLines = true; // (VistaWindowMenu::SetStringData: lines 32, the name 28)
             loadWindow(vistaName, "commsgvnamemenu");
@@ -10655,6 +10659,7 @@ struct Viewer {
         const float aspect = float(w) / float(std::max(h, 1));
         wl.fig.place = cr3::Mat34();
         if (wl.stretch && aspect >= 1.5f) wl.fig.place.m[0] = aspect / 1.5f;
+        else if (wl.span > 0 && aspect / 1.5f > wl.span) wl.fig.place.m[0] = aspect / 1.5f / wl.span;
         else if (wl.lowerBelow3x2) wl.fig.place.m[7] = -0.0403125f;
         if (!wl.positionCall.empty() && wl.positionFig.skinned) { // (CR3: at its Position figure's joint, fitted)
             const std::vector<cr3::Mat34> pw = wl.positionFig.skeleton.world(wl.positionFig.skeleton.basePose);
@@ -12371,14 +12376,17 @@ struct Viewer {
             return;
         }
         std::vector<std::string> changed; // (the cached pictures the other translation has otherwise: in place)
+        auto picture = [&](const std::string& name, std::vector<uint8_t>& out) { // (decode's file: images_eng\ first where it reads that)
+            return (englishTextures && archive.read("images_eng\\" + name + ".img", out)) || archive.read("images\\" + name + ".img", out);
+        };
         if (live)
             for (auto& [name, t] : textures) {
                 if (!t.id) continue;
                 std::vector<uint8_t> a, b;
                 archive.setActiveOverlay(before);
-                const bool ra = archive.read(name, a);
+                const bool ra = picture(name, a);
                 archive.setActiveOverlay(l.overlay);
-                const bool rb = archive.read(name, b);
+                const bool rb = picture(name, b);
                 if (ra != rb || a != b) changed.push_back(name);
             }
         archive.setActiveOverlay(l.overlay);
@@ -23554,7 +23562,7 @@ struct Viewer {
     vitaimport::Session saveImport;
     struct Cr3CampOptions {
         int tab = 0;
-        int otherRow = 0; // resolution or Vita save import
+        int otherRow = 0; // 0 resolution, 1 the language (where there's more than one), 2 Vita save import
         int hands = 0; // (Controls: 0 two-handed, 1 one-handed)
         int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
         int top = 0;   // (Graphics: the first row shown)
@@ -23863,11 +23871,35 @@ struct Viewer {
                     UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
                     if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 601});
                 }
-                UiFig& imp = cr3UiPut("optsltlrpanel", "", 0, px, py - 0.85f * s, view);
+                // CR3-U's Language (the Vita's options had none): the copy's languages - its own, each
+                // fan translation over it -, each in its own words, the arrows as Resolution's
+                float below = 0.85f * s;
+                if (languages.size() > 1) {
+                    UiFig& lang = cr3UiPut("optsltlrpanel", "", 0, px, py - below, view);
+                    cr3UiLabel(lang, "typeM_L00", menuAnnounce(102), w, h, 0.26f); // ("Language", "言語", "Idioma")
+                    if (cr3UiCall(lang, "typeM_C01", tx, ty)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        const cr3::Language id = languages[languageIndex].id;
+                        const char* name = id == cr3::Language::Japanese ? "日本語" : id == cr3::Language::FanSpanish ? "Español" : "English";
+                        drawUiText(name, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
+                    }
+                    if (cr3UiCall(lang, "call_optSltLbtn", cx, cy)) {
+                        UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
+                        float ax, ay, bx, by;
+                        if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
+                            cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, 1401}); // (the box between the arrows: on)
+                            cr3CampTaps.push_back({ax, ay, bx, by, 1400});
+                        }
+                        UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
+                        if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 1401});
+                    }
+                    below += 0.85f * s;
+                }
+                UiFig& imp = cr3UiPut("optsltlrpanel", "", 0, px, py - below, view);
                 cr3UiLabel(imp, "typeM_L00", "Vita Saves", w, h, 0.26f);
                 if (cr3UiCall(imp, "typeM_C01", tx, ty)) {
                     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    const std::string label = co.from != 1 ? "Title only" : co.otherRow == 1 ? "> Import <" : "Import";
+                    const std::string label = co.from != 1 ? "Title only" : co.otherRow == 2 ? "> Import <" : "Import";
                     drawUiText(label, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
                 }
                 if (cr3UiCall(imp, "call_optSltLbtn", cx, cy)) {
@@ -23896,7 +23928,8 @@ struct Viewer {
             const std::vector<SettingRow> rows = settingRows();
             if (settingsCursor >= 0 && settingsCursor < int(rows.size())) line = rows[size_t(settingsCursor)].help;
         }
-        if (co.tab == 2 && co.otherRow == 1) line = co.from == 1 ? "Import decrypted Vita saves (I). Existing saves are backed up." : "Import saves from the title screen's Options.";
+        if (co.tab == 2 && co.otherRow == 2) line = co.from == 1 ? "Import decrypted Vita saves (I). Existing saves are backed up." : "Import saves from the title screen's Options.";
+        if (co.tab == 2 && co.otherRow == 1) line = "The language of the game's text: its own, or a fan translation over it.";
         drawCr3Header(t, 7, line, w, h, view);
         if (co.asking) { // (the Reset's question over all; its Yes / No the only taps)
             cr3CampTaps.clear();
@@ -23959,6 +23992,7 @@ struct Viewer {
         if (id >= 400 && id < 400 + kOptionTabs && id - 400 != co.tab) co.tab = id - 400, audio.playSe("com_002", false);
         if (id >= 500 && id < 502 && id - 500 != co.hands) co.hands = id - 500, audio.playSe("com_003", false);
         if (id == 600 || id == 601) optionQuality = (optionQuality + (id == 600 ? 2 : 1)) % 3, audio.playSe("com_002", false);
+        if (id == 1400 || id == 1401) stepLanguage(id == 1400 ? -1 : 1), co.otherRow = 1, audio.playSe("com_002", false);
         if (id >= 800 && id < 860) {
             optionVolume[(id - 800) / 20] = (id - 800) % 20 * 10;
             audio.setVolumes(float(optionVolume[0]) / 100.0f, float(optionVolume[1]) / 100.0f, float(optionVolume[2]) / 100.0f);
@@ -23996,9 +24030,13 @@ struct Viewer {
         if (co.tab == 0 && key >= SDLK_1 && key <= SDLK_3) optionFocus = int(key - SDLK_1);
         if (co.tab == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(500 + (key == SDLK_RIGHT ? 1 : 0));
         if (co.tab == 2) {
-            if (key == SDLK_UP || key == SDLK_DOWN) co.otherRow ^= 1;
-            else if (key == SDLK_I || (co.otherRow == 1 && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))) chooseCampOptions(1300);
+            if (key == SDLK_UP || key == SDLK_DOWN) { // (the Language row only where there are languages to pick)
+                const int rows = languages.size() > 1 ? 3 : 2, at = co.otherRow == 2 ? rows - 1 : co.otherRow;
+                const int next = (at + (key == SDLK_DOWN ? 1 : rows - 1)) % rows;
+                co.otherRow = next == rows - 1 ? 2 : next;
+            } else if (key == SDLK_I || (co.otherRow == 2 && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))) chooseCampOptions(1300);
             else if (co.otherRow == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 600 : 601);
+            else if (co.otherRow == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 1400 : 1401);
         }
     }
 
