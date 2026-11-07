@@ -1,21 +1,16 @@
-# CR3-U v0.3.0
+# CR3-U v0.3.1
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **Camera:** the field's camera can be turned again, as in the iPad and Android releases. On a touch
-  screen, Two-Handed (the default) walks on the left half and turns the camera on the right;
-  One-Handed walks on the bottom and turns on the top, both at once with two fingers, with the
-  game's camera pad. On a PC, hold the right mouse button. The Options' Controls choice now does
-  this and is remembered.
-- **Minimap:** dungeons show the game's minimap at the top left: the area's map, its warps and
-  objects, where you are and which way the camera looks.
-- **Field buttons:** they start folded behind the top-right button, as in the game; tap it (or Tab,
-  the controller's triangle) to open them. Battle and the encounters' switch show in dungeons once
-  the story gives them.
-- **Fixed:** the Camp button opened the Special Shop, and My Page and SpShop were swapped the same
-  way - the game's names for those three buttons don't match their pictures.
+- **Android, a repacked `.apks`:** sound effects, voices and text work. Its asset packs are stored
+  compressed, and the port couldn't read them that way: they are now unpacked once, on the first
+  start, into `assetpacks/` beside the `.apks` - **about 1.3 GB of free space**, and that first start
+  takes a while. If they can't be unpacked, the game says so. The font is read from inside the
+  `.apks` too, so text shows on a phone.
+- **Android:** the game runs fullscreen with the status and navigation bars hidden, and keeps clear
+  of the camera cutout.
 
 The story still hasn't been played through end to end. Physical Android devices and a real Windows
 PC without Vulkan are still untested.
