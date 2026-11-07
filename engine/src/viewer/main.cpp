@@ -412,9 +412,13 @@ struct Viewer {
         tf.lodBias = upscale.mode != cr3::Upscaler::Off ? -std::log2(upscale.ratio) : 0.0f;
         dev->setFiltering(tf);
         if (window && s.display != appliedDisplay) {
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+            SDL_SetWindowFullscreen(window, true); // (a phone's or tablet's: the whole screen, the system's bars hidden - SDL's immersive mode)
+#else
             if (s.display == 1) SDL_SetWindowFullscreenMode(window, SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(window)));
             else SDL_SetWindowFullscreenMode(window, nullptr);
             SDL_SetWindowFullscreen(window, s.display != 0);
+#endif
             appliedDisplay = s.display;
         }
         const bool artChanged = cardArtwork.setEnabled(s.originalCardArt);
@@ -2291,11 +2295,32 @@ struct Viewer {
         drawMovie(screenW, screenH);
     }
     // The game's screen in a frame of fw x fh (screenX ...), the scene's viewport on it
+    // (drawing straight into the window - GL, Android's -: kept off a display cutout. SDL lays the
+    // window out under it - LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS - where the original, its default
+    // mode, had Android letterbox that edge in landscape: the safe area's insets, each axis's larger
+    // on both its sides so the screen stays centred. CR3_SAFE_INSETS "l,t,r,b" in pixels: tests)
+    void safeInsets(int fw, int fh, int& ix, int& iy) const {
+        ix = iy = 0;
+        if (dev->offscreen()) return;
+        int l = 0, t = 0, r = 0, b = 0;
+        if (const char* e = SDL_getenv("CR3_SAFE_INSETS"); e && std::sscanf(e, "%d,%d,%d,%d", &l, &t, &r, &b) == 4) {
+        } else if (SDL_Rect safe; window && SDL_GetWindowSafeArea(window, &safe)) {
+            int ww = 0, wh = 0;
+            if (!SDL_GetWindowSize(window, &ww, &wh) || ww <= 0 || wh <= 0) return;
+            const float sx = float(fw) / float(ww), sy = float(fh) / float(wh);
+            l = int(std::ceil(float(safe.x) * sx)), t = int(std::ceil(float(safe.y) * sy));
+            r = int(std::ceil(float(ww - safe.x - safe.w) * sx)), b = int(std::ceil(float(wh - safe.y - safe.h) * sy));
+        }
+        ix = std::clamp(std::max(l, r), 0, fw / 4), iy = std::clamp(std::max(t, b), 0, fh / 4);
+    }
     void placeScreen(int fw, int fh) {
-        screenX = screenY = 0, screenW = fw, screenH = fh;
+        int ix = 0, iy = 0;
+        safeInsets(fw, fh, ix, iy);
+        screenX = ix, screenY = iy, screenW = std::max(fw - 2 * ix, 1), screenH = std::max(fh - 2 * iy, 1);
         if (!dev->offscreen() && resW > 0 && resH > 0) {
-            if (int64_t(resW) * fh > int64_t(fw) * resH) screenH = std::max(int(int64_t(fw) * resH / resW), 1);
-            else screenW = std::max(int(int64_t(fh) * resW / resH), 1);
+            const int aw = screenW, ah = screenH;
+            if (int64_t(resW) * ah > int64_t(aw) * resH) screenH = std::max(int(int64_t(aw) * resH / resW), 1);
+            else screenW = std::max(int(int64_t(ah) * resW / resH), 1);
             screenX = (fw - screenW) / 2, screenY = (fh - screenH) / 2;
         }
         int rw = fw, rh = fh;
@@ -26428,6 +26453,17 @@ int main(int argc, char** argv) {
         SDL_Log("%s release, %s (messages' slot %d)%s", v.archive.kindName(), l.label, l.slot,
                 l.overlay ? (" over " + v.archive.overlayPath()).c_str() : "");
     }
+    if (!v.archive.unpackFailed().empty()) { // (an .apks' asset packs that couldn't be unpacked beside it: no room, no access)
+        std::string names;
+        for (const std::string& n : v.archive.unpackFailed()) names += (names.empty() ? "" : ", ") + n;
+        SDL_Log("asset packs not unpacked: %s", names.c_str());
+        if (capture.empty())
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Chaos Rings III",
+                                     ("Couldn't unpack the game's asset packs from the .apks (" + names +
+                                      ") into the assetpacks folder beside it - is there about 1.3 GB free?\n\n"
+                                      "The game will run without its sound, voices and movies.").c_str(),
+                                     nullptr);
+    }
     {
         std::vector<std::string> sources;
         if (!originalArtSource.empty()) sources.push_back(originalArtSource);
@@ -26584,7 +26620,11 @@ int main(int argc, char** argv) {
     cr3::useBundledVulkan(); // (macOS: the .app's own loader)
     std::unique_ptr<cr3::RenderDevice> dev;
     SDL_Window* win = nullptr;
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+    const SDL_WindowFlags shown = capture.empty() ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_HIDDEN; // (the system's bars hidden from the start)
+#else
     const SDL_WindowFlags shown = capture.empty() ? SDL_WINDOW_RESIZABLE : SDL_WINDOW_HIDDEN;
+#endif
     for (const cr3::Backend b : {cr3::Backend::Vulkan, cr3::Backend::OpenGL}) {
         if (b == cr3::Backend::Vulkan && renderer != "vulkan") continue;
         std::unique_ptr<cr3::RenderDevice> d = b == cr3::Backend::Vulkan ? cr3::makeVkDevice() : cr3::makeGlDevice();
@@ -26641,7 +26681,9 @@ int main(int argc, char** argv) {
                     apkFontFrom = v.archive.sourceOf(f), fontFace = 1;
                     break;
                 }
-        if (fp.empty() && apkFont.empty() && !cr3::androidFile(data, "assets/00001", apkFont, &apkFontFrom)) {
+        if (fp.empty() && apkFont.empty() && cr3::androidFile(data, "assets/F0001.bin", apkFont, &apkFontFrom))
+            fontFace = 1; // (the APK's own, an .apks' too: TB Gothic B, its proportional face)
+        if (fp.empty() && apkFont.empty()) {
             const char* windir = SDL_getenv("WINDIR");
             const std::string winFonts = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
             fp = cr3::TextRasterizer::firstFont({"/usr/share/fonts/noto/NotoSans-Regular.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -27063,7 +27105,8 @@ int main(int argc, char** argv) {
             SDL_GetWindowSizeInPixels(win, &pw, &ph);
             const float px = wx * float(pw) / float(std::max(ww, 1)), py = wy * float(ph) / float(std::max(wh, 1));
             const float sw = float(v.screenW), sh = float(v.screenH);
-            const float k = std::min(float(pw) / sw, float(ph) / sh);
+            // (an offscreen device's frame scaled into the window; GL's screen is in the window's pixels)
+            const float k = v.dev->offscreen() ? std::min(float(pw) / sw, float(ph) / sh) : 1.0f;
             const float ox = (float(pw) - sw * k) * 0.5f, oy = (float(ph) - sh * k) * 0.5f;
             fx = (px - ox) / (sw * k), fy = (py - oy) / (sh * k);
         };

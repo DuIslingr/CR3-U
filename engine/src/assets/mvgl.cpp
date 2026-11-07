@@ -1,4 +1,7 @@
 #include "assets/mvgl.hpp"
+#ifdef CR3_HAVE_ZLIB
+#include <zlib.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -55,6 +58,12 @@ std::string lower(std::string s) {
     return s;
 }
 
+bool isMainName(const std::string& name) {
+    std::string n = name.substr(name.find_last_of("/\\") == std::string::npos ? 0 : name.find_last_of("/\\") + 1);
+    n = lower(n);
+    return n.compare(0, 5, "main.") == 0 && endsWith(n, ".android.mvgl");
+}
+
 // A zip's entries (`base`: where the zip starts in its host file; the offsets are the data's there)
 struct ZipEntry {
     std::string name;
@@ -103,6 +112,55 @@ void storedArchives(std::FILE* f, uint64_t base, uint64_t size, int depth, std::
         else if (depth > 0 && (endsWith(e.name, ".apk") || endsWith(e.name, ".zip") || e.name == "data"))
             storedArchives(f, e.data, e.size, depth - 1, out);
     }
+}
+
+// the asset packs a zip holds deflated (a repacked .apks: its split APK's stored `data` zip, the
+// packs' CRDB{bgm,voice,se,mov}.android.mvgl in it compressed), through the zips it holds stored
+void packedArchives(std::FILE* f, uint64_t base, uint64_t size, int depth, std::vector<ZipEntry>& out) {
+    std::vector<ZipEntry> es;
+    if (!zipEntries(f, base, size, es)) return;
+    for (const ZipEntry& e : es) {
+        if (e.method == 8 && endsWith(e.name, ".android.mvgl") && !isMainName(e.name)) out.push_back(e);
+        else if (e.method == 0 && e.size == e.packed && depth > 0 && (endsWith(e.name, ".apk") || endsWith(e.name, ".zip") || e.name == "data"))
+            packedArchives(f, e.data, e.size, depth - 1, out);
+    }
+}
+
+// one inflated to `to` (by way of to.part: a cut-off unpacking is never taken for a whole one)
+bool inflateTo(std::FILE* f, const ZipEntry& e, const fs::path& to) {
+#ifdef CR3_HAVE_ZLIB
+    std::error_code ec;
+    fs::create_directories(to.parent_path(), ec);
+    const fs::path part = to.string() + ".part";
+    std::FILE* o = std::fopen(part.string().c_str(), "wb");
+    if (!o) return false;
+    z_stream s{};
+    bool ok = inflateInit2(&s, -MAX_WBITS) == Z_OK && seek64(f, e.data);
+    std::vector<uint8_t> in(1 << 20), buf(1 << 20);
+    uint64_t left = e.packed, written = 0;
+    int r = Z_OK;
+    while (ok && r != Z_STREAM_END) {
+        if (s.avail_in == 0 && left > 0) {
+            const size_t n = size_t(std::min<uint64_t>(left, in.size()));
+            ok = std::fread(in.data(), 1, n, f) == n;
+            s.next_in = in.data(), s.avail_in = uInt(n), left -= n;
+        }
+        s.next_out = buf.data(), s.avail_out = uInt(buf.size());
+        r = inflate(&s, Z_NO_FLUSH);
+        ok = ok && (r == Z_OK || r == Z_STREAM_END) && !(r == Z_OK && s.avail_in == 0 && left == 0 && s.avail_out != 0);
+        const size_t got = buf.size() - s.avail_out;
+        ok = ok && std::fwrite(buf.data(), 1, got, o) == got;
+        written += got;
+    }
+    inflateEnd(&s);
+    ok = std::fclose(o) == 0 && ok && written == e.size;
+    if (ok) fs::rename(part, to, ec), ok = !ec;
+    if (!ok) fs::remove(part, ec);
+    return ok;
+#else
+    (void)f, (void)e, (void)to;
+    return false;
+#endif
 }
 
 // the files under `dir` (at most `depth` folders down), sorted
@@ -265,7 +323,7 @@ void Database::close() {
     kind_ = Kind::None;
     path_.clear(), root_.clear(), overlayPath_.clear();
     files_.clear();
-    loose_.clear();
+    loose_.clear(), unpackFailed_.clear();
     entries_.clear(), overlay_.clear();
     byName_.clear(), overlayByName_.clear();
     edits_.clear();
@@ -363,6 +421,19 @@ bool Database::open(const std::string& path, std::string* error) {
         for (const auto& [off, n] : inZip)
             if (isMain(n)) archives.emplace(archives.begin(), zipPath, off);
             else archives.emplace_back(zipPath, off);
+        // its deflated asset packs: unpacked once into assetpacks/ beside it, then read as unpacked ones
+        // (sound, voices, the movies and the windows' figures are theirs)
+        if (std::FILE* zf = std::fopen(zipPath.c_str(), "rb")) {
+            std::vector<ZipEntry> packed;
+            packedArchives(zf, 0, fileSize(zf), 2, packed);
+            for (const ZipEntry& e : packed) {
+                const fs::path to = fs::path(zipPath).parent_path() / "assetpacks" / baseName(e.name);
+                std::error_code fe;
+                if (fs::exists(to, fe) && fs::file_size(to, fe) == e.size) continue; // (unpacked before: walk below finds it)
+                if (!inflateTo(zf, e, to)) unpackFailed_.push_back(baseName(e.name));
+            }
+            std::fclose(zf);
+        }
         for (const std::string& f : walk(dir, 8)) // (asset packs unpacked beside it)
             if (endsWith(f, ".android.mvgl") && !isMain(f)) archives.emplace_back(f, 0);
     }

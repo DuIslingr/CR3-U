@@ -116,64 +116,138 @@ std::string defaultArchive(const std::vector<std::string>& places) {
 
 std::string defaultArchive(const std::string& baseDir) { return defaultArchive(std::vector<std::string>{baseDir}); }
 
-bool readZipEntry(const std::string& zip, const std::string& name, std::vector<uint8_t>& out, std::string* error) {
-    std::FILE* f = std::fopen(zip.c_str(), "rb");
-    if (!f) return fail(error, zip + ": cannot open");
-    std::fseek(f, 0, SEEK_END);
-    const long size = std::ftell(f);
-    // the end record (in the last 64 KB + 22: its comment's at most 65535 bytes)
-    const long tail = std::min<long>(size, 0x10000 + 22);
-    std::vector<uint8_t> t(size_t(std::max<long>(tail, 0)));
-    std::fseek(f, size - tail, SEEK_SET);
-    if (t.size() < 22 || std::fread(t.data(), 1, t.size(), f) != t.size()) return std::fclose(f), fail(error, zip + ": not a zip");
+namespace {
+bool seekAt(std::FILE* f, uint64_t at) {
+#ifdef _WIN32
+    return _fseeki64(f, int64_t(at), SEEK_SET) == 0;
+#else
+    return fseeko(f, off_t(at), SEEK_SET) == 0;
+#endif
+}
+uint64_t sizeOf(std::FILE* f) {
+#ifdef _WIN32
+    _fseeki64(f, 0, SEEK_END);
+    return uint64_t(_ftelli64(f));
+#else
+    fseeko(f, 0, SEEK_END);
+    return uint64_t(ftello(f));
+#endif
+}
+struct ZipItem {
+    std::string name;
+    uint16_t method = 0;
+    uint32_t packed = 0, unpacked = 0;
+    uint64_t data = 0; // (in the host file)
+};
+// the entries of a zip at `base` (`size` long) in its host file - an .apks' APKs are zips stored in it
+bool zipItems(std::FILE* f, uint64_t base, uint64_t size, std::vector<ZipItem>& out) {
+    out.clear();
+    const uint64_t tail = std::min<uint64_t>(size, 0x10000 + 22); // (the end record: its comment at most 65535 bytes)
+    std::vector<uint8_t> t(static_cast<size_t>(tail));
+    if (t.size() < 22 || !seekAt(f, base + size - tail) || std::fread(t.data(), 1, t.size(), f) != t.size()) return false;
     size_t end = t.size() - 22 + 1;
     while (end-- > 0)
         if (le32(&t[end]) == 0x06054b50) break;
-    if (end == size_t(-1)) return std::fclose(f), fail(error, zip + ": not a zip");
+    if (end == size_t(-1)) return false;
     const uint32_t count = le16(&t[end + 10]), dirSize = le32(&t[end + 12]), dirOffset = le32(&t[end + 16]);
     std::vector<uint8_t> d(dirSize);
-    std::fseek(f, long(dirOffset), SEEK_SET);
-    if (std::fread(d.data(), 1, d.size(), f) != d.size()) return std::fclose(f), fail(error, zip + ": truncated");
+    if (!seekAt(f, base + dirOffset) || std::fread(d.data(), 1, d.size(), f) != d.size()) return false;
     for (size_t p = 0, k = 0; k < count && p + 46 <= d.size(); ++k) {
         if (le32(&d[p]) != 0x02014b50) break;
-        const uint16_t method = le16(&d[p + 10]), nameLen = le16(&d[p + 28]), extraLen = le16(&d[p + 30]), commentLen = le16(&d[p + 32]);
-        const uint32_t packed = le32(&d[p + 20]), unpacked = le32(&d[p + 24]), local = le32(&d[p + 42]);
-        const std::string n(reinterpret_cast<const char*>(&d[p + 46]), std::min<size_t>(nameLen, d.size() - p - 46));
+        ZipItem e;
+        e.method = le16(&d[p + 10]);
+        e.packed = le32(&d[p + 20]), e.unpacked = le32(&d[p + 24]);
+        const uint16_t nameLen = le16(&d[p + 28]), extraLen = le16(&d[p + 30]), commentLen = le16(&d[p + 32]);
+        const uint32_t local = le32(&d[p + 42]);
+        e.name.assign(reinterpret_cast<const char*>(&d[p + 46]), std::min<size_t>(nameLen, d.size() - p - 46));
         p += 46 + size_t(nameLen) + extraLen + commentLen;
-        if (n != name) continue;
         uint8_t h[30];
-        std::fseek(f, long(local), SEEK_SET);
-        if (std::fread(h, 1, sizeof h, f) != sizeof h || le32(h) != 0x04034b50) return std::fclose(f), fail(error, zip + ": bad entry");
-        std::fseek(f, long(local + 30 + le16(h + 26) + le16(h + 28)), SEEK_SET);
-        std::vector<uint8_t> raw(packed);
-        const bool read = std::fread(raw.data(), 1, raw.size(), f) == raw.size();
-        std::fclose(f);
-        if (!read) return fail(error, zip + ": truncated");
-        if (method == 0) return out = std::move(raw), true;
-        if (method != 8) return fail(error, name + ": compressed in a way not read here");
-#ifdef CR3_HAVE_ZLIB
-        out.assign(unpacked, 0);
-        z_stream z{};
-        if (inflateInit2(&z, -MAX_WBITS) != Z_OK) return fail(error, "zlib could not start");
-        z.next_in = raw.data(), z.avail_in = uInt(raw.size());
-        z.next_out = out.data(), z.avail_out = uInt(out.size());
-        const int r = inflate(&z, Z_FINISH);
-        inflateEnd(&z);
-        if (r != Z_STREAM_END || z.total_out != unpacked) return fail(error, name + ": does not inflate");
-        return true;
-#else
-        return fail(error, name + ": deflated (built without zlib)");
-#endif
+        if (!seekAt(f, base + local) || std::fread(h, 1, sizeof h, f) != sizeof h || le32(h) != 0x04034b50) continue;
+        e.data = base + local + 30 + le16(h + 26) + le16(h + 28);
+        out.push_back(std::move(e));
     }
-    std::fclose(f);
-    return fail(error, zip + ": no " + name);
+    return true;
 }
+bool readItem(std::FILE* f, const ZipItem& e, std::vector<uint8_t>& out, std::string* error) {
+    std::vector<uint8_t> raw(e.packed);
+    if (!seekAt(f, e.data) || std::fread(raw.data(), 1, raw.size(), f) != raw.size()) return fail(error, e.name + ": truncated");
+    if (e.method == 0) return out = std::move(raw), true;
+    if (e.method != 8) return fail(error, e.name + ": compressed in a way not read here");
+#ifdef CR3_HAVE_ZLIB
+    out.assign(e.unpacked, 0);
+    z_stream z{};
+    if (inflateInit2(&z, -MAX_WBITS) != Z_OK) return fail(error, "zlib could not start");
+    z.next_in = raw.data(), z.avail_in = uInt(raw.size());
+    z.next_out = out.data(), z.avail_out = uInt(out.size());
+    const int r = inflate(&z, Z_FINISH);
+    inflateEnd(&z);
+    if (r != Z_STREAM_END || z.total_out != e.unpacked) return fail(error, e.name + ": does not inflate");
+    return true;
+#else
+    return fail(error, e.name + ": deflated (built without zlib)");
+#endif
+}
+} // namespace
+
+bool readZipEntry(const std::string& zip, const std::string& name, std::vector<uint8_t>& out, std::string* error) {
+    std::FILE* f = std::fopen(zip.c_str(), "rb");
+    if (!f) return fail(error, zip + ": cannot open");
+    std::vector<ZipItem> items;
+    const bool listed = zipItems(f, 0, sizeOf(f), items);
+    bool found = false, ok = false;
+    for (const ZipItem& e : items)
+        if (e.name == name) {
+            found = true, ok = readItem(f, e, out, error);
+            break;
+        }
+    std::fclose(f);
+    if (!listed) return fail(error, zip + ": not a zip");
+    return found ? ok : fail(error, zip + ": no " + name);
+}
+
+namespace {
+// `name` from the game's own APK inside an .apks / .xapk (stored there, as they are): the APK with
+// the game's library, its entry read in place
+bool readFromBundle(const std::string& bundle, const std::string& name, std::vector<uint8_t>& out) {
+    std::FILE* f = std::fopen(bundle.c_str(), "rb");
+    if (!f) return false;
+    std::vector<ZipItem> apks;
+    bool ok = false;
+    if (zipItems(f, 0, sizeOf(f), apks))
+        for (const ZipItem& a : apks) {
+            if (a.method != 0 || a.packed != a.unpacked || a.name.size() < 4 || a.name.compare(a.name.size() - 4, 4, ".apk") != 0) continue;
+            std::vector<ZipItem> in;
+            if (!zipItems(f, a.data, a.packed, in)) continue;
+            const bool game = std::any_of(in.begin(), in.end(), [](const ZipItem& e) { return e.name == kAndroidLibrary; });
+            if (!game) continue;
+            for (const ZipItem& e : in)
+                if (e.name == name) {
+                    ok = readItem(f, e, out, nullptr);
+                    break;
+                }
+            if (ok) break;
+        }
+    std::fclose(f);
+    return ok;
+}
+} // namespace
 
 bool androidFile(const std::string& archivePath, const std::string& name, std::vector<uint8_t>& out, std::string* from) {
     const std::string dir = folderOf(resolveArchive(archivePath));
     for (const std::string& p : {dir + "/" + name, dir + "/extracted/" + name})
         if (readWhole(p, out)) {
             if (from) *from = p;
+            return true;
+        }
+    // (an .apks / .xapk - given, or in the folder -: the game's APK inside it)
+    const std::string given = resolveArchive(archivePath);
+    std::vector<std::string> bundles;
+    if (endsWith(given, ".apks") || endsWith(given, ".xapk")) bundles.push_back(given);
+    for (const std::string& n : filesIn(dir))
+        if ((endsWith(n, ".apks") || endsWith(n, ".xapk")) && dir + "/" + n != given) bundles.push_back(dir + "/" + n);
+    for (const std::string& b : bundles)
+        if (readFromBundle(b, name, out)) {
+            if (from) *from = b + ":" + name;
             return true;
         }
     for (const std::string& n : filesIn(dir)) {

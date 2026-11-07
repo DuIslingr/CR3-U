@@ -67,7 +67,8 @@ public:
 
     // a release: its folder (an .app or the Payload above it; a Vita PCSG00500 / PCSG00457 folder
     // or its CR3/resources; an unpacked APK or a folder with the APK and the asset packs), one of
-    // its archives, or an .apk / .apks (read in place: their archives are stored, not deflated)
+    // its archives, or an .apk / .apks (read in place where stored; asset packs it holds deflated - a
+    // repacked .apks' - unpacked once into assetpacks/ beside it: unpackFailed() names any that couldn't be)
     bool open(const std::string& path, std::string* error = nullptr);
     void close();
     bool isOpen() const { return !files_.empty(); }
@@ -76,6 +77,7 @@ public:
     const std::string& path() const { return path_; } // what open() was given
     const std::string& root() const { return root_; } // the release's own folder (resources/, the .app)
     size_t archiveCount() const { return files_.size(); }
+    const std::vector<std::string>& unpackFailed() const { return unpackFailed_; }
     const MvglFile& archive(size_t i) const { return *files_[i]; }
 
     // a fan translation over the release (the Vita's: its rePatch folder, PCSG00500 or
@@ -115,6 +117,7 @@ private:
     std::string path_, root_, overlayPath_;
     std::vector<std::unique_ptr<MvglFile>> files_;
     std::vector<std::string> loose_; // loose files' paths
+    std::vector<std::string> unpackFailed_; // (asset packs an .apks held deflated that couldn't be unpacked)
     std::vector<Entry> entries_, overlay_;
     std::unordered_map<std::string, size_t> byName_, overlayByName_;
     std::unordered_map<std::string, Edit> edits_;
