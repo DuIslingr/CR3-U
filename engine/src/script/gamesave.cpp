@@ -112,6 +112,7 @@ bool readGameSave(const std::vector<uint8_t>& d, GameState& g, GameSavePlace& pl
     place.heading = 2.0f * std::atan2(qy, qw);
     g.encountEnable = d[f + 0x30] != 0;
     g.changeEnable = d[f + 0x32] != 0, g.tabEnable = d[f + 0x33] != 0;
+    g.tabButtons = rd32(d, f + 0x34); // (Fld2SaveData: the tab's buttons, Fld2TabMenu +0xb8)
     // the flags past 1000 (those below are system.dat's: kept as they are)
     for (int n = 1001; n < int(kFlagBytes) * 8; ++n) g.setFlag(n, (d[kFlags + size_t(n >> 3)] >> (n & 7)) & 1);
     for (int k = 0; k < 32; ++k) g.globalWork[k] = int32_t(rd32(d, kGlobal + size_t(k) * 4));
@@ -157,6 +158,7 @@ std::vector<uint8_t> writeGameSave(const GameState& g, const GameSavePlace& plac
     for (int k = 0; k < 3; ++k) wrf(d, f + 0x10 + size_t(k) * 4, place.position[k]);
     wrf(d, f + 0x24, std::sin(place.heading * 0.5f)), wrf(d, f + 0x2c, std::cos(place.heading * 0.5f));
     d[f + 0x30] = g.encountEnable, d[f + 0x31] = 1, d[f + 0x32] = g.changeEnable, d[f + 0x33] = g.tabEnable;
+    wr32(d, f + 0x34, g.tabButtons);
     for (int n = 1001; n < int(kFlagBytes) * 8; ++n)
         if (g.flag(n)) d[kFlags + size_t(n >> 3)] |= uint8_t(1u << (n & 7));
     for (int k = 0; k < 32; ++k) wr32(d, kGlobal + size_t(k) * 4, uint32_t(g.globalWork[k]));

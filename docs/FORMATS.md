@@ -961,8 +961,9 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
 
 `cr3view --input camp:open,camp:button<n>,camp:cat<n>,camp:row<n>,camp:card<n>,camp:reel<n>,camp:chara<n>,
 camp:yes,camp:no,camp:ok,camp:back,camp:model,camp:turn<px>,camp:zoom<px>` (or `camp:genes`,
-`camp:field<n>` - a field button; Tab the Equipment's model; C opens the
-camp with flag 27); `--cr3-party a,b,c` and `--item id:n` set a test's party and items.
+`camp:field<n>` - a field button: 0 open / close, 1 Save, 2 encounters, 3 Battle, 4 My Page
+(feBtnCamp), 5 the SpShop (feBtnMypage), 6 Camp (feBtnShop), 8 / 10 the town; Tab the Equipment's
+model; C opens the camp with flag 26); `--cr3-party a,b,c` and `--item id:n` set a test's party and items.
 
 ### The VS mode (CR3)
 
@@ -1032,7 +1033,8 @@ results, the prizes, back to B.
 
 `cr3view --input vs:open,vs:battle,vs:normal,vs:boost<n>,vs:row<n>,vs:ok,vs:yes,vs:wild<n>,attack,t0,
 ...,vs:next,...,vs:results,vs:prizes` (also `vs:shop`, `vs:goods<n>`, `vs:side<n>` - B's small
-buttons -, `vs:unboost<n>`, `vs:no`, `vs:told`; the field's Battle button opens it - `camp:field3`).
+buttons -, `vs:unboost<n>`, `vs:no`, `vs:told`; My Page's Battle Mode opens it, as in the game - the
+field's Battle button is a dungeon's, ForceBattleIn).
 
 ### Invoke, Invoke2, the team level (CR3)
 
@@ -1375,7 +1377,7 @@ joints in from -8 / +8 over 3 frames) holds `mpTopLog` and `mpTopMenu`.
   (GetGeneCardNewnumber).
 
 `cr3view --input camp:mypage,camp:button<n>,camp:yes,camp:scroll<rows x 0.48>` (or the field's
-`camp:field5`), `camp:row<n>` the presents' rows (`camp:row700 + k` a Gene Index card, `row500 + n`
+`camp:field4`), `camp:row<n>` the presents' rows (`camp:row700 + k` a Gene Index card, `row500 + n`
 a rarity), `camp:cat200 + k` a tab; `--present item:count` / `--present g<gene>:<level>` fill the
 presents box.
 
@@ -2105,9 +2107,12 @@ SetIsEventPause`; the field lets it go when the event ends) - the port takes non
 runs anyway. `Cr3System.GetPlatform` (`platform::GetPlatform`): 1 on iOS, 2 on Android (quest 273's
 notice: `AnnounceField` 34 or 113). `CheckWeaponFull` / `ArmorFull` / `AccessoryFull`
 (`CrxGameData::IsWeaponFull` ...): more than 94 kinds held besides those the seven wear (quest 56
-is cancelled then). `StartQuake` / `StopQuake` shake a vista as they do the field. Not modelled:
-`Cr3TabMenu.AddTabMenu` / `DelTabMenu` (`Fld2TabMenu::AddTabButton` - the encounters' and battle
-buttons, which the port's panel always has).
+is cancelled then). `StartQuake` / `StopQuake` shake a vista as they do the field. `Cr3TabMenu.AddTabMenu` /
+`DelTabMenu` (`Fld2TabMenu::AddTabButton`: bit 0 the encounters' switch, bit 1 Battle - kept in
+`cr3_field_data` +0x34 and CR3-U's `tabs` line; the scripts mirror them in flags 4107 / 4106, a
+dungeon's `<dNN>_gim` re-adding them - `MenuTabAddALL` -, a town's dropping them - `MenuTabDelALL`).
+`Fld2TabMenu::Open` shows the two only in a dungeon and not riding (flag 4105); an older CR3-U save
+takes them from the flags.
 
 Treasure and gold boxes (Fld2TBoxList, `Fld2Box`): drawn as the field is set up in a dungeon
 (`Fld2TBoxList::Drawing(dungeon, level - 1)`; the dungeon's number is its `dNN` + 4, d02 6).

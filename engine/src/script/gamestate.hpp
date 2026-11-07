@@ -108,6 +108,7 @@ struct GameState {
     // (+0x33: Cr3TabMenu.SetEnable) - a new game's both (Cr3InitFieldData)
     int active = 0;
     bool changeEnable = true, tabEnable = true;
+    bool minimapEnable = true; // (Cr3TabMenu.SetMinimapEnable - Fld2TabMenu::SetMinimapVisible; back on with each area: Fld2Main::ChangeArea)
     int partySets[3][2] = {{0, 2}, {1, 3}, {4, 5}};
     // the sopia's levels and EXP (cr3_common_data +0x26c, a byte each, by the sopia's number; +0x28c,
     // 32 integers) - what Cr3Battle.SetParamI2 / GetParamI2 (0 / 1) read and set. A new game's
@@ -215,6 +216,10 @@ struct GameState {
     // SetButtonEnableOne: 0 the bomb, 1 the toy camera, 2 the detector, 3 the darts; the areas'
     // MenuTabAddALL puts them back by flags 4101 ..) - not saved
     std::set<int> goodsButtons;
+    // the field tab's buttons (Fld2TabMenu +0xb8, cr3_field_data +0x34 - Cr3TabMenu.AddTabMenu /
+    // DelTabMenu): bit 0 the encounters' switch, bit 1 Battle; the areas' scripts keep them with
+    // flags 4107 / 4106 (MenuTabAddALL in a dungeon's <dNN>_gim, MenuTabDelALL in a town's)
+    uint32_t tabButtons = 0;
     // the rocks broken (Fld2Rock: by a bomb's blast) this visit to a dungeon - "<area>:<gimmick>";
     // a new dungeon's areas have them back - not saved
     std::set<std::string> brokenRocks;

@@ -371,6 +371,8 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SendFriendMessage", [](NativeCall&) {});
     vm.setNative("Cr3TabMenu", "AddGoodsButton", [&state](NativeCall& c) { state.goodsButtons.insert(c.integer(0)); });
     vm.setNative("Cr3TabMenu", "DelGoodsButton", [&state](NativeCall& c) { state.goodsButtons.erase(c.integer(0)); });
+    vm.setNative("Cr3TabMenu", "AddTabMenu", [&state](NativeCall& c) { state.tabButtons |= 1u << (c.integer(0) & 31); }); // (Fld2TabMenu::AddTabButton)
+    vm.setNative("Cr3TabMenu", "DelTabMenu", [&state](NativeCall& c) { state.tabButtons &= ~(1u << (c.integer(0) & 31)); }); // (DelTabButton)
     vm.setNative("Cr3FieldMapEffectResident", "EffectResidentOut", [&state](NativeCall& c) {
         const std::string target = c.string(0);
         state.fieldEffects.erase(std::remove_if(state.fieldEffects.begin(), state.fieldEffects.end(),
@@ -437,6 +439,7 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3ChangeCharacter", "SetEnable", [&state](NativeCall& c) { state.changeEnable = c.boolean(0); });
     vm.setNative("Cr3TabMenu", "SetEnable", [&state](NativeCall& c) { state.tabEnable = c.boolean(0); }); // (FldUtilSetTabMenuEnable)
     vm.setNative("Cr3TabMenu", "GetEnable", [&state](NativeCall& c) { c.result(state.tabEnable); });
+    vm.setNative("Cr3TabMenu", "SetMinimapEnable", [&state](NativeCall& c) { state.minimapEnable = c.boolean(0); }); // (Fld2SetMinimapEnable)
     vm.setNative("Cr3ChangeCharacter", "GetEnable", [&state](NativeCall& c) { c.result(state.changeEnable); });
     vm.setNative("Cr3ChangeCharacter", "GetActive", [&state](NativeCall& c) { c.result(state.active); });
     vm.setNative("Cr3ChangeCharacter", "ExeQuick", [&state](NativeCall& c) {
@@ -527,6 +530,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << '\n';
     o << "party " << party[0] << ' ' << party[1] << '\n';
     o << "active " << active << ' ' << int(changeEnable) << ' ' << int(tabEnable) << ' ' << int(encountEnable) << '\n';
+    o << "tabs " << tabButtons << '\n';
     for (int s = 0; s < 3; ++s) o << "pairs " << s << ' ' << partySets[s][0] << ' ' << partySets[s][1] << '\n';
     for (int id = 1; id < 300; ++id)
         if (itemCount[id]) o << "item " << id << ' ' << itemCount[id] << '\n';
@@ -662,6 +666,8 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
         return true;
     };
     std::vector<std::pair<int, int>> oldWork;
+    bool tabsRead = false;
+    tabButtons = 0;
     for (short& n : itemCount) n = 0;
     while (std::getline(in, line)) {
         std::istringstream l(line);
@@ -680,6 +686,9 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
             l >> active >> e >> t;
             if (!(l >> encounters)) encounters = 1; // saves before encounter state was kept
             active = active == 1 ? 1 : 0, changeEnable = e != 0, tabEnable = t != 0, encountEnable = encounters != 0;
+        } else if (key == "tabs") {
+            l >> tabButtons;
+            tabsRead = true;
         } else if (key == "pairs") {
             int s = -1;
             if (l >> s && s >= 0 && s < 3) l >> partySets[s][0] >> partySets[s][1];
@@ -817,6 +826,7 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
         }
     }
     for (const auto& [k, v] : oldWork) globalWork[k] = v;
+    if (!tabsRead) tabButtons = (flag(4107) ? 1u : 0u) | (flag(4106) ? 2u : 0u); // (an older save's: as MenuTabAddALL would make them)
     // (every line ends in a newline, and every save of every version closes with its extras, area
     // first - map in the older field saves and cr3tool's imports: with that line here, nothing before
     // it was lost)

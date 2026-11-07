@@ -150,6 +150,13 @@ void Cr3GomCamera::turn(float dyaw, float dpitch) {
     pitch = std::clamp(pitch + dpitch, 0.05f, 1.3f);
 }
 
+void Cr3GomCamera::drag(float dyaw, float dpitch) {
+    if (lookDown_ || external_) return;
+    const float most = 20.0f * 0.01745328f;
+    yaw += dyaw;
+    pitch = std::clamp(pitch + dpitch, std::min(pitch, -most), std::max(pitch, most));
+}
+
 void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls, const CollisionWorld* walls) {
     if (external_) return playerAlpha = 1, void();
     if (lookDown_) { // (Fld2CameraLookDown::Update)

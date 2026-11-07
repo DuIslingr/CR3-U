@@ -53,6 +53,30 @@ controller (`feConMove01` .. `03`) showing once it moves or after half a second.
 having moved and it is a tap (a message's page, the check object at hand). The keys, the d-pad and
 the left stick walk as before.
 
+## CR3's camera and field buttons
+
+The camera turns as the iPad's and Android's releases turn it (Fld2TaskTouch::UpdateTouch,
+Fld2CameraGom::UpdateControl): with the follow camera, the screen is split by the Options'
+Controls - Two-Handed (the default) walks on the left half and turns the camera on the right,
+One-Handed walks on the bottom half and turns on the top -, both at once with two fingers. The
+camera's touch works as a pad, not a drag: held 20 to 60 pixels (of the screen's 960 x 640) from
+where it pressed it turns 0.45 rad a second, further 1.5; across turns it, up and down tilts it
+within 20 degrees. Its pad (feConCamera) shows once it moves or after half a second; let go without
+moving, it is a tap. With a mouse, the right button held turns the camera the same way, anywhere;
+the left button walks. Q / E and R / V still turn and tilt it. The look-down and rail cameras
+(houses, the village) are not turned, as in the game. The choice is kept in `system.txt`.
+
+The field's buttons (CampFieldMenu) start folded away behind the top-right button, as each area
+begins in the game: tap it (or Tab, the controller's triangle) to open Camp, My Page, the SpShop,
+Save, Battle, the encounters' switch and the way back to town; tap it again to close them. Battle
+and the encounters' switch are a dungeon's, once the story has given them (Cr3TabMenu.AddTabMenu),
+and not while riding. Folded,
+only that button and a town's Short Cut take taps. In a
+dungeon the minimap (MiniMapMenu) shows at the top left: the area's map, its warps and objects, the
+party's arrow and the camera's view. The game's names for three buttons are one round from their
+pictures (feBtnShop is Camp, feBtnCamp My Page, feBtnMypage the SpShop); CR3-U goes by what they
+open in the game (Fld2Main's states 6, 9 and 10).
+
 ## CR3's save files
 
 The native title-screen save menu has 12 slots across four pages of three.

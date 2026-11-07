@@ -752,9 +752,14 @@ struct Viewer {
     struct Cr3AreaDrag {
         bool on = false, moved = false;
         float x0 = 0, y0 = 0, x = 0, y = 0, held = 0;
+        bool own = false;        // (a finger of its own; else the pointer's - the mouse, or the finger SDL makes one of)
+        SDL_FingerID finger = 0;
     } areaDrag;
     bool areaDragFree() const { return areaMode && !eventMode && !(areaEvents && areaEvents->running()) && cr3Camp.stage == 0; }
-    void areaDragStart(float fx, float fy) { areaDrag = Cr3AreaDrag(), areaDrag.on = true, areaDrag.x0 = areaDrag.x = fx, areaDrag.y0 = areaDrag.y = fy; }
+    void areaDragStart(float fx, float fy, bool own = false, SDL_FingerID finger = 0) {
+        areaDrag = Cr3AreaDrag(), areaDrag.on = true, areaDrag.x0 = areaDrag.x = fx, areaDrag.y0 = areaDrag.y = fy;
+        areaDrag.own = own, areaDrag.finger = finger;
+    }
     void areaDragMove(float fx, float fy) {
         if (!areaDrag.on) return;
         areaDrag.x = fx, areaDrag.y = fy;
@@ -765,6 +770,75 @@ struct Viewer {
         const bool tapped = !areaDrag.moved;
         areaDrag.on = false;
         if (tapped) tap(); // (a touch without a move: the field's tap)
+    }
+    // The camera's half of the screen (Fld2TaskTouch::UpdateTouch, with the Gom camera - Fld2TaskCamera
+    // type 1 - the touches split by fieldTouchMode, the Options' Controls: Two-Handed 0 the right half,
+    // One-Handed 1 the top half; the other half walks, both at once). Held, its offset from where it
+    // pressed turns the camera (Fld2CameraGom::UpdateControl) - each way under 20 pixels of the
+    // screen's 960 x 640 nothing, under 60 75, further 250, x 60 x 0.0001 a frame (0.45 or 1.5 rad a
+    // second): across turning it, up and down tilting it (the finger down, the view down). Let go
+    // within 20 of where it pressed: a tap. Fld2Controller(1) shows it once moved or held half a
+    // second: feConCamera where it pressed, feConMove03 at the finger. CR3-U's: the right mouse
+    // button's drag, anywhere
+    struct Cr3AreaCam {
+        bool on = false, moved = false, mouse = false; // (mouse: the right button's)
+        float x0 = 0, y0 = 0, x = 0, y = 0, held = 0;
+        bool own = false; // (as the walk's)
+        SDL_FingerID finger = 0;
+    } areaCam;
+    bool pointerTouch = false; // (the press being handled: SDL's from a finger)
+    bool areaCamFree() const { return areaDragFree() && areaCamera.turnable(); }
+    bool cameraHalf(float fx, float fy) const { return campOptions.hands == 1 ? fy < 0.5f : fx > 0.5f; }
+    void uiUnits(float fx, float fy, float& ux, float& uy) const { // (the UI's units: 100 pixels of the screen's 960 x 640, y up)
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+    }
+    void areaCamStart(float fx, float fy, bool mouse, bool own = false, SDL_FingerID finger = 0) {
+        areaCam = Cr3AreaCam(), areaCam.on = true, areaCam.mouse = mouse, areaCam.own = own, areaCam.finger = finger;
+        areaCam.x0 = areaCam.x = fx, areaCam.y0 = areaCam.y = fy;
+    }
+    void areaCamMove(float fx, float fy) {
+        if (!areaCam.on) return;
+        areaCam.x = fx, areaCam.y = fy;
+        float ax, ay, bx, by;
+        uiUnits(areaCam.x0, areaCam.y0, ax, ay), uiUnits(fx, fy, bx, by);
+        if (std::hypot(bx - ax, by - ay) * 100 > 20) areaCam.moved = true; // (Fld2TaskTouch: over 400 squared)
+    }
+    void areaCamEnd() {
+        if (!areaCam.on) return;
+        const bool tapped = !areaCam.moved && !areaCam.mouse;
+        areaCam.on = false;
+        if (tapped) tap();
+    }
+    void areaCamStep(float dt) {
+        if (!areaCam.on || !areaCamFree()) return;
+        float ax, ay, bx, by;
+        uiUnits(areaCam.x0, areaCam.y0, ax, ay), uiUnits(areaCam.x, areaCam.y, bx, by);
+        auto rate = [](float d) { const float a = std::fabs(d); return a < 20 ? 0.0f : std::copysign(a < 60 ? 75.0f : 250.0f, d); };
+        // (GetTouchDiff: where it pressed less where it is; yaw += x x -0.0001 x -1, pitch += y x -1 x -0.0001)
+        areaCamera.drag(rate((ax - bx) * 100) * dt * 60 * 0.0001f, rate((ay - by) * 100) * dt * 60 * 0.0001f);
+    }
+    // a finger SDL makes no mouse of (a second one down): the walk's or the camera's by its half
+    bool mouseFingerOn = false; // (the finger SDL's mouse follows - SDL_touch.c: the first down while none is)
+    SDL_FingerID mouseFinger = 0;
+    void fingerEvent(Uint32 type, SDL_FingerID id, float fx, float fy) {
+        const bool mine = mouseFingerOn && id == mouseFinger;
+        if (type == SDL_EVENT_FINGER_DOWN) {
+            if (!mouseFingerOn) return void((mouseFingerOn = true, mouseFinger = id)); // (its mouse button's: pointerDown)
+            if (!areaDragFree()) return;
+            if (areaCamFree() && cameraHalf(fx, fy)) {
+                if (!areaCam.on) areaCamStart(fx, fy, false, true, id);
+            } else if (!areaDrag.on) areaDragStart(fx, fy, true, id);
+        } else if (type == SDL_EVENT_FINGER_MOTION) {
+            if (mine) return;
+            if (areaCam.on && areaCam.own && areaCam.finger == id) areaCamMove(fx, fy);
+            if (areaDrag.on && areaDrag.own && areaDrag.finger == id) areaDragMove(fx, fy);
+        } else if (type == SDL_EVENT_FINGER_UP || type == SDL_EVENT_FINGER_CANCELED) {
+            if (mine) return void(mouseFingerOn = false);
+            const bool up = type == SDL_EVENT_FINGER_UP;
+            if (areaCam.on && areaCam.own && areaCam.finger == id) up ? areaCamEnd() : void(areaCam = Cr3AreaCam());
+            if (areaDrag.on && areaDrag.own && areaDrag.finger == id) up ? areaDragEnd() : void(areaDrag = Cr3AreaDrag());
+        }
     }
     // (its push as the stick's: sx across, sy away from the camera - the finger up the screen)
     bool areaDragStick(float& sx, float& sy, bool& run) const {
@@ -2665,6 +2739,7 @@ struct Viewer {
     void cancelPointerInput() {
         menuSwipe = mobile::MenuSwipe();
         areaDrag = Cr3AreaDrag();
+        areaCam = Cr3AreaCam();
         worldSel.dragging = town.dragging = myPage.dragging = false;
         fastHeld = false, fastUntil = 0;
         keyLock.pressing = vslash.pressed = false;
@@ -2733,7 +2808,10 @@ struct Viewer {
         else if (fieldMode && !eventMode && mystic.stage) mysticPointer(fx, fy);
         else if (fieldMode && !eventMode && (sprintTap(fx, fy) || actionTap(fx, fy))) {}
         else if (fieldMode && !eventMode && fieldClick(fx, fy)) {
-        } else if (areaDragFree()) areaDragStart(fx, fy); // (CR3's field: a drag walks, a touch let go taps)
+        } else if (areaDragFree()) { // (CR3's field: a drag walks, a touch let go taps; a finger on the camera's half turns it)
+            if (pointerTouch && areaCamFree() && cameraHalf(fx, fy) && !areaCam.on) areaCamStart(fx, fy, false);
+            else areaDragStart(fx, fy);
+        }
         else if (eventMode || fieldMode || battleMode || cr3BattleMode || areaMode) tap();
     }
     // (--input click:<fx>:<fy>: a press and its release there, for tests)
@@ -3230,7 +3308,7 @@ struct Viewer {
     static constexpr int kSystemFlags = 992;
     bool systemRead = false, systemFound = false;
     std::vector<int> systemFlags;
-    int systemOptions[5] = {-1, -1, -1, -1, -1};
+    int systemOptions[6] = {-1, -1, -1, -1, -1, -1}; // (+ fieldTouchMode: the Controls' hands - DBLoadPlayer::ReadSaveData_Option)
     void readSystem() {
         systemRead = true;
         std::FILE* f = std::fopen(savePath("system.txt").c_str(), "rb");
@@ -3264,13 +3342,14 @@ struct Viewer {
         if (systemOptions[0] >= 0)
             optionLanguage = systemOptions[0], optionQuality = systemOptions[1], optionVolume[0] = systemOptions[2],
             optionVolume[1] = systemOptions[3], optionVolume[2] = systemOptions[4];
+        if (systemOptions[5] == 0 || systemOptions[5] == 1) campOptions.hands = systemOptions[5];
     }
     void writeSystem() {
         systemRead = systemFound = true;
         systemFlags.clear();
         for (int n = 0; n < kSystemFlags; ++n)
             if (game.flag(n)) systemFlags.push_back(n);
-        const int o[5] = {optionLanguage, optionQuality, optionVolume[0], optionVolume[1], optionVolume[2]};
+        const int o[6] = {optionLanguage, optionQuality, optionVolume[0], optionVolume[1], optionVolume[2], campOptions.hands};
         std::memcpy(systemOptions, o, sizeof o);
         std::string text = "CR3-U system 1\nflags";
         for (int n : systemFlags) text += " " + std::to_string(n);
@@ -6995,6 +7074,9 @@ struct Viewer {
         for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head), unload(npc.alt);
         areaNpcs.clear();
         game.gimmickShown.clear(), game.fieldBoxes.clear(), game.switchesOn.clear(); // (Fld2TaskGimmick::CreateGimmick: all shown, evt000 hides what it will)
+        // (Fld2Main::ChangeArea: the tab closed and made again - CampFieldMenu closed -, the minimap back on)
+        cr3Camp.panelOpen = false, cr3Camp.panelAt = -10, game.minimapEnable = true;
+        minimapMarks.clear(), minimapLayers.clear(), minimapLayer = -1;
         game.fieldEffects.clear();
         if (name.compare(0, 3, areaPrefix) != 0) game.brokenRocks.clear(); // (another dungeon or a town: its rocks whole again)
         areaPrefix = name.substr(0, 3);
@@ -7083,6 +7165,7 @@ struct Viewer {
                         areaGimmicks.push_back(g);
                     }
                 loadAreaNpcs(name, names, w);
+                loadMinimap(name, names, w);
                 unload(areaP), areaP = ViewFigure();
                 if (std::any_of(areaNpcs.begin(), areaNpcs.end(), [](const AreaNpc& n) { return n.mover || n.wander == 2 || n.wander == 3; }) && loadFigure(name + "p.geom", areaP, &err)) {
                     areaP.absolute = true; // (CrxSimpleModel: its own animation)
@@ -7777,6 +7860,27 @@ struct Viewer {
             else if (std::sscanf(want.c_str(), "%f/%f/%f/%f", &a, &b, &c, &d) == 4) areaDragStart(a, b), areaDragMove(c, d);
             SDL_Log("area %s: drag %s", area.name.c_str(), want.c_str());
         }
+        // (--input touch:<x0>/<y0>/<x1>/<y1> - a finger as SDL gives it: pressed, the camera's half or
+        // the walk's by the Options' Controls, moved and held; touch:end lets go; mouse2:... the right
+        // button's drag: tests)
+        if (!(areaEvents && areaEvents->running()) && !inputScript.empty() &&
+            (inputScript.front().compare(0, 6, "touch:") == 0 || inputScript.front().compare(0, 7, "mouse2:") == 0)) {
+            const bool mouse = inputScript.front()[0] == 'm';
+            const std::string want = inputScript.front().substr(mouse ? 7 : 6);
+            inputScript.pop_front();
+            float a = 0.5f, b = 0.5f, c = 0.5f, d = 0.5f;
+            if (want == "end") {
+                if (areaCam.on) areaCamEnd();
+                if (areaDrag.on) areaDragEnd();
+            } else if (std::sscanf(want.c_str(), "%f/%f/%f/%f", &a, &b, &c, &d) == 4) {
+                if (mouse) areaCamStart(a, b, true);
+                else pointerTouch = true, pointerDown(a, b), pointerTouch = false;
+                if (areaCam.on) areaCamMove(c, d);
+                else if (areaDrag.on) areaDragMove(c, d);
+            }
+            SDL_Log("area %s: %s %s - camera %s, walk %s", area.name.c_str(), mouse ? "mouse2" : "touch", want.c_str(), areaCam.on ? "held" : "free",
+                    areaDrag.on ? "held" : "free");
+        }
         // (--input near:<gimmick>[:<distance>]: tests - the player stood 1.5 (or that) from it on its side, facing it)
         if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 5, "near:") == 0) {
             std::string want = inputScript.front().substr(5);
@@ -7844,6 +7948,7 @@ struct Viewer {
         }
         const bool* keys = SDL_GetKeyboardState(nullptr);
         if (keys) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
+        areaCamStep(dt); // (the camera's half held: Fld2CameraGom::UpdateControl)
         const float fx = areaCamera.at[0] - areaCamera.eye[0], fz = areaCamera.at[2] - areaCamera.eye[2];
         const float fl = std::max(std::hypot(fx, fz), 1e-4f);
         const float forward[2] = {fx / fl, fz / fl}, right[2] = {-forward[1], forward[0]};
@@ -17110,7 +17215,9 @@ struct Viewer {
     // The field's buttons (CampFieldMenu: feBtnMenu at feBtnPosition's fit9, its feBtnPanel at
     // call_feBtnPanel - feBtnPanel_in's 0 .. 0.133 s opening, .. 0.3 closing - and on it feBtnOpen,
     // feBtnSave, feBtnEncount, feBtnBattle, and with flag 27 feBtnCamp and feBtnMypage, with 26
-    // feBtnShop, each at its call_ joint; feBtnTown at fit7 unless flag 1001). Camp (Fld2Main::SM_Camp
+    // feBtnShop, each at its call_ joint - the game's names one round from their pictures and
+    // what they do: feBtnShop is Camp, feBtnCamp My Page, feBtnMypage the SpShop (TapChkFieldTabMenu 1,
+    // 6, 7: Fld2Main states 6, 9, 10) -; feBtnTown at fit7 unless flag 1001). Camp (Fld2Main::SM_Camp
     // - SetCampWindowParameter): CampTopMenu (0x33: comBgMenu, camTopCharaMenu's five
     // camTopCharaPanel - a party member's gene: its picture cutin_<series> on camTopGene_id00's
     // mat_cutin_001, camTopStatusPanel's level, HP and MP; empty slots camTopNoEntory_fr00 -, the
@@ -17124,7 +17231,7 @@ struct Viewer {
     struct Cr3Camp {
         int stage = 0;          // 0 the field, 1 the camp's top, 2 Genes: the characters, 3 a character's gene
         float since = 0;
-        bool panelOpen = true;  // (the field's buttons: feBtnOpen's panel)
+        bool panelOpen = false; // (the field's buttons: feBtnOpen's panel - closed to begin with)
         float panelAt = -10;
         int chara = 0;          // (3: its char_para id)
         int row = 0;            // (2: the row in focus)
@@ -17501,44 +17608,168 @@ struct Viewer {
         if (cr3Camp.stage == 0) return drawCr3FieldButtons(w, h, view);
         drawCr3Camp(w, h, view);
     }
+    // (CampFieldMenu, as Fld2TabMenu::Open makes it with each area: closed - feBtnPanel at its
+    // closing's end, only feBtnOpen and feBtnEncount of the panel's showing. feBtnOpen opens it
+    // (InterfaceOpenAnimeSet, com_008) or closes it (com_009); open, the others take taps
+    // (TouchGestureTap2). Pose fades them with the panel: its feBtnPanel_in time t / 0.133
+    // opening, (0.3 - t) / 0.133 closing. feBtnTown twice: at feMapPositon's feMapMenu's
+    // call_feMapBtn, its frame 0 - the town map (tab 8: SetDirectTownMove), a town's while flag
+    // 0x3f1 is off (SetMapPermitFieldTabMenu), open or not -, and at call_feBtnTown its frame 1 -
+    // back to town (tab 10: CreateTownMoveDungeonWindow) -, with the panel, unless flag 1001)
+    bool cr3InDungeon() const { return area.name.size() > 1 && (area.name[0] == 'd' || area.name[0] == 'e'); } // (GetDungeonNo 5 .. 22)
     void drawCr3FieldButtons(int w, int h, const Mat4& view) {
-        float x, y;
-        UiFig& pos = cr3UiPut("febtnposition", "", 0, 0, 0, view);
-        if (!game.flag(1001) && cr3UiCall(pos, "call_feBtnTown", x, y, w, h)) {
-            UiFig& u = cr3UiPut("febtntown", "", 0, x, y, view);
-            float ax, ay, ex, ey;
-            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 108)); // (Fld2TabMenu tab 8)
-        }
-        if (!cr3UiCall(pos, "call_feBtnMenu", x, y, w, h)) return;
-        UiFig& menu = cr3UiPut("febtnmenu", "", 0, x, y, view);
-        if (!cr3UiCall(menu, "call_feBtnPanel", x, y)) return;
+        float x, y, bx, by;
+        const bool open = cr3Camp.panelOpen, dungeon = cr3InDungeon();
+        // (Fld2TabMenu::Open: in a dungeon, not riding - flag 4105 -, the encounters' switch by the
+        // tab's bit 0 and Battle by bit 1; in a town neither - its VS mode is My Page's)
+        const bool tabs = dungeon && !game.flag(4105);
         const float age = std::max(uiClock - cr3Camp.panelAt, 0.0f);
-        const float pt = cr3Camp.panelOpen ? std::min(age, 0.1333f) : std::min(0.1333f + age, 0.3f);
-        UiFig& panel = cr3UiPut("febtnpanel", "febtnpanel_in", pt, x, y, view);
-        struct Btn {
-            const char* joint;
-            const char* fig;
-            int id;
-            bool shown;
-        };
-        const bool open = cr3Camp.panelOpen;
-        const Btn btns[] = {{"call_feBtnOpen", "febtnopen", 0, true},
-                            {"call_feBtnSave", "febtnsave", 1, open},
-                            {"call_feBtnEncount", "febtnencount", 2, open},
-                            {"call_feBtnBattle", "febtnbattle", 3, open},
-                            {"call_feBtnCamp", "febtncamp", 4, open && game.flag(27)},
-                            {"call_feBtnMypage", "febtnmypage", 5, open && game.flag(27)},
-                            {"call_feBtnShop", "febtnshop", 6, open && game.flag(26)}};
-        for (const Btn& b : btns) {
-            float bx, by;
-            if (!b.shown || !cr3UiCall(panel, b.joint, bx, by)) continue;
-            UiFig& u = cr3UiPut(b.fig, "", 0, bx, by, view);
-            float ix, iy;
-            if (b.id == 0 && cr3UiCall(u, "call_feIconOpen_fr00", ix, iy)) cr3UiPut("febtniconopen_fr00", "", open ? 1.0f / 30 : 0.0f, ix, iy, view);
+        const float pt = open ? std::min(age, 0.1333f) : std::min(0.1333f + age, 0.3f);
+        const float fade = std::clamp(pt < 0.1333f ? pt / 0.1333f : (0.3f - pt) / 0.1333f, 0.0f, 1.0f);
+        const auto tapOf = [&](const UiFig& u, int id) {
             float ax, ay, ex, ey;
-            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 100 + b.id));
+            if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, id));
+        };
+        UiFig& pos = cr3UiPut("febtnposition", "", 0, 0, 0, view);
+        if (cr3UiCall(pos, "call_feBtnMenu", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("febtnmenu", "", 0, x, y, view);
+            if (cr3UiCall(menu, "call_feBtnPanel", x, y)) {
+                UiFig& panel = cr3UiPut("febtnpanel", "febtnpanel_in", pt, x, y, view);
+                struct Btn {
+                    const char* joint;
+                    const char* fig;
+                    int id;
+                    bool shown, fades;
+                };
+                const Btn btns[] = {{"call_feBtnMypage", "febtnmypage", 5, game.flag(27), true},
+                                    {"call_feBtnCamp", "febtncamp", 4, game.flag(27), true},
+                                    {"call_feBtnOpen", "febtnopen", 0, true, false},
+                                    {"call_feBtnSave", "febtnsave", 1, true, true},
+                                    {"call_feBtnEncount", "febtnencount", 2, tabs && (game.tabButtons & 1) != 0, false},
+                                    {"call_feBtnBattle", "febtnbattle", 3, tabs && (game.tabButtons & 2) != 0, true},
+                                    {"call_feBtnShop", "febtnshop", 6, game.flag(26), true}};
+                for (const Btn& b : btns) {
+                    if (!b.shown || !cr3UiCall(panel, b.joint, bx, by)) continue;
+                    UiFig& u = cr3UiPut(b.fig, "", 0, bx, by, view, b.fades ? fade : 1);
+                    float ix, iy;
+                    if (b.id == 0 && cr3UiCall(u, "call_feIconOpen_fr", ix, iy)) cr3UiPut("febtniconopen_fr00", "", open ? 1.0f / 30 : 0.0f, ix, iy, view);
+                    if (b.id == 2 && cr3UiCall(u, "call_feIconEncount_fr", ix, iy)) // (frame 0 on, 1 off)
+                        cr3UiPut("febtniconencount_fr00", "", encountersOff ? 1.0f / 30 : 0.0f, ix, iy, view, fade);
+                    if (b.id == 0 || open) tapOf(u, 100 + b.id);
+                }
+            }
         }
+        UiFig& mapPos = cr3UiPut("femappositon", "", 0, 0, 0, view);
+        if (cr3UiCall(mapPos, "call_feMapMenu", x, y, w, h)) {
+            UiFig& mapMenu = cr3UiPut("femapmenu", "", 0, x, y, view);
+            if (!dungeon && !game.flag(0x3f1) && cr3UiCall(mapMenu, "call_feMapBtn", bx, by)) tapOf(cr3UiPut("febtntown", "", 0, bx, by, view), 108);
+        }
+        if (!game.flag(1001) && cr3UiCall(pos, "call_feBtnTown", x, y, w, h)) {
+            UiFig& u = cr3UiPut("febtntown", "", 1.0f / 30, x, y, view, fade);
+            if (open) tapOf(u, 110);
+        }
+        if (dungeon && game.minimapEnable) drawCr3Minimap(w, h, view);
         drawCr3Goods(w, h, view);
+    }
+    // The minimap (MiniMapMenu, interface 0x5a: SetFieldTabMenuParameter's with a dungeon's tab - its
+    // taps off there): feMapPositon, feMapMenu at its call_feMapMenu, feMap_id00 at that's
+    // call_feMap_id with <area>m_map on its first material (ChangeMapTexture; d0904 / d0908 / d0912
+    // by the layer: Fld2Main::UpdateMinimap - the ragdoll_minimap_<name> box the player is in,
+    // <name>m_map, the gimmicks of other layers left off); then each Field row's gimmick marked +0x28
+    // 1 feMapWarp, 2 feMapObject, and feMapPlayerPanel - at call_feMapMenu plus x / 30, -z / 30 - with
+    // feMapCamera at its call_feMapCamera turned to the camera's way to the player, feMapPlayer at
+    // call_feMapPlayer turned as the player faces (atan2(-x, -z) of its direction)
+    struct MinimapMark {
+        int kind = 0, layer = -1;
+        float x = 0, z = 0;
+    };
+    struct MinimapLayer {
+        std::string name;
+        cr3::Vec3 lo{}, hi{};
+    };
+    std::vector<MinimapMark> minimapMarks;
+    std::vector<MinimapLayer> minimapLayers;
+    int minimapLayer = -1;
+    float minimapAt = 0;
+    void loadMinimap(const std::string& name, const std::vector<std::string>& joints, const std::vector<cr3::Mat34>& world) {
+        minimapMarks.clear(), minimapLayers.clear(), minimapLayer = -1, minimapAt = uiClock;
+        for (size_t j = 0; j < joints.size() && j < world.size(); ++j) {
+            if (joints[j].compare(0, 16, "ragdoll_minimap_") != 0) continue;
+            const cr3::Mat34& m = world[j];
+            MinimapLayer l;
+            l.name = joints[j].substr(16);
+            for (int a = 0; a < 3; ++a) {
+                const float half = std::sqrt(m.m[a] * m.m[a] + m.m[4 + a] * m.m[4 + a] + m.m[8 + a] * m.m[8 + a]) * 0.1f * 0.5f; // (its scale x 0.1 x 0.5 each way)
+                l.lo[a] = m.m[a * 4 + 3] - half, l.hi[a] = m.m[a * 4 + 3] + half;
+            }
+            minimapLayers.push_back(l);
+        }
+        std::vector<uint8_t> d;
+        cr3::MbeFile f;
+        if (!archive.read("data\\field_" + name.substr(0, 3) + ".mbe", d) || !f.parse(d)) return;
+        const cr3::MbeFile::Table* t = f.table("Field");
+        if (!t) return;
+        const int areaNo = std::atoi(name.substr(3, 2).c_str()) - 1;
+        for (size_t r = 0; r < t->rows.size(); ++r) {
+            cr3::MbeFile::Row row;
+            if (!f.row(*t, r, "iiiiiippiiif", row) || row.i(0) != areaNo || row.i(4) != -1 || (row.i(8) != 1 && row.i(8) != 2)) continue;
+            const std::string gimmick = row.s(6);
+            auto it = std::find(joints.begin(), joints.end(), gimmick);
+            if (it == joints.end() && gimmick.size() > 8) it = std::find(joints.begin(), joints.end(), gimmick.substr(8));
+            if (it == joints.end() || size_t(it - joints.begin()) >= world.size()) continue;
+            const cr3::Mat34& m = world[size_t(it - joints.begin())];
+            MinimapMark mk;
+            mk.kind = row.i(8), mk.x = m.m[3], mk.z = m.m[11];
+            mk.layer = minimapLayerAt({m.m[3], m.m[7], m.m[11]});
+            minimapMarks.push_back(mk);
+        }
+        SDL_Log("area %s: minimap %zu marks, %zu layers", name.c_str(), minimapMarks.size(), minimapLayers.size());
+    }
+    int minimapLayerAt(const cr3::Vec3& p) const { // (Fld2TaskGimmick::GetMinimapLayer)
+        for (size_t i = 0; i < minimapLayers.size(); ++i) {
+            const MinimapLayer& l = minimapLayers[i];
+            if (p[0] >= l.lo[0] && p[0] <= l.hi[0] && p[1] >= l.lo[1] && p[1] <= l.hi[1] && p[2] >= l.lo[2] && p[2] <= l.hi[2]) return int(i);
+        }
+        return -1;
+    }
+    UiFig& cr3UiPutTurned(const std::string& name, float x, float y, float turn, const Mat4& view) {
+        UiFig& u = cr3UiPose(name, "", 0, x, y, false);
+        const float c = std::cos(turn), s = std::sin(turn);
+        u.fig.place.m[0] = c * cr3UiScale, u.fig.place.m[1] = -s * cr3UiScale, u.fig.place.m[4] = s * cr3UiScale, u.fig.place.m[5] = c * cr3UiScale;
+        u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = u.fig.tint[3] = 1;
+        drawFigure(u.fig, view.data());
+        return u;
+    }
+    void drawCr3Minimap(int w, int h, const Mat4& view) {
+        if (!areaWalker) return;
+        const cr3::Vec3 p = areaWalker->position();
+        if (const int l = minimapLayerAt(p); l >= 0) minimapLayer = l; // (UpdateMinimap: kept where none says)
+        float x, y, cx, cy;
+        UiFig& pos = cr3UiPut("femappositon", "", std::min(uiClock - minimapAt, 5.0f), 0, 0, view);
+        if (!cr3UiCall(pos, "call_feMapMenu", cx, cy, w, h)) return;
+        UiFig& menu = cr3UiPut("femapmenu", "", 0, cx, cy, view);
+        if (cr3UiCall(menu, "call_feMap_id", x, y)) {
+            UiFig& map = cr3UiPose("femap_id00", "", 0, x, y, false);
+            const std::string tex = (minimapLayer >= 0 && minimapLayer < int(minimapLayers.size()) ? minimapLayers[size_t(minimapLayer)].name : area.name) + "m_map";
+            if (cr3::Texture* t = texture(tex))
+                for (ViewMesh& vm : map.fig.meshes)
+                    if (vm.source.material == 0) vm.texture = t;
+            map.fig.tint[0] = map.fig.tint[1] = map.fig.tint[2] = map.fig.tint[3] = 1;
+            drawFigure(map.fig, view.data());
+        }
+        for (int kind : {1, 2}) // (the warps, then the objects)
+            for (const MinimapMark& mk : minimapMarks)
+                if (mk.kind == kind && (minimapLayers.empty() || mk.layer == minimapLayer))
+                    cr3UiPut(kind == 1 ? "femapwarp" : "femapobject", "", 0, cx + mk.x / 30, cy - mk.z / 30, view);
+        UiFig& panel = cr3UiPose("femapplayerpanel", "", 0, cx + p[0] / 30, cy - p[2] / 30, false);
+        float px, py;
+        if (cr3UiCall(panel, "call_feMapCamera", px, py)) {
+            const float toPlayer = std::atan2(p[0] - areaCamera.eye[0], p[2] - areaCamera.eye[2]);
+            cr3UiPutTurned("femapcamera", px, py, toPlayer, view);
+        }
+        panel.fig.tint[0] = panel.fig.tint[1] = panel.fig.tint[2] = panel.fig.tint[3] = 1;
+        drawFigure(panel.fig, view.data());
+        if (cr3UiCall(panel, "call_feMapPlayer", px, py)) cr3UiPutTurned("femapplayer", px, py, std::atan2(-std::sin(areaYaw), -std::cos(areaYaw)), view);
     }
     // The goods button (FieldGoodsMenu, interface 0x36 - Fld2GoodsButton): feGoodsMenu at
     // feGoodsPosition's call_feGoodsMenu_fit3 (the bottom right), its five slots call_feGoodsPanel_01
@@ -17790,26 +18021,26 @@ struct Viewer {
     }
     void chooseCr3Camp(int id) {
         if (cr3Camp.stage == 0) {
-            if (id == 100) { // (feBtnOpen: the panel opened or closed)
+            if (id == 100) { // (feBtnOpen: the panel opened - com_008 - or closed - com_009)
                 cr3Camp.panelOpen = !cr3Camp.panelOpen, cr3Camp.panelAt = uiClock;
-                audio.playSe("com_002", false);
-            } else if (id == 104)
+                audio.playSe(cr3Camp.panelOpen ? "com_008" : "com_009", false);
+                SDL_Log("field: the buttons %s", cr3Camp.panelOpen ? "opened" : "closed");
+            } else if (id == 106) // (feBtnShop - the Camp picture: TapChkFieldTabMenu 1, Fld2Main state 6 - SM_Camp)
                 openCr3Camp();
-            else if (id == 103) { // (feBtnBattle: ForceBattleIn in a dungeon; the VS mode in a town)
-                if (!forceEncounter()) openVs();
-            }
-            else if (id == 105) // (feBtnMypage: My Page)
+            else if (id == 103) // (feBtnBattle: Fld2TaskEncount::ForceBattleIn - a dungeon's alone; SE 0x16d)
+                audio.playSe(0x16d, false), forceEncounter();
+            else if (id == 104) // (feBtnCamp - the My Page picture: 6, state 9 - SM_MyPage)
                 openMyPage();
-            else if (id == 106) // (feBtnShop: Fld2Main::SM_Shop - CreatePiucomTop, the premium shop: PiuComMenu, data\shops' com_1)
+            else if (id == 105) // (feBtnMypage - the SpShop picture: 7, state 10 - SM_Shop: CreatePiucomTop, the premium shop - PiuComMenu, data\shops' com_1)
                 openPremiumShop();
-            else if (id == 102) {
+            else if (id == 102) { // (Fld2TabMenu tab 4: Fld2TaskEncount::SetEnable; SE 0x16d)
                 encountersOff = !encountersOff;
-                audio.playSe("com_003", false);
+                audio.playSe(0x16d, false);
                 SDL_Log("field: encounters %s", encountersOff ? "off" : "on");
-            } else if (id == 108) { // (feBtnTown: Fld2TabMenu tab 8 - in a town SetDirectTownMove)
-                // (a dungeon's: Fld2Main::SM_TownJump - the area script's DungeonExit, which asks and
-                // takes the party home)
-                if (area.name.size() > 1 && area.name[0] == 't') audio.playSe(0x16d, false), openTownMove(true);
+            } else if (id == 108 || id == 110) { // (feBtnTown: Fld2TabMenu tab 8 - the map's, SetDirectTownMove -, 10 - the panel's)
+                // (tab 10 in a dungeon: CreateTownMoveDungeonWindow, then Fld2Main::SM_TownJump - the area
+                // script's DungeonExit, which asks and takes the party home)
+                if (id == 108 || !cr3InDungeon()) audio.playSe(0x16d, false), openTownMove(true);
                 else audio.playSe(0x16d, false), runAreaFunction("DungeonExit");
             } else if (id >= 120 && id < 124) { // (the goods button)
                 useGoods(id - 120);
@@ -17905,7 +18136,8 @@ struct Viewer {
     }
     bool cr3CampKey(SDL_Keycode key) {
         if (cr3Camp.stage == 0) {
-            if (key == SDLK_C && cr3FieldIdle() && game.flag(27)) return openCr3Camp(), true;
+            if (key == SDLK_C && cr3FieldIdle() && game.flag(26)) return openCr3Camp(), true; // (the Camp button's flag: feBtnShop's, 26)
+            if (key == SDLK_TAB && cr3FieldIdle()) return chooseCr3Camp(100), true; // (Tab, the controller's triangle: feBtnOpen)
             return false;
         }
         if (cr3Camp.stage == 4) return campItemsKey(key), true;
@@ -17933,6 +18165,7 @@ struct Viewer {
     }
 
     void drawAreaDrag(int w, int h) {
+        drawAreaCam(w, h);
         if (!areaDrag.on || !areaDragFree() || (!areaDrag.moved && areaDrag.held < 0.5f)) return;
         Mat4 camera = cr3::mat4Identity();
         camera[14] = -0.881f * 10;
@@ -17951,6 +18184,27 @@ struct Viewer {
         cr3UiPut("feconmove01", "", areaDrag.held, ax, ay, view, 1, true);
         cr3UiPut("feconmove02", "", areaDrag.held, ax + dx * 0.5f, ay + dy * 0.5f, view, 1, true);
         cr3UiPut("feconmove03", "", areaDrag.held, ax + dx, ay + dy, view, 1, true);
+        cr3UiScale = 1;
+    }
+
+    // the camera's pad (Fld2Controller(1): feConCamera where it pressed, feConMove03 at the finger -
+    // 128 of the screen's 960 at most)
+    void drawAreaCam(int w, int h) {
+        if (!areaCam.on || !areaCamFree() || (!areaCam.moved && areaCam.held < 0.5f)) return;
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        dev->setLighting(cr3::SceneLighting());
+        dev->clearDepth();
+        float ax, ay, bx, by;
+        uiUnits(areaCam.x0, areaCam.y0, ax, ay);
+        uiUnits(areaCam.x, areaCam.y, bx, by);
+        float dx = bx - ax, dy = by - ay;
+        const float len = std::hypot(dx, dy), most = 1.28f;
+        if (len > most) dx *= most / len, dy *= most / len;
+        cr3UiScale = 2;
+        cr3UiPut("feconcamera", "", areaCam.held, ax, ay, view, 1, true);
+        cr3UiPut("feconmove03", "", areaCam.held, ax + dx, ay + dy, view, 1, true);
         cr3UiScale = 1;
     }
 
@@ -23015,7 +23269,7 @@ struct Viewer {
     // typeM_L00), each an optSltVolume - optSltBar_fr00 at the volume's frame, optSltBarCursor
     // moved along (barLimitLow - 0.23) - (barLimitUp + 0.23) x the volume / 100 (SetBarControlPoint);
     // Controls - optHndMenu's two optHnd_fr00 (Two-Handed, One-Handed 0x19b / 0x19c at typeM_C01;
-    // the chosen at frame 1 - the port's controls are its own); Other - optSltLRPanel's Resolution
+    // the chosen at frame 1 - fieldTouchMode: the field's camera half, right or top); Other - optSltLRPanel's Resolution
     // (0x230: Low, Medium, High 0x22b .. 0x22d - the port's quality) with optSltLbtn / optSltRbtn.
     // The header title 7, its line the tab's (0x19f .. 0x1a1); left - the volumes kept
     // (Cr3Util_Save_SystemData)
@@ -26697,6 +26951,7 @@ int main(int argc, char** argv) {
             float sx = walking ? walkX : 0.0f, sy = walking ? walkY : 0.0f;
             bool run = true;
             if (v.areaDrag.on) v.areaDrag.held += 1.0f / 60.0f;
+            if (v.areaCam.on) v.areaCam.held += 1.0f / 60.0f;
             v.areaDragStick(sx, sy, run); // (--input drag:..: a finger's drag)
             v.advance(1.0f / 60.0f, sx, sy, run);
             v.pose();
@@ -27001,19 +27256,45 @@ int main(int argc, char** argv) {
                     else if (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER && (v.inMenu() || v.cr3Title.stage == 4)) key = shopList ? SDLK_RIGHT : SDLK_PAGEDOWN;
                     else if (b == SDL_GAMEPAD_BUTTON_START && v.titleMenu.stage >= 2 && v.titleMenu.stage <= 3) key = SDLK_RETURN;
                     if (key) pushKey(key);
+                } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION || e.type == SDL_EVENT_FINGER_UP ||
+                           e.type == SDL_EVENT_FINGER_CANCELED) { // (the fingers SDL makes no mouse of: the field's second touch)
+                    int ww = 1, wh = 1;
+                    SDL_GetWindowSize(win, &ww, &wh);
+                    float fx, fy;
+                    screenFraction(e.tfinger.x * float(ww), e.tfinger.y * float(wh), fx, fy);
+                    v.fingerEvent(e.type, e.tfinger.fingerID, fx, fy);
+                } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT && e.button.which != SDL_TOUCH_MOUSEID &&
+                           v.areaCamFree()) { // (CR3-U's: the right button's drag turns the field's camera)
+                    float fx, fy;
+                    screenFraction(e.button.x, e.button.y, fx, fy);
+                    if (!v.areaCam.on) v.areaCamStart(fx, fy, true);
+                } else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT && v.areaCam.on && v.areaCam.mouse) {
+                    v.areaCamEnd();
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && v.areaCam.on && !v.areaCam.own && (v.areaCam.mouse || e.motion.which == SDL_TOUCH_MOUSEID)) {
+                    float fx, fy;
+                    screenFraction(e.motion.x, e.motion.y, fx, fy);
+                    v.areaCamMove(fx, fy);
+                    if (dragging && v.areaDrag.on && !v.areaDrag.own && !v.areaCam.mouse) v.areaDragMove(fx, fy);
                 } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                     v.pointerCancelled = false;
                     dragging = true;
                     float fx, fy;
                     screenFraction(e.button.x, e.button.y, fx, fy);
+                    v.pointerTouch = e.button.which == SDL_TOUCH_MOUSEID;
                     v.pointerDown(fx, fy);
+                    v.pointerTouch = false;
                 }
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                    if (e.button.which == SDL_TOUCH_MOUSEID && v.areaCam.on && !v.areaCam.own && !v.areaCam.mouse) {
+                        v.areaCamEnd(); // (the camera's half let go)
+                        dragging = false;
+                        continue;
+                    }
                     if (v.pointerCancelled) continue; // an interrupted gesture cannot activate or finish anything
                     float fx, fy;
                     screenFraction(e.button.x, e.button.y, fx, fy);
                     if (v.menuPointerUp(fx, fy)) { dragging = false; continue; }
-                    v.areaDragEnd();
+                    if (!v.areaDrag.own) v.areaDragEnd();
                     v.worldSel.dragging = false; // (the planet let go: spun on)
                     v.town.dragging = false;    // (the town map let go)
                     dragging = false;
@@ -27034,7 +27315,7 @@ int main(int argc, char** argv) {
                     screenFraction(e.motion.x, e.motion.y, fx, fy);
                     v.menuPointerMove(fx, fy);
                 } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.menuScroll(e.wheel.y > 0 ? -1 : e.wheel.y < 0 ? 1 : 0)) {
-                } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.areaDrag.on) {
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.areaDrag.on && !v.areaDrag.own) {
                     float fx, fy;
                     screenFraction(e.motion.x, e.motion.y, fx, fy);
                     v.areaDragMove(fx, fy);
@@ -27178,6 +27459,7 @@ int main(int argc, char** argv) {
                     else if (dx != 0 || dy != 0) sx = dx, sy = dy, run = true;
                 }
                 if (v.areaDrag.on) v.areaDrag.held += dt;
+                if (v.areaCam.on) v.areaCam.held += dt;
                 v.areaDragStick(sx, sy, run); // (a finger's drag: the field's stick)
                 v.advance(dt, sx, sy, run);
             }

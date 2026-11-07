@@ -42,6 +42,10 @@ public:
               const CollisionWorld* walls = nullptr);
     float playerAlpha = 1; // (the camera within 1 of the target across: the player drawn at 0.3)
     void turn(float yawRadians, float pitchRadians); // (the player's own turning of it)
+    // Fld2CameraGom::UpdateControl: the camera pad's turn - the pitch kept within 20 degrees either
+    // way (its +0x10), one already further out only brought back in
+    void drag(float yawRadians, float pitchRadians);
+    bool turnable() const { return !lookDown_ && !external_; } // (Fld2TaskCamera's type 1, Gom: the screen's camera half)
     // Fld2CameraLookDown (an area's camera type 3 - the executable's map table -: houses, the Space
     // Port): the eye at the player plus the area's offset (FieldCameraLD), looking at the player
     // 1.2 up; each followed at 4 a second once 0.3 or more off (a still zone), no turning
