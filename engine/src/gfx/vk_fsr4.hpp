@@ -48,6 +48,8 @@ public:
     // block added to the chain) and the two extensions they take when present
     void deviceRequirements(VkPhysicalDevice gpu, std::vector<const char*>& ext, VkPhysicalDeviceFeatures2& f2,
                             VkPhysicalDeviceVulkan12Features& f12, VkPhysicalDeviceVulkan13Features& f13);
+    // (after deviceRequirements: the files are there and the GPU is AMD's - the device is made for it)
+    bool wanted() const { return wanted_; }
     // Loads AMD's library, asks it for a context once to learn which FSR it offers here
     bool init(VkInstance instance, VkPhysicalDevice gpu, VkDevice device);
     void shutdown();
