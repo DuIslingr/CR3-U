@@ -190,6 +190,18 @@ bool isMain(const std::string& path) {
     return n == "crdb.ios.mvgl" || n == "crdb.psp2.mvgl" || (n.compare(0, 5, "main.") == 0 && endsWith(n, ".android.mvgl"));
 }
 
+// under another game's folder of the Prequel Trilogy (its PCSG00457 holds CR1/, CRO/, CR2/ beside
+// CR3/; the add-ons DIESEL1000ADDCON, DIESELOM00ADDCON, DIESEL2000ADDCON are theirs) - its own
+// CRDB.psp2.mvgl too, never this game's. Only the folders below `dir`, the one searched, count
+bool otherGame(const std::string& path, const std::string& dir) {
+    for (const fs::path& part : fs::path(path).lexically_relative(dir).parent_path()) {
+        const std::string n = lower(part.string());
+        if (n == "cr1" || n == "cro" || n == "cr2" || n == "diesel1000addcon" || n == "dieselom00addcon" || n == "diesel2000addcon")
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 bool undoboz(const uint8_t* in, size_t inSize, std::vector<uint8_t>& out) {
@@ -374,6 +386,7 @@ bool Database::open(const std::string& path, std::string* error) {
     std::vector<std::pair<std::string, uint64_t>> archives; // (path, base)
     std::vector<std::string> files = walk(dir, zip ? 0 : 8);
     if (zip) files = {path};
+    files.erase(std::remove_if(files.begin(), files.end(), [&](const std::string& f) { return otherGame(f, dir); }), files.end());
     // which release: the main archive found nearest the top decides
     std::string main;
     size_t mainDepth = size_t(-1);
