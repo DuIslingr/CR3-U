@@ -129,6 +129,9 @@ the program - it finds it by itself. The game folder is:
 │   └── es/                             the .rar / .zip / .7z, unpacked into en/ or es/): over an unpatched Vita copy,
 │                                       "English (fan translation)" and "Spanish (fan translation)" in the Options' Language
 ├── movies/                          cNN.mp4 your release lacks, from another (the iPad lacks c04..c11): "Movies"
+├── fsr4/                            AMD FSR 4 (optional; Linux and Windows, an AMD GPU): AMD's amd_fidelityfx_loader_vk.dll
+│                                    and amd_fidelityfx_upscaler_vk.dll (FSR SDK 2.4), the driver's amdvkffx64.dll
+│                                    (AMD Software 26.10.1+), and on Linux ffx-vk-linux's libffx_vk_linux.so: "FSR 4"
 └── textures/
     ├── export/                         written by --export-textures: the pictures to upscale (<hash>.png)
     └── hd/                             read by the game: the upscaled pictures (<hash>.png or .crhd)
@@ -294,6 +297,26 @@ the world (characters, monsters, stages and props; not the menus) rounded out at
 triangles, as CR1-U's: the original vertices stay put, edges sharper than 60 degrees stay hard, and
 skinning and animation work as before. From the next scene on; kept in settings.ini
 (`smooth_models` 0, 2 or 3), `--smooth-models n` for one run.
+
+## FSR 4
+
+The game's own upscaler is AMD's FSR 3.1.6, built from AMD's open source, on every system. On
+Linux and Windows with an AMD GPU (RX 6000 series or later) **FSR 4** - AMD's machine-learning
+upscaler, FSR Upscaling 4.1.2 - is an Upscaler choice too (Options > Graphics, or `--upscaler fsr4`),
+once its files are in `fsr4/` in the game folder. AMD ships FSR 4 for Vulkan only as its own signed
+Windows DLLs, whose licence allows them to be passed on in that form under AMD's terms alone, so
+they aren't included:
+
+- `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` from AMD's FSR SDK 2.4
+  (`Kits/FidelityFX/signedbin/` in its [release](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/releases/tag/v2.4.0));
+- `amdvkffx64.dll`, FSR 4 itself, from AMD Software: Adrenalin Edition 26.10.1 or later (the Windows
+  driver package: `Packages/Drivers/Display/WT6A_INF/B*/` inside the installer). Without it AMD's SDK
+  offers only FSR 3.1, and the game says so;
+- on Linux, `libffx_vk_linux.so` from [ffx-vk-linux](https://github.com/DuIslingr/ffx-vk-linux) (MIT),
+  which maps AMD's DLLs natively - no Wine. Windows loads them as they are.
+
+The log says which FSR AMD's SDK picked (`FSR 4.1.2: AMD's upscaler from ...`). FSR 4 costs about
+2 ms a frame at 1440p on an RX 7900 XTX. `CR3_FSR4_DIR` points at the files elsewhere.
 
 ## Add-ons: outfits and weapons of your own
 

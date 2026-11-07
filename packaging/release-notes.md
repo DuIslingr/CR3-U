@@ -28,6 +28,12 @@ A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux a
   corners; only the menus, windows and buttons keep clear of them.
 - **Upscalers** (FSR, DLSS, MetalFX) now apply to the 3D scene only; menus and text are drawn
   afterwards at full resolution and stay sharp.
+- **FSR 3.1.6:** the built-in FSR is updated from 3.1.4 to AMD's FSR SDK 2.4 passes.
+- **FSR 4 (Linux and Windows, AMD GPUs):** a new Upscaler choice. AMD ships FSR 4 for Vulkan only as
+  its own Windows DLLs, so they aren't included: put AMD's two SDK DLLs, the driver's
+  `amdvkffx64.dll` and (on Linux) ffx-vk-linux's `libffx_vk_linux.so` into `fsr4/` in the game
+  folder - its `README.txt` says where each comes from. On Linux the DLLs run natively through
+  ffx-vk-linux, no Wine. Without the files FSR 3.1 stays as it is.
 - **Vita, the Prequel Trilogy:** CR3-U no longer mistakes another game's archives in a Trilogy
   folder for its own.
 
