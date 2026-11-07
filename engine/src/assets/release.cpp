@@ -233,7 +233,12 @@ bool readFromBundle(const std::string& bundle, const std::string& name, std::vec
 } // namespace
 
 bool androidFile(const std::string& archivePath, const std::string& name, std::vector<uint8_t>& out, std::string* from) {
-    const std::string dir = folderOf(resolveArchive(archivePath));
+    // (the folder given - android/, as a start finds it -, else the given file's)
+    std::error_code ec;
+    std::string dir = resolveArchive(archivePath);
+    if (fs::is_directory(dir, ec)) {
+        while (dir.size() > 1 && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
+    } else dir = folderOf(dir);
     for (const std::string& p : {dir + "/" + name, dir + "/extracted/" + name})
         if (readWhole(p, out)) {
             if (from) *from = p;
