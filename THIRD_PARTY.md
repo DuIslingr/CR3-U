@@ -6,7 +6,7 @@ them in `engine/third_party/`:
 
 | Folder | What | Licence |
 |---|---|---|
-| `fidelityfx/` | AMD FidelityFX SDK 1.1.4's FSR 3.1 GPU passes (as in CR1:U / CRO-U) | MIT (`LICENSE.txt`) |
+| `fidelityfx/` | AMD FSR SDK 2.4.0's FSR 3.1.6 GPU passes (SDK 1.1.4's GLSL core) (as in CR1:U / CRO-U) | MIT (`LICENSE.txt`) |
 | `stb/stb_image.h` | stb_image 2.30 by Sean Barrett, JPEG and PNG only (`stb/stb_image.c`) - decodes the pictures of a gene card's page | public domain / MIT (in the file) |
 | `cgltf/` | cgltf 1.13 by Johannes Kuhlmann - reads the HD models (glTF 2.0) | MIT (in the file) |
 | `stb/stb_image_write.h` | stb_image_write 1.16 by Sean Barrett - writes the exported models' pictures (`gltf_libs.c` builds it with cgltf) | public domain / MIT (in the file) |
