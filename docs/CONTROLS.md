@@ -111,5 +111,12 @@ releases (touch alone) have none of, the controller does as the Vita does:
   after, round, com_002; the option under it its `comMsgC<n>Panel` shown, its text dark (0.227), the
   others' 0.88; ○ chooses it (com_003). The keys 1-3 still choose outright.
 
+- **L / R** (masks 0x200 / 0x400) over CR3's menus do what the Vita's do there, by the port's own
+  keys for the same: the gene lab's tabs (GeneSynthesisFutter `FUN_811690b6`), the shop's Buy /
+  Sell (ShopMenuMain::Update), the gifts' and the quests' categories and a quest's neighbours
+  (GiftSynthesizeListMenu, comListMenu, QuestDitailMenu), the Options' tabs (OptionMenu
+  `FUN_81203e54`: not round, com_003), the Gene Index's pages and profiles (PictureBookMenu
+  `FUN_81211910`), the Lucky Box's boxes (LuckyBoxMenu::Update).
+
 `CR3_PAD_SCRIPT` also takes `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
 

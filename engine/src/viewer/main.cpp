@@ -18537,6 +18537,33 @@ struct Viewer {
         if (cr3Camp.barCursor != was) audio.playSe("com_002", false), SDL_Log("field: the cursor on %d", kCr3BarIds[cr3Camp.barCursor]);
         return true;
     }
+    // ---- The Vita's L / R (masks 0x200 / 0x400) over CR3's menus, each as the port's own keys do the
+    // same there: the gene lab's tabs (GeneSynthesisFutter FUN_811690b6: L the one before, R the
+    // one after), the shop's Buy / Sell (ShopMenuMain::Update 0x812432aa, either), the gifts'
+    // categories (GiftSynthesizeListMenu::Update 0x81189cf2), the quests' categories and a quest's
+    // neighbours (comListMenu::Update 0x81137862, QuestDitailMenu::Update 0x81246a8e), the
+    // Options' tabs (OptionMenu FUN_81203e54: not round, com_003), the Gene Index's pages and
+    // profiles (PictureBookMenu FUN_81211910), the Lucky Box's boxes (LuckyBoxMenu::Update
+    // 0x811ea496). With the Vita copy as the game
+    bool cr3Shoulder(bool right) {
+        if (!vitaButtons()) return false;
+        const SDL_Keycode lr = right ? SDLK_RIGHT : SDLK_LEFT;
+        cr3::EventRuntime* ev = activeEvents();
+        if (ev && ev->geneLab().open && !ev->geneLab().talking && geneMenu.alert.empty() && (geneMenu.screen == 3 || geneMenu.screen == 7))
+            return geneLabKey(lr), true;
+        if (ev && ev->shop().open && !ev->shop().talking && shopMenu.told.empty() && (shopMenu.screen == 1 || shopMenu.screen == 2))
+            return cr3ShopKey(SDLK_TAB), true;
+        if (vs.screen == 11 && !vs.boxBuy) return chooseVs(right ? 1102 : 1100), true;
+        if (cr3Camp.stage == 6 && campGifts.step == 0 && campGifts.told.empty()) return campGiftsKey(lr), true;
+        if (cr3Camp.stage == 7) return campQuestsKey(lr), true;
+        if (cr3Camp.stage == 9 && !saveImport.active() && !campOptions.asking) {
+            const int to = std::clamp(campOptions.tab + (right ? 1 : -1), 0, kOptionTabs - 1);
+            if (to != campOptions.tab) campOptions.tab = to, audio.playSe("com_003", false), SDL_Log("options: tab %d", to);
+            return true;
+        }
+        if (cr3Camp.stage == 10 && myPage.screen == 3 && !cardView.gene) return myPageKey(lr), true;
+        return false;
+    }
     bool cr3CampKey(SDL_Keycode key) {
         if (cr3Camp.stage == 0) {
             if (key == SDLK_C && cr3FieldIdle() && game.flag(26)) return openCr3Camp(), true; // (the Camp button's flag: feBtnShop's, 26)
@@ -19788,6 +19815,7 @@ struct Viewer {
             if (id - 400 == cg.category) return;
             cg.category = id - 400, cg.row = 0;
             audio.playSe("com_002", false);
+            SDL_Log("camp: gifts, category %d", cg.category);
             campGiftRows();
             return;
         }
@@ -22673,6 +22701,7 @@ struct Viewer {
             if (id - 400 == cq.category) return;
             cq.category = id - 400, cq.row = 0;
             audio.playSe("com_002", false);
+            SDL_Log("camp: quests, category %d", cq.category);
             campQuestRows();
             return;
         }
@@ -27803,6 +27832,8 @@ int main(int argc, char** argv) {
                                    : b == SDL_GAMEPAD_BUTTON_DPAD_UP ? PP::Up : b == SDL_GAMEPAD_BUTTON_DPAD_DOWN ? PP::Down
                                    : b == SDL_GAMEPAD_BUTTON_DPAD_LEFT ? PP::Left : b == SDL_GAMEPAD_BUTTON_DPAD_RIGHT ? PP::Right : PP::None;
                     if (press != PP::None && v.cr3BarPad(press)) continue; // (the Vita's field buttons under its own)
+                    if ((b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER || b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) && v.cr3Shoulder(b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER))
+                        continue; // (the Vita's L / R over CR3's menus)
                     SDL_Keycode key = 0;
                     if (b == circle) key = SDLK_RETURN;
                     else if (b == cross) key = SDLK_BACKSPACE;

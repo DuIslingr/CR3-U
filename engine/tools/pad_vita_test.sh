@@ -41,5 +41,13 @@ want choice && run choice "2:east 3:east 4.5:down 5:down 5.5:down 6.5:east 8:qui
     "choice: the cursor on 2|choice: the cursor on 1|choice: the cursor on 2|choice: 2 of 2" \
     -- --area t0101 --input "call:c111_s110_t01_00101"
 
+# L / R over CR3's menus: OptionMenu's tabs (FUN_81203e54: not round), the gifts' categories (0x81189cf2)
+want shoulders && run options-tabs "3:r 3.5:r 4:r 4.5:r 5:l 6:quit" \
+    "options: tab 1|options: tab 2|options: tab 3|test controller: r|test controller: l|options: tab 2" \
+    -- --area t0101 --flag 26 --input "camp:open camp:button6"
+want shoulders && run gift-categories "3:r 3.5:r 4:l 6:quit" \
+    "camp: gifts, category 1|camp: gifts, category 2|camp: gifts, category 1" \
+    -- --area t0101 --flag 26 --input "camp:open camp:button3"
+
 echo "the Vita's buttons: $problems problems"
 [ "$problems" -eq 0 ]
