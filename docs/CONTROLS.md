@@ -118,5 +118,11 @@ releases (touch alone) have none of, the controller does as the Vita does:
   `FUN_81203e54`: not round, com_003), the Gene Index's pages and profiles (PictureBookMenu
   `FUN_81211910`), the Lucky Box's boxes (LuckyBoxMenu::Update).
 
-`CR3_PAD_SCRIPT` also takes `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
+- **A lost battle's Continue** (ContinueMenu::Update `0x8113c03a`): ↑ / ↓ over Give Up and Revive
+  (com_002), the one under it in its tapped look, ○ pressing it; its question (YNChoiceButton
+  `FUN_812818ca`) ↑ / ↓ / ← / → between Yes and No, ○ that, × No; the told's ○ its OK. `--input
+  ctn:hold` keeps `auto` from answering it (tests).
+
+`CR3_PAD_SCRIPT` also takes `until=<text>` (the later steps wait for a log line with it, `_` a
+space, their times counted from then), `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
 

@@ -8626,6 +8626,7 @@ struct Viewer {
         int stage = 0; // 1 the menu, 2 asked to give up, 3 asked to pay, 4 told there's no jem
         float since = 0;
         int focus = 0;
+        int askFocus = 0; // (the question's: 0 Yes, 1 No)
         bool decided = false;
     } cr3Ctn;
     static constexpr int kCtnGiveUp = 900, kCtnJem = 901, kCtnYes = 902, kCtnNo = 903, kCtnOk = 904;
@@ -8660,10 +8661,11 @@ struct Viewer {
                t.compare(0, 4, "gene") == 0 || t.compare(0, 4, "item") == 0 || (t.size() > 1 && t[0] == 't' && std::isdigit(static_cast<unsigned char>(t[1])));
     }
     void stepCr3Continue() {
-        // (--input ctn:giveup / jem / yes / no / ok: tests - the battle's leftover choices dropped)
+        // (--input ctn:giveup / jem / yes / no / ok: tests - the battle's leftover choices dropped; ctn:hold none)
         while (!inputScript.empty() && (inputScript.front() == "attack" || inputScript.front() == "guard" || inputScript.front() == "battle" ||
                                         (inputScript.front().size() > 1 && inputScript.front()[0] == 't' && std::isdigit(static_cast<unsigned char>(inputScript.front()[1])))))
             inputScript.pop_front();
+        if (!inputScript.empty() && inputScript.front() == "ctn:hold") return; // (tests: left to the keys / a controller)
         if (!inputScript.empty() && inputScript.front().compare(0, 4, "ctn:") == 0 && cr3BattleClock - cr3Ctn.since > 0.6f) {
             static const std::map<std::string, int> kCtn = {{"giveup", kCtnGiveUp}, {"jem", kCtnJem}, {"yes", kCtnYes}, {"no", kCtnNo}, {"ok", kCtnOk}};
             const auto it = kCtn.find(inputScript.front().substr(4));
@@ -8675,8 +8677,26 @@ struct Viewer {
             chooseCr3Continue(stage == 1 ? (cr3Jems() > 0 ? kCtnJem : kCtnGiveUp) : stage == 4 ? kCtnOk : kCtnYes);
         }
     }
+    // The Vita's buttons over it (ContinueMenu::Update 0x8113c03a: FUN_8128d1ea's cursor over its two
+    // contBtns - ↑ / ↓, round, com_002 -, the one under it TapON - FUN_8113b80c: its text's tapped
+    // look -, ○ pressing it; the question YNChoiceButton's - FUN_812818ca: ↑ / ↓ between Yes and No,
+    // com_002, ○ the one under it, × No -; the told's ○ its OK). With the Vita copy as the game
+    bool cr3ContinueKey(SDL_Keycode k) {
+        if (!vitaButtons() || cr3Ctn.stage == 0 || cr3BattleClock - cr3Ctn.since < 0.2f) return false;
+        const bool move = k == SDLK_UP || k == SDLK_DOWN || k == SDLK_LEFT || k == SDLK_RIGHT, enter = k == SDLK_RETURN || k == SDLK_KP_ENTER;
+        if (cr3Ctn.stage == 1) {
+            if (move && (k == SDLK_UP || k == SDLK_DOWN)) cr3Ctn.focus ^= 1, audio.playSe("com_002", false), SDL_Log("continue: the cursor on %d", cr3Ctn.focus);
+            else if (enter) chooseCr3Continue(cr3Ctn.focus == 0 ? kCtnGiveUp : kCtnJem);
+        } else if (cr3Ctn.stage == 2 || cr3Ctn.stage == 3) {
+            if (move) cr3Ctn.askFocus ^= 1, audio.playSe("com_002", false);
+            else if (enter) chooseCr3Continue(cr3Ctn.askFocus == 0 ? kCtnYes : kCtnNo);
+            else if (k == SDLK_BACKSPACE || k == SDLK_ESCAPE) chooseCr3Continue(kCtnNo);
+        } else if (cr3Ctn.stage == 4 && enter) chooseCr3Continue(kCtnOk);
+        return true;
+    }
     void chooseCr3Continue(int id) {
         const int stage = cr3Ctn.stage;
+        cr3Ctn.askFocus = 0;
         if (stage == 1 && id == kCtnGiveUp) {
             audio.playSe("com_003", false);
             cr3Ctn.stage = 2, cr3Ctn.since = cr3BattleClock;
@@ -8699,6 +8719,7 @@ struct Viewer {
             cr3Ctn.stage = 0; // (not decided: a later defeat asks again)
             continueCr3Battle();
         }
+        if (cr3Ctn.stage != stage) SDL_Log("continue: %d to %d", stage, cr3Ctn.stage);
     }
     void continueCr3Battle() {
         for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
@@ -8767,7 +8788,7 @@ struct Viewer {
         }
         const float since = cr3BattleClock - cr3Ctn.since;
         if (cr3Ctn.stage == 2 || cr3Ctn.stage == 3)
-            drawCr3Asked(announceText("AnnounceBattle", cr3Ctn.stage == 2 ? 0x2a : 0x2b), since, 0, true, kCtnYes, kCtnNo, w, h, view, &cr3CtnTaps);
+            drawCr3Asked(announceText("AnnounceBattle", cr3Ctn.stage == 2 ? 0x2a : 0x2b), since, vitaButtons() ? cr3Ctn.askFocus : 0, true, kCtnYes, kCtnNo, w, h, view, &cr3CtnTaps);
         else if (cr3Ctn.stage == 4) {
             std::string text = menuAnnounce(0x132);
             if (const size_t at = text.find("{jem}"); at != std::string::npos) text.replace(at, 5, std::to_string(cr3Jems())); // (the count held)
@@ -9814,6 +9835,7 @@ struct Viewer {
 
     // the keys: up / down the focus, Return chooses, Backspace back from the targets
     bool cr3BattleKey(SDL_Keycode k) {
+        if (cr3ContinueKey(k)) return true;
         if (cr3BattleEvents && cr3BattleEvents->running()) return false;
         const int n = cr3BattleStage == Cr3BattleStage::Menu ? 3 : cr3BattleStage == Cr3BattleStage::Command ? 4
                     : cr3BattleStage == Cr3BattleStage::Escape ? (cr3EscapeAsk ? 2 : 0)
@@ -27602,13 +27624,24 @@ int main(int argc, char** argv) {
         // CR3_PAD_SCRIPT (tests): a virtual controller, its buttons and stick set at their times - "1.5:east
         // 2:down 3:lx=1 4:lx=0" (a button is held 0.1 s; east / south / north / west, up / down / left /
         // right, l / r, start, back; lx / ly the left stick, -1 .. 1, ly up positive; blur the window's focus
-        // lost; shot=<file.bmp> the frame then; quit the end). Each press of a held direction is logged
+        // lost; shot=<file.bmp> the frame then; until=<text> the later steps held till a log line has it -
+        // '_' a space -, their times from then; quit the end). Each press of a held direction is logged
         struct PadStep {
             float at;
             std::string what;
         };
         std::vector<PadStep> padScript;
         std::string padShot;
+        // (until=<text>: the steps after it wait for a log line with that text - '_' a space - and
+        // their times count from then)
+        struct PadWait {
+            std::string text;
+            bool seen = false;
+            SDL_LogOutputFunction next = nullptr;
+            void* nextData = nullptr;
+        };
+        static PadWait padWait;
+        float padShift = 0;
         SDL_Joystick* testPad = nullptr;
         if (const char* ps = SDL_getenv("CR3_PAD_SCRIPT")) {
             SDL_VirtualJoystickDesc desc;
@@ -27618,6 +27651,13 @@ int main(int argc, char** argv) {
             desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
             desc.name = "CR3-U test controller";
             if (const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc)) testPad = SDL_OpenJoystick(id);
+            SDL_GetLogOutputFunction(&padWait.next, &padWait.nextData);
+            SDL_SetLogOutputFunction(
+                [](void*, int category, SDL_LogPriority priority, const char* message) {
+                    if (!padWait.text.empty() && message && std::strstr(message, padWait.text.c_str())) padWait.seen = true;
+                    if (padWait.next) padWait.next(padWait.nextData, category, priority, message);
+                },
+                nullptr);
             std::string all = ps;
             for (size_t at = 0; at < all.size();) {
                 const size_t sp = std::min(all.find(' ', at), all.size());
@@ -27972,9 +28012,17 @@ int main(int argc, char** argv) {
                     {"left", SDL_GAMEPAD_BUTTON_DPAD_LEFT}, {"right", SDL_GAMEPAD_BUTTON_DPAD_RIGHT}, {"l", SDL_GAMEPAD_BUTTON_LEFT_SHOULDER},
                     {"r", SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER}, {"start", SDL_GAMEPAD_BUTTON_START}, {"back", SDL_GAMEPAD_BUTTON_BACK}};
                 const float since = float(double(now - started) / 1e9);
-                while (!padScript.empty() && padScript.front().at <= since) {
+                if (!padWait.text.empty() && padWait.seen) padWait.text.clear(), padShift = since; // (the awaited line: on from here)
+                while (padWait.text.empty() && !padScript.empty() && padScript.front().at + padShift <= since) {
                     const std::string w = padScript.front().what;
                     padScript.erase(padScript.begin());
+                    if (w.rfind("until=", 0) == 0) { // (logged before it's awaited: the line itself no match)
+                        std::string text = w.substr(6);
+                        std::replace(text.begin(), text.end(), '_', ' ');
+                        SDL_Log("test controller: until \"%s\"", text.c_str());
+                        padWait.text = text, padWait.seen = false;
+                        continue;
+                    }
                     if (w.rfind("lx=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_LEFTX, Sint16(std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
                     else if (w.rfind("ly=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_LEFTY, Sint16(-std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
                     else if (w == "blur") {

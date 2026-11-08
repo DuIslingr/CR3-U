@@ -49,5 +49,10 @@ want shoulders && run gift-categories "3:r 3.5:r 4:l 6:quit" \
     "camp: gifts, category 1|camp: gifts, category 2|camp: gifts, category 1" \
     -- --area t0101 --flag 26 --input "camp:open camp:button3"
 
+# ContinueMenu (0x8113c03a): ↑ / ↓ over Give Up / Revive, ○ presses (no gem: told), the question's ↓ No, ○
+want continue && run continue "1:until=continue? 1:down 1.5:up 2:down 3:east 4:east 5:up 6:east 6.6:down 7.2:east 8:east 8.6:east 10:quit" \
+    "continue: the cursor on 1|continue: the cursor on 0|continue: the cursor on 1|continue: 1 to 4|continue: 4 to 1|continue: 1 to 2|continue: 2 to 1|continue: 1 to 2|given up" \
+    -- --battle 2612 --team-level 1 --input "auto ctn:hold"
+
 echo "the Vita's buttons: $problems problems"
 [ "$problems" -eq 0 ]
