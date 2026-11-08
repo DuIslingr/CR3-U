@@ -255,15 +255,17 @@ bool androidFile(const std::string& archivePath, const std::string& name, std::v
             if (from) *from = b + ":" + name;
             return true;
         }
-    for (const std::string& n : filesIn(dir)) {
-        if (!endsWith(n, ".apk")) continue;
-        std::vector<uint8_t> lib; // (the game's own APK: the one with its library)
-        if (name != kAndroidLibrary && !readZipEntry(dir + "/" + n, kAndroidLibrary, lib)) continue;
-        if (readZipEntry(dir + "/" + n, name, out)) {
-            if (from) *from = dir + "/" + n + ":" + name;
-            return true;
+    // (the APKs beside it, and those a bundle holding them compressed was unpacked to: unpacked/)
+    for (const std::string& d : {dir, dir + "/unpacked"})
+        for (const std::string& n : filesIn(d)) {
+            if (!endsWith(n, ".apk")) continue;
+            std::vector<uint8_t> lib; // (the game's own APK: the one with its library)
+            if (name != kAndroidLibrary && !readZipEntry(d + "/" + n, kAndroidLibrary, lib)) continue;
+            if (readZipEntry(d + "/" + n, name, out)) {
+                if (from) *from = d + "/" + n + ":" + name;
+                return true;
+            }
         }
-    }
     return false;
 }
 

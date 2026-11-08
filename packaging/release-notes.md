@@ -25,6 +25,9 @@ A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux a
   - A repacked `.apks`: sound effects, voices and text work. Its compressed asset packs are unpacked
     once, on the first start, into `assetpacks/` beside it (**about 1.3 GB of free space**; that
     first start takes a while).
+  - An `.apks` or `.xapk` that holds the APKs themselves compressed (as some download sites pack
+    them) works too: they are unpacked once into `unpacked/` beside it (**about 3.7 GB with the
+    asset packs**). Such a file used to stop the game at once with "no Chaos Rings III data".
   - The first start lets you pick your game files or folder on the phone, and a Vita dump copied
     into `vita/` is decrypted there, as on a PC.
   - Fullscreen, with the status and navigation bars hidden.

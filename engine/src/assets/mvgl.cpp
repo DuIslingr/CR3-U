@@ -380,7 +380,8 @@ bool Database::open(const std::string& path, std::string* error) {
 
     // an .apk / .apks: its stored archives in place (the asset packs inside an .apks are deflated:
     // those need unpacking - a folder with them beside the .apk)
-    const bool zip = fs::is_regular_file(path, ec) && (endsWith(path, ".apk") || endsWith(path, ".apks") || endsWith(path, ".zip"));
+    const bool zip = fs::is_regular_file(path, ec) &&
+                     (endsWith(path, ".apk") || endsWith(path, ".apks") || endsWith(path, ".xapk") || endsWith(path, ".zip"));
     std::string dir = zip || fs::is_regular_file(path, ec) ? fs::path(path).parent_path().string() : path;
     if (dir.empty()) dir = ".";
 
@@ -388,6 +389,32 @@ bool Database::open(const std::string& path, std::string* error) {
     std::vector<std::string> files = walk(dir, zip ? 0 : 8);
     if (zip) files = {path};
     files.erase(std::remove_if(files.begin(), files.end(), [&](const std::string& f) { return otherGame(f, dir); }), files.end());
+    // an .apks / .xapk that holds its APKs compressed (as some tools pack one - APKPure's .xapk): nothing
+    // in them can be read in place, so each is unpacked once into unpacked/ beside it (about 2.3 GB for
+    // the 1.1.3 release) and read as APKs beside it are - the base.apk the main archive's, a split's
+    // the asset packs
+    {
+        std::vector<std::string> unpacked;
+        for (const std::string& f : files) {
+            if (!(endsWith(f, ".apks") || endsWith(f, ".xapk"))) continue;
+            std::FILE* zf = std::fopen(f.c_str(), "rb");
+            if (!zf) continue;
+            std::vector<ZipEntry> es;
+            if (zipEntries(zf, 0, fileSize(zf), es))
+                for (const ZipEntry& e : es) {
+                    if (e.method != 8 || !endsWith(e.name, ".apk")) continue;
+                    const fs::path to = fs::path(f).parent_path() / "unpacked" / baseName(e.name);
+                    std::error_code fe;
+                    if (!(fs::exists(to, fe) && fs::file_size(to, fe) == e.size) && !inflateTo(zf, e, to)) {
+                        unpackFailed_.push_back(baseName(e.name));
+                        continue;
+                    }
+                    if (std::find(files.begin(), files.end(), to.string()) == files.end()) unpacked.push_back(to.string());
+                }
+            std::fclose(zf);
+        }
+        files.insert(files.end(), unpacked.begin(), unpacked.end());
+    }
     // which release: the main archive found nearest the top decides
     std::string main;
     size_t mainDepth = size_t(-1);
@@ -400,7 +427,7 @@ bool Database::open(const std::string& path, std::string* error) {
     std::string zipPath;
     if (main.empty()) { // (an .apk / .apks given, or beside the asset packs)
         for (const std::string& f : files) {
-            if (!(endsWith(f, ".apk") || endsWith(f, ".apks"))) continue;
+            if (!(endsWith(f, ".apk") || endsWith(f, ".apks") || endsWith(f, ".xapk"))) continue;
             std::FILE* zf = std::fopen(f.c_str(), "rb");
             if (!zf) continue;
             std::vector<std::pair<uint64_t, std::string>> found;
@@ -435,9 +462,24 @@ bool Database::open(const std::string& path, std::string* error) {
         for (const auto& [off, n] : inZip)
             if (isMain(n)) archives.emplace(archives.begin(), zipPath, off);
             else archives.emplace_back(zipPath, off);
-        // its deflated asset packs: unpacked once into assetpacks/ beside it, then read as unpacked ones
-        // (sound, voices, the movies and the windows' figures are theirs)
-        if (std::FILE* zf = std::fopen(zipPath.c_str(), "rb")) {
+        // the other APKs beside it - an unpacked bundle's split -: the asset packs they hold stored
+        std::vector<std::string> bundles{zipPath};
+        for (const std::string& f : files) {
+            if (f == zipPath || !(endsWith(f, ".apk") || endsWith(f, ".apks") || endsWith(f, ".xapk"))) continue;
+            bundles.push_back(f);
+            std::FILE* zf = std::fopen(f.c_str(), "rb");
+            if (!zf) continue;
+            std::vector<std::pair<uint64_t, std::string>> found;
+            storedArchives(zf, 0, fileSize(zf), 2, found);
+            std::fclose(zf);
+            for (const auto& [off, n] : found)
+                if (!isMain(n)) archives.emplace_back(f, off);
+        }
+        // and those any of them holds deflated: unpacked once into assetpacks/ beside it, then read as
+        // unpacked ones (sound, voices, the movies and the windows' figures are theirs)
+        for (const std::string& b : bundles) {
+            std::FILE* zf = std::fopen(b.c_str(), "rb");
+            if (!zf) continue;
             std::vector<ZipEntry> packed;
             packedArchives(zf, 0, fileSize(zf), 2, packed);
             for (const ZipEntry& e : packed) {
