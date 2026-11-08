@@ -71,7 +71,17 @@ begins in the game: tap it (or Tab, the controller's triangle) to open Camp, My 
 Save, Battle, the encounters' switch and the way back to town; tap it again to close them. Battle
 and the encounters' switch are a dungeon's, once the story has given them (Cr3TabMenu.AddTabMenu),
 and not while riding. Folded,
-only that button and a town's Short Cut take taps. In a
+only that button and a town's Short Cut take taps.
+
+With the Vita copy as the game a controller works the buttons as the Vita's own code does
+(CampFieldMenu, `FUN_811116b4`): △ opens and shuts them (com_008 / com_009), × shuts them; open, a
+cursor starts on Camp and the d-pad moves it in the game's order - the way back to town, the town
+map, Battle, the encounters, Save, Camp, My Page, the SpShop; ↑ / ← back, ↓ / → on, passing those
+not shown (com_002) -, the button under it lit in DiffuseColor (0.5, 1, 1.5), and ○ presses it.
+While it is up the d-pad moves the cursor and the left stick still walks. `engine/tools/pad_vita_test.sh`
+(ctest `viewer-pad-vita`, with `CR3_VITA_DATA` the Vita copy's folder) drives the virtual controller
+through it headless; `--input camp:padleft` (padup, paddown, padright, padok, padback, padtri)
+presses for a capture. In a
 dungeon the minimap (MiniMapMenu) shows at the top left: the area's map, its warps and objects, the
 party's arrow and the camera's view. The game's names for three buttons are one round from their
 pictures (feBtnShop is Camp, feBtnCamp My Page, feBtnMypage the SpShop); CR3-U goes by what they

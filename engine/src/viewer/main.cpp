@@ -7880,6 +7880,12 @@ struct Viewer {
             else if (want.compare(0, 3, "row") == 0) chooseCr3Camp(300 + std::atoi(want.c_str() + 3));
             else if (want.compare(0, 4, "card") == 0) chooseCr3Camp(kTapCard + std::atoi(want.c_str() + 4));
             else if (want.compare(0, 5, "field") == 0) chooseCr3Camp(100 + std::atoi(want.c_str() + 5));
+            else if (want.compare(0, 3, "pad") == 0) { // (camp:padup .. padtri: a controller's press as the Vita takes it - captures)
+                static const std::map<std::string, PadPress> kPress = {{"up", PadPress::Up},         {"down", PadPress::Down},     {"left", PadPress::Left},
+                                                                     {"right", PadPress::Right},   {"ok", PadPress::Confirm},    {"back", PadPress::Cancel},
+                                                                     {"tri", PadPress::Triangle}};
+                if (const auto p = kPress.find(want.substr(3)); p != kPress.end()) cr3BarPad(p->second);
+            }
             else if (want.compare(0, 6, "button") == 0) chooseCr3Camp(200 + std::atoi(want.c_str() + 6));
             else if (want.compare(0, 3, "cat") == 0) chooseCr3Camp(400 + std::atoi(want.c_str() + 3));
             else if (want.compare(0, 2, "id") == 0) chooseCr3Camp(std::atoi(want.c_str() + 2)); // (a tap's id: id403 the Options' Graphics tab)
@@ -16005,6 +16011,9 @@ struct Viewer {
     float cr3UiZ = 0; // (a part raised toward the camera: over a card)
     bool cr3UiAlphaSet = false; // (the alpha its materials' outright - PartsBase::SetAlpha, over a file's 0 - not a tint)
     float cr3UiTint[3] = {1, 1, 1}; // (SetMaterialDiffuseColor over the part: a category button not in focus)
+    // (FUN_8132d3ea: one material's DiffuseColor times this - the Vita's cursor on a field button's mat_fe_parts_01)
+    std::string cr3UiTintMaterial;
+    float cr3UiMaterialTint[3] = {1, 1, 1};
     bool cr3UiFocus = false;
     // (an item not enabled - AddListItem's bool: a battle row not usable, a quest whose item isn't
     // held - only the row, without its cursor or the white; comListItem::Initialize colours its
@@ -16043,7 +16052,21 @@ struct Viewer {
             }
             u.fig.tint[3] = 1;
         }
+        std::vector<std::pair<ViewMesh*, std::vector<float>>> kept; // (a material's tint: for this drawing alone)
+        if (!cr3UiTintMaterial.empty())
+            for (ViewMesh& vm : u.fig.meshes) {
+                const uint32_t mi = vm.source.material;
+                if (mi >= u.materials.size() || u.materials[mi] != cr3UiTintMaterial) continue;
+                std::vector<float>& dc = vm.material.params[0x33];
+                kept.push_back({&vm, dc});
+                if (dc.size() < 4) dc.resize(4, 1.0f);
+                for (int c = 0; c < 3; ++c) dc[size_t(c)] *= cr3UiMaterialTint[c];
+            }
         drawFigure(u.fig, view.data());
+        for (auto& [vm, dc] : kept) {
+            if (dc.empty()) vm->material.params.erase(0x33);
+            else vm->material.params[0x33] = dc;
+        }
         return u;
     }
     // a part posed by an animator over its own animation's first frame (the colours it rests at -
@@ -17520,6 +17543,7 @@ struct Viewer {
         std::vector<int> genes; // (3: the cards - cr3Genes indices)
         int focus = 0;
         int button = 0;         // (1: the button in focus)
+        int barCursor = 5;      // (the Vita's cursor over the field's buttons - kCr3BarIds' place; 5 Camp)
     } cr3Camp;
     static constexpr int kCampButtons[7] = {0, 1, 2, 5, 4, 3, 6};
     std::vector<Cr3GeneLabTap> cr3CampTaps;
@@ -17912,6 +17936,11 @@ struct Viewer {
             float ax, ay, ex, ey;
             if (cr3UiCall(u, "tapAreaCP00", ax, ay) && cr3UiCall(u, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, id));
         };
+        // (the Vita's cursor: the place it lights - the whole part, or its mat_fe_parts_01)
+        static constexpr float kLit[3] = {0.5f, 1.0f, 1.5f}, kWhite[3] = {1, 1, 1};
+        const auto setTint = [](float* to, const float* from) { to[0] = from[0], to[1] = from[1], to[2] = from[2]; };
+        int barLit = 0;
+        if (cr3BarCursorOn()) cr3BarSettle(-1), barLit = kCr3BarIds[cr3Camp.barCursor];
         UiFig& pos = cr3UiPut("febtnposition", "", 0, 0, 0, view);
         if (cr3UiCall(pos, "call_feBtnMenu", x, y, w, h)) {
             UiFig& menu = cr3UiPut("febtnmenu", "", 0, x, y, view);
@@ -17932,11 +17961,17 @@ struct Viewer {
                                     {"call_feBtnShop", "febtnshop", 6, game.flag(26), true}};
                 for (const Btn& b : btns) {
                     if (!b.shown || !cr3UiCall(panel, b.joint, bx, by)) continue;
+                    const bool lit = barLit == 100 + b.id;
+                    if (lit && b.id != 2) cr3UiTintMaterial = "mat_fe_parts_01", setTint(cr3UiMaterialTint, kLit);
                     UiFig& u = cr3UiPut(b.fig, "", 0, bx, by, view, b.fades ? fade : 1);
+                    cr3UiTintMaterial.clear(), setTint(cr3UiMaterialTint, kWhite);
                     float ix, iy;
                     if (b.id == 0 && cr3UiCall(u, "call_feIconOpen_fr", ix, iy)) cr3UiPut("febtniconopen_fr00", "", open ? 1.0f / 30 : 0.0f, ix, iy, view);
-                    if (b.id == 2 && cr3UiCall(u, "call_feIconEncount_fr", ix, iy)) // (frame 0 on, 1 off)
+                    if (b.id == 2 && cr3UiCall(u, "call_feIconEncount_fr", ix, iy)) { // (frame 0 on, 1 off; the Vita's cursor lights the icon)
+                        if (lit) setTint(cr3UiTint, kLit);
                         cr3UiPut("febtniconencount_fr00", "", encountersOff ? 1.0f / 30 : 0.0f, ix, iy, view, fade);
+                        setTint(cr3UiTint, kWhite);
+                    }
                     if (b.id == 0 || open) tapOf(u, 100 + b.id);
                 }
             }
@@ -17944,10 +17979,16 @@ struct Viewer {
         UiFig& mapPos = cr3UiPut("femappositon", "", 0, 0, 0, view);
         if (cr3UiCall(mapPos, "call_feMapMenu", x, y, w, h)) {
             UiFig& mapMenu = cr3UiPut("femapmenu", "", 0, x, y, view);
-            if (!dungeon && !game.flag(0x3f1) && cr3UiCall(mapMenu, "call_feMapBtn", bx, by)) tapOf(cr3UiPut("febtntown", "", 0, bx, by, view), 108);
+            if (!dungeon && !game.flag(0x3f1) && cr3UiCall(mapMenu, "call_feMapBtn", bx, by)) {
+                if (barLit == 108) setTint(cr3UiTint, kLit);
+                tapOf(cr3UiPut("febtntown", "", 0, bx, by, view), 108);
+                setTint(cr3UiTint, kWhite);
+            }
         }
         if (!game.flag(1001) && cr3UiCall(pos, "call_feBtnTown", x, y, w, h)) {
+            if (barLit == 110) setTint(cr3UiTint, kLit);
             UiFig& u = cr3UiPut("febtntown", "", 1.0f / 30, x, y, view, fade);
+            setTint(cr3UiTint, kWhite);
             if (open) tapOf(u, 110);
         }
         if (dungeon && game.minimapEnable) drawCr3Minimap(w, h, view);
@@ -18305,6 +18346,7 @@ struct Viewer {
         if (cr3Camp.stage == 0) {
             if (id == 100) { // (feBtnOpen: the panel opened - com_008 - or closed - com_009)
                 cr3Camp.panelOpen = !cr3Camp.panelOpen, cr3Camp.panelAt = uiClock;
+                cr3Camp.barCursor = 5; // (the Vita's cursor: on Camp, opened or shut)
                 audio.playSe(cr3Camp.panelOpen ? "com_008" : "com_009", false);
                 SDL_Log("field: the buttons %s", cr3Camp.panelOpen ? "opened" : "closed");
             } else if (id == 106) // (feBtnShop - the Camp picture: TapChkFieldTabMenu 1, Fld2Main state 6 - SM_Camp)
@@ -18415,6 +18457,64 @@ struct Viewer {
                 return true;
             }
         return cr3Camp.stage != 0; // (the camp holds the screen; the field's taps go on)
+    }
+    // ---- The Vita's buttons over the field's (CampFieldMenu, FUN_811116b4 - Fld2's cases 0x1d .. 0x1f,
+    // each update): △ (0x80) opens the panel (com_008); open, × (0x40) or △ shuts it (com_009), a
+    // cursor over its buttons in the game's order - ↑ / ← the one before (from the first two, the
+    // last), ↓ / → the one after (from the last, the town map's, else the way back's) with com_002,
+    // passing those not shown (past either end: Camp) -, the one under it in DiffuseColor (0.5, 1,
+    // 1.5) (0x81615ed0: the whole part, or its mat_fe_parts_01 - FUN_8132d3ea), ○ (0x100) pressing
+    // it as its tap. Opened or shut, the cursor is on Camp. The iPad's and Android's have no buttons:
+    // the Vita copy's alone (otherwise △ - Tab - only opens and shuts the panel)
+    static constexpr int kCr3BarIds[8] = {110, 108, 103, 102, 101, 106, 104, 105}; // (the way back to town, the town map, Battle, the encounters, Save, Camp, My Page, the SpShop)
+    bool vitaButtons() const { return archive.kind() == cr3::MvglArchive::Kind::Vita; }
+    bool cr3BarShown(int id) const { // (drawCr3FieldButtons' conditions)
+        const bool dungeon = cr3InDungeon(), tabs = dungeon && !game.flag(4105);
+        switch (id) {
+        case 110: return !game.flag(1001);
+        case 108: return !dungeon && !game.flag(0x3f1);
+        case 103: return tabs && (game.tabButtons & 2) != 0;
+        case 102: return tabs && (game.tabButtons & 1) != 0;
+        case 101: return true;
+        case 106: return game.flag(26);
+        case 104: case 105: return game.flag(27);
+        default: return false;
+        }
+    }
+    bool cr3BarCursorOn() { return vitaButtons() && cr3Camp.stage == 0 && cr3Camp.panelOpen && cr3FieldIdle(); }
+    // the cursor on a shown place (from where it is: on the way it went - past either end, Camp's)
+    void cr3BarSettle(int way) {
+        int at = cr3Camp.barCursor;
+        for (int n = 0; n < 9; ++n) {
+            if (at < 0 || at > 7) at = 5;
+            if (cr3BarShown(kCr3BarIds[at])) break;
+            at += way > 0 ? 1 : -1;
+        }
+        cr3Camp.barCursor = at;
+    }
+    enum class PadPress { None, Up, Down, Left, Right, Confirm, Cancel, Triangle };
+    bool cr3BarPad(PadPress p) {
+        if (!vitaButtons() || cr3Camp.stage != 0 || !cr3FieldIdle()) return false;
+        if (p == PadPress::Triangle || (p == PadPress::Cancel && cr3Camp.panelOpen)) {
+            chooseCr3Camp(100);
+            return true;
+        }
+        if (!cr3Camp.panelOpen) return false;
+        const int was = cr3Camp.barCursor;
+        if (p == PadPress::Up || p == PadPress::Left) {
+            cr3Camp.barCursor = was <= 1 ? 7 : was - 1;
+            cr3BarSettle(-1);
+        } else if (p == PadPress::Down || p == PadPress::Right) {
+            cr3Camp.barCursor = was != 7 ? was + 1 : cr3BarShown(kCr3BarIds[1]) ? 1 : cr3BarShown(kCr3BarIds[0]) ? 0 : 7;
+            cr3BarSettle(1);
+        } else if (p == PadPress::Confirm) {
+            cr3BarSettle(-1);
+            SDL_Log("field: the cursor presses %d", kCr3BarIds[cr3Camp.barCursor]);
+            chooseCr3Camp(kCr3BarIds[cr3Camp.barCursor]);
+            return true;
+        } else return false;
+        if (cr3Camp.barCursor != was) audio.playSe("com_002", false), SDL_Log("field: the cursor on %d", kCr3BarIds[cr3Camp.barCursor]);
+        return true;
     }
     bool cr3CampKey(SDL_Keycode key) {
         if (cr3Camp.stage == 0) {
@@ -27452,7 +27552,7 @@ int main(int argc, char** argv) {
         // CR3_PAD_SCRIPT (tests): a virtual controller, its buttons and stick set at their times - "1.5:east
         // 2:down 3:lx=1 4:lx=0" (a button is held 0.1 s; east / south / north / west, up / down / left /
         // right, l / r, start, back; lx / ly the left stick, -1 .. 1, ly up positive; blur the window's focus
-        // lost). Each press of a held direction is logged
+        // lost; quit the end). Each press of a held direction is logged
         struct PadStep {
             float at;
             std::string what;
@@ -27675,6 +27775,11 @@ int main(int argc, char** argv) {
                     const SDL_GamepadButton circle = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
                     const SDL_GamepadButton cross = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH;
                     const bool shopList = v.shop.stage >= 3 && v.shop.kind > 0; // (ShopCutInPiupiuMenu: L / R the character)
+                    using PP = Viewer::PadPress;
+                    const PP press = b == circle ? PP::Confirm : b == cross ? PP::Cancel : b == SDL_GAMEPAD_BUTTON_NORTH ? PP::Triangle
+                                   : b == SDL_GAMEPAD_BUTTON_DPAD_UP ? PP::Up : b == SDL_GAMEPAD_BUTTON_DPAD_DOWN ? PP::Down
+                                   : b == SDL_GAMEPAD_BUTTON_DPAD_LEFT ? PP::Left : b == SDL_GAMEPAD_BUTTON_DPAD_RIGHT ? PP::Right : PP::None;
+                    if (press != PP::None && v.cr3BarPad(press)) continue; // (the Vita's field buttons under its own)
                     SDL_Keycode key = 0;
                     if (b == circle) key = SDLK_RETURN;
                     else if (b == cross) key = SDLK_BACKSPACE;
@@ -27823,6 +27928,10 @@ int main(int argc, char** argv) {
                         focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
                         focus.window.windowID = SDL_GetWindowID(win);
                         SDL_PushEvent(&focus);
+                    } else if (w == "quit") {
+                        SDL_Event quit{};
+                        quit.type = SDL_EVENT_QUIT;
+                        SDL_PushEvent(&quit);
                     } else if (auto b = kButtons.find(w); b != kButtons.end()) {
                         SDL_SetJoystickVirtualButton(testPad, b->second, true);
                         testReleases.push_back({now + 100000000, b->second});
@@ -27853,6 +27962,7 @@ int main(int argc, char** argv) {
                 if (!d && std::max(std::abs(ax), std::abs(ay)) >= 0.9f)
                     d = std::abs(ay) >= std::abs(ax) ? (ay > 0 ? SDLK_UP : SDLK_DOWN) : (ax > 0 ? SDLK_RIGHT : SDLK_LEFT);
                 auto padPress = [&] {
+                    if (v.cr3BarCursorOn()) return; // (the Vita's field buttons: its cursor by the presses alone)
                     pushKey(d);
                     if (testPad) SDL_Log("test controller: pressed %s", SDL_GetKeyName(d));
                 };
@@ -27885,7 +27995,7 @@ int main(int argc, char** argv) {
                     const float dx = float(SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) - float(SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT));
                     const float dy = float(SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)) - float(SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN));
                     if (ax != 0 || ay != 0) sx = ax, sy = ay, run = std::hypot(ax, ay) >= 0.75f;
-                    else if (dx != 0 || dy != 0) sx = dx, sy = dy, run = true;
+                    else if ((dx != 0 || dy != 0) && !v.cr3BarCursorOn()) sx = dx, sy = dy, run = true; // (the d-pad the Vita's cursor's while it's up)
                 }
                 if (v.areaDrag.on) v.areaDrag.held += dt;
                 if (v.areaCam.on) v.areaCam.held += dt;
