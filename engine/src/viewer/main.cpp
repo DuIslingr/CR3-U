@@ -817,6 +817,18 @@ struct Viewer {
         areaCam.on = false;
         if (tapped) tap();
     }
+    // The Vita's right stick (Fld2CameraGom::UpdateControl 0x810c4f9a, FUN_8128d144's axes 2 / 3, with
+    // no camera touch): its push x -120 as the touch's offset - the same 20 / 60 steps -, so the
+    // stick right as a finger moved right, down as one moved down. With the Vita copy as the game
+    bool areaCamSticking = false;
+    void areaCamStick(float rx, float ryDown, float dt) {
+        if (areaCamSticking && rx == 0 && ryDown == 0)
+            areaCamSticking = false, SDL_Log("camera: the right stick let go - yaw %.2f, pitch %.2f", areaCamera.yaw, areaCamera.pitch);
+        if (!vitaButtons() || areaCam.on || !areaMode || !areaCamFree() || (rx == 0 && ryDown == 0)) return;
+        areaCamSticking = true;
+        auto rate = [](float d) { const float a = std::fabs(d); return a < 20 ? 0.0f : std::copysign(a < 60 ? 75.0f : 250.0f, d); };
+        areaCamera.drag(rate(-rx * 120) * dt * 60 * 0.0001f, rate(ryDown * 120) * dt * 60 * 0.0001f);
+    }
     void areaCamStep(float dt) {
         if (!areaCam.on || !areaCamFree()) return;
         float ax, ay, bx, by;
@@ -27623,7 +27635,7 @@ int main(int argc, char** argv) {
         };
         // CR3_PAD_SCRIPT (tests): a virtual controller, its buttons and stick set at their times - "1.5:east
         // 2:down 3:lx=1 4:lx=0" (a button is held 0.1 s; east / south / north / west, up / down / left /
-        // right, l / r, start, back; lx / ly the left stick, -1 .. 1, ly up positive; blur the window's focus
+        // right, l / r, start, back; lx / ly the left stick, rx / ry the right, -1 .. 1, y up positive; blur the window's focus
         // lost; shot=<file.bmp> the frame then; until=<text> the later steps held till a log line has it -
         // '_' a space -, their times from then; quit the end). Each press of a held direction is logged
         struct PadStep {
@@ -28025,6 +28037,8 @@ int main(int argc, char** argv) {
                     }
                     if (w.rfind("lx=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_LEFTX, Sint16(std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
                     else if (w.rfind("ly=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_LEFTY, Sint16(-std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
+                    else if (w.rfind("rx=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_RIGHTX, Sint16(std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
+                    else if (w.rfind("ry=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_RIGHTY, Sint16(-std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
                     else if (w == "blur") {
                         SDL_Event focus{};
                         focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
@@ -28050,7 +28064,8 @@ int main(int argc, char** argv) {
             if (pad) {
                 float ax, ay;
                 padStick(ax, ay);
-                bool held = ax != 0 || ay != 0;
+                bool held = ax != 0 || ay != 0 ||
+                            std::hypot(float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX)), float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY))) >= 0.25f * 32767;
                 for (auto button : {SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_WEST})
                     held = held || SDL_GetGamepadButton(pad, button);
                 if (v.padHeldOver.live(held)) livePad = pad;
@@ -28103,6 +28118,11 @@ int main(int argc, char** argv) {
                 }
                 if (v.areaDrag.on) v.areaDrag.held += dt;
                 if (v.areaCam.on) v.areaCam.held += dt;
+                if (livePad) { // (the right stick: the Vita's camera, its 0.25 dead zone)
+                    float rx = float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX)) / 32767.0f, ry = float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY)) / 32767.0f;
+                    if (std::hypot(rx, ry) < 0.25f) rx = ry = 0;
+                    v.areaCamStick(rx, ry, dt);
+                }
                 v.areaDragStick(sx, sy, run); // (a finger's drag: the field's stick)
                 v.advance(dt, sx, sy, run);
             }

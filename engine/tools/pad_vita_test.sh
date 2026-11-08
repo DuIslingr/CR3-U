@@ -54,5 +54,11 @@ want continue && run continue "1:until=continue? 1:down 1.5:up 2:down 3:east 4:e
     "continue: the cursor on 1|continue: the cursor on 0|continue: the cursor on 1|continue: 1 to 4|continue: 4 to 1|continue: 1 to 2|continue: 2 to 1|continue: 1 to 2|given up" \
     -- --battle 2612 --team-level 1 --input "auto ctn:hold"
 
+# Fld2CameraGom::UpdateControl (0x810c4f9a): the right stick as the camera's touch - 1 s full right 1.5 rad,
+# 0.4 down 0.45 rad a second, the tilt kept within 20 degrees
+want camera && run right-stick "6:rx=1 7:rx=0 8:ry=-0.4 9:ry=0 10:quit" \
+    "yaw -1.50, pitch 0.30|yaw -1.50, pitch 0.35" \
+    -- --area d0301
+
 echo "the Vita's buttons: $problems problems"
 [ "$problems" -eq 0 ]

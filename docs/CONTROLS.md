@@ -123,6 +123,11 @@ releases (touch alone) have none of, the controller does as the Vita does:
   `FUN_812818ca`) ↑ / ↓ / ← / → between Yes and No, ○ that, × No; the told's ○ its OK. `--input
   ctn:hold` keeps `auto` from answering it (tests).
 
-`CR3_PAD_SCRIPT` also takes `until=<text>` (the later steps wait for a log line with it, `_` a
+- **The right stick turns the field's camera** (Fld2CameraGom::UpdateControl `0x810c4f9a`, the
+  stick's axes x -120 as the camera touch's offset - under 20 nothing, under 60 0.45 rad a second,
+  further 1.5 -, the tilt within 20 degrees), as the right half's touch does, with the follow camera.
+  (The Vita's L, GomBehind `0x810c4484`, swings it behind the player over 0.3 s: not in yet.)
+
+`CR3_PAD_SCRIPT` also takes `rx=` / `ry=` (the right stick), `until=<text>` (the later steps wait for a log line with it, `_` a
 space, their times counted from then), `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
 
