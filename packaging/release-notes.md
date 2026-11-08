@@ -4,6 +4,10 @@ A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux a
 
 ## What's new
 
+- **Vulkan: fewer hitches.** The renderer keeps the driver's compiled pipelines between runs
+  (`vulkan-pipelines.bin` in the profile folder), so the start and each new screen don't compile
+  them again. Measured here: about 6.5 ms of pipeline compiling the first time, 0.1 ms the next;
+  slower drivers save more. A cache from another GPU or driver is ignored and rebuilt.
 - **The first battle no longer freezes.** Every battle started from the field (an event's, or an
   encounter's) stopped on its opening screen. It now plays through, and the game returns to the
   field afterwards.

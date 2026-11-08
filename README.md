@@ -157,6 +157,9 @@ If nothing is found the program says where it looked. The older places still wor
 To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `CR3_DATA`), `--patch <the rePatch folder>`. Settings and saves go to the profile folder
 (`~/.local/share/DuIslingr/CR3-U/` on Linux; the same folders under `%APPDATA%\` on Windows and
 `~/Library/Application Support/` on macOS), not the game folder. All four ports (CR1:U, CRO-U, CR2-U, CR3-U) look for their copies the same way.
+With Vulkan the profile folder also keeps `vulkan-pipelines.bin`: the graphics driver's compiled
+pipelines, so later starts and new screens don't compile them again (safe to delete; another GPU
+or a driver update starts it anew).
 
 ## Original card artwork
 
