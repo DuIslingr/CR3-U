@@ -1,366 +1,369 @@
-# CR3-U — a Chaos Rings III reimplementation
+# CR3-U - Chaos Rings III, native
 
-A from-scratch native port of *Chaos Rings III* (Square Enix / Media.Vision, 2014), built by
-reverse-engineering the Android release (1.1.3, whose 64-bit library keeps its names), with the
-iPhone/iPad release (1.2.2) and the PlayStation Vita release (PCSG00500, or the CR3 of the Prequel
-Trilogy, PCSG00457) - **any one of the three is enough on its own**. It follows
-**[CR2-U](https://github.com/DuIslingr/CR2-U)**: Chaos Rings III runs on a later revision of the
-same engine, Media.Vision's MVGL (its archives, figures, Edge animations and Squirrel scripts), so
-CR3-U starts from CR2-U's engine and platform layers. It loads the game from **your own copy** at
-runtime.
+CR3-U is a from-scratch native port of *Chaos Rings III* (Square Enix / Media.Vision, 2014) for
+Windows, macOS, Linux and Android. It runs the game from the files of **your own copy**: nothing of
+the game is included.
 
-**No game data is in this repository or distributed with it** - no art, audio, text, scripts or
-code of the game, and nothing generated from them. You need your own copy of the game.
+It is new code, written by reverse-engineering the Android release (whose 64-bit library keeps its
+function names) and checked against the iPhone / iPad and Vita releases and reference playthroughs.
+Chaos Rings III runs on a later revision of the engine behind *Chaos Rings II* (Media.Vision's MVGL,
+with compiled Squirrel scripts), so CR3-U starts from [CR2-U](https://github.com/DuIslingr/CR2-U)'s
+engine and platform layers. Its siblings are [CR1:U](https://github.com/DuIslingr/CR1-U) and
+[CRO-U](https://github.com/DuIslingr/CRO-U).
 
-Licence: GPL-2.0-or-later (`LICENSE`); the bundled libraries keep their own (`THIRD_PARTY.md`).
-Not affiliated with or endorsed by Square Enix or Media.Vision.
+**[Download the latest release](https://github.com/DuIslingr/CR3-U/releases/latest)**
 
-## Status: playable, in progress
+**Status: playable, in progress.** The title, the prologue and the first chapter play through to
+the first real dungeon: towns and dungeons, random encounters, battles, the camp, the gene lab,
+shops, quests, saving, movies and every voice. Much of the later story hasn't been tested yet, and
+the battles' particle effects, some spells' staging and a few menus' rarer screens are still missing. The game's online services
+work offline, as the Vita's own rules for them do; CR3-U never contacts Square Enix's servers.
+Details: [docs/STATUS.md](docs/STATUS.md).
 
-Start `cr3view` with your copy in place and the game's title comes up; a tap starts a new game -
-or, with a save, carries on from it. What works today:
+## What you need
 
-- **The story's start**: the title (its camera reel and logo), a new game through the prologue
-  and the first chapter to the first real dungeon - its battles, the scenes after them, the
-  village's meals (talking with the party by their balloons) and the town - as the reference
-  playthrough shows them: message windows, cut-ins, voices
-- **Towns and dungeons** (CR3's `Fld2` field): walking by keys, pad, mouse or touch, the follow
-  camera (and the village's rail and the houses' look-down ones), doors, the ways between a town's
-  areas, the town map, the townspeople (standing and talked to), event boxes, the area scripts, map
-  names, the field's buttons; **random encounters** with first strikes, surprise attacks and ace
-  monsters; **saving** with the field's Save button and where the game saves by itself - entering
-  areas, after battles (one save, in the profile folder)
-- **Battles**: the glass break, the get-set menu, commands, genes and items, the break gauge,
-  criticals, downs and combos, status effects, hit effects, the battle scripts, announcements,
-  escape, the result - EXP into the worn genes, money, monster drops - and the continue and game over
-- **Menus**: the camp (items, equipment, status, Gene Swap, gifts), the gene lab (combine, enhance,
-  sell, the repository), town shops, the Space Port's quests, the world select, My Page, the Gene
-  Index, the VS mode - with the game's online services **offline** (the Vita's own DBEmu rules,
-  every release; CR3-U never contacts Square Enix's servers)
-- **Sound**: the 54 music tracks with their loops, the 1,033 effects and every voice, in each
-  release's own format - iOS AAC in MP4, Android Ogg Vorbis, the Vita's ATRAC9 and HE-VAG
-- **Data, all three releases standalone**: a release is found from its folder and every one of its
-  archives indexed together - the iPhone's ~170 `CRDB*.ios.mvgl` and loose movies, Android's
-  `main.10007.android.mvgl` (read straight out of the APK or `.apks`) and its asset packs, the Vita's
-  ~236 `CR3/resources/**.psp2.mvgl`; every file, texture, mesh, skeleton and animation of all three
-  decodes (`cr3tool check`, `images`, `models`, `animations`)
-- **Languages**: Japanese and English on iOS / Android; the Vita's Japanese - and the **fan
-  translations** ([Chaos Rings III Translation Project](https://gbatemp.net/threads/chaos-rings-iii-translation-project.443742/)'s
-  English, Joseas's Spanish) as *options*: each one given next to an unpatched Vita copy is a
-  language of its own, both at once too. The in-game Options' Language switches between them live
-  (the text, the pictures they translate, the Spanish one's font) and the choice is kept
-  (`--patch`, once for each; `assets/language.hpp`)
-- **Scripts**: all 194 of CR3's compiled scripts in the game's own Squirrel 2.2.4, with its 600
-  natives bound; every one of its 4,127 events plays through to its end (`cr3tool events`)
+A copy of the game from one of these releases - any one of them is enough on its own:
 
-Not yet: much of what's later in the story is untested; the battles' particle effects and some
-spell directions, a few menus' rarer screens; see `docs/FORMATS.md` for each system's notes and
-what each still leaves out.
+| Release | What to give the port |
+|---|---|
+| **Android** 1.1.3 (`com.square_enix.chaosrings3gp`) | the `.apks` (or `.xapk`), or the `base.apk` together with its asset packs (`CRDBbgm`, `CRDBvoice`, `CRDBse`, `CRDBmov`). **The asset packs are needed**: without them there is no sound and the text and movies are missing. |
+| **iPhone / iPad** 1.2.2 | the `.ipa` (or its unpacked `ChaosRings3_FINAL_ENG.app`) |
+| **PlayStation Vita** (PCSG00500) | the installed game (Vita3K's folder, or the `PCSG00500` folder), or a NoNpDrm dump - a folder or a `.zip` / `.rar` / `.7z` / `.vpk`. The Prequel Trilogy's Chaos Rings III (PCSG00457) works too. |
 
-## Quick start
+The Android and iOS releases have English and Japanese. The Vita release is Japanese; the fan
+translations add English and Spanish to it (see [Fan translations](#fan-translations)). With the
+Vita copy, a controller also works the game the way the Vita's own buttons do.
+
+A PC needs Vulkan 1.3 or OpenGL 3.3; a phone, Android 7 or later (64-bit).
+
+## Install and first start
+
+1. Download the file for your system from the [releases page](https://github.com/DuIslingr/CR3-U/releases)
+   and unzip it.
+2. Start `cr3view`.
+3. If it doesn't find a copy of the game, it asks for one: pick the file or folder, and the port
+   copies what it needs into its game folder (or your profile folder if that can't be written).
+   You can delete or move the original afterwards.
+
+A Vita dump is decrypted during setup, keeping only Chaos Rings III's files. Over an untranslated
+Vita copy the setup also asks for a fan translation (optional).
+
+| System | Notes |
+|---|---|
+| Windows 10+ | If SmartScreen warns about an unsigned program, choose *More info*, *Run anyway*. |
+| macOS 11+ | Right-click `cr3view.app` and choose *Open* (it isn't signed). |
+| Linux | `chmod +x` the AppImage and run it, or use the `.tar.gz`. |
+| Android 7+ | Install the APK and start it. The first start offers the same setup: pick your `.apks` (or APK and asset packs), the `.ipa` or a Vita archive. Folders can't be picked on Android; copy them over USB instead (below). |
+
+**Android `.apks` files:** a repacked `.apks` that holds its asset packs compressed has them
+unpacked once on the first start, into `assetpacks/` beside it (about **1.3 GB** of free space; that
+first start takes a while). An `.apks` or `.xapk` that holds its APKs themselves compressed (as some
+download sites pack them) has those unpacked once into `unpacked/` (about **3.7 GB** with the asset
+packs). Later starts reuse them.
+
+### Your copy
+
+You can also copy your game into the **game folder** yourself; the port finds it on the next start.
+The game folder is the folder holding `cr3view` (or `cr3view.exe`, `cr3view.app`, the AppImage). On
+Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over USB.
+
+```
+<game folder>/
+├── android/      the 1.1.3 .apks - or its base.apk with the asset packs' CRDB{bgm,voice,se,mov}.android.mvgl
+├── ios/          the 1.2.2 app (ChaosRings3_FINAL_ENG.app, or Payload/ChaosRings3_FINAL_ENG.app as unzipped)
+├── vita/         PCSG00500/ (or PCSG00457/) as installed - or a NoNpDrm dump as dumped
+├── translation/  optional: en/ and es/, the fan translations (over a Vita copy)
+├── movies/       optional: story movies your release lacks (the iPad's lacks c04..c11)
+├── artwork/      optional: card archives for Original Card Art
+├── fsr4/         optional: AMD's FSR 4 files (see Settings)
+├── textures/     optional: export/ and hd/ for HD textures
+└── models/       optional: export/, hd/ and addons/ for HD models and add-ons
+```
+
+- Any one release folder is enough. With several, the port uses the first of `vita/`, `android/`,
+  `ios/`; `--data <folder, .apks or archive>` (or `CR3_DATA`) picks another, or a copy elsewhere.
+- A release can sit one or two folders down, as it was unpacked; folder names below `ios/`,
+  `android/` and `vita/` don't matter.
+- A still-encrypted Vita dump in `vita/` (its `app/`, and `addcont/` for the Prequel Trilogy) is
+  decrypted on the next start, on a phone too, once there is room for the decrypted copy. Delete
+  the dump afterwards.
+- The release downloads already contain these folders, each with a `README.txt` saying what goes
+  in it.
+- Older layouts still work: `ipad/`, `PCSG00500/`, `PCSG00457/`, `ChaosRings3_FINAL_ENG.app/`,
+  `Payload/` or `data/` straight in the game folder.
+
+If nothing is found, the port says where it looked. Every layout, the command-line tools and the
+environment variables: [docs/GAME_FILES.md](docs/GAME_FILES.md).
+
+### Fan translations
+
+Over an **unpatched** Vita copy, the [Chaos Rings III Translation Project](https://gbatemp.net/threads/chaos-rings-iii-translation-project.443742/)'s
+English and Joseas's Spanish (with its own font for á, ñ, ¿, ¡) are each a language of their own,
+both at once too. Put each one's rePatch folder, or the archive it comes in, into
+`translation/en/` or `translation/es/` (an archive dropped straight into `translation/` is unpacked
+into the right one on the next start). **Options > Other > Language** switches between Japanese
+and the translations while you play, and the choice is kept. A Vita copy with a translation already
+patched into it shows that translation as it is. `--patch <rePatch folder>` gives one from
+elsewhere.
+
+### Saves and settings
+
+Saves and `settings.ini` go to your profile folder, not the game folder:
+
+| System | Profile folder |
+|---|---|
+| Linux | `~/.local/share/DuIslingr/CR3-U/` |
+| Windows | `%APPDATA%\DuIslingr\CR3-U\` |
+| macOS | `~/Library/Application Support/DuIslingr/CR3-U/` |
+
+With Vulkan it also keeps `vulkan-pipelines.bin`, the driver's compiled shaders, so later starts
+and new screens are smoother (safe to delete; a new GPU or driver starts it afresh).
+
+- **Save slots:** the title's save menu has **12 slots**, three to a page across four pages. The
+  on-screen arrows, Left / Right, Page Up / Page Down or L / R change the page; Up / Down pick a
+  slot. Copy and Delete work across pages. The game also saves by itself when you enter an area and
+  after battles, into the slot you're playing.
+- **New Game Plus** (the port's addition): a cleared save is marked **CLEARED**; open it to choose
+  Continue, New Game Plus or Back. New Game Plus asks for an empty slot and starts a new prologue
+  carrying over team level, genes and their upgrades, equipment, items, money, collections, names
+  and records. Story flags, quests, VS progress and recruitment start over. The original save is
+  kept.
+- **Vita saves:** on the title, open **Options > Other > Vita Saves > Import** and pick the folder
+  of your decrypted Vita saves. Existing saves are backed up first. Details:
+  [docs/VITA_SAVES.md](docs/VITA_SAVES.md).
+
+## Controls
+
+The iPhone and Android releases are touch only, so a finger or the mouse works everywhere. On the
+field, press and drag to walk (drag further to run); let go without moving to tap - turn a page,
+check what's in front of you. With the follow camera the screen is split by **Options > Controls**:
+Two-Handed (the default) walks on the left half and turns the camera on the right; One-Handed walks
+on the bottom half and turns on the top. With a mouse, the left button walks and the right button
+held turns the camera anywhere.
+
+### Controller
+
+Buttons are by position: on an Xbox pad ○ is B, × is A, △ is Y and □ is X. ○ confirms, as on the
+Vita. To confirm with the bottom button instead, turn on **Swap ○ and ×** in Options > Graphics.
+
+| Button | Field | Menus, battles, messages |
+|---|---|---|
+| Left stick / D-pad | walk (push the stick fully to run) | move the cursor (holding repeats) |
+| Right stick | turn the camera (Vita copy) | - |
+| ○ | talk, check | confirm, turn the page |
+| × | close the field buttons (Vita copy) | back, cancel; No in a question |
+| □ (hold) | - | fast-forward a scene's messages |
+| △ | open / close the field buttons (Camp, My Page, the shop, Save, Battle, the way back to town) | - |
+| L / R | camera behind you, cycle goods (Vita copy) | the save files' pages; tabs, categories and pages (Vita copy) |
+| START | - | the title's tap (Vita copy) |
+
+**With the Vita copy as the game**, the controller follows the Vita release's own button code on
+every screen where the touch releases have nothing to follow:
+
+- **Field buttons:** △ opens them with a cursor on Camp; the d-pad moves it round, ○ presses, × or
+  △ closes. L swings the camera behind you; R cycles the goods in reach, □ uses them.
+- **Event choices and Yes / No questions:** a cursor starts on the first option; Up / Down move it,
+  ○ answers, × is No.
+- **Battles:** the d-pad moves over the commands, lists and targets (greyed-out ones refuse with a
+  sound); L / R switch Items and Gifts; flexible-target commands can switch to the other side. ○
+  shortens the victory camera and the result tally.
+- **A lost battle:** Up / Down choose Give Up or Revive, ○ presses.
+- **Menus:** L / R switch the gene lab's, options' and Gene Index's tabs, the shop's Buy / Sell, the
+  gifts' and quests' categories and the Lucky Box's boxes. The camp, items (the quantity reels), gene
+  change (□ sorts, lock), gene lab, gifts, options, Gene Index, premium shop, My Page, the save
+  files, the world select, the VS mode and the lunches all have a d-pad cursor.
+- **Movies and Vista scenes:** △ pauses and resumes (picture and sound together), □ stops a movie.
+
+With the iPhone or Android copy, the stick and d-pad walk and move the cursors, and the buttons
+stand in for keys (○ Return, × Backspace, △ Tab, □ held F). Full details, screen by screen, with the original's
+code references: [docs/CONTROLS.md](docs/CONTROLS.md).
+
+### Keyboard
+
+| Key | Action |
+|---|---|
+| Arrow keys / W A S D | run on the field (hold Shift to walk); move the cursor in menus |
+| Return | talk, check, turn a page, confirm |
+| Backspace (Android: Back) | back, cancel |
+| Tab | the field buttons; the next tab in menus |
+| C | Camp |
+| 1 / 2 / 3, Y / N | answer a choice, a question |
+| Page Up / Page Down | as L / R: pages and tabs |
+| F (hold) | fast-forward a scene's messages |
+| Q / E, R / V | turn, tilt the field's camera |
+| O | Options, on the title; R there resets the open tab |
+| Space | pause |
+| F1 / F2 | cycle output resolution / upscaler mode |
+| Esc | back in menus; quits from the field |
+
+## Settings
+
+The title's **Options** (lower right, or O), the camp's and a battle's have the game's own tabs
+plus CR3-U's **Graphics** tab, saved in `settings.ini`. On a desktop the tabs and rows get smaller
+as the window grows, so more rows fit. **Reset** (the round button left of Back, or R) puts the open
+tab back to its defaults. Most settings also have a command-line flag for a single run.
+
+| Setting | What it does |
+|---|---|
+| Display, Resolution, VSync, Frame Rate | window / fullscreen / borderless, output size (up to 3840 x 2160), frame cap |
+| Renderer | Vulkan (default) or OpenGL; takes effect on the next start |
+| Upscaler, Upscale Mode, Sharpness | FSR 3.1, FSR 4, DLSS or MetalFX. The 3D scene renders smaller and is upscaled; menus and text stay sharp. |
+| Anti-aliasing, Anisotropic / Texture Filtering | MSAA, sharper textures at an angle, sharp or smooth texels |
+| HD Textures, HD Models | your own replacement textures and models (below) |
+| Smooth Models | rounds out every 3D model (4x or 9x triangles), keeping hard edges |
+| Original Card Art | Gene Index cards 80, 81 and 86 with their original artwork (below) |
+| Field Speed, Battle Speed | Off or 2x to 5x: walking the field and the battles that many times as fast |
+| Swap ○ and × | which controller button confirms |
+| Lock Orientation | keep the current landscape direction (phones) |
+
+The **Other** tab has the **Language** (where the copy has more than one) and the Vita save import.
+
+**FSR 4** (AMD RX 6000 or later, on Linux and Windows) needs AMD's own files, which can't be
+included. Put these in `fsr4/` in the game folder (its `README.txt` has the links):
+
+- `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` from AMD's
+  [FSR SDK 2.4](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/releases/tag/v2.4.0)
+  (`Kits/FidelityFX/signedbin/`)
+- `amdvkffx64.dll` from the AMD Software: Adrenalin Edition 26.10.1 (or later) driver package
+- on Linux also `libffx_vk_linux.so` from [ffx-vk-linux](https://github.com/DuIslingr/ffx-vk-linux),
+  which runs AMD's DLLs natively, without Wine
+
+Without them the option shows "(n/a)" with the reason, and FSR 3.1 is used. `CR3_FSR4_DIR` points
+elsewhere.
+
+**DLSS** isn't in the release builds: NVIDIA's library can't ship with GPL code. You can build it
+yourself (see [Building from source](#building-from-source)).
+
+## Extras
+
+### Movies
+
+The story's movies play full screen with subtitles in the game's language; tap once for **Skip**,
+and again within three seconds to skip. The Vita and Android releases hold them all; the iPad's
+lacks the story's c04..c11 (the game downloaded those). Put the ones yours lacks in `movies/` (for
+example from a Vita copy's `CR3/resources/movie/`); a movie found nowhere is skipped.
+
+### Original card artwork
+
+**Options > Graphics > Original Card Art** shows Gene Index cards **80, 81 and 86** with their
+original artwork and matching names - Little Red Riding Hood, Aphrodite and Adam - in menus, gene
+icons and full-screen views. Stats, rarities and saves don't change. The Vita copy already uses the
+originals and iOS holds all three; Android holds two (the option shows **On (2/3)**). For the
+missing one, copy both card archives from a decrypted Vita or iOS copy into `artwork/`
+(`CRDBcard01` and `CRDBcardhd`, `.psp2.mvgl` or `.ios.mvgl`). Details:
+[docs/GAME_FILES.md](docs/GAME_FILES.md#original-card-artwork).
+
+### HD textures
+
+Upscale the game's textures yourself, from your own copy:
+
+1. `cr3view --export-textures` writes every picture the game draws to `textures/export/` as
+   ordinary upright PNGs.
+2. Upscale them into `textures/hd/` with the same file names. `python3 tools/hd_textures.py <game
+   folder>` does it with waifu2x and Real-ESRGAN (needs Python 3, NumPy and Pillow; `--help` for
+   options), or use any upscaler or image editor.
+3. Start the game. With `textures/hd/` present, HD Textures switches on by itself.
+
+Keep each picture's proportions and orientation (one scale both ways, at least the original size,
+at most 8192 a side). A replacement that doesn't fit is skipped and the log says why.
+
+### HD models
+
+1. `cr3view --export-models` writes every model to `models/export/` as glTF (`.glb`) with its
+   skeleton, textures and animations (`--no-animations` keeps the files small). Blender imports
+   them directly.
+2. Edit it, keeping the armature (bones named `node_<n>...`) and material names (`cr_mat_<n>...`).
+   New textures can be packed into the `.glb`.
+3. Export as glTF to `models/hd/<model>.glb` (for example `j001b01.glb`) and turn on HD Models in
+   Options > Graphics. It's used from the next scene.
+
+### Add-ons
+
+New outfits and weapons of your own, sold in the premium shop beside the game's: a `.glb` made from
+an exported model and a small `.ini` manifest (its id, kind, character, name, price) in
+`models/addons/`. `cr3tool addons` checks them first.
+
+Exported textures and models are made from the game's art: keep them, and anything made from them,
+for personal use. The full steps, limits and the add-on manifest:
+[docs/HD_ASSETS.md](docs/HD_ASSETS.md).
+
+## Troubleshooting
+
+- **Android: no sound, missing or broken text:** the asset packs are missing. Give the port the
+  whole `.apks` (or `.xapk`), or the `base.apk` together with its `CRDB*.android.mvgl` asset packs
+  - not the `base.apk` alone. A repacked `.apks` needs about 1.3 GB free on its first start (more
+  for an `.xapk`); a pack that can't be unpacked is named in a message.
+- **"No copy found":** the port lists every place it looked. Check the folder names above, or give
+  the copy with `--data`.
+- **Vulkan won't start:** the port falls back to OpenGL by itself; `--renderer opengl` forces it.
+- **Menus or pictures look wrong with HD textures:** try with HD Textures off (Options > Graphics,
+  or `--no-hd-textures`). The log names any replacement it skipped.
+- **Android, updating from an older version:** v0.3.0 and earlier were each signed with a different
+  key. Uninstall the old version once first. This deletes the game files and saves you copied in,
+  so keep a copy of them. From v0.4.0 on, each release installs over the last.
+- **Tested on:** Linux (played), Windows (under Wine), Android (the emulator). The macOS build comes
+  from CI and hasn't been tried on real hardware, nor the Android one on many phones. Reports are
+  welcome in the [issues](https://github.com/DuIslingr/CR3-U/issues): please say which copy of the
+  game you use (Android, iOS or Vita, and how you got the files), your system, and what you did.
+
+## Building from source
 
 ```sh
 cd engine
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ninja -C build
-build/cr3view --model c101.geom
-build/cr3tool release "<your copy>"
+build/cr3view
 ```
 
-`cr3view` finds your copy by itself in the game folder - for this build `engine/build/`, or the
-folder you start it from - as `vita/`, `android/` or `ios/` ([Your copy](#your-copy)); `cr3tool`
-(and `cr3view --data`) take one wherever it is:
+Needs a C++17 compiler, CMake and Ninja. SDL3, FreeType and zlib are used from the system or
+downloaded and built by CMake. Vulkan needs the Vulkan loader and `glslc`; without them the build
+is OpenGL only. `ctest --test-dir build` runs the tests; none need the game's files, and the two
+that drive the Vita controls headless (`viewer-pad-vita`, `viewer-vista-pause`) run only with
+`CR3_VITA_DATA` set to a decrypted Vita copy.
 
-| Your copy | `<your copy>` |
+| Platform | How | Renderers and upscalers |
+|---|---|---|
+| Linux | as above | Vulkan, OpenGL 3.3; FSR 3.1, FSR 4, DLSS (with the SDK) |
+| Windows 10+ x64 | MSVC and Ninja from a Developer prompt, with the [Vulkan SDK](https://vulkan.lunarg.com/); or from Linux with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw): `-DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-x86_64.cmake` | Vulkan, OpenGL 3.3; FSR 3.1, FSR 4, DLSS (MSVC, with the SDK) |
+| macOS 11+ | Xcode command-line tools, Ninja and the [Vulkan SDK](https://vulkan.lunarg.com/) (MoltenVK is copied into the `.app`); `"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"` for a universal build | Vulkan (MoltenVK), OpenGL 3.3; FSR 3.1, MetalFX (macOS 13+) |
+| Android 7+ (arm64, x86-64) | Android SDK and NDK: `git clone -b release-3.2.0 https://github.com/libsdl-org/SDL android/SDL`, then `gradle assembleRelease` in `android/` | OpenGL ES 3.0 |
+
+- `-DCR3_GLES=ON` builds the desktop version on OpenGL ES 3.0, as Android runs it.
+- **DLSS:** add `-DCR_DLSS_SDK=<NVIDIA's DLSS SDK checkout>` (or put it in
+  `engine/third_party/dlss/`) and copy its runtime next to the game. NGX is proprietary, so a DLSS
+  build is for your own use only (see `THIRD_PARTY.md`).
+- Every push is built for all four platforms by `.github/workflows/build.yml`; a `v*` tag publishes
+  a release.
+
+Build options, `cr3view`'s debug modes and `cr3tool`'s checks: [docs/ENGINE.md](docs/ENGINE.md).
+
+## Documentation
+
+| | |
 |---|---|
-| iPhone / iPad 1.2.2 | the unpacked `.ipa` (or its `Payload/ChaosRings3_FINAL_ENG.app`) |
-| Android 1.1.3 (`com.square_enix.chaosrings3gp`) | the `.apk` / `.apks`, or a folder with the APK unpacked; the asset packs (`CRDB{bgm,voice,se,mov}.android.mvgl`) anywhere under it. An `.apks` that holds them compressed (a repacked one) has them unpacked once into `assetpacks/` beside it: about 1.3 GB; one that holds its APKs themselves compressed (as some tools pack them - APKPure's `.xapk` too) has those unpacked once into `unpacked/` beside it: about 2.3 GB more |
-| PS Vita PCSG00500 / PCSG00457 | the installed (decrypted) title's folder, or its `CR3/resources` |
-| + a fan translation | `cr3tool --patch <its rePatch folder> ...` over an unpatched Vita copy (`cr3view`: `translation/` in the game folder): the Translation Project's English, or Joseas's Spanish (`CR3_ES`, with its own font for á, ñ, ¿, ¡); either one patched into the Vita copy itself is read as it is too |
+| [docs/STATUS.md](docs/STATUS.md) | what the port plays today, system by system |
+| [docs/GAME_FILES.md](docs/GAME_FILES.md) | where the port looks for your copy, every layout, the tools' `<your copy>`, movies, card artwork |
+| [docs/CONTROLS.md](docs/CONTROLS.md) | touch, keyboard and the Vita's buttons, screen by screen, with the original's code references |
+| [docs/HD_ASSETS.md](docs/HD_ASSETS.md) | HD textures, HD models, smooth models, FSR 4 and add-ons in full |
+| [docs/VITA_SAVES.md](docs/VITA_SAVES.md) | importing Vita saves |
+| [docs/ENGINE.md](docs/ENGINE.md) | building in detail, `cr3view`'s modes, `cr3tool`'s checks, the tools |
+| [docs/FORMATS.md](docs/FORMATS.md) | the game's file formats, CR3's differences from CR2 first |
+| `docs/*.md` (others) | audits: saves, input, timing, scene audio, mobile, graphics recovery |
 
-An encrypted Vita dump (NoNpDrm, still PFS-encrypted) has to be installed first for `cr3tool` (Vita3K does it);
-`cr3view` decrypts one put in `vita/` itself (Your copy).
-
-## Your copy
-
-The easiest way: just start the program. With no copy found, it asks where yours is - pick it in
-the window it opens, and the files the port needs are **copied into the game folder** (the profile
-folder's if that one can't be written), the same layout as putting them there by hand (below):
-
-- **iOS** - the `.ipa` (or any file in its unpacked `.app`): unpacked into `ios/`;
-- **Android** - the `.apks` (or the `base.apk` with its asset packs, all at once): copied into `android/`
-  (an APK beside them that carries the game's package goes along; another game's is refused);
-- **Vita** - Vita3K's folder with the game installed (its own, the folder its `config.yml` names as
-  `pref-path`, or `ux0`), or the game's own `PCSG00500` folder: copied into `vita/PCSG00500/` as Vita3K installs
-  it (`eboot.bin`, `sce_sys/`, the game's folder); the Prequel Trilogy's `PCSG00457` too (into `vita/PCSG00457/`,
-  without the other games) - then its fan translation (the `rePatch` folder: Vita3K's
-  `ux0/rePatch/PCSG00500` by itself, else asked for, or left out) into `translation/en/` or `translation/es/` (its language's).
-  A **NoNpDrm dump** (its files encrypted, `sce_sys/package/work.bin` its licence) - its folder, or packed as
-  `.rar`, `.7z`, `.zip` or `.vpk` - is decrypted as Vita3K's install does, this game's parts alone.
-
-One copy is the game: the first given starts it. Nothing is read where it was chosen, so the folder it came from can go
-afterwards. (Windows, Linux and macOS; on Android, copy the files over USB as below.)
-
-Or, as before, nothing given on the command line: put your copy in the **game folder** and start
-the program - it finds it by itself. The game folder is:
-
-| Platform | The game folder |
-|---|---|
-| Windows, Linux | the folder holding `cr3view.exe` / `cr3view` |
-| Linux AppImage | the folder holding the `.AppImage` |
-| macOS | the folder holding `cr3view.app` (its `Contents/Resources/` works too) |
-| Android | `Android/data/local.preservation.chaosrings3/files/` on the shared storage (copy your files there over USB) |
-
-(then the working directory too). In it, a folder for each release you have - any one is enough:
-
-```
-<game folder>/
-├── cr3view                          (or cr3view.exe, cr3view.app, the .AppImage)
-├── ios/
-│   └── ChaosRings3_FINAL_ENG.app/      the iPhone / iPad 1.2.2's .app: its ~170 CRDB*.ios.mvgl and movies
-│                                       - or Payload/ChaosRings3_FINAL_ENG.app/ (the .ipa unpacked as it is)
-├── android/
-│   └── <the 1.1.3 .apks>               (or its base.apk with the asset packs' CRDB{bgm,voice,se,mov}.android.mvgl
-│                                        anywhere under android/)
-├── vita/
-│   └── PCSG00500/                      the installed title: CR3/resources/**.psp2.mvgl (or the Prequel Trilogy's PCSG00457)
-├── translation/
-│   ├── en/                             a fan translation, a folder each (its rePatch/PCSG00500/CR3/resources/*.psp2.mvgl - or
-│   └── es/                             the .rar / .zip / .7z, unpacked into en/ or es/): over an unpatched Vita copy,
-│                                       "English (fan translation)" and "Spanish (fan translation)" in the Options' Language
-├── movies/                          cNN.mp4 your release lacks, from another (the iPad lacks c04..c11): "Movies"
-├── fsr4/                            AMD FSR 4 (optional; Linux and Windows, an AMD GPU): AMD's amd_fidelityfx_loader_vk.dll
-│                                    and amd_fidelityfx_upscaler_vk.dll (FSR SDK 2.4), the driver's amdvkffx64.dll
-│                                    (AMD Software 26.10.1+), and on Linux ffx-vk-linux's libffx_vk_linux.so: "FSR 4"
-└── textures/
-    ├── export/                         written by --export-textures: the pictures to upscale (<hash>.png)
-    └── hd/                             read by the game: the upscaled pictures (<hash>.png or .crhd)
-```
-
-A release's folder may hold the release itself or have it one or two folders down, as above
-(`ios/Payload/....app`, `vita/PCSG00xxx/`), so a copy can be dropped in as it was unpacked or
-installed; the names of the folders below `ios/`, `android/` and `vita/` don't matter. A Vita copy
-is the installed, decrypted title - or a NoNpDrm dump's folder as it was dumped, still encrypted (its
-`app/`, and `addcont/` beside it for the Prequel Trilogy's add-on): the next start decrypts it into
-`vita/` (on a phone too; it needs the space for the decrypted copy), and the dump can be deleted then.
-A dump packed in an archive (.zip, .rar, .7z, .vpk) is chosen in the first start's setup instead - a
-phone's too, which shows when there's no copy yet and picks files (folders are copied in over USB).
-The release downloads come with these folders made, each with a `README.txt` saying what
-goes in it.
-
-CR3-U plays one release at a time: with several, **the first of `vita/`, `android/`, `ios/`** (the
-same order as the other ports take one alone); `--data` picks another. `translation/` is used only
-with the Vita release (the iOS and Android ones have English of their own); a Vita copy with the
-patch already installed shows that English without it.
-
-If nothing is found the program says where it looked. The older places still work: `ipad/`, `PCSG00500/`, `PCSG00457/`, `ChaosRings3_FINAL_ENG.app/`, `Payload/` or `data/` straight in the game folder.
-To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `CR3_DATA`), `--patch <the rePatch folder>`. Settings and saves go to the profile folder
-(`~/.local/share/DuIslingr/CR3-U/` on Linux; the same folders under `%APPDATA%\` on Windows and
-`~/Library/Application Support/` on macOS), not the game folder. All four ports (CR1:U, CRO-U, CR2-U, CR3-U) look for their copies the same way.
-With Vulkan the profile folder also keeps `vulkan-pipelines.bin`: the graphics driver's compiled
-pipelines, so later starts and new screens don't compile them again (safe to delete; another GPU
-or a driver update starts it anew).
-
-## Original card artwork
-
-**Options → Graphics → Original Card Art** switches the Gene Index entries **80, 81 and 86**
-to their original artwork in menus, gene icons and full-screen card views, with matching
-names and N/R/SR profiles: **Little Red Riding Hood, Aphrodite and Adam**. English and
-fan-English modes use English translations of the Japanese-only originals; Japanese mode
-keeps their original Japanese text. Only cards whose original artwork is available receive
-the matching text. Turning the setting Off restores the selected release's art and text.
-The setting is Off by default, takes effect immediately, and is remembered between sessions.
-Gene IDs, stats, rarities and save data stay the same.
-
-Vita already uses the originals. iOS retains all three originals in its files. Android retains
-the originals for 80 and 81; with Android alone the option shows **On (2/3)** and keeps card 86's
-release artwork until its original is available.
-
-For the missing artwork, copy **both** card archives from your decrypted Vita or iOS copy into
-`artwork/` beside the game's `ios/`, `android/` and `vita/` folders:
-
-- Vita: `CRDBcard01.psp2.mvgl` and `CRDBcardhd.psp2.mvgl`.
-- iOS: `CRDBcard01.ios.mvgl` and `CRDBcardhd.ios.mvgl`.
-
-Subfolders are accepted. Existing Vita/iOS copies in the normal game folders are checked too.
-These files supply pictures only; putting them in `artwork/` keeps the selected gameplay release.
-If the game is already running when you copy the files, turn the option Off and On to refresh it.
-No artwork is included with the port. On Android, `artwork/` belongs under
-`Android/data/local.preservation.chaosrings3/files/`.
-
-For files elsewhere, `--original-art-source <folder>` or `CR3_ORIGINAL_ART` points to the card
-archives or a complete Vita/iOS release. `--original-art` / `--release-art` override the toggle
-for a run (also useful for captures).
-
-## Movies
-
-The story's movies play as in the game: full screen, with their sound at the music's volume and
-their subtitles in the game's language (`cNN_en.srt` / `cNN_jp.srt`; the fan translation's English
-is in its `_jp` files). Tap once for **Skip**, again within three seconds to skip. Each release
-has its own: the iPad's `.app` holds c01..c03 and c50..c58 but not the story's c04..c11 (the game
-downloaded those), the Vita's `CR3/resources/movie/` and Android's asset pack hold them all. Put
-the ones yours lacks in `movies/` in the game folder (or point `CR3_MOVIES` at a folder of them,
-such as a Vita copy's `CR3/resources/movie/`); a movie found nowhere is skipped. `--movie cNN`
-plays one at start-up. The video is H.264, decoded with OpenH264 (the system's, else the copy
-built in), the sound with FAAD2.
-
-## Field and battle speed
-
-Options (the camp's; the title's Options button, lower right - or O; a battle's get-set Options),
-Graphics (CR3-U's own tab - graphics, HD, controls - rows as the Other tab's, scrolled with the
-arrows right of them, the mouse wheel or Up / Down): **Field Speed** and **Battle Speed**, each Off or 2x .. 5x - walking the
-field (its scenes, talk and menus as they are) and the battles that many times as fast. Kept in
-settings.ini (`field_speed`, `battle_speed`); `--field-speed n` / `--battle-speed n` for one run.
-
-On a desktop the Options' tabs and rows get smaller as the window grows, so more of the Graphics
-rows fit at once (a phone or tablet keeps the game's size and four rows). **Reset**, the round
-button left of the back (or R), asks, then puts the open tab's settings back to their defaults (Graphics keeps the window's type and resolution).
-
-## Save slots
-
-The native title-screen save menu has **12 slots**, shown three at a time across
-four pages. Use the on-screen arrows, Left/Right, Page Up/Page Down, or controller
-L/R to change pages. Up/Down moves between slots. Copy and Delete work across pages;
-playing a slot keeps manual saves and autosaves in that slot.
-
-## New Game Plus
-
-Cleared saves are marked **CLEARED**. Open one in the title's save menu to choose
-**Continue**, **New Game Plus**, or **Back**. New Game Plus asks for an empty
-slot on any page, then confirms. The original save stays intact.
-
-This port feature carries team level, genes and their upgrades, equipment, items,
-currency, collections, names and records into a new prologue. The protagonist keeps
-the equipped outfit from the opening tower scene onward. Story flags, quests,
-VS progression and party recruitment restart; MP is restored. Playtime accumulates,
-and daily rewards keep their claim history. Clear the story again to begin another run.
-
-## Vita save importing
-
-Import decrypted Vita saves from title-screen **Options**, using **Other → Vita Saves → Import**.
-Choose the exported save folder and confirm; existing saves are backed up automatically.
-No Python is needed. See [Vita save importing](docs/VITA_SAVES.md) for supported state,
-profile locations and the optional command-line converter.
-
-## HD textures
-
-Upscaled textures you make yourself, from your own copy - waifu2x or Real-ESRGAN, drawn in place of
-the originals:
-
-1. `cr3view --export-textures` writes every picture the game draws to `<game folder>/textures/export/`
-   (`<hash>.png`, upright; the profile folder's `textures/export/` if the game folder can't be written;
-   `--export-textures <folder>` elsewhere). Each release exports its own pictures.
-2. `python3 tools/hd_textures.py <game folder>` upscales them into `<game folder>/textures/hd/`
-   (`<hash>.png`): waifu2x (`waifu2x-ncnn-vulkan` on the PATH, or `--waifu2x <it>`) for the
-   lossless and block-compressed pictures, Real-ESRGAN (`--esrgan <the folder with
-   realesrgan-ncnn-vulkan and models/>`) for the 16-bit ones - or `--engine waifu2x` for all. It
-   needs Python 3 with NumPy and Pillow; `--help` lists the rest (`--scale`, `--noise`, `--only` ...).
-3. Start the game: with `textures/hd/` there, HD Textures is on by itself (Options, Graphics, HD Textures switches
-   it; `--no-hd-textures` for a run without). One `textures/hd/` can hold every release's.
-
-The exports are ordinary PNGs, so any upscaler or image editor works as well: save the result
-under the same name in `textures/hd/`. Keep each picture's shape - one scale across and down, at
-least the original's size, up to 8192 a side - and its rows the right way up: a picture that
-doesn't fit is left out (the log says which and why) rather than drawn wrong.
-
-`CR3_HD_TEXTURES=<folder>` reads them from elsewhere; the older `hd-textures/` beside the program or in
-the profile folder is still read while there is no `textures/hd/`. The `tools/hd_textures.py` is the
-same in all four ports. Personal use: the outputs are made from the game's art - keep them out of
-anything shared.
-
-## HD models
-
-Models you make or improve yourself, drawn in place of the game's - more detailed, smoother,
-retextured - moving with the game's own skeleton and animations:
-
-1. `cr3view --export-models` writes every figure to `<game folder>/models/export/` as glTF 2.0
-   (`<name>.glb`: its skeleton, meshes, materials, pictures and animations; `--export-models <folder>`
-   elsewhere; `--no-animations` leaves the animations out - with them a character's file runs to
-   hundreds of MB, all of them to about 6 GB). Blender (File, Import, glTF 2.0) opens them as they are.
-2. Edit it - sculpt, subdivide, rebuild, re-weight, paint - keeping the armature: its bones are named
-   `node_<n>...` and the game finds them by that (a new bone goes with its nearest original parent).
-   A material keeps the game's render state by its name `cr_mat_<n>...`; give it a picture of your own
-   (PNG or JPEG, any size, packed in the `.glb`) and that picture replaces the figure's.
-3. Export it from Blender as glTF 2.0 (`.glb`, the defaults) to `models/hd/<figure>.glb` (`j001b01.glb`
-   for the figure `j001b01`). With HD Models on (Options, Graphics; off until you switch it on) it is drawn
-   instead of the original from the next scene on.
-
-What it reads: triangles, the first UV set and the second and colour set, four weights a vertex; meshes
-on more than 85 joints are split, up to 65535 vertices a mesh; normals, and tangents for normal-mapped
-materials, are worked out when missing. The animations in the file are for previewing - the game plays
-its own. `cr3tool gltfcheck <release> <figure|all> [file.glb]` checks a round trip (the export loaded
-back: every figure lands exactly on the original in every animation). `CR3_HD_MODELS=<folder>` reads
-them from elsewhere. Personal use: the exports are the game's models - keep them, and what you make
-from them, out of anything shared.
-
-## Smooth models
-
-Options, Graphics, **Smooth Models**: Off, Smooth (4x triangles) or Smoother (9x) - every model in
-the world (characters, monsters, stages and props; not the menus) rounded out at load time with PN
-triangles, as CR1-U's: the original vertices stay put, edges sharper than 60 degrees stay hard, and
-skinning and animation work as before. From the next scene on; kept in settings.ini
-(`smooth_models` 0, 2 or 3), `--smooth-models n` for one run.
-
-## FSR 4
-
-The game's own upscaler is AMD's FSR 3.1.6, built from AMD's open source, on every system. On
-Linux and Windows with an AMD GPU (RX 6000 series or later) **FSR 4** - AMD's machine-learning
-upscaler, FSR Upscaling 4.1.2 - is an Upscaler choice too (Options > Graphics, or `--upscaler fsr4`),
-once its files are in `fsr4/` in the game folder. AMD ships FSR 4 for Vulkan only as its own signed
-Windows DLLs, whose licence allows them to be passed on in that form under AMD's terms alone, so
-they aren't included:
-
-- `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` from AMD's FSR SDK 2.4
-  (`Kits/FidelityFX/signedbin/` in its [release](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/releases/tag/v2.4.0));
-- `amdvkffx64.dll`, FSR 4 itself, from AMD Software: Adrenalin Edition 26.10.1 or later (the Windows
-  driver package: `Packages/Drivers/Display/WT6A_INF/B*/` inside the installer). Without it AMD's SDK
-  offers only FSR 3.1, and the game says so;
-- on Linux, `libffx_vk_linux.so` from [ffx-vk-linux](https://github.com/DuIslingr/ffx-vk-linux) (MIT),
-  which maps AMD's DLLs natively - no Wine. Windows loads them as they are.
-
-The log says which FSR AMD's SDK picked (`FSR 4.1.2: AMD's upscaler from ...`). FSR 4 costs about
-2 ms a frame at 1440p on an RX 7900 XTX. `CR3_FSR4_DIR` points at the files elsewhere.
-
-## Add-ons: outfits and weapons of your own
-
-New outfits and weapons - beside the game's, not in place of them - sold in the premium shop (the
-field's Shop button, or the VS mode's Sp Shop) next to its special ones, worn like any other:
-
-1. Make the model from an export (`cr3view --export-models --no-animations`): an outfit over a
-   character's body - `j001b02.glb`, the hero's Worn Hoodie -, a weapon over a weapon -
-   `w001_01.glb`, the Chain Sword. Keep the armature (bones `node_<n>...`) and the material names
-   (`cr_mat_<n>...`); new pictures, more detail, another shape are all yours. Save it as `.glb`.
-2. Beside it in `<game folder>/models/addons/`, a manifest `<anything>.ini`:
-
-   ```ini
-   id = 1               # 1 .. 999 - keep it: saves know what you own by it
-   kind = outfit        # or weapon
-   character = 1        # who wears it (1 the hero)
-   name = Night Coat    # (name_ja = for Japanese)
-   model = coat.glb
-   like = 200083        # the item it's made from - its numbers, icon and body or weapon (default: the character's own)
-   price = 30           # in the premium shop...
-   currency = coin      # ...in coin, GP or gold (shop = none: not sold)
-   hd_models = no       # an outfit's look with HD Models - see below
-   ```
-
-3. Start the game: it is in the shop (`cr3tool addons <release> <game folder>/models/addons`
-   checks them first - each one's item, name, shop goods and model, as the game takes them).
-
-Add-ons are always sold and worn, their numbers their own. A weapon is always drawn as its own
-model; an outfit is made for the character as the game draws it, so while HD Models replaces any
-of that character's figures (`models/hd/j001*.glb`) it looks like the item it's made from - as the
-game's own armour does, its numbers still the add-on's - unless it says it fits: `hd_models = yes`
-(any), or the replaced figures it is made for (`hd_models = j001b01 j001h01`). (`like` an armour
-whose body is your replaced one - the hero's b01, the Black Jacket - keeps your model on show.) `CR3_ADDONS=<folder>` reads them from
-elsewhere. Personal use, as HD Models: they're made from the game's models.
-
-## Layout
-
-| Path | Purpose |
+| Path | Contents |
 |---|---|
 | `engine/` | the C++17 / SDL3 engine (`cr3core`), `cr3view` and `cr3tool` |
-| `docs/` | engine and format notes (`docs/FORMATS.md`: CR3's differences first) |
-| `tools/` | analysis / extraction tools (`re_setup.sh`, `mvgl.py`, `msg.py`, ...); they work on your own copy |
-| `android/`, `packaging/` | the Android project; the icons, desktop entry and release notes |
-| `re/`, `extracted/` | (not in the repository) local RE output and decoded assets - never commit or share |
+| `tools/` | analysis and extraction tools (`re_setup.sh`, `mvgl.py`, `msg.py`, ...); they work on your own copy |
+| `android/`, `packaging/` | the Android project; icons, desktop entry, release notes |
+| `re/`, `extracted/` | not in the repository: local reverse-engineering output and decoded assets - never commit or share |
+
+## Licence and credits
+
+- CR3-U is GPL-2.0-or-later (`LICENSE`). The macOS app is GPL-3.0, because of the bundled
+  MoltenVK. Bundled libraries keep their own licences: see `THIRD_PARTY.md`.
+- **No game data is in this repository or the downloads** - no art, audio, text, scripts or code
+  of the game, nor anything generated from them. You need your own copy of the game.
+- The fan translations are the Chaos Rings III Translation Project's (English) and Joseas's
+  (Spanish); CR3-U reads them from your own copy of their patches.
+- *Chaos Rings III* is by Square Enix and Media.Vision. CR3-U is a fan preservation project, not
+  affiliated with or endorsed by them.

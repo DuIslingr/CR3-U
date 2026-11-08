@@ -1,51 +1,84 @@
-# CR3-U v0.3.2
+# CR3-U v0.4.0
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
 ## What's new
 
-- **Vulkan: fewer hitches.** The renderer keeps the driver's compiled pipelines between runs
-  (`vulkan-pipelines.bin` in the profile folder), so the start and each new screen don't compile
-  them again. Measured here: about 6.5 ms of pipeline compiling the first time, 0.1 ms the next;
-  slower drivers save more. A cache from another GPU or driver is ignored and rebuilt.
-- **The first battle no longer freezes.** Every battle started from the field (an event's, or an
-  encounter's) stopped on its opening screen. It now plays through, and the game returns to the
-  field afterwards.
-- **Spanish fan translation:** Joseas's Spanish translation of the Vita release works like the
-  English one, with its own font for á, ñ, ¿ and ¡. Put its rePatch folder, or the `.zip` it comes
-  in, into `translation/`.
-- **Both translations at once:** the English and Spanish translations can be installed side by
-  side (`translation/en/` and `translation/es/` - an archive dropped into `translation/` is unpacked
-  into the right one on the next start). The in-game **Options > Language** switches between
-  Japanese, English and Spanish **while you play**, and the choice is remembered.
-- **Long choices fit:** a choice line too long for its bubble (common in the translations) now gets
-  a wider bubble instead of running past its edge. On a 3:2 or 4:3 screen, where there's no room to
-  widen it far enough, the line is centred and narrowed slightly.
-- **Android:**
-  - A repacked `.apks`: sound effects, voices and text work. Its compressed asset packs are unpacked
-    once, on the first start, into `assetpacks/` beside it (**about 1.3 GB of free space**; that
-    first start takes a while).
-  - An `.apks` or `.xapk` that holds the APKs themselves compressed (as some download sites pack
-    them) works too: they are unpacked once into `unpacked/` beside it (**about 3.7 GB with the
-    asset packs**). Such a file used to stop the game at once with "no Chaos Rings III data".
-  - The first start lets you pick your game files or folder on the phone, and a Vita dump copied
-    into `vita/` is decrypted there, as on a PC.
-  - Fullscreen, with the status and navigation bars hidden.
-- **Phones:** the picture now fills the whole screen, under the camera cutout and into the rounded
-  corners; only the menus, windows and buttons keep clear of them.
-- **Upscalers** (FSR, DLSS, MetalFX) now apply to the 3D scene only; menus and text are drawn
-  afterwards at full resolution and stay sharp.
-- **FSR 3.1.6:** the built-in FSR is updated from 3.1.4 to AMD's FSR SDK 2.4 passes.
-- **FSR 4 (Linux and Windows, AMD GPUs):** a new Upscaler choice. AMD ships FSR 4 for Vulkan only as
-  its own Windows DLLs, so they aren't included: put AMD's two SDK DLLs, the driver's
-  `amdvkffx64.dll` and (on Linux) ffx-vk-linux's `libffx_vk_linux.so` into `fsr4/` in the game
-  folder - its `README.txt` says where each comes from. On Linux the DLLs run natively through
-  ffx-vk-linux, no Wine. Without the files FSR 3.1 stays as it is.
-- **Vita, the Prequel Trilogy:** CR3-U no longer mistakes another game's archives in a Trilogy
-  folder for its own.
+### Android and phones
 
-The story still hasn't been played through end to end. The Android build has been run on the
-emulator, not yet on a real phone; a real Windows PC without Vulkan is still untested.
+- **Sound and text from an `.apks`:** a repacked `.apks` gave no sound effects or voices, and on a
+  phone no text. Its compressed asset packs are now unpacked once on the first start, into
+  `assetpacks/` beside it (**about 1.3 GB of free space**; that first start takes a while), and the
+  game's font is read from inside the `.apks`.
+- **`.apks` and `.xapk` with compressed APKs** (as some download sites pack them) work: they are
+  unpacked once into `unpacked/` (**about 3.7 GB with the asset packs**). Before, the game stopped
+  at once with "no Chaos Rings III data".
+- **The first start's setup runs on the phone:** pick your `.apks`, `.ipa` or Vita archive and the
+  files are copied in. A Vita dump copied into `vita/` over USB is decrypted on the next start.
+- **The screen fits:** the game runs fullscreen with the system bars hidden. The picture fills the
+  whole screen, round the camera hole and into the corners, while menus, windows and buttons stay
+  inside the safe area. On 19.5:9 and 20:9 phones the message band now reaches the screen's sides,
+  and the speaker's name no longer hangs off its corner.
+- **No more green frame** round the screen after using a controller or keyboard.
+- **Updates install over the last:** the APK is now signed with the ports' release key (see Good
+  to know).
+
+### Battles and story
+
+- **The first battle no longer freezes.** Every battle started from the field (an event's or an
+  encounter's) stopped on its opening screen. It now plays through and returns to the field.
+
+### Controller, as on the Vita
+
+With the Vita copy as the game, the controller now follows the Vita release's own buttons:
+
+- **Field buttons:** △ opens them with a cursor on Camp; the d-pad moves it, ○ presses, × or △
+  closes. L swings the camera behind you; R cycles the goods in reach and □ uses them.
+- **Camera:** the right stick turns the field's camera.
+- **Event choices and Yes / No questions:** a cursor starts on the first option; Up / Down move it,
+  ○ answers, × is No.
+- **L / R in menus:** the gene lab's, options' and Gene Index's tabs, the shop's Buy / Sell, the
+  gifts' and quests' categories, the Lucky Box's boxes, the tutorials' pages.
+- **Battles:** the d-pad works the commands, item lists and targets, L / R switch Items and Gifts,
+  flexible-target commands can switch sides, and ○ shortens the victory camera and the result.
+- **A lost battle's Continue:** Up / Down choose Give Up or Revive, ○ presses. Before, it took only
+  clicks.
+- **Every other screen** has a d-pad cursor too: the camp and party order, item quantities, gene
+  change (sorts, lock), the gene lab, gifts, options, Gene Index, premium shop, My Page, save files,
+  world select, the VS mode and the lunches.
+- **Movies and Vista scenes:** △ pauses and resumes picture and sound together; □ stops a movie.
+- **START** taps the title.
+- `docs/CONTROLS.md` lists every screen's buttons. With the iPhone or Android copy the controller
+  works as before.
+
+### Fan translations
+
+- **Spanish:** Joseas's Spanish translation of the Vita release works like the English one, with its
+  own font for á, ñ, ¿ and ¡. Put its rePatch folder, or the `.zip` it comes in, into `translation/`.
+- **Both at once:** the English and Spanish translations can sit side by side (`translation/en/`,
+  `translation/es/`; an archive dropped into `translation/` is unpacked into the right one).
+- **Options > Other > Language** switches between Japanese, English and Spanish **while you play**,
+  pictures included (the title's "Tap to play"), and remembers the choice.
+- **Long choices fit:** a choice too long for its bubble gets a wider one; on 3:2 and 4:3 screens it
+  is centred and narrowed slightly.
+
+### Graphics
+
+- **Fewer hitches with Vulkan:** compiled shaders are kept between runs (`vulkan-pipelines.bin` in
+  the profile folder), so the start and each new screen are smoother.
+- **Sharp menus with upscalers:** FSR, DLSS and MetalFX now upscale the 3D scene only; menus and
+  text are drawn afterwards at full resolution.
+- **FSR 4** (AMD RX 6000 or later, Linux and Windows): a new Upscaler choice. AMD's files can't be
+  included; put them in `fsr4/` (its `README.txt` lists them). On Linux they run natively through
+  ffx-vk-linux, without Wine.
+- **FSR 3.1.6:** the built-in FSR is updated to AMD's FSR SDK 2.4.
+
+### Vita copies
+
+- **Prequel Trilogy:** CR3-U no longer takes the other games' archives in a Trilogy folder for its
+  own, which left it without sound or models.
+
+The story still hasn't been played through end to end.
 
 ## Downloads
 
@@ -54,7 +87,7 @@ emulator, not yet on a real phone; a real Windows PC without Vulkan is still unt
 | `CR3-U-windows-x64.zip` | Windows 10+ x64 |
 | `CR3-U-macos-universal.zip` | macOS 11+ (Apple silicon and Intel) |
 | `CR3-U-x86_64.AppImage` / `CR3-U-linux-x86_64.tar.gz` | Linux x86-64 |
-| `CR3-U-android.apk` | Android 7+ |
+| `CR3-U-android.apk` | Android 7+ (64-bit) |
 
 ## Getting started
 
@@ -65,22 +98,22 @@ emulator, not yet on a real phone; a real Windows PC without Vulkan is still unt
 - **Windows:** if SmartScreen warns about an unsigned program, choose *More info*, *Run anyway*.
 - **macOS:** right-click `cr3view.app` and choose *Open* (it isn't signed).
 - **Linux:** `chmod +x` the AppImage, then run it.
-- **Android:** install the APK, then copy your game files over USB into
-  `Android/data/local.preservation.chaosrings3/files/`, in an `ios/`, `android/` or `vita/` folder.
+- **Android:** install the APK and start it; the setup asks for your game files. Or copy them over
+  USB into `Android/data/local.preservation.chaosrings3/files/`, in an `ios/`, `android/` or `vita/`
+  folder. An Android copy needs its asset packs: give the whole `.apks`, not the `base.apk` alone.
 
-The README's "Your copy" section lists exactly which files each release needs.
+The README's "What you need" section lists which releases of the game work and what each needs.
 
 ## Good to know
 
-- **Android, updating:** from this version on, each release installs over the one before it. Every
-  earlier version was signed with a different key, so coming from one, uninstall it first - one
-  last time. That deletes the game files you copied in and your saves: keep a copy of the game
-  files to copy back.
+- **Android, updating:** from this version on, each release installs over the one before it.
+  Earlier versions were each signed with a different key, so uninstall the old one first - one
+  last time. That deletes the game files you copied in and your saves, so keep a copy of them.
 - **No game data is included.** You need your own copy; the port reads it at run time.
 - **Tested on:** Linux (played), Windows (under Wine), Android (the emulator). The macOS build is
-  made by CI but hasn't been run on real hardware yet, nor the Android one on a phone. Reports are
-  welcome.
+  made by CI but hasn't been run on real hardware yet. The Vita controls were tested with a virtual
+  controller, not a physical one. Reports are welcome.
 - **DLSS** isn't in these builds (NVIDIA's library can't ship with GPL code); you can build it
-  yourself (README, Platforms).
+  yourself (README, Building from source).
 - Licence GPL-2.0-or-later (the macOS app is GPL-3.0 because of MoltenVK). A fan preservation
   project, not affiliated with Square Enix or Media.Vision.

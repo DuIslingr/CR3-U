@@ -14,7 +14,7 @@ C++17; SDL3 (the system's, else downloaded and built by CMake), FreeType for the
 here: `CR_FETCH_DEPS`), zlib for the APK (the same), and for Vulkan the Vulkan loader + glslc -
 without them OpenGL only. The build is Ninja's: `ninja -C build` (`cmake --build build` runs it).
 Options: `-DCR3_GLES=ON` (the GL device on OpenGL ES 3.0, as Android has it), `-DCR_DLSS_SDK=<the
-DLSS SDK>` (DLSS: README, Platforms), `-DCR3_BUNDLED_FAAD2=ON` (the bundled FAAD2 over the
+DLSS SDK>` (DLSS: README, Building from source), `-DCR3_BUNDLED_FAAD2=ON` (the bundled FAAD2 over the
 system's), `-DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-x86_64.cmake` (Windows from Linux).
 
 ## Tools
