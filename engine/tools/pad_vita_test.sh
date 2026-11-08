@@ -36,5 +36,10 @@ want field-bar && run field-bar "3:north 3.5:left 4:up 4.5:up 5:down 5.5:down 6:
     "field: the buttons opened|field: the cursor on 101|field: the cursor on 108|field: the cursor on 105|field: the cursor on 108|field: the cursor on 101|field: the buttons closed|field: the buttons opened|field: the cursor presses 106|camp: open" \
     -- --area t0101 --flag 26 --flag 27
 
+# SelectTwoChoicesMenu (FUN_8123f2f4, the cursor FUN_8128d1ea): ↓ / ↑ round the options from the first, ○ the one under it
+want choice && run choice "2:east 3:east 4.5:down 5:down 5.5:down 6.5:east 8:quit" \
+    "choice: the cursor on 2|choice: the cursor on 1|choice: the cursor on 2|choice: 2 of 2" \
+    -- --area t0101 --input "call:c111_s110_t01_00101"
+
 echo "the Vita's buttons: $problems problems"
 [ "$problems" -eq 0 ]

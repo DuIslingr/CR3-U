@@ -100,3 +100,16 @@ Click the labeled option or select it with Up/Down and Enter (controller d-pad
 and confirm). New Game Plus then asks for an empty destination on any page.
 The final confirmation defaults to No; arrows change the choice and Enter confirms
 it. Back cancels. There is no global New Game Plus button or shortcut.
+
+## CR3's Vita buttons in the port
+
+With the Vita copy as the game, where the Vita's own code moves a cursor the iPad's and Android's
+releases (touch alone) have none of, the controller does as the Vita does:
+
+- **An event's choice** (SelectTwoChoicesMenu / SelectThreeChoicesMenu, `FUN_8123f2f4` /
+  `FUN_8123e184`, the cursor `FUN_8128d1ea`): the first option to begin with, ↑ / ↓ the one before /
+  after, round, com_002; the option under it its `comMsgC<n>Panel` shown, its text dark (0.227), the
+  others' 0.88; ○ chooses it (com_003). The keys 1-3 still choose outright.
+
+`CR3_PAD_SCRIPT` also takes `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
+

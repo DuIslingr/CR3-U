@@ -13920,8 +13920,12 @@ struct Viewer {
                     }
                 }
             }
-            for (const Placed& q : o.placed) drawUiText(q.text, size - 4, q.x, q.y, w, h, true, a, q.width);
+            // (the Vita's cursor - FUN_8123f2f4 / FUN_8123e184: the option under it its comMsgC<n>Panel
+            // shown, its text at 0.227, the others' at 0.88)
+            const bool cursor = vitaButtons() && ev.choiceAnswer() < 0, lit = cursor && kk == choiceCursor;
             float px, py;
+            if (lit && cr3UiCallNth(menu, "call_comMsg" + c + "Panel", kk, px, py)) cr3UiPut("commsg" + lc + "panel", "", 0, px, py, view, a);
+            for (const Placed& q : o.placed) drawUiText(q.text, size - 4, q.x, q.y, w, h, true, cursor ? a * (lit ? 0.227f : 0.88f) : a, q.width);
             if (!cr3UiCallNth(menu, "call_comMsg" + c + "Panel", kk, px, py)) continue;
             UiFig& panel = uiFig("commsg" + lc + "panel");
             panel.fig.place = cr3::Mat34();
@@ -13938,11 +13942,28 @@ struct Viewer {
         if (!ev || ev->choiceShown() < 2 || ev->choiceAnswer() >= 0 || index < 0 || index >= ev->choiceShown()) return;
         audio.playSe("com_003", false); // (comBtn's tap: decide)
         ev->answerChoice(index);
+        choiceCursor = 0;
         SDL_Log("choice: %d of %d", index + 1, ev->choiceShown());
     }
     bool choiceShown() {
         cr3::EventRuntime* ev = activeEvents();
         return ev && ev->choiceShown() >= 2;
+    }
+    // The Vita's cursor over them (FUN_8128d1ea: ↑ the one before, ↓ the one after, round, com_002 -
+    // the first to begin with; ○ the one under it, com_003): with the Vita copy as the game
+    int choiceCursor = 0;
+    bool choiceKey(SDL_Keycode k) {
+        cr3::EventRuntime* ev = activeEvents();
+        if (!vitaButtons() || !ev || ev->choiceShown() < 2 || ev->choiceAnswer() >= 0) return false;
+        const int n = ev->choiceShown();
+        if (k == SDLK_UP || k == SDLK_DOWN) {
+            choiceCursor = (std::clamp(choiceCursor, 0, n - 1) + (k == SDLK_DOWN ? 1 : n - 1)) % n;
+            audio.playSe("com_002", false);
+            SDL_Log("choice: the cursor on %d", choiceCursor + 1);
+            return true;
+        }
+        if (k == SDLK_RETURN || k == SDLK_KP_ENTER) return answerChoice(std::clamp(choiceCursor, 0, n - 1)), true;
+        return false;
     }
     bool choiceClick(float fx, float fy) {
         if (!choiceShown()) return false;
@@ -27552,12 +27573,13 @@ int main(int argc, char** argv) {
         // CR3_PAD_SCRIPT (tests): a virtual controller, its buttons and stick set at their times - "1.5:east
         // 2:down 3:lx=1 4:lx=0" (a button is held 0.1 s; east / south / north / west, up / down / left /
         // right, l / r, start, back; lx / ly the left stick, -1 .. 1, ly up positive; blur the window's focus
-        // lost; quit the end). Each press of a held direction is logged
+        // lost; shot=<file.bmp> the frame then; quit the end). Each press of a held direction is logged
         struct PadStep {
             float at;
             std::string what;
         };
         std::vector<PadStep> padScript;
+        std::string padShot;
         SDL_Joystick* testPad = nullptr;
         if (const char* ps = SDL_getenv("CR3_PAD_SCRIPT")) {
             SDL_VirtualJoystickDesc desc;
@@ -27691,8 +27713,9 @@ int main(int argc, char** argv) {
                         if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) v.answerClearQuest();
                         continue;
                     }
-                    if (v.choiceShown()) { // (an event's choice: 1, 2 or 3)
-                        if (k >= SDLK_1 && k <= SDLK_3) v.answerChoice(int(k - SDLK_1));
+                    if (v.choiceShown()) { // (an event's choice: 1, 2 or 3; the Vita's cursor)
+                        if (v.choiceKey(k)) {
+                        } else if (k >= SDLK_1 && k <= SDLK_3) v.answerChoice(int(k - SDLK_1));
                         else if (k >= SDLK_KP_1 && k <= SDLK_KP_3) v.answerChoice(int(k - SDLK_KP_1));
                         continue;
                     }
@@ -27928,6 +27951,8 @@ int main(int argc, char** argv) {
                         focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
                         focus.window.windowID = SDL_GetWindowID(win);
                         SDL_PushEvent(&focus);
+                    } else if (w.rfind("shot=", 0) == 0) {
+                        padShot = w.substr(5);
                     } else if (w == "quit") {
                         SDL_Event quit{};
                         quit.type = SDL_EVENT_QUIT;
@@ -28008,6 +28033,14 @@ int main(int argc, char** argv) {
                                      describe() + ", " + std::to_string(int(measured + 0.5f)) + " fps) - " + v.status + v.animStatus()).c_str());
             int w = 0, h = 0;
             frameSize(w, h);
+            if (!padShot.empty()) { // (CR3_PAD_SCRIPT's shot=: this frame to a file, as --capture writes one)
+                v.draw(w, h);
+                dev->endFrame(false);
+                std::vector<uint8_t> px;
+                const bool ok = dev->readPixels(px, w, h) && saveBmp(padShot.c_str(), px, w, h);
+                SDL_Log("test controller: shot %s %s", padShot.c_str(), ok ? "written" : SDL_GetError());
+                padShot.clear();
+            }
             v.draw(w, h);
             dev->endFrame(true);
         }
