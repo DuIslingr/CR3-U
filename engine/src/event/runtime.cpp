@@ -711,6 +711,9 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (c.boolean(0)) skipOff_.erase(Vista);
         else skipOff_.insert(Vista);
     });
+    vm.setNative("EvtWindow", "SetVistaPauseButtonEnable", [this](NativeCall& c) {
+        vistaPauseEnabled = c.boolean(0);
+    });
     // the sound (Cr3Sound -> utils::Sound*: soundHooks, the player's; none set - silence, GetState
     // -2): CR3's by name - PlaySE(name) / PlaySE_Repeat(name: looping) / PlaySE_Fade(name, frames
     // up, loop), StopSE(name, frames), StopSEAll(frames), PlayVoice(name), StopVoiceAll(frames),
@@ -762,6 +765,7 @@ void EventRuntime::reset() {
     // Keep the host's playback policy, language and manual selection, but no old input/UI.
     mapAnimPaused = effectLine = fastForward = false;
     skipButton_ = touched_ = false;
+    vistaPauseEnabled = vistaPaused = false;
     touchWait_ = yesNoAge_ = 0;
     skipOff_.clear(), pageSendOff_.clear();
     itemShown_ = messagesSet_ = 0;
@@ -965,6 +969,18 @@ std::string EventRuntime::cutInImage(int id) const {
     for (const auto& [i, image] : cutInImages_)
         if (i == id) return image;
     return {};
+}
+
+bool EventRuntime::tutorialPage(int direction) {
+    if (message_ <= 0 || (messageWindow_ != Tutorial && messageWindow_ != TutorialMenu)) return false;
+    if (parsed_.pages.empty()) return true;
+    const int next = std::clamp(page_ + direction, 0, int(parsed_.pages.size()) - 1);
+    if (next != page_) {
+        if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
+        page_ = next, pageTime_ = stopTime_ = 0, revealed_ = 0, stop_ = 0, ended_ = false;
+        if (tutorialPicture_.visible && size_t(next) < tutorialPicture_.images.size()) tutorialPicture_.shown = next;
+    }
+    return true;
 }
 
 void EventRuntime::advance() {

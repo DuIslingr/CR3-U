@@ -6,7 +6,7 @@ viewer=$1
 shift
 [ -n "$CR3_VITA_DATA" ] && [ -d "$CR3_VITA_DATA" ] || { echo "CR3_VITA_DATA not set: skipped"; exit 77; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/cr3pad.XXXXXX") || exit 1
-trap 'rm -rf "$work"' EXIT
+trap 'if [ "$problems" -eq 0 ]; then rm -rf "$work"; else echo "failed test logs: $work"; fi' EXIT
 mkdir -p "$work/home"
 problems=0
 
@@ -17,13 +17,15 @@ run() {
     [ "$1" = "--" ] && shift
     HOME="$work/home" XDG_DATA_HOME="$work/home" SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy CR3_PAD_SCRIPT="$pad" \
         timeout 120 "$viewer" --data "$CR3_VITA_DATA" --mute "$@" > "$work/$name.log" 2>&1
-    if awk -v want="$want" 'BEGIN { n = split(want, w, "|"); k = 1 }
+    status=$?
+    if [ "$status" -eq 0 ] && awk -v want="$want" 'BEGIN { n = split(want, w, "|"); k = 1 }
         k <= n && index($0, w[k]) { ++k }
         END { if (k <= n) { print "  missing: " w[k]; exit 1 } }' "$work/$name.log"; then
         echo "$name: ok"
     else
         echo "$name: FAILED"
-        grep -E "test controller|field:|camp|choice|battle|title|shop" "$work/$name.log" | grep -v pressed | tail -20 | sed 's/^/    /'
+        echo "  viewer exit: $status"
+        tail -25 "$work/$name.log" | sed 's/^/    /'
         problems=$((problems + 1))
     fi
 }
@@ -62,6 +64,24 @@ want camera && run right-stick "6:rx=1 7:rx=0 8:ry=-0.4 9:ry=0 10:quit" \
 
 # TitleMenu (0x81256cde): ○ or START its tap
 want title && run title-start "3:start 5:quit" "title: START|title: tapped" -- --title
+
+want camera && run camera-behind "5:rx=1 6:rx=0 6.5:l 7.5:quit" \
+    "camera: the right stick let go|camera: behind the player" -- --area d0301
+want saves && run save-footer "3:start 4:down 4.5:up 5:right 5.5:down 6:quit" \
+    "title: save focus 1|title: save footer copy|title: save footer delete|title: save focus 1" -- --title
+want movies && run movie-pad "3:north 4:east 5:north 6:west 7:quit" \
+    "movie: paused|test controller: east|movie: resumed|movie c01: skipped" -- --movie c01 --area t0101
+want goods && run field-goods "3:r 3.5:r 4:west 5:quit" \
+    "field: goods cursor 1|field: goods cursor 0|field: goods uses 0" \
+    -- --area t0101 --input "goods:show0 goods:show1"
+want lunch && run lunch-balloons "0.1:until=the_balloons,_at_frame 0.5:up 1:down 1.5:east 4:quit" \
+    "lunch: the balloons, at frame|lunch: the cursor on|lunch: the cursor on|lunch: s001_t02_00301_" \
+    -- --area t0101 --page 0.01 --input "lunch:start:s001_t02_00301_evt:s001_t02_00301"
+
+case_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+for group in shop camp battle; do
+    [ ! -f "$case_dir/pad_${group}_cases.sh" ] || . "$case_dir/pad_${group}_cases.sh"
+done
 
 echo "the Vita's buttons: $problems problems"
 [ "$problems" -eq 0 ]

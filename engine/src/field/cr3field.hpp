@@ -45,6 +45,8 @@ public:
     // Fld2CameraGom::UpdateControl: the camera pad's turn - the pitch kept within 20 degrees either
     // way (its +0x10), one already further out only brought back in
     void drag(float yawRadians, float pitchRadians);
+    // GomBehind (Vita L): swing behind the player's facing in 0.3 seconds.
+    void behind(float playerYaw);
     bool turnable() const { return !lookDown_ && !external_; } // (Fld2TaskCamera's type 1, Gom: the screen's camera half)
     // Fld2CameraLookDown (an area's camera type 3 - the executable's map table -: houses, the Space
     // Port): the eye at the player plus the area's offset (FieldCameraLD), looking at the player
@@ -61,6 +63,7 @@ private:
     std::array<float, 3> spring_{}; // (the point the spring holds: +0x20)
     float speed_ = 0;
     bool swinging_ = false;
+    float behindAge_ = -1, behindYaw_ = 0, behindPitch_ = 0, behindDelta_ = 0;
     bool lookDown_ = false, external_ = false;
     std::array<float, 3> ldOffset_{};
 };

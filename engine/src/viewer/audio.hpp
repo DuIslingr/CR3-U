@@ -52,6 +52,8 @@ public:
     // a movie's sound (its own stream, at the music's volume): started, stopped
     void playMovieSound(std::vector<int16_t> pcm, int rate, int channels);
     void stopMovieSound();
+    void pauseMovieSound(bool paused);
+    void pauseSceneSound(bool paused);
     bool playing(int slot) const;
 
     std::vector<std::string> log; // (what was asked, in turn: checks)
@@ -85,6 +87,7 @@ private:
     void feedBgm();
     std::vector<Voice> slots_; // 0..15 effects, 16..31 voices
     Voice movie_;
+    bool scenePaused_ = false, moviePaused_ = false;
     float volume_[3] = {1, 1, 1};
 };
 

@@ -123,6 +123,8 @@ public:
     // a tap (a swipe): the slash awaited, else the page typed at once, else the message's next
     // page, or its end (CheckMessage then says it's done)
     void advance();
+    // TutorialMenu's L / R browse its message pages without closing the last page.
+    bool tutorialPage(int direction);
     // a tap: also the touch Cr3Touch.GetTouchState says once (1: a finger down - WaitTouch's)
     void touch() { touched_ = true, advance(); }
     // pages turn (and slashes happen) by themselves after this many seconds (0: only advance())
@@ -139,6 +141,7 @@ public:
     // page while EvtWindow.SetSkipButtonEnable allows - each Open allows it again): held
     // (EvtWindow::IsSkip), a page shows whole and turns at once, without a tap
     bool fastForward = false;
+    bool vistaPauseEnabled = false, vistaPaused = false; // stop-button visibility; controller pause is available without it
     // Cr3Fade.SetEffectLine / DeleteEffectLine (InterfaceMain::SetEffectLine: BattleEffectTypeBMenu,
     // radiate_loop on its loop over the screen)
     bool effectLine = false;

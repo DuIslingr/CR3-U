@@ -1,48 +1,27 @@
-# The Vita's controls, and CR3-U's controller
+# CR3 touch, keyboard and Vita controller controls
 
-> Inherited from CR2-U with its names changed; it describes CR2-U's engine and game layer, which CR3-U still carries while CR3's own is written.
+The iPad and Android releases use touch. The Vita releases (PCSG00500 and the
+PCSG00457 trilogy) add native button handling. The controller mappings here are
+based on the saved Vita decompilation in `re/vita`; the follow-up table gives
+screen-specific function addresses and the port's behavior.
 
-The iPad's and Android's releases are touch alone. The Vita's (PCSG00498) adds its buttons in its
-own code - there are no names for it in the Android library, so this is read from the Vita build's
-decompilation (`re/vita`, `tools/re_setup.sh`):
+The Vita pad reader (`FUN_8135689e`, table `0x8160cb70`) feeds InputEquipment.
+Its channels distinguish pressed, held, released and repeating input. The game's
+masks (`FUN_8128cd9c`, `FUN_8128ce86`, `FUN_8128cf70`, `FUN_8128d05a`) use Up
+`0x2`, Down `0x4`, Left `0x8`, Right `0x10`, Square `0x20`, Cross `0x40`,
+Triangle `0x80`, Circle `0x100`, L `0x200`, R `0x400`, START `0x800` and
+SELECT `0x1000`. Menu directions also accept the left stick at full push;
+repeat starts after 0.6 seconds and continues every 0.08 seconds.
 
-- **The pad** (0x810efbe6): `sceCtrlReadBufferPositive`, the sticks to -1 .. 1 with a 0.25 dead zone;
-  sixteen buttons by the table at 0x812fdcac - □ ×  ○ △, L R, -, -, SELECT START, -, -, up right down
-  left (SCE_CTRL 0x8000, 0x4000, 0x2000, 0x1000, 0x100, 0x200, 1, 8, 0x10 .. 0x80) - into
-  MVGL::Input's device record (+0x404.. the sticks, +0x42c.. the buttons).
-- **InputEquipment** (Setup at 0x810ec...: Android's same channels, mpSquare .. mpR2, mpUp .. mpRight,
-  the four axes): each channel keeps +0x20 held, +0x21 pressed this update, +0x22 released, +0x28
-  repeating (pressed, then after 0.6 s every 0.08 s: 0x810eda7c). On the Vita the four directions
-  are the d-pad *or* the left stick pushed all the way (0x810ed90e).
-- **The queries** (Android's ButtonType: 0 up, 1 down, 2 left, 3 right, 4 □, 5 ×, 6 △, 7 ○, 8 L1,
-  9 L2, 10 R1, 11 R2, 12 START, 13 SELECT) and four masks over them (0x81044ebc pressed, 0x81044fa6
-  held, 0x81045090 released, 0x8104517a repeating: bit 1 << (type + 1) - 0x2 up .. 0x100 ○, 0x200
-  L, 0x400 R, 0x800 START, 0x1000 SELECT); 0x810452ba / 0x810452fe step a cursor by up / down,
-  playing SE 0xb3.
+CR3-U maps controller buttons by position: Circle is the right face button and
+Cross the bottom button. Options → Graphics → Swap ○ and × reverses confirm
+and cancel. Circle normally confirms or advances a message, Cross cancels,
+Square holds message fast-forward, Triangle opens the field bar, the left stick
+walks and the right stick turns the follow camera. Each screen can give these
+buttons its own action, as listed below. START also starts the Vita title.
 
-What the game does with them (the 38 functions that call the masks):
-
-| Button | The Vita |
-|---|---|
-| ○ | confirm; on the field the nearest touch action or balloon (FldMain::CheckTouchEventExec_Tap), a message's page (Cr3UtilGetTouchState ORs it into the touch), a result's or a special scene's tap |
-| × | back, cancel |
-| □ held | the messages' fast-forward, the staff roll's (VistaConversationWindowMenu, StaffrollMenu, the menus' texts) |
-| d-pad / left stick | the menus' cursors (repeating); on the field the stick walks - FldMain::PlayerMove takes its push as a finger's drag |
-| L / R | a scroll list's page (ScrollListMenu::PartsUpdate), the shop's character (ShopCutInPiupiuMenu) |
-| START | the title's "Please Touch" (with ○) |
-| △, SELECT | nothing |
-
-The field's tab (FieldMenuTabMenu, 0x81098da8) is opened by a touch even on the Vita; once open the
-d-pad steps round camp, encounters, save, map (the encounters left out while off), the one lit in
-diffuse colour (1, 2, 3), ○ choosing it.
-
-CR3-U maps a controller onto that by position (○ the right button, × the bottom one; the options'
-Graphics list has Swap ○ and ×), as the keys the menus take: ○ Return, × Backspace, the directions
-the arrows with the same repeat, L / R a page (the shop: its character), START the title, □ held
-the fast-forward. △ opens the field's tab - the port's own, as a controller has no touch. Where the
-touch releases have no cursor of the keyboard's either (the title's buttons and questions, the
-shop's first two menus, the party's), the keys and the controller now move a focus over the buttons
-in the game's own focused look. `CR3_PAD_SCRIPT` (tests) drives a virtual controller.
+`CR3_PAD_SCRIPT` drives an SDL virtual controller for headless tests. Controller
+focus uses the game's existing parts, cyan tint and sounds where available.
 
 ## CR3's field by touch or the mouse
 
@@ -91,7 +70,7 @@ open in the game (Fld2Main's states 6, 9 and 10).
 
 The native title-screen save menu has 12 slots across four pages of three.
 Use Left/Right, Page Up/Page Down, the on-screen arrows, or controller L/R to
-change pages. Up/Down selects a slot and crosses page boundaries; confirm opens
+change pages. Up/Down selects a slot (the Vita cursor uses the footer at the upper boundary); confirm opens
 its prompt. C starts Copy, D or Delete starts Delete, and Back cancels. Copy
 can select its source and empty destination on different pages.
 
@@ -126,106 +105,83 @@ releases (touch alone) have none of, the controller does as the Vita does:
 - **The right stick turns the field's camera** (Fld2CameraGom::UpdateControl `0x810c4f9a`, the
   stick's axes x -120 as the camera touch's offset - under 20 nothing, under 60 0.45 rad a second,
   further 1.5 -, the tilt within 20 degrees), as the right half's touch does, with the follow camera.
-  (The Vita's L, GomBehind `0x810c4484`, swings it behind the player over 0.3 s: not in yet.)
+  (L swings it behind the player over 0.3 s, restoring the tilt; fixed and rail cameras keep their own views.)
 
 - **START on the title** (TitleMenu, `0x81256cde`: ○ or START) is its tap, as ○ is.
 
 `CR3_PAD_SCRIPT` also takes `rx=` / `ry=` (the right stick), `until=<text>` (the later steps wait for a log line with it, `_` a
-space, their times counted from then), `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
+space, their times counted from then), `shot=<file.bmp>` (the frame then, as `--capture` writes one), `hold=<button>`, `release=<button>` and `quit`.
 
 
-### Not yet as the Vita's (to do)
+### Controller follow-up
 
-The audit of the Vita's button code (the callers of the masks `FUN_8128cd9c` pressed,
-`FUN_8128ce86` held, `FUN_8128cf70` released, `FUN_8128d05a` repeating; the list cursor
-`FUN_8128d1ea`) found these still different. Addresses are the Vita build's; readings are from
-the decompilation, to be checked on screen as each is done.
+The remaining input gaps from the November 8 audit are implemented for the Vita copy.
+The iOS/Android touch layouts keep their existing controls. Confirm/cancel follow
+Options → Graphics → Swap ○ and ×. Directions below also accept the left stick at full push.
 
-- **Field**
-  - L: GomBehind `0x810c4484` swings the camera behind the player over 0.3 s (yaw to the
-    player's facing the short way, the tilt reset); it needs the Gom camera's swing in
-    `Cr3GomCamera`.
-  - FieldGoodsMenu `0x81144642` / `0x81145a2c`: R steps the focus round the goods' icons
-    (no sound), □ uses the one in focus, ○ the check / talk icon. The port's □ is the
-    fast-forward there.
-- **Battle**
-  - comBtnMenu `0x8112bdc4`: com_002 on each move; com_005 on a disabled button; com_004 on
-    back; the focused button's `mat_com_menuBtn_02` in (0.5, 1, 1.5), a disabled one
-    (0.17, 0.33, 0.5).
-  - comListMenu `0x81137862`: ↑ / ↓ stop at the ends (the port's wrap); L / R the
-    categories where there are several; com_005 on a row that can't be used.
-  - TargetSelectMenu `0x81253dd0`: past either end the cursor reaches the enemy-info part
-    (`mat_bt_parts_03` cyan, ○ PersonalInfo 6); with an all-target command ↑ / ↓ toggle
-    all / info; com_004 on back.
-  - WildCardMenu `0x81277712`: ← / → move between the cards (no wrap, no sound), ○ picks one
-    that can be picked, else com_004. The port takes the keys 1 - 5 only.
-  - phaseVictory `0x81057fec`: ○ cuts the victory camera short.
-  - BattleResultV2Menu `0x8122d28e`: the first ○ runs the tally to its end, a later ○ closes.
-- **Messages**
-  - VistaWindowMenu `0x8125f47e`: △ toggles the vista's pause (SetVistaPauseButtonEnable,
-    not in the port).
-  - TutorialMenu `0x8125c57e`: L / R its pages (direction not yet checked).
-  - An event's yes / no (YNChoiceButton `FUN_812818ca`): ↑ / ↓ between them with com_002,
-    cyan, ○ that one (Yes com_003, No com_004), × No. The port takes Return / Backspace,
-    with no cursor.
-- **Saves**: SaveFileMenu `0x812384a2`. ↑ from the first slot reaches the Copy / Delete row,
-  ← / → between them, ↓ back; ↓ on the last slot stays. The port reaches Copy / Delete by
-  the C / D keys alone; its 12 paged slots are its own.
-- **Movies** (`0x812d6060`): △ pauses / resumes (sceAvPlayerPause / Resume), □ stops; ○ does
-  nothing. The port skips on ○ twice within 3 s.
-- **Lunch** (LunchMain `0x810b2bf0`): ↑ / → the next balloon, ↓ / ← the one before, the
-  focused one pulsing 1.1 - 1.5 x, ○ running it. The port takes clicks only.
-- **Camp**
-  - CampTopMenu `0x81118718`:
-    - ← / → over the party's panels (com_002); → past the last hands focus to the buttons.
-    - Hold ○ on a panel and ← / → to move that member along (the party's order).
-    - CampcomBtnMenu `0x811160a2`: ← from the buttons back to the panels; com_005 on a
-      disabled button.
-  - CampItemMenu `0x8110dd74` / `0x8110ec86`: the count's reels.
-    - ← / → between the tens, the ones and Yes / No; ↑ / ↓ turn the reel in focus (cyan).
-    - ○ the button in focus, × No.
-  - CampEquipFutterMenu `0x81108660`: □ the next character too.
-  - FutterMenu `0x81156662`: L / R the Gene / Skill tab (the skill change menu); □ cycles 6
-    sort orders.
-  - GeneChangeMenu `0x81159e62`:
-    - ← to its change button (`mat_gene_change_01` cyan, the cards dimmed 0.6).
-    - From there a 2 x 4 grid of the gene's skills with their help.
-    - Wearing another's card asks first (0x241); com_005 on one that can't be worn.
-    - GeneSkillListMenu `0x81161726` and GeneStatusMenu `0x81166386` are not in the port.
-  - The gene lab:
-    - GeneSynthesisListMenu `0x8116d6b6`: △ opens the row's gene status; ← back to the left
-      panel. The port's △ is Mix.
-    - NormalSynthesisMenu `0x8117cf06`: ↑ / ↓ over the two materials and the Mix button
-      (cyan).
-    - IntensificationSynthesisMenu `0x81178302`: ← / → between its two buttons (cyan).
-    - GeneSynthesisFutter `0x811690b6`: □ the next tab, START its OK.
-  - GiftSynthesizeListMenu `0x81189cf2`: △ the gene status. GiftSynthesizeMain `0x8118c40a`:
-    ← Yes / → No in focus.
-  - OptionMenu `0x81203e54`:
-    - ↑ / ↓ over the rows, on to the footer (OptionFooterMenu `0x81201416`).
-    - The Sound tab: ← / → ±10, repeating; the SE row plays com_003, Voice j002_110. The
-      port picks the row by the keys 1 - 3.
-    - The focused item's `mat_opt_btn_01` cyan.
-  - PictureBookMenu `0x81211910`:
-    - A card cursor over 2 pages x 6 (com_002); ○ its profile.
-    - ↓ from the bottom row to the 8 tabs (cyan, the others 0.5).
-    - The profile's ↑ / ↓ the rarity.
-- **Shops, My Page, VS**
-  - SShopMenu `0x8124b4e8`: a cursor over Box, Item, VIP.
-    - → / ← between Box and Item; ↓ / ↑ between Item and VIP.
-    - In focus scale 1 and (1, 1, 1); the others 0.9 and (0.8, 0.8, 0.8).
-    - The port's keys 1 - 3 only: Item and VIP can't be reached by a controller.
-  - LuckyBoxMenu `0x811ea496`:
-    - ← / → over the 3 buy panels; ↑ / ↓ to the check button (cyan); com_002 on each move.
-    - The box at 1.35 while the panels have focus.
-  - MyPageNewTopMenu `0x811fb75c`: ↑ / ↓ a cursor over its 4 buttons, round, skipping hidden
-    ones; the right stick scrolls the log. The port's keys 1 - 4.
-  - WorldSelectMenu `0x8127e8e0`: ○ presses List (cyan). The port's Return enters the dungeon;
-    its list is on the L key.
-  - VsModeMenu `0x81272806`: a cursor over 6 places.
-    - Two large buttons, then a 2 x 2 grid; the focused one in its highlight frame.
-    - × back one screen.
-    - A controller is stuck on the port's second screen, which takes the keys 1 / 2.
-  - VsModeListMenu `0x8126adba`: △ picks the row at once; ← out of the list.
-  - TournamentDitailMenu `0x81266bb2`: L / R the tournament before / after.
-  - PresentGet `0x8121a866`: ← / → between OK and Cancel.
+| Screen | Vita controls now handled by the port | Reference |
+|---|---|---|
+| Field camera | L swings behind the player's facing over 0.3 seconds by the short route and restores tilt. Manual camera input interrupts it. | GomBehind `0x810c4484` |
+| Field goods | R cycles visible goods without a sound; □ uses the focused goods. ○ keeps check/talk. | FieldGoodsMenu `0x81144642`, `0x81145a2c` |
+| Battle commands | Directions move focus with com_002; disabled commands play com_005; Back plays com_004. Focus uses cyan, disabled buttons use the darker material. | comBtnMenu `0x8112bdc4` |
+| Battle lists | Up/Down stop at the ends. L/R select Items/Gifts; unusable entries play com_005. | comListMenu `0x81137862` |
+| Battle targets | Flexible-target commands expose the cyan target-side switch beyond the target list. With all-target commands, Up/Down choose the whole side or its switch. Back plays com_004. | TargetSelectMenu `0x81253dd0`, phaseTargetSelect `0x8105ad76`, OpenTargetSelect `0x81050f20` |
+| VS wildcards | Left/Right select cards without wrapping or cursor sound; ○ chooses an available card, otherwise com_004. | WildCardMenu `0x81277712` |
+| Battle victory/result | ○ shortens the victory camera. During the result tally, the first ○ completes the tally; a subsequent ○ closes it. | phaseVictory `0x81057fec`, BattleResultV2Menu `0x8122d28e` |
+| Vista messages | With the Vista window open, the first △ reveals controls for three seconds; another △ pauses, and △ resumes. SetVistaPauseButtonEnable controls the on-screen button visibility, not controller permission. Scene and sound pause together. | VistaWindowMenu `0x8125f47e` |
+| Tutorials | L previous, R next, within page boundaries. The manual traverses tutorial entries and returns to its list at the ends. | TutorialMenu `0x8125c57e`, ChangeChapterSentence `0x8125b324` |
+| Event Yes/No | Up/Down select with com_002 and cyan focus; ○ answers (Yes com_003, No com_004), × answers No. | YNChoiceButton `0x812818ca` |
+| Save files | Up from the page's first slot reaches Copy/Delete; Left/Right choose between them; Down returns to files. Down at the page's last slot stops. L/R change pages. Questions have directional Yes/No focus. Copy/Delete still require their existing confirmations. | SaveFileMenu `0x812384a2` |
+| Movies | △ pauses/resumes picture and sound; □ stops; ○ has no controller action. Touch/mouse keep their Skip control. | `0x812d6060` |
+| Lunch | Up/Right next visible balloon, Down/Left previous; ○ runs its conversation. The focused balloon pulses between 1.1 and 1.5 scale. | LunchMain `0x810b2bf0` |
+| Camp top | Left/Right move over party panels and back to buttons; hold ○ with Left/Right to reorder the party. Disabled buttons play com_005. | CampTopMenu `0x81118718`, CampcomBtnMenu `0x811160a2` |
+| Item quantity | Left/Right focus tens, ones, Yes and No; Up/Down turn the focused reel; ○ chooses the focused button; × cancels. Focused reels use cyan. | CampItemMenu `0x8110dd74`, `0x8110ec86` |
+| Equipment | □ selects the next character. | CampEquipFutterMenu `0x81108660` |
+| Gene change | L/R select Gene/Skill; □ cycles six native sorts. Left reaches the lock button; ○ toggles lock. Directions focus the skill grid/help; wearing another member's gene asks first. | FutterMenu `0x81156662`, GeneChangeMenu `0x81159e62` |
+| Gene lab | △ inspects a row's gene; Left reaches the materials/Mix panel; Up/Down move within it. Enhance buttons use Left/Right. □ cycles footer tabs and START confirms. | GeneSynthesisListMenu `0x8116d6b6`, NormalSynthesisMenu `0x8117cf06`, IntensificationSynthesisMenu `0x81178302`, GeneSynthesisFutter `0x811690b6` |
+| Gifts | △ inspects the resulting gene. Left selects Yes, Right selects No. | GiftSynthesizeListMenu `0x81189cf2`, GiftSynthesizeMain `0x8118c40a` |
+| Options | Up/Down move through rows and the footer. Sound Left/Right changes volume by 10, with SE/voice samples; focused controls use cyan. | OptionMenu `0x81203e54`, OptionFooterMenu `0x81201416` |
+| Gene Index | Directions move over the 2×3 cards, then the eight tabs; ○ opens a profile; profile Up/Down selects rarity. | PictureBookMenu `0x81211910` |
+| Premium shop | Spatial focus over Box, Item and VIP; focused scale/color 1/white, others 0.9/0.8. | SShopMenu `0x8124b4e8` |
+| Lucky Box | Left/Right choose buy panels; Up/Down switch to the contents button. L/R change boxes while buying. Focus is cyan; the box enlarges while buying. | LuckyBoxMenu `0x811ea496` |
+| My Page | Up/Down wrap over visible buttons; right stick scrolls the log. Presents use Left/Right between OK and Cancel. | MyPageNewTopMenu `0x811fb75c`, PresentGet `0x8121a866` |
+| World select | ○ opens List with cyan focus. | WorldSelectMenu `0x8127e8e0` |
+| VS menus | Directions navigate six positions and their native highlight frames; × returns one screen. In tournament lists, △ selects and Left leaves. Detail L/R selects adjacent tournaments. | VsModeMenu `0x81272806`, VsModeListMenu `0x8126adba`, TournamentDitailMenu `0x81266bb2` |
+
+Two audit interpretations were corrected against the callers. The battle target
+button changes target side; it is not an enemy-information screen. The Gene Change
+left button toggles the gene's lock; it does not equip it. Tutorial L/R return codes
+are interpreted by TutorialMain, giving the usual previous/next directions.
+
+The six gene sorts follow the native comparators: UID ascending, element ascending,
+level descending, level ascending, rarity descending, rarity ascending. Non-UID ties
+use master ID ascending (`GeneSortStatusListUp 0x8115cfe8`, comparators
+`0x814281e8` through `0x8142c278`).
+
+The port reuses its existing gene status/card UI for inspection and its skill grid/help
+for Skill focus; the Vita's separate GeneStatus/GeneSkillList window layouts are not
+reconstructed here. Lucky Box contents use the port's paged system window. These
+controls are usable from the pad; those layouts are not pixel-identical to the Vita.
+
+### Verification
+
+`engine/tools/pad_vita_test.sh` drives an SDL virtual gamepad against the user's Vita
+copy, headless, with isolated profiles. Its sourced camp/shop/battle files cover
+party reorder, reels, gene locks/sorts/tabs, index focus, options, equipment, shop
+and VS navigation, battle commands/categories/result, plus the existing field,
+choice, Continue, camera and title checks. Additional cases cover save footer,
+movie pause/stop, goods and lunch. Set `CR3_VITA_DATA` to a decrypted Vita release
+and run CTest's `viewer-pad-vita`, or pass case groups to the script. Failed runs
+retain their logs and any nonzero viewer exit is a failure.
+
+`gom-camera` checks recenter timing, shortest-angle movement, manual interruption
+and fixed-camera behavior. `battle-target-side` checks actual damage/healing on the
+selected side using synthetic tables, including default and fixed-side commands.
+`event-reset` checks tutorial boundaries and cleared pause state. `viewer-vista-pause` checks reveal-before-pause, frozen scene time, resume after timeout/window close, and the native visibility setter. Physical
+controller/device validation is not claimed; captures inspect the desktop renderer.
+
+Validated November 8, 2026 on Linux, RelWithDebInfo: all 30 virtual-controller
+scenarios passed against the local Vita copy. After the final pause and held-confirm
+cleanup, all 24 component/regression CTests passed, including graphics recovery and
+the new Vista pause test. The normal `engine/build/cr3view` is rebuilt and up to date.
+No game data or captures are included in these changes.

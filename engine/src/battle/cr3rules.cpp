@@ -639,13 +639,18 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         const bool ownSide = c.target == 2 || c.target == 13 || (c.target == 9 && ally);
         const bool playersSide = c.target == 10 || c.target == 11; // (the player's: whoever uses it - battle 7's 1844 by a monster)
         const bool ownOne = c.target == 1 || c.target == 12 || (c.target == 8 && ally);
+        // TargetSelectMenu's change-side button supplies a fighter on the selected side for
+        // flexible target kinds. Unspecified targets retain the command's default behavior.
+        const bool chosenSide = tgt >= 0 && size_t(tgt) < fighters.size() && (c.target == 5 || c.target == 7 || c.target == 8 || c.target == 9);
         if (c.all)
             for (size_t k = 0; k < fighters.size(); ++k) {
-                if ((c.target == 5 || fighters[k].player == (playersSide ? true : ownSide ? s.player : !s.player)) && targetable(int(k), &c) &&
+                if ((chosenSide ? fighters[k].player == fighters[size_t(tgt)].player :
+                     c.target == 5 || fighters[k].player == (playersSide ? true : ownSide ? s.player : !s.player)) && targetable(int(k), &c) &&
                     (c.target != 13 || int(k) != src))
                     targets.push_back(int(k));
             }
         else if (c.target == 0) targets.push_back(src);
+        else if (chosenSide && targetable(tgt, &c)) targets.push_back(tgt);
         else if (ally || ownOne) { // (the one chosen on its own side, else - a monster's - one at random; 12 never itself)
             if (tgt >= 0 && fighters[size_t(tgt)].player == s.player && !fighters[size_t(tgt)].dead() && (c.target != 12 || tgt != src)) targets.push_back(tgt);
             else {

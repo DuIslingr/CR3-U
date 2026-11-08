@@ -92,6 +92,8 @@
 #include "battle/cr3rules.hpp"
 #include "script/gamesave.hpp"
 #include "event/runtime.hpp"
+#include "script/vm.hpp"
+#include <squirrel.h>
 #include "viewer/audio.hpp"
 #include "viewer/mobile_input.hpp"
 #include "platform/input_cancel.hpp"
@@ -872,6 +874,7 @@ struct Viewer {
     // A tap (Return, a click): the vista's page; the field's - its event's page, else the nearest
     // balloon's function (FldMain::CheckTouchEventExec_Tap, EventExecute), the leader turned to it
     void tap() {
+        if (eventMode && event && event->vistaPaused) return;
         if (movieTap()) return;
         if (cr3BattleMode) return cr3BattleTap();
         if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
@@ -2803,6 +2806,7 @@ struct Viewer {
         areaCam = Cr3AreaCam();
         worldSel.dragging = town.dragging = myPage.dragging = false;
         fastHeld = false, fastUntil = 0;
+        cr3Camp.confirmHeld = false;
         keyLock.pressing = vslash.pressed = false;
         if (iai.stage == 2) iai.stage = 1;
         if (aim.stage == 2) aim.stage = 1;
@@ -2836,6 +2840,7 @@ struct Viewer {
         return true;
     }
     void pointerDown(float fx, float fy) {
+        if (eventMode && event && event->vistaPaused) return;
         if (!menuPointerDown(fx, fy)) pointerActivate(fx, fy);
     }
     void pointerActivate(float fx, float fy) {
@@ -2897,10 +2902,20 @@ struct Viewer {
     int loggedTeamLevel = 1; // (the team level as last logged)
     void advance(float dt, float sx, float sy, bool run) {
         uiClock += dt;
+        const bool vistaPaused = eventMode && event && event->vistaPaused;
+        if (!vistaPaused && (!eventMode || !event || !event->windowOpen(cr3::EventRuntime::Vista))) vistaControlsUntil = -1;
+        audio.pauseSceneSound(vistaPaused);
+        if (vistaPaused) return;
         // (tests: --input's language@s - the options' language one on at s seconds, as its arrow)
         if (!inputScript.empty() && inputScript.front().compare(0, 9, "language@") == 0 && uiClock >= float(std::atof(inputScript.front().c_str() + 9)))
             inputScript.pop_front(), optionTap(3106);
         testClick();
+        if (!inputScript.empty() && inputScript.front().rfind("lunch:start:", 0) == 0) {
+            const std::string request = inputScript.front().substr(12);
+            inputScript.pop_front();
+            const size_t colon = request.find(':');
+            startLunch(request.substr(0, colon), colon == std::string::npos ? "null" : request.substr(colon + 1));
+        }
         stepMovie(dt);
         if (areaMode || cr3BattleMode) game.cr3Records.playSeconds += dt; // (My Page's play time)
         if (game.cr3TeamLevel != loggedTeamLevel) SDL_Log("team level %d -> %d", loggedTeamLevel, game.cr3TeamLevel), loggedTeamLevel = game.cr3TeamLevel;
@@ -8089,9 +8104,11 @@ struct Viewer {
         }
         // (--input goods:<n> - the field's goods button n: tests)
         if (!scripted && !inputScript.empty() && inputScript.front().compare(0, 6, "goods:") == 0 && cr3FieldIdle()) {
-            const int n = std::atoi(inputScript.front().c_str() + 6);
+            const bool show = inputScript.front().rfind("goods:show", 0) == 0;
+            const int n = std::atoi(inputScript.front().c_str() + (show ? 10 : 6));
             inputScript.pop_front();
-            useGoods(n);
+            if (show) game.goodsButtons.insert(n); // fixture: same visibility as the script's goods button
+            else useGoods(n);
         }
         // (Fld2Main::SM_Camp 5: the camp closed, the area script's evt001 - the story's steps that
         // wait on the camp: s101_d02_00606_set, a gift merged)
@@ -9122,7 +9139,9 @@ struct Viewer {
                 reinforceCr3Battle(next);
             } else {
                 cr3VictoryIn = true;
+                cr3StageStart = cr3BattleClock;
                 if (game.next.battleMusicAfter >= 0) audio.playBgm(game.next.battleMusicAfter, 0);
+                SDL_Log("battle: victory camera ready");
             }
         } else if (cr3BattleStage == Cr3BattleStage::Won) {
             // (BtlSysStateAction::phaseVictory: then a half-second fade - and the result unless
@@ -9338,6 +9357,7 @@ struct Viewer {
     bool cr3EscapeAllowed() const { return (cr3Battle.couplingFlags & 2) == 0; }
     // the get-set menu's choice: 0 Battle, 1 Escape, 2 Options
     void chooseCr3GetSet(int b) {
+        if (b == 1 && !cr3EscapeAllowed()) return (void)audio.playSe("com_005", false);
         if (b == 2) return openCr3OptionsFrom(2); // (the Options: CR3-U's - the camp's Options screen over the battle)
         if (b == 0) {
             audio.playSe(0x153, false);
@@ -9400,7 +9420,9 @@ struct Viewer {
     };
     std::vector<Cr3ListRow> cr3List;
     bool cr3ListItems = false;
+    int cr3ItemCategory = 0; // (BtlItemListUI: Items / Gifts)
     int cr3ChosenCommand = -1, cr3ChosenItem = 0;
+    bool cr3TargetChanged = false;
     std::string cr3NameOf(const char* file, const char* table, int id) {
         if (std::strcmp(file, "gene_name.mbe") == 0) {
             const std::string original = cardArtwork.originalName(id, originalTextJapanese);
@@ -9418,9 +9440,10 @@ struct Viewer {
         if (!f.find(table, id, "ipp", r)) return {};
         return optionLanguage == 0 || r.s(2).empty() ? r.s(1) : r.s(2);
     }
-    void openCr3List(bool items) {
+    void openCr3List(bool items, bool keepCategory = false) {
         cr3List.clear();
         cr3ListItems = items;
+        if (!keepCategory) cr3ItemCategory = 0;
         const cr3::Cr3Fighter& f = cr3Rules.fighters[size_t(cr3Chooser)];
         if (!items) {
             for (int id : cr3Rules.skillCommands(cr3Chooser)) { // (its skills' commands first: kind 127)
@@ -9441,13 +9464,16 @@ struct Viewer {
             }
         } else {
             for (const auto& [id, n] : game.cr3Items) {
-                if (id <= 0 || id >= 100000 || n <= 0) continue; // (an Item's full id its own)
+                if (id <= 0 || n <= 0 || (cr3ItemCategory == 0 ? id >= 100000 : id / 100000 != 6)) continue;
                 cr3::MbeFile::Row r;
                 // (item_para's +0x30 its battle command - Chocolate by J's 526, a Plum's 511; -1 none:
                 // a field item, the Microcommunicator, not listed. +0x0c is no command)
-                if (!cr3BattleTables.item.find("Item", id, "iiiiiiiiiiiii", r) || r.i(12) < 0) continue;
+                if (!cr3BattleTables.item.find(cr3ItemCategory == 0 ? "Item" : "Gift", id % 100000,
+                                               cr3ItemCategory == 0 ? "iiiiiiiiiiiii" : "iiiiiiiiiiiiiiiiii", r)) continue;
+                const int command = r.i(cr3ItemCategory == 0 ? 12 : 15);
+                if (command < 0) continue;
                 Cr3ListRow row;
-                row.item = id, row.command = r.i(12), row.count = n, row.name = cr3NameOf("item_name.mbe", "ItemName", id);
+                row.item = id, row.command = command, row.count = n, row.name = cr3ItemText(id, false);
                 cr3::Cr3Command c;
                 row.usable = cr3Rules.command(row.command, c) && c.usable();
                 cr3List.push_back(row);
@@ -9460,19 +9486,31 @@ struct Viewer {
         }
         cr3BattleStage = Cr3BattleStage::List, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
     }
+    bool battleShoulder(bool right) {
+        if (!vitaButtons() || !cr3BattleMode || cr3BattleStage != Cr3BattleStage::List || !cr3ListItems) return false;
+        cr3ItemCategory = (cr3ItemCategory + (right ? 1 : -1) + 2) % 2;
+        openCr3List(true, true);
+        audio.playSe("com_002", false);
+        SDL_Log("battle: item category %d", cr3ItemCategory);
+        return true;
+    }
     void chooseCr3ListRow(int k) {
-        if (k < 0 || size_t(k) >= cr3List.size() || !cr3List[size_t(k)].usable) return;
+        if (k < 0 || size_t(k) >= cr3List.size() || !cr3List[size_t(k)].usable) {
+            audio.playSe("com_005", false);
+            SDL_Log("battle: unavailable list row %d", k);
+            return;
+        }
         const Cr3ListRow& row = cr3List[size_t(k)];
         audio.playSe(0x153, false);
         cr3ChosenCommand = row.command, cr3ChosenItem = row.item;
         cr3::Cr3Command c;
         cr3Rules.command(row.command, c);
-        if (c.all || c.ally() || c.target == 0) { // (no target to choose: all of them, or the user - its own side's first)
+        if ((!vitaButtons() && (c.all || c.ally())) || c.target == 0) { // (the Vita also confirms ally and all-target commands)
             if (row.item) game.cr3Items[row.item] = std::max(game.cr3Items[row.item] - 1, 0);
             cr3Choices.push_back({cr3Chooser, row.command, c.ally() ? cr3Chooser : -1});
             nextCr3Chooser();
         } else {
-            cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+            cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0, cr3TargetChanged = false;
         }
     }
     void nextCr3Chooser() {
@@ -9506,14 +9544,18 @@ struct Viewer {
         startCr3Action();
     }
     void chooseCr3Command(int button) {
-        if (cr3Chooser < 0 || !cr3Rules.menuEnabled(cr3Chooser, button)) return;
+        if (cr3Chooser < 0 || !cr3Rules.menuEnabled(cr3Chooser, button)) {
+            audio.playSe("com_005", false);
+            SDL_Log("battle: unavailable command %d", button);
+            return;
+        }
         audio.playSe(0x153, false);
         if (button == 3) { // (Guard)
             cr3Choices.push_back({cr3Chooser, -1, -1});
             nextCr3Chooser();
         } else if (button == 0) { // (Attack: its target next)
             cr3ChosenCommand = cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, cr3ChosenItem = 0;
-            cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+            cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0, cr3TargetChanged = false;
         } else if (button == 1 || button == 2) { // (Gene: its commands; Item)
             openCr3List(button == 2);
         }
@@ -9524,8 +9566,23 @@ struct Viewer {
             if (!cr3Rules.fighters[f].player && cr3Rules.targetable(int(f))) out.push_back(int(f));
         return out;
     }
+    bool cr3TargetCanChange() {
+        cr3::Cr3Command c;
+        return vitaButtons() && cr3Rules.command(cr3ChosenCommand, c) && (c.target == 5 || c.target == 7 || c.target == 8 || c.target == 9);
+    }
+    std::vector<int> cr3Targets() {
+        if (!vitaButtons()) return cr3LivingMonsters();
+        cr3::Cr3Command c;
+        cr3Rules.command(cr3ChosenCommand, c);
+        const bool own = c.target == 1 || c.target == 2 || c.target == 10 || c.target == 11 || c.target == 12 || c.target == 13 || ((c.target == 8 || c.target == 9) && c.ally());
+        std::vector<int> targets;
+        for (size_t f = 0; f < cr3Rules.fighters.size(); ++f)
+            if (cr3Rules.fighters[f].player == (own != cr3TargetChanged) && cr3Rules.targetable(int(f), &c) &&
+                ((c.target != 12 && c.target != 13) || int(f) != cr3Chooser)) targets.push_back(int(f));
+        return targets;
+    }
     void chooseCr3Target(int n) {
-        const std::vector<int> alive = cr3LivingMonsters();
+        const std::vector<int> alive = cr3Targets();
         if (alive.empty() || cr3Chooser < 0) return;
         audio.playSe(0x153, false);
         const int target = alive[size_t(std::clamp(n, 0, int(alive.size()) - 1))];
@@ -9849,25 +9906,45 @@ struct Viewer {
     bool cr3BattleKey(SDL_Keycode k) {
         if (cr3ContinueKey(k)) return true;
         if (cr3BattleEvents && cr3BattleEvents->running()) return false;
+        const bool enter = k == SDLK_RETURN || k == SDLK_KP_ENTER;
+        if (enter && (cr3BattleStage == Cr3BattleStage::Won || cr3BattleStage == Cr3BattleStage::Result)) return cr3BattleTap(), true;
+        cr3::Cr3Command targetCommand;
+        const bool allTargets = cr3BattleStage == Cr3BattleStage::Target && cr3Rules.command(cr3ChosenCommand, targetCommand) && targetCommand.all;
         const int n = cr3BattleStage == Cr3BattleStage::Menu ? 3 : cr3BattleStage == Cr3BattleStage::Command ? 4
                     : cr3BattleStage == Cr3BattleStage::Escape ? (cr3EscapeAsk ? 2 : 0)
                     : cr3BattleStage == Cr3BattleStage::List ? std::max(int(cr3List.size()), 1)
-                    : cr3BattleStage == Cr3BattleStage::Target ? int(cr3LivingMonsters().size()) : 0;
+                    : cr3BattleStage == Cr3BattleStage::Target ? (allTargets ? 1 : int(cr3Targets().size())) : 0;
         if (n == 0) return false;
-        if (k == SDLK_UP) cr3Focus = (cr3Focus + n - 1) % n;
-        else if (k == SDLK_DOWN) cr3Focus = (cr3Focus + 1) % n;
-        else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+        const int before = cr3Focus;
+        if (k == SDLK_UP || k == SDLK_DOWN) {
+            const int direction = k == SDLK_UP ? -1 : 1;
+            if (vitaButtons() && cr3BattleStage == Cr3BattleStage::Target && cr3TargetCanChange()) cr3Focus = (cr3Focus + direction + n + 1) % (n + 1);
+            else if (vitaButtons() && cr3BattleStage == Cr3BattleStage::List) cr3Focus = std::clamp(cr3Focus + direction, 0, n - 1);
+            else cr3Focus = (cr3Focus + direction + n) % n;
+            if (before != cr3Focus) {
+                audio.playSe("com_002", false);
+                SDL_Log("battle: cursor %d%s", cr3Focus, cr3BattleStage == Cr3BattleStage::Target && cr3Focus == n ? " (change target side)" : "");
+            }
+        }
+        else if (enter) {
             if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(cr3Focus);
             else if (cr3BattleStage == Cr3BattleStage::Escape) chooseCr3Escape(cr3Focus);
             else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(cr3Focus);
             else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
+            else if (cr3TargetCanChange() && cr3Focus == n) {
+                cr3TargetChanged = !cr3TargetChanged, cr3Focus = 0;
+                audio.playSe("com_003", false);
+                SDL_Log("battle: target side changed");
+            }
             else chooseCr3Target(cr3Focus);
         } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Escape) { // (GetHardReturnTap: com_004, back)
             audio.playSe("com_004", false);
             chooseCr3Escape(1);
         } else if (k == SDLK_BACKSPACE && (cr3BattleStage == Cr3BattleStage::Target || cr3BattleStage == Cr3BattleStage::List)) {
+            audio.playSe("com_004", false);
             cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
         } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Command && cr3Choices.empty()) {
+            audio.playSe("com_004", false);
             beginCr3Turn(); // (back to the get-set)
         } else return false;
         return true;
@@ -9919,7 +9996,18 @@ struct Viewer {
 
     void cr3BattleTap() {
         if (cr3BattleEvents && cr3BattleEvents->running()) return cr3BattleEvents->touch(); // (its window's page)
-        if (cr3BattleStage == Cr3BattleStage::Result && cr3BattleClock - cr3StageStart > 1.0f) return endCr3Battle();
+        if (cr3BattleStage == Cr3BattleStage::Result) {
+            if (cr3BattleClock - cr3StageStart < 1.5f) {
+                cr3StageStart = cr3BattleClock - 1.5f;
+                SDL_Log("battle: result tally completed");
+            } else endCr3Battle();
+            return;
+        }
+        if (cr3BattleStage == Cr3BattleStage::Won && cr3VictoryIn) {
+            cr3StageStart = cr3BattleClock - 2.5f;
+            SDL_Log("battle: victory camera skipped");
+            return;
+        }
         if (cr3BattleStage == Cr3BattleStage::In) cr3Cam.start = cr3BattleClock - cr3Cam.end; // (phaseBattleIn: a tap ends it)
         else if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(cr3Focus);
         else if (cr3BattleStage == Cr3BattleStage::Escape) chooseCr3Escape(cr3Focus);
@@ -10039,6 +10127,7 @@ struct Viewer {
 
     // VistaMain: the map's figure, the event's script (its scene's figures follow it)
     bool startVista(const std::string& function, const std::string& map) {
+        vistaControlsUntil = -1;
         std::string err;
         unload(vistaMap);
         vistaMap = ViewFigure();
@@ -10085,6 +10174,7 @@ struct Viewer {
     // runs <function less _evt>_<model> (s001_t02_00301_c106), the balloons held while it runs.
     // LunchEvent.Shutdown, the script over: on as a vista ends (BranchAfterVista)
     bool lunchActive = false, lunchWaitLogged = false;
+    std::string lunchFocus;
     std::string lunchFunction;
     Mat4 lastEventVP{};
     bool lastEventVPSet = false;
@@ -10092,7 +10182,7 @@ struct Viewer {
         SDL_Log("lunch: %s in %s", function.c_str(), map.c_str());
         const std::string script = eventScriptOf(function);
         if (!startVista(script.empty() ? function : script + ":" + function, map.empty() ? "null" : map)) return;
-        lunchActive = true, lunchWaitLogged = false, lunchFunction = function;
+        lunchActive = true, lunchWaitLogged = false, lunchFunction = function, lunchFocus.clear();
     }
     // a balloon's place on the screen (UI units, the screen 9.6 x 6.4 at least): false behind the camera
     bool lunchBalloonAt(const cr3::EventRuntime::LunchBalloon& b, float& x, float& y) {
@@ -10118,6 +10208,25 @@ struct Viewer {
         return false;
     }
     bool lunchIdle() const { return lunchActive && event && eventMode && !event->running() && !event->lunch().shutdown; }
+    bool lunchKey(SDL_Keycode key) {
+        if (!vitaButtons() || !lunchIdle()) return false;
+        std::vector<std::string> shown;
+        for (const auto& b : event->lunch().balloons)
+            if (b.shown && b.delay <= 0) shown.push_back(b.model);
+        if (shown.empty()) return true;
+        auto it = std::find(shown.begin(), shown.end(), lunchFocus);
+        int at = it == shown.end() ? 0 : int(it - shown.begin());
+        if (key == SDLK_UP || key == SDLK_RIGHT) at = (at + 1) % int(shown.size());
+        else if (key == SDLK_DOWN || key == SDLK_LEFT) at = (at + int(shown.size()) - 1) % int(shown.size());
+        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            lunchFocus = shown[size_t(at)];
+            chooseLunchBalloon(lunchFocus);
+            return true;
+        } else return true;
+        lunchFocus = shown[size_t(at)];
+        SDL_Log("lunch: the cursor on %s", lunchFocus.c_str());
+        return true;
+    }
     void chooseLunchBalloon(const std::string& model) {
         const std::string base = lunchFunction.size() > 4 && lunchFunction.compare(lunchFunction.size() - 4, 4, "_evt") == 0
                                      ? lunchFunction.substr(0, lunchFunction.size() - 4) : lunchFunction;
@@ -10147,9 +10256,19 @@ struct Viewer {
         cr3::SceneLighting none;
         dev->setLighting(none);
         dev->clearDepth();
+        if (vitaButtons()) {
+            const auto& balloons = event->lunch().balloons;
+            const auto focused = std::find_if(balloons.begin(), balloons.end(), [&](const auto& b) { return b.model == lunchFocus && b.shown && b.delay <= 0; });
+            if (focused == balloons.end()) {
+                lunchFocus.clear();
+                for (const auto& b : balloons) if (b.shown && b.delay <= 0) { lunchFocus = b.model; break; }
+            }
+        }
         for (const cr3::EventRuntime::LunchBalloon& b : event->lunch().balloons) {
             float x, y;
+            if (vitaButtons() && b.model == lunchFocus) cr3UiScale = 1.3f + 0.2f * std::sin(uiClock * 6);
             if (b.shown && lunchBalloonAt(b, x, y)) cr3UiPut("feflag_fr00", "", float(b.frame) / 30, x, y, view);
+            cr3UiScale = 1;
         }
     }
 
@@ -11595,6 +11714,14 @@ struct Viewer {
     // A title transition abandons menus and their callbacks; it never confirms them.
     // Keep game progress and preferences until the player chooses a save or new game.
     void resetSessionUi() {
+        audio.pauseSceneSound(false);
+        endMovie();
+        geneInspectOpen = false;
+        goodsFocus = -1;
+        lunchFocus.clear();
+        lunchActive = lunchWaitLogged = false;
+        lunchFunction.clear();
+        vistaControlsUntil = -1;
         campOpen = mapOpen = settingsOpen = optionsOpen = optionsAsk = false;
         saveStage = manualStage = 0;
         saveFailed = false;
@@ -11624,6 +11751,7 @@ struct Viewer {
         campOptions.asking = false;
         campOptions.from = 0;
         saveMenu.ask = 0;
+        saveMenu.footerFocus = -1;
         saveMenu.source = -1;
         saveTaps.clear();
     }
@@ -13736,6 +13864,8 @@ struct Viewer {
         float x0, y0, x1, y1;
     };
     std::vector<YesNoRect> yesNoRects;
+    int yesNoCursor = 0;
+    float yesNoSeenAge = -1;
     void drawYesNo(cr3::EventRuntime& ev, int w, int h) {
         yesNoRects.clear();
         if (!ev.yesNoShown()) return;
@@ -13745,6 +13875,8 @@ struct Viewer {
         // joint 10 on - slots 005 and 006 -, Yes (icon and text 10) and No (11). CR2's choice_io isn't
         // in CR3's data
         const float t = ev.yesNoAge(), a = std::min(t * 10.0f, 1.0f);
+        if (t < yesNoSeenAge) yesNoCursor = 0;
+        yesNoSeenAge = t;
         if (white.id) {
             static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
             const Mat4 id = cr3::mat4Identity();
@@ -13767,6 +13899,10 @@ struct Viewer {
             float px, py, cx, cy;
             if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(5 + b), px, py)) continue;
             const int id = 10 + b;
+            if (vitaButtons() && b == yesNoCursor) {
+                cr3UiTintMaterial = "mat_com_menuBtn_02";
+                cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+            }
             UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view, a);
             if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view, a);
             if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view, a);
@@ -13774,6 +13910,8 @@ struct Viewer {
             if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view, a);
             float ax, ay, bx, by;
             if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) yesNoRects.push_back({b == 0, ax / 10, ay / 10, bx / 10, by / 10});
+            cr3UiTintMaterial.clear();
+            cr3UiMaterialTint[0] = cr3UiMaterialTint[1] = cr3UiMaterialTint[2] = 1;
         }
     }
     // CR3's choice menus (Msg_Choice2 / 3 - SelectTwo/ThreeChoicesMenu, interface event): no dimming;
@@ -14018,11 +14156,40 @@ struct Viewer {
         if (!ev || !ev->yesNoShown()) return;
         audio.playSe(yes ? "com_003" : "com_004", false); // (comBtn's tap: decide, cancel)
         ev->answerYesNo(yes);
+        yesNoCursor = 0, yesNoSeenAge = -1;
         SDL_Log("yes / no: %s", yes ? "yes" : "no");
     }
     bool yesNoShown() {
         cr3::EventRuntime* ev = activeEvents();
         return ev && ev->yesNoShown();
+    }
+    bool yesNoKey(SDL_Keycode k) {
+        if (!yesNoShown()) return false;
+        cr3::EventRuntime* ev = activeEvents();
+        if (ev->yesNoAge() < yesNoSeenAge) yesNoCursor = 0;
+        yesNoSeenAge = ev->yesNoAge();
+        if (vitaButtons() && (k == SDLK_UP || k == SDLK_DOWN)) {
+            yesNoCursor ^= 1;
+            audio.playSe("com_002", false);
+            SDL_Log("yes / no: cursor %s", yesNoCursor == 0 ? "yes" : "no");
+        } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) answerYesNo(!vitaButtons() || yesNoCursor == 0);
+        else if (k == SDLK_Y) answerYesNo(true);
+        else if (k == SDLK_BACKSPACE || k == SDLK_N) answerYesNo(false);
+        return true;
+    }
+    bool tutorialShoulder(bool right) {
+        if (manualStage == 2 && manualToList && !manualEntries.empty()) {
+            const int next = manualCursor + (right ? 1 : -1);
+            if (next < 0 || size_t(next) >= manualEntries.size()) {
+                manualEvents.reset(), manualStage = 1, manualStart = uiClock;
+                SDL_Log("tutorial: back to the list");
+            } else playManual(next);
+            return true;
+        }
+        cr3::EventRuntime* ev = manualStage == 2 && manualEvents ? manualEvents.get() : activeEvents();
+        if (!ev || !ev->tutorialPage(right ? 1 : -1)) return false;
+        SDL_Log("tutorial: page %d", ev->page() + 1);
+        return true;
     }
     bool yesNoClick(float fx, float fy) {
         if (!yesNoShown()) return false;
@@ -16265,8 +16432,25 @@ struct Viewer {
         int lights = 2;          // (5: GeneSynthesizeEffect's gene lights - a merge's two, an enhance's fed + its own)
         float effectEnd = 0;     // (5: the camera's animation's length - the effect over)
         std::string message;     // (an alert's, over it)
+        bool leftFocus = false;
+        int materialFocus = 0;   // base, material, Mix
     } geneMenu;
-    void geneMenuScreen(int screen) { geneMenu.screen = screen, geneMenu.since = 0, geneLabFocus = 0; }
+    bool geneInspectOpen = false;
+    cr3::Cr3Gene inspectedGene;
+    void inspectGene(int master, int held = -1) {
+        inspectedGene = held >= 0 && held < int(game.cr3Genes.size()) ? game.cr3Genes[size_t(held)] : cr3::Cr3Gene(master);
+        if (held < 0 && game.cr3Db) game.cr3Db->addGeneLevels(inspectedGene, 0);
+        geneInspectOpen = true;
+        audio.playSe("com_003", false);
+        SDL_Log("gene: status %d", master);
+    }
+    bool geneInspectionKey(SDL_Keycode key) {
+        if (!geneInspectOpen) return false;
+        if (key == SDLK_BACKSPACE || key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_TAB)
+            geneInspectOpen = false, audio.playSe("com_004", false);
+        return true;
+    }
+    void geneMenuScreen(int screen) { geneMenu.screen = screen, geneMenu.since = 0, geneLabFocus = 0, geneMenu.leftFocus = false, geneMenu.materialFocus = 0; }
     std::vector<int> geneLabButtons() const {
         if (geneMenu.screen == 1) return {30, 31};
         if (geneMenu.screen == 9) return {33, 34, 35}; // (SetGeneSynthesisArsenalSecond: Store, Take Out, Expand)
@@ -16615,6 +16799,12 @@ struct Viewer {
         }
         if (screen == 4 || screen == 8) drawGeneAsk(w, h, view);
         if (!geneMenu.alert.empty()) drawGeneAlert(w, h, view);
+        if (geneInspectOpen) {
+            dev->clearDepth();
+            drawGeneBase(w, h, view, &inspectedGene);
+            geneLabTaps.clear();
+            geneLabTaps.push_back({-100, -100, 100, 100, kTapAlert});
+        }
     }
     // the base gene (GeneChangeMenu 0xa5, CreateBaseGeneSelectMenu): its status at the left -
     // geneCngStsMenu at geneCngStsPositon's call_geneCngStsMenu: the eight commands and skills at
@@ -16625,13 +16815,13 @@ struct Viewer {
     // HP and MP bars full; the cards at the right - geneCngListMenu at geneCngListPosition's fit6,
     // its nine call_geneCngListPanel joints the places (x, y + 0.25, z x 10), the one in focus the
     // fifth at 4 x, the rest 3 x
-    void drawGeneBase(int w, int h, const Mat4& view) {
-        const float t = geneMenu.since, alpha = std::min(t / 0.2f, 1.0f);
+    void drawGeneBase(int w, int h, const Mat4& view, const cr3::Cr3Gene* inspected = nullptr) {
+        const float t = inspected ? 1 : geneMenu.since, alpha = std::min(t / 0.2f, 1.0f);
         const std::vector<cr3::Cr3Gene>& genes = game.cr3Genes;
         geneMenu.focus = std::clamp(geneMenu.focus, 0, std::max(int(geneMenu.genes.size()) - 1, 0));
         float x, y;
         UiFig& lp = cr3UiPut("genecnglistposition", "genecnglistposition_io", t, 0, 0, view, alpha);
-        if (cr3UiCall(lp, "call_geneCngListMenu", x, y, w, h)) {
+        if (!inspected && cr3UiCall(lp, "call_geneCngListMenu", x, y, w, h)) {
             UiFig& list = cr3UiPut("genecnglistmenu", "genecnglistmenu_io", t, x, y, view, alpha);
             float px[9], py[9], pz[9];
             int slots = 0;
@@ -16659,14 +16849,16 @@ struct Viewer {
                     if (g < 0 || g >= int(geneMenu.genes.size())) continue;
                     const cr3::Cr3Gene& gene = genes[size_t(geneMenu.genes[size_t(g)])];
                     const float scale = s == 5 ? 4.0f : 3.0f;
-                    drawCr3Card(gene.master, px[s], py[s] + 0.25f, pz[s] + float(8 - std::abs(s - 5)) * 0.1f, scale, view, alpha, geneBaseSelectable(gene));
+                    drawCr3Card(gene.master, px[s], py[s] + 0.25f, pz[s] + float(8 - std::abs(s - 5)) * 0.1f, scale, view,
+                                alpha * (vitaButtons() && cr3Camp.stage == 3 && cr3Camp.geneButton ? 0.6f : 1), geneBaseSelectable(gene));
                     const float hw = 0.15f * scale, hh = 0.22f * scale; // (its tap: the card's face)
                     geneLabTaps.push_back({px[s] - hw, py[s] + 0.25f - hh, px[s] + hw, py[s] + 0.25f + hh, kTapCard + g});
                 }
             }
         }
-        if (geneMenu.genes.empty()) return;
-        const cr3::Cr3Gene& gene = genes[size_t(geneMenu.genes[size_t(geneMenu.focus)])];
+        if (!inspected && geneMenu.genes.empty()) return;
+        const cr3::Cr3Gene& gene = inspected ? *inspected : genes[size_t(geneMenu.genes[size_t(geneMenu.focus)])];
+        if (inspected) drawCr3Card(gene.master, 2.4f, 0, 1, 7, view);
         const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db ? game.cr3Db->geneInfo(gene.master) : nullptr;
         if (!gi) return;
         dev->clearDepth();
@@ -16675,7 +16867,12 @@ struct Viewer {
         UiFig& sts = cr3UiPut("genecngstsmenu", "", 0, x, y, view, alpha);
         float cx, cy;
         if (cr3UiCall(sts, "call_btStAtbIcon_fr00", cx, cy)) cr3UiPut("btstatbicon_fr00", "", float(gi->kind) / 30, cx, cy, view, alpha);
-        if (cr3UiCall(sts, "call_geneCnglockBtn_fr00", cx, cy)) cr3UiPut("genecnglockbtn_fr00", "", gene.locked ? 1.0f / 30 : 0.0f, cx, cy, view, alpha);
+        if (cr3UiCall(sts, "call_geneCnglockBtn_fr00", cx, cy)) {
+            if (vitaButtons() && cr3Camp.stage == 3 && cr3Camp.geneButton && cr3Camp.geneSkill < 0)
+                cr3UiTintMaterial = "mat_gene_change_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+            cr3UiPut("genecnglockbtn_fr00", "", gene.locked ? 1.0f / 30 : 0.0f, cx, cy, view, alpha);
+            cr3UiTintMaterial.clear();
+        }
         const int level = game.cr3Db->geneLevel(gene);
         const std::array<int, 6> stats = game.cr3Db->geneStats(gene);
         if (cr3UiCall(sts, "call_ccamEquJenePanel", cx, cy)) {
@@ -16712,7 +16909,8 @@ struct Viewer {
         for (size_t k = 0; k < lines.size() && k < 8; ++k) {
             char joint[16];
             std::snprintf(joint, sizeof joint, "typeM_L%02zu", k + 1);
-            if (cr3UiCall(sts, joint, cx, cy)) drawUiText(lines[k].first, 24, (cx + 0.075f) / 10, (cy - 0.15f) / 10, w, h, true, lines[k].second ? 0.26f : 0.6f);
+            const bool selected = vitaButtons() && cr3Camp.stage == 3 && cr3Camp.geneButton && int(k) == cr3Camp.geneSkill;
+            if (cr3UiCall(sts, joint, cx, cy)) drawUiText((selected ? "> " : "") + lines[k].first, 24, (cx + 0.075f) / 10, (cy - 0.15f) / 10, w, h, true, lines[k].second ? 0.26f : 0.6f);
         }
     }
     // the materials (GeneSynthesisListMenu 0xa2: comListMenu at comListPosition's call_comListMenu,
@@ -16805,7 +17003,9 @@ struct Viewer {
             const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(g.master);
             float px, py;
             if (!gi || !cr3UiCall(mp, "call_mixMtrMenu_00" + std::to_string(k + 1), px, py)) return;
+            if (vitaButtons() && geneMenu.leftFocus && geneMenu.materialFocus == k) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
             UiFig& menu = cr3UiPut("mixmtrmenu", "", 0, px, py, view);
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             float cx, cy;
             if (cr3UiCall(menu, "call_mixMtrText_fr00", cx, cy)) cr3UiPut("mixmtrtext_fr00", "", float(k) / 30, cx, cy, view);
             if (cr3UiCall(menu, "call_mixStar_fr00", cx, cy)) cr3UiPut("mixstar_fr00", "", float(gi->stars - 1) / 30, cx, cy, view);
@@ -16852,7 +17052,9 @@ struct Viewer {
         }
         if (asked) return;
         if (chosen && cr3UiCall(mp, "call_mixBtn_fr00", x, y)) {
+            if (vitaButtons() && geneMenu.leftFocus && geneMenu.materialFocus == 2) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
             UiFig& b = cr3UiPut("mixbtn_fr00", "", geneMenu.result ? 1.0f / 30 : 0.0f, x, y, view);
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             float ax, ay, bx, by;
             if (cr3UiCall(b, "tapAreaCP01", ax, ay) && cr3UiCall(b, "tapAreaAP01", bx, by)) geneLabTaps.push_back(circleTap(ax, ay, bx, by, kTapMix));
         }
@@ -17276,6 +17478,7 @@ struct Viewer {
         SDL_Log("gene lab: %s - %zu genes", kNames[std::clamp(mode, 0, 4)], geneMenu.pickRows.size());
     }
     void chooseGeneLab(cr3::EventRuntime& ev, int id) {
+        if (geneInspectOpen) { geneInspectOpen = false; audio.playSe("com_004", false); return; }
         const int screen = geneMenu.screen;
         if (screen == 5) { // (a tap ends the effect - TouchGestureTap)
             if (id == kTapAlert) geneMenu.screen = 6, geneMenu.since = 0;
@@ -17516,6 +17719,7 @@ struct Viewer {
     bool geneLabKey(SDL_Keycode key) {
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !ev->geneLab().open || ev->geneLab().talking) return false;
+        if (geneInspectionKey(key)) return true;
         const int screen = geneMenu.screen;
         const bool up = key == SDLK_UP, down = key == SDLK_DOWN, enter = key == SDLK_RETURN || key == SDLK_SPACE;
         if (!geneMenu.alert.empty()) {
@@ -17544,6 +17748,35 @@ struct Viewer {
             } else if (enter && !geneMenu.genes.empty())
                 chooseGeneLab(*ev, kTapCard + geneMenu.focus);
         } else if (screen == 3 || screen == 7) {
+            if (vitaButtons() && key == SDLK_X) return chooseGeneLab(*ev, kTapTab + (geneMenu.tab + 1) % 4), true;
+            if (vitaButtons() && key == SDLK_TAB) {
+                int g = -1, master = 0;
+                if (screen == 7 && geneMenu.row < int(geneMenu.pickRows.size())) g = geneMenu.pickRows[size_t(geneMenu.row)];
+                else if (screen == 3 && game.cr3Db && geneMenu.row < int(geneMenu.rows.size())) {
+                    const auto& preview = game.cr3Db->mergePreviews()[size_t(geneMenu.rows[size_t(geneMenu.row)])];
+                    master = preview.result.master;
+                }
+                if (g >= 0) master = game.cr3Genes[size_t(g)].master;
+                if (master) inspectGene(master, g);
+                return true;
+            }
+            if (vitaButtons() && key == SDLK_LEFT && !geneMenu.leftFocus && (screen == 3 || geneMenu.mode == 1))
+                return geneMenu.leftFocus = true, geneMenu.materialFocus = 0, true;
+            if (vitaButtons() && screen == 7 && geneMenu.mode == 1 && geneMenu.leftFocus) {
+                if (key == SDLK_RIGHT && geneMenu.materialFocus == 0) geneMenu.materialFocus = 1, audio.playSe("com_002", false);
+                else if (key == SDLK_RIGHT) geneMenu.leftFocus = false;
+                else if (key == SDLK_LEFT) geneMenu.materialFocus = 0, audio.playSe("com_002", false);
+                else if (enter) chooseGeneLab(*ev, geneMenu.materialFocus == 0 ? kTapMix : kTapOk);
+                SDL_Log("gene lab: enhance button %d", geneMenu.materialFocus);
+                return true;
+            }
+            if (vitaButtons() && screen == 3 && geneMenu.leftFocus) {
+                if (key == SDLK_RIGHT) geneMenu.leftFocus = false;
+                else if (up || down) geneMenu.materialFocus = std::clamp(geneMenu.materialFocus + (down ? 1 : -1), 0, 2), audio.playSe("com_002", false);
+                else if (enter && geneMenu.materialFocus == 2 && !geneMenu.rows.empty()) chooseGeneLab(*ev, kTapRow + geneMenu.row);
+                SDL_Log("gene lab: material focus %d", geneMenu.materialFocus);
+                return true;
+            }
             const int n = int(screen == 3 ? geneMenu.rows.size() : geneMenu.pickRows.size());
             if ((up || down) && n > 0) {
                 const int r = std::clamp(geneMenu.row + (down ? 1 : -1), 0, n - 1);
@@ -17599,6 +17832,12 @@ struct Viewer {
         std::vector<int> genes; // (3: the cards - cr3Genes indices)
         int focus = 0;
         int button = 0;         // (1: the button in focus)
+        int panel = -1;        // (Vita's top: -1 the buttons, otherwise a party panel)
+        bool confirmHeld = false;
+        bool geneButton = false;
+        int geneSkill = -1;
+        int geneTake = -1, geneAskFocus = 1;
+        int geneSort = 0, geneTab = 0;
         int barCursor = 5;      // (the Vita's cursor over the field's buttons - kCr3BarIds' place; 5 Camp)
     } cr3Camp;
     static constexpr int kCampButtons[7] = {0, 1, 2, 5, 4, 3, 6};
@@ -18156,13 +18395,34 @@ struct Viewer {
     // middle one - feGoodsIcon_fr00 at its frame by the goods: 0 the bomb, 1 the toy camera -;
     // tapped, used (Fld2GoodsButton::OnUpdate: 1 PutBomb). The others round the arc, the
     // feGoodsNext arrows, the names: not yet
+    int goodsFocus = -1;
+    int focusedGoods() {
+        if (game.goodsButtons.empty()) return goodsFocus = -1;
+        if (!game.goodsButtons.count(goodsFocus)) goodsFocus = *game.goodsButtons.begin();
+        return goodsFocus;
+    }
+    bool goodsPad(bool cycle) {
+        if (!vitaButtons() || !areaMode || !cr3FieldIdle() || cr3Camp.stage != 0) return false;
+        const int goods = focusedGoods();
+        if (goods < 0) return false;
+        if (cycle) {
+            auto it = game.goodsButtons.find(goods);
+            if (++it == game.goodsButtons.end()) it = game.goodsButtons.begin();
+            goodsFocus = *it;
+            SDL_Log("field: goods cursor %d", goodsFocus);
+        } else {
+            SDL_Log("field: goods uses %d", goods);
+            useGoods(goods);
+        }
+        return true;
+    }
     void drawCr3Goods(int w, int h, const Mat4& view) {
         if (game.goodsButtons.empty()) return;
         float x, y, px, py, ix, iy;
         UiFig& pos = cr3UiPut("fegoodsposition", "", 0, 0, 0, view);
         if (!cr3UiCall(pos, "call_feGoodsMenu", x, y, w, h)) return;
         UiFig& menu = cr3UiPut("fegoodsmenu", "", 0, x, y, view);
-        const int goods = *game.goodsButtons.begin(); // (the one in focus: the first held)
+        const int goods = focusedGoods();
         if (!cr3UiCall(menu, "call_feGoodsPanel_03", px, py)) return; // (the arc's middle - _01 .. _05 down from the corner)
         UiFig& panel = cr3UiPut("fegoodspanel", "fegoodspanel_in", 1.0f, px, py, view);
         if (cr3UiCall(panel, "call_feGoodsIcon_fr00", ix, iy)) cr3UiPut("fegoodsicon_fr00", "", float(goods) / 30, ix, iy, view);
@@ -18176,7 +18436,7 @@ struct Viewer {
         else SDL_Log("field: goods %d (not in yet)", goods);
     }
     void openCr3Camp() {
-        cr3Camp.stage = 1, cr3Camp.since = 0, cr3Camp.button = 0;
+        cr3Camp.stage = 1, cr3Camp.since = 0, cr3Camp.button = 0, cr3Camp.panel = -1;
         audio.playSe("com_003", false);
         SDL_Log("camp: open (CR3)");
     }
@@ -18212,6 +18472,11 @@ struct Viewer {
                 }
                 if (!cr3UiCall(chara, "call_camTopCharaPanel_00" + std::to_string(k + 1), cx, cy)) continue;
                 UiFig& panel = cr3UiPut("camtopcharapanel", "", 0, cx, cy, view);
+                if (vitaButtons() && k == cr3Camp.panel) {
+                    cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
+                    cr3UiPut("camtopcharapanel", "", 0, cx, cy, view);
+                    cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+                }
                 const int gk = game.wornGene(members[size_t(k)]);
                 const cr3::Cr3Gene* g = gk >= 0 ? &game.cr3Genes[size_t(gk)] : nullptr;
                 const cr3::Cr3OfflineDb::GeneInfo* gi = g && game.cr3Db ? game.cr3Db->geneInfo(g->master) : nullptr;
@@ -18270,7 +18535,7 @@ struct Viewer {
                     const int id = kCampButtons[b];
                     const bool off = !cr3CampButtonOn(id);
                     UiFig& panel = cr3UiPut("combtnspanel", "", 0, px, py, view, off ? 0.5f : 1.0f);
-                    if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b == cr3Camp.button ? 1 : 0) / 30, cx, cy, view, off ? 0.5f : 1.0f);
+                    if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b == cr3Camp.button && cr3Camp.panel < 0 ? 1 : 0) / 30, cx, cy, view, off ? 0.5f : 1.0f);
                     if (cr3UiCall(panel, "call_comBtnIconS_fr00", cx, cy)) cr3UiPut("combtnicons_fr00", "", float(id) / 30, cx, cy, view, off ? 0.5f : 1.0f);
                     if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
                     float ax, ay, ex, ey;
@@ -18364,7 +18629,23 @@ struct Viewer {
     // a character's gene: the lab's cards (camp: all held; the focused card's status), each card
     // worn by another marked with its camEquChr_fr00 (the character - 1)
     void drawCr3CampGenes(int w, int h, const Mat4& view) {
+        if (geneInspectOpen) {
+            drawGeneBase(w, h, view, &inspectedGene);
+            cr3CampTaps.clear();
+            cr3CampTaps.push_back({-100, -100, 100, 100, 9010});
+            return;
+        }
         // (the base select's drawing, its genes and focus the camp's)
+        std::string help;
+        if (vitaButtons() && cr3Camp.geneButton && cr3Camp.focus < int(cr3Camp.genes.size())) {
+            const auto& gene = game.cr3Genes[size_t(cr3Camp.genes[size_t(cr3Camp.focus)])];
+            int at = 0;
+            for (const auto& slot : gene.slots)
+                if (slot[1] >= 0 && at++ == cr3Camp.geneSkill) {
+                    help = slot[0] == 1 ? cr3NameOf("skill_help.mbe", "SkillHelp", slot[1]) : cr3NameOf("command_help.mbe", "CommandHelp", slot[1]);
+                    break;
+                }
+        }
         std::swap(geneMenu.genes, cr3Camp.genes), std::swap(geneMenu.focus, cr3Camp.focus);
         const int mode = geneMenu.mode;
         const float since = geneMenu.since;
@@ -18397,8 +18678,16 @@ struct Viewer {
             if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
             if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
         }
+        drawCr3Header(cr3Camp.since, 3, help, w, h, view);
+        if (cr3Camp.geneTake >= 0) drawCr3Asked(menuAnnounce(0x241), cr3Camp.since, cr3Camp.geneAskFocus, true, 9001, 9002, w, h, view);
     }
     void chooseCr3Camp(int id) {
+        if (cr3Camp.stage == 3 && geneInspectOpen) { geneInspectOpen = false; audio.playSe("com_004", false); return; }
+        if (cr3Camp.stage == 3 && cr3Camp.geneTake >= 0 && (id == 9001 || id == 9002 || id == -1)) {
+            if (id == 9001) chooseCr3Camp(kTapCard + cr3Camp.geneTake);
+            else cr3Camp.geneTake = -1, audio.playSe("com_004", false);
+            return;
+        }
         if (cr3Camp.stage == 0) {
             if (id == 100) { // (feBtnOpen: the panel opened - com_008 - or closed - com_009)
                 cr3Camp.panelOpen = !cr3Camp.panelOpen, cr3Camp.panelAt = uiClock;
@@ -18448,7 +18737,8 @@ struct Viewer {
             // (InterfaceMain::Update 0x1d: by the button's place - 0 Items, 1 Equipment, 2 Gene Swap,
             // 3 Fuse Gifts, 4 Quests, 5 Status, 6 Options)
             const int b = id - 200;
-            if (b < 0 || b >= 7 || !cr3CampButtonOn(kCampButtons[b])) return;
+            if (b < 0 || b >= 7) return;
+            if (!cr3CampButtonOn(kCampButtons[b])) return (void)audio.playSe("com_005", false);
             audio.playSe("com_003", false);
             cr3Camp.button = b;
             if (b == 0) openCampItems();
@@ -18480,12 +18770,13 @@ struct Viewer {
             const int worn = game.wornGene(cr3Camp.chara);
             const auto it = std::find(cr3Camp.genes.begin(), cr3Camp.genes.end(), worn);
             cr3Camp.focus = it != cr3Camp.genes.end() ? int(it - cr3Camp.genes.begin()) : 0;
-            cr3Camp.stage = 3, cr3Camp.since = 0;
+            cr3Camp.stage = 3, cr3Camp.since = 0, cr3Camp.geneButton = false, cr3Camp.geneSkill = -1, cr3Camp.geneTake = -1;
             SDL_Log("camp: %d's gene (%zu cards)", cr3Camp.chara, cr3Camp.genes.size());
             return;
         }
         if (cr3Camp.stage == 3 && id >= kTapCard && id < kTapRow) {
             const int g = id - kTapCard;
+            if (g < 0 || g >= int(cr3Camp.genes.size())) return;
             if (g != cr3Camp.focus) {
                 cr3Camp.focus = g;
                 audio.playSe("com_002", false);
@@ -18493,6 +18784,14 @@ struct Viewer {
             }
             // (SetEquipGeneCardGeneChangeMenuCamp: worn - taken from whoever wore it)
             cr3::Cr3Gene& gene = game.cr3Genes[size_t(cr3Camp.genes[size_t(g)])];
+            const int wearer = game.geneWearer(cr3Camp.genes[size_t(g)]);
+            if (vitaButtons() && wearer > 0 && wearer != cr3Camp.chara && cr3Camp.geneTake != g) {
+                cr3Camp.geneTake = g, cr3Camp.geneAskFocus = 1;
+                audio.playSe("com_003", false);
+                SDL_Log("camp: take gene from character %d?", wearer);
+                return;
+            }
+            cr3Camp.geneTake = -1;
             const int uid = game.geneUid(gene);
             for (auto it = game.cr3GeneOf.begin(); it != game.cr3GeneOf.end();)
                 it = it->second == uid ? game.cr3GeneOf.erase(it) : std::next(it);
@@ -18582,22 +18881,62 @@ struct Viewer {
     // 0x811ea496). With the Vita copy as the game
     bool cr3Shoulder(bool right) {
         if (!vitaButtons()) return false;
+        if (geneInspectOpen) return true;
+        if (tutorialShoulder(right) || battleShoulder(right) || vsShoulder(right) || campGeneShoulder(right)) return true;
         const SDL_Keycode lr = right ? SDLK_RIGHT : SDLK_LEFT;
         cr3::EventRuntime* ev = activeEvents();
         if (ev && ev->geneLab().open && !ev->geneLab().talking && geneMenu.alert.empty() && (geneMenu.screen == 3 || geneMenu.screen == 7))
-            return geneLabKey(lr), true;
+            return chooseGeneLab(*ev, kTapTab + (geneMenu.tab + (right ? 1 : 3)) % 4), true;
         if (ev && ev->shop().open && !ev->shop().talking && shopMenu.told.empty() && (shopMenu.screen == 1 || shopMenu.screen == 2))
             return cr3ShopKey(SDLK_TAB), true;
-        if (vs.screen == 11 && !vs.boxBuy) return chooseVs(right ? 1102 : 1100), true;
+        if (vs.screen == 11 && !vs.boxCheckFocus && !vs.ask && vs.told.empty()) return chooseVs(right ? 1102 : 1100), true;
         if (cr3Camp.stage == 6 && campGifts.step == 0 && campGifts.told.empty()) return campGiftsKey(lr), true;
         if (cr3Camp.stage == 7) return campQuestsKey(lr), true;
         if (cr3Camp.stage == 9 && !saveImport.active() && !campOptions.asking) {
             const int to = std::clamp(campOptions.tab + (right ? 1 : -1), 0, kOptionTabs - 1);
-            if (to != campOptions.tab) campOptions.tab = to, audio.playSe("com_003", false), SDL_Log("options: tab %d", to);
+            if (to != campOptions.tab) campOptions.tab = to, campOptions.footer = false, audio.playSe("com_003", false), SDL_Log("options: tab %d", to);
             return true;
         }
         if (cr3Camp.stage == 10 && myPage.screen == 3 && !cardView.gene) return myPageKey(lr), true;
+        if (areaMode && cr3Camp.stage == 0 && cr3FieldIdle()) {
+            if (right) return goodsPad(true);
+            if (areaCamFree()) {
+                areaCamera.behind(areaYaw);
+                SDL_Log("camera: behind the player");
+                return true;
+            }
+        }
         return false;
+    }
+    void cr3CampPadHeld(bool held) { cr3Camp.confirmHeld = held; }
+    bool campGeneShoulder(bool right) {
+        (void)right;
+        if (!vitaButtons() || cr3Camp.stage != 3 || cr3Camp.geneTake >= 0) return false;
+        cr3Camp.geneTab ^= 1;
+        cr3Camp.geneButton = cr3Camp.geneTab != 0;
+        cr3Camp.geneSkill = cr3Camp.geneButton ? 0 : -1;
+        audio.playSe("com_003", false);
+        SDL_Log("camp: gene tab %s", cr3Camp.geneTab ? "Skill" : "Gene");
+        return true;
+    }
+    void sortCampGenes() {
+        if (!game.cr3Db || cr3Camp.genes.empty()) return;
+        const int selected = cr3Camp.genes[size_t(std::clamp(cr3Camp.focus, 0, int(cr3Camp.genes.size()) - 1))];
+        const int order = cr3Camp.geneSort;
+        std::stable_sort(cr3Camp.genes.begin(), cr3Camp.genes.end(), [&](int a, int b) {
+            const auto& ga = game.cr3Genes[size_t(a)];
+            const auto& gb = game.cr3Genes[size_t(b)];
+            const auto* ia = game.cr3Db->geneInfo(ga.master);
+            const auto* ib = game.cr3Db->geneInfo(gb.master);
+            // GeneSortStatusListUp: UID, element, level descending / ascending,
+            // rarity descending / ascending. Non-UID ties use the master ID.
+            if (order == 0) return (ga.uid > 0 ? ga.uid : a) < (gb.uid > 0 ? gb.uid : b);
+            const int va = order == 1 ? (ia ? ia->kind : -1) : order < 4 ? game.cr3Db->geneLevel(ga) : ia ? ia->grade : -1;
+            const int vb = order == 1 ? (ib ? ib->kind : -1) : order < 4 ? game.cr3Db->geneLevel(gb) : ib ? ib->grade : -1;
+            return va == vb ? ga.master < gb.master : order == 2 || order == 4 ? va > vb : va < vb;
+        });
+        cr3Camp.focus = int(std::find(cr3Camp.genes.begin(), cr3Camp.genes.end(), selected) - cr3Camp.genes.begin());
+        SDL_Log("camp: gene sort %d", order);
     }
     bool cr3CampKey(SDL_Keycode key) {
         if (cr3Camp.stage == 0) {
@@ -18612,18 +18951,60 @@ struct Viewer {
         if (cr3Camp.stage == 8) return campStatusKey(key), true;
         if (cr3Camp.stage == 9) return campOptionsKey(key), true;
         if (cr3Camp.stage == 10) return myPageKey(key), true;
+        if (cr3Camp.stage == 3 && geneInspectionKey(key)) return true;
         const bool up = key == SDLK_UP, down = key == SDLK_DOWN, enter = key == SDLK_RETURN || key == SDLK_SPACE;
+        if (vitaButtons() && cr3Camp.stage == 3 && cr3Camp.geneTake >= 0) {
+            if (key == SDLK_LEFT || key == SDLK_RIGHT || up || down) cr3Camp.geneAskFocus ^= 1, audio.playSe("com_002", false);
+            else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE || (enter && cr3Camp.geneAskFocus)) cr3Camp.geneTake = -1, audio.playSe("com_004", false);
+            else if (enter) chooseCr3Camp(kTapCard + cr3Camp.geneTake);
+            return true;
+        }
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCr3Camp(-1);
         else if (cr3Camp.stage == 1) {
-            if (up || down) cr3Camp.button = (cr3Camp.button + (down ? 1 : 6)) % 7, audio.playSe("com_002", false);
-            else if (enter && cr3CampButtonOn(kCampButtons[cr3Camp.button])) chooseCr3Camp(200 + cr3Camp.button);
+            const int n = int(cr3PartyMembers().size());
+            if (vitaButtons() && (key == SDLK_LEFT || key == SDLK_RIGHT)) {
+                if (cr3Camp.panel < 0) { if (key == SDLK_LEFT && n) cr3Camp.panel = n - 1; }
+                else {
+                    const int to = cr3Camp.panel + (key == SDLK_RIGHT ? 1 : -1);
+                    if (to >= 0 && to < n) {
+                        if (cr3Camp.confirmHeld) {
+                            int positions[5], count = 0;
+                            for (int slot = 0; slot < 5; ++slot) if (game.cr3Party[slot] > 0) positions[count++] = slot;
+                            std::swap(game.cr3Party[positions[cr3Camp.panel]], game.cr3Party[positions[to]]);
+                            SDL_Log("camp: party order moved %d to %d", cr3Camp.panel, to);
+                        }
+                        cr3Camp.panel = to;
+                    } else if (to == n && !cr3Camp.confirmHeld) cr3Camp.panel = -1;
+                }
+                audio.playSe("com_002", false);
+                SDL_Log("camp: party panel %d", cr3Camp.panel);
+            } else if (cr3Camp.panel < 0 && (up || down)) cr3Camp.button = (cr3Camp.button + (down ? 1 : 6)) % 7, audio.playSe("com_002", false);
+            else if (enter && cr3Camp.panel < 0) chooseCr3Camp(200 + cr3Camp.button);
         } else if (cr3Camp.stage == 2) {
             const int n = int(cr3PartyMembers().size());
             if ((up || down) && n > 0) cr3Camp.row = std::clamp(cr3Camp.row + (down ? 1 : -1), 0, n - 1), audio.playSe("com_002", false);
             else if (enter && n > 0) chooseCr3Camp(300 + cr3Camp.row);
         } else if (cr3Camp.stage == 3) {
             const int n = int(cr3Camp.genes.size());
-            if ((up || down) && n > 0) chooseCr3Camp(kTapCard + std::clamp(cr3Camp.focus + (down ? 1 : -1), 0, n - 1));
+            if (vitaButtons() && key == SDLK_X) cr3Camp.geneSort = (cr3Camp.geneSort + 1) % 6, sortCampGenes(), audio.playSe("com_002", false);
+            else if (vitaButtons() && key == SDLK_LEFT && !cr3Camp.geneButton) cr3Camp.geneButton = true, cr3Camp.geneSkill = -1, audio.playSe("com_002", false);
+            else if (vitaButtons() && cr3Camp.geneButton) {
+                if (key == SDLK_RIGHT && cr3Camp.geneSkill < 0) cr3Camp.geneSkill = 0;
+                else if (key == SDLK_RIGHT && cr3Camp.geneSkill % 2 == 0) ++cr3Camp.geneSkill;
+                else if (key == SDLK_RIGHT) cr3Camp.geneButton = false;
+                else if (key == SDLK_LEFT) cr3Camp.geneSkill = cr3Camp.geneSkill > 0 && cr3Camp.geneSkill % 2 ? cr3Camp.geneSkill - 1 : -1;
+                else if (up || down) cr3Camp.geneSkill = cr3Camp.geneSkill < 0 && down ? 0 : std::clamp(cr3Camp.geneSkill + (down ? 2 : -2), -1, 7);
+                else if (enter && cr3Camp.geneSkill < 0 && n > 0) {
+                    auto& gene = game.cr3Genes[size_t(cr3Camp.genes[size_t(cr3Camp.focus)])];
+                    gene.locked = !gene.locked;
+                    audio.playSe("com_003", false);
+                    SDL_Log("camp: gene %d %s", gene.master, gene.locked ? "locked" : "unlocked");
+                } else if (enter && cr3Camp.geneSkill >= 0 && n > 0) {
+                    const int g = cr3Camp.genes[size_t(cr3Camp.focus)];
+                    inspectGene(game.cr3Genes[size_t(g)].master, g);
+                }
+                SDL_Log("camp: gene skill focus %d", cr3Camp.geneSkill);
+            } else if ((up || down) && n > 0) chooseCr3Camp(kTapCard + std::clamp(cr3Camp.focus + (down ? 1 : -1), 0, n - 1));
             else if (enter && n > 0) chooseCr3Camp(kTapCard + cr3Camp.focus);
         }
         return true;
@@ -18699,6 +19080,7 @@ struct Viewer {
         int item = 0, count = 1, held = 0;      // (the item chosen, how many to use, how many held)
         int kind = 0, amount = 0;               // (its first field effect)
         int step = 0;                           // 0 the list, 1 how many, 2 a gene for it, 3 a character, 4 asked (a gift itemised), 5 asked (the Microcommunicator)
+        int countFocus = 0;                     // tens, ones, Yes, No (Vita's CampItemMenu)
         std::string told;                       // (an alert over it - a tap ends it)
         float toldSince = 0;
     } campItems;
@@ -18945,7 +19327,7 @@ struct Viewer {
         if (ci.step == 4) {
             std::string text = menuAnnounce(0x1d0);
             if (const size_t at = text.find("{name}"); at != std::string::npos) text.replace(at, 6, cr3ItemText(ci.item, false));
-            drawCr3Asked(text, t, 0, true, 500, 501, w, h, view);
+            drawCr3Asked(text, t, ci.countFocus == 3 ? 1 : 0, true, 500, 501, w, h, view);
         }
         if (!ci.told.empty()) drawCr3Told(ci.told, ci.toldSince, 502, w, h, view);
         drawCr3Header(t, 1, sentence, w, h, view);
@@ -18974,6 +19356,8 @@ struct Viewer {
                     if (mi >= reel.materials.size()) continue;
                     if (reel.materials[mi] == a) vm.material.params[0x5e] = {0.0f, v};
                     if (reel.materials[mi] == b) vm.material.params[0x5e] = {0.13f, v < 0 ? v + 0.7f : v - 0.7f};
+                    if (reel.materials[mi] == a || reel.materials[mi] == b)
+                        vm.material.params[0x33] = vitaButtons() && campItems.countFocus == c ? std::vector<float>{0.5f, 1, 1.5f, 1} : std::vector<float>{1, 1, 1, 1};
                 }
             }
             drawFigure(reel.fig, view.data());
@@ -18992,7 +19376,7 @@ struct Viewer {
                 cr3UiDigits(stock, "call_camItemNum_fr00", "camitemnum_fr00", campItems.held, 3, 0, view);
             }
         }
-        drawCr3Asked(menuAnnounce(0xdc), t, 0, campItems.count >= 1 && campItems.count <= campItems.held, 500, 501, w, h, view);
+        drawCr3Asked(menuAnnounce(0xdc), t, campItems.countFocus == 3 ? 1 : 0, campItems.count >= 1 && campItems.count <= campItems.held, 500, 501, w, h, view);
     }
     // the item used on the gene `g` (a cr3Genes index) / the character `ch`
     void campItemOnGene(int g) {
@@ -19071,7 +19455,7 @@ struct Viewer {
             }
             if (!cr3ItemUsable(item)) return (void)audio.playSe("com_005", false);
             audio.playSe("com_003", false);
-            ci.item = item, ci.held = n, ci.count = 1;
+            ci.item = item, ci.held = n, ci.count = 1, ci.countFocus = 0;
             std::tie(ci.kind, ci.amount) = cr3FieldEffect(item);
             if (item / 100000 == 6) ci.step = 4;
             else if (ci.kind == 7 || ci.kind == 8) campItemsTarget();
@@ -19087,9 +19471,11 @@ struct Viewer {
                 (step == 10 ? tens : ones) = ((step == 10 ? tens : ones) + up + 10) % 10;
                 ci.count = tens * 10 + ones;
                 audio.playSe("com_002", false);
+                SDL_Log("camp: item count %d", ci.count);
             } else if (id == 501) {
                 audio.playSe("com_004", false);
                 ci.step = 0, cr3Camp.since = 1;
+                SDL_Log("camp: item count cancelled");
             } else if (id == 500 && ci.count >= 1 && ci.count <= ci.held) {
                 audio.playSe("com_003", false);
                 campItemsTarget();
@@ -19177,12 +19563,23 @@ struct Viewer {
             else if ((up || down) && n > 0) chooseCampItems(300 + std::clamp(ci.row + (down ? 1 : -1), 0, n - 1));
             else if (enter && n > 0) chooseCampItems(300 + ci.row);
         } else if (ci.step == 1) {
-            if (up || down) chooseCampItems(down ? 603 : 602);
+            if (vitaButtons() && (left || right)) {
+                ci.countFocus = std::clamp(ci.countFocus + (right ? 1 : -1), 0, 3);
+                audio.playSe("com_002", false);
+                SDL_Log("camp: item count focus %d", ci.countFocus);
+            } else if (vitaButtons() && (up || down)) {
+                if (ci.countFocus < 2) chooseCampItems(600 + ci.countFocus * 2 + (down ? 1 : 0));
+                else ci.countFocus = ci.countFocus == 2 ? 3 : 2, audio.playSe("com_002", false);
+            } else if (up || down) chooseCampItems(down ? 603 : 602);
             else if (left || right) chooseCampItems(left ? 601 : 600);
-            else if (enter || key == SDLK_Y) chooseCampItems(500);
+            else if (enter && vitaButtons()) {
+                if (ci.countFocus >= 2) chooseCampItems(ci.countFocus == 2 ? 500 : 501);
+            } else if (enter || key == SDLK_Y) chooseCampItems(500);
             else if (key == SDLK_N) chooseCampItems(501);
         } else if (ci.step == 4 || ci.step == 5) {
-            if (enter || key == SDLK_Y) chooseCampItems(500);
+            if (vitaButtons() && (up || down || left || right)) ci.countFocus = ci.countFocus == 3 ? 2 : 3, audio.playSe("com_002", false);
+            else if (enter) chooseCampItems(ci.countFocus == 3 ? 501 : 500);
+            else if (key == SDLK_Y) chooseCampItems(500);
             else if (key == SDLK_N) chooseCampItems(501);
         } else if (ci.step == 2) {
             const int n = int(cr3Camp.genes.size());
@@ -19592,6 +19989,7 @@ struct Viewer {
             if (id - 700 >= int(members.size()) || members[size_t(id - 700)] == ce.chara) return;
             ce.chara = members[size_t(id - 700)];
             audio.playSe("com_002", false);
+            SDL_Log("camp: equipment character %d", ce.chara);
             if (ce.step == 1) campEquipRows();
             return;
         }
@@ -19625,12 +20023,12 @@ struct Viewer {
         const bool enter = key == SDLK_RETURN || key == SDLK_SPACE;
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampEquip(-1);
         if (key == SDLK_TAB) return chooseCampEquip(800);
-        if (left || right) {
+        if (left || right || (vitaButtons() && key == SDLK_X)) {
             const std::vector<int> members = cr3PartyMembers();
             const auto it = std::find(members.begin(), members.end(), ce.chara);
             if (members.empty() || it == members.end()) return;
             const int at = int(it - members.begin()), n = std::min(int(members.size()), 5);
-            return chooseCampEquip(700 + (at + (right ? 1 : n - 1)) % n);
+            return chooseCampEquip(700 + (at + (right || key == SDLK_X ? 1 : n - 1)) % n);
         }
         const int n = ce.step == 0 ? 3 : int(ce.rows.size()), focus = ce.step == 0 ? ce.slot : ce.row;
         if ((up || down) && n > 0) chooseCampEquip(300 + std::clamp(focus + (down ? 1 : -1), 0, n - 1));
@@ -19695,6 +20093,7 @@ struct Viewer {
         std::vector<int> rows;   // (mergegifts' row indices)
         int row = 0;
         int step = 0;            // 0 the list, 1 asked
+        int askFocus = 0;
         std::string told;
         float toldSince = 0;
     } campGifts;
@@ -19750,6 +20149,12 @@ struct Viewer {
         SDL_Log("camp: fuse gifts (%zu)", campGifts.rows.size());
     }
     void drawCampGifts(int w, int h, const Mat4& view) {
+        if (geneInspectOpen) {
+            drawGeneBase(w, h, view, &inspectedGene);
+            cr3CampTaps.clear();
+            cr3CampTaps.push_back({-100, -100, 100, 100, 502});
+            return;
+        }
         const float t = cr3Camp.since;
         Cr3CampGifts& cg = campGifts;
         float x, y, cx, cy;
@@ -19829,12 +20234,13 @@ struct Viewer {
             std::string text = menuAnnounce(0x118);
             if (const size_t at = text.find("{rarety}"); at != std::string::npos) text.replace(at, 8, menuAnnounce(0x242 + (gi ? gi->grade : 0)));
             if (const size_t at = text.find("{name}"); at != std::string::npos) text.replace(at, 6, cr3NameOf("gene_name.mbe", "GeneName", focus->integer("gene_id")));
-            drawCr3Asked(text, t, 0, true, 500, 501, w, h, view);
+            drawCr3Asked(text, t, cg.askFocus, true, 500, 501, w, h, view);
         }
         if (!cg.told.empty()) drawCr3Told(cg.told, cg.toldSince, 502, w, h, view);
         drawCr3Header(t, 4, menuAnnounce(0x23e + cg.category), w, h, view);
     }
     void chooseCampGifts(int id) {
+        if (geneInspectOpen) { geneInspectOpen = false; audio.playSe("com_004", false); return; }
         Cr3CampGifts& cg = campGifts;
         if (!cg.told.empty()) {
             if (id == 502 || id == -1) cg.told.clear();
@@ -19871,7 +20277,7 @@ struct Viewer {
                 return;
             }
             audio.playSe("com_003", false);
-            cg.step = 1, cr3Camp.since = 0;
+            cg.step = 1, cg.askFocus = 0, cr3Camp.since = 0;
             return;
         }
         if (cg.step == 1 && (id == 500 || id == 501)) {
@@ -19892,18 +20298,23 @@ struct Viewer {
         }
     }
     void campGiftsKey(SDL_Keycode key) {
+        if (geneInspectionKey(key)) return;
         Cr3CampGifts& cg = campGifts;
         const bool up = key == SDLK_UP, down = key == SDLK_DOWN, left = key == SDLK_LEFT, right = key == SDLK_RIGHT;
         const bool enter = key == SDLK_RETURN || key == SDLK_SPACE;
         if (!cg.told.empty()) return enter || key == SDLK_ESCAPE ? chooseCampGifts(502) : void();
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampGifts(-1);
         if (cg.step == 1) {
-            if (enter || key == SDLK_Y) chooseCampGifts(500);
+            if (left || right) cg.askFocus = right ? 1 : 0, audio.playSe("com_002", false);
+            else if (enter) chooseCampGifts(cg.askFocus ? 501 : 500);
+            else if (key == SDLK_Y) chooseCampGifts(500);
             else if (key == SDLK_N) chooseCampGifts(501);
             return;
         }
         const int n = int(cg.rows.size());
-        if (left || right) chooseCampGifts(400 + (cg.category + (right ? 1 : 2)) % 3);
+        if (vitaButtons() && key == SDLK_TAB && cg.row < n) {
+            if (const auto* f = cr3Fusion(cg.rows[size_t(cg.row)])) inspectGene(f->integer("gene_id"));
+        } else if (left || right) chooseCampGifts(400 + (cg.category + (right ? 1 : 2)) % 3);
         else if ((up || down) && n > 0) chooseCampGifts(300 + std::clamp(cg.row + (down ? 1 : -1), 0, n - 1));
         else if (enter && n > 0) chooseCampGifts(300 + cg.row);
     }
@@ -20200,6 +20611,7 @@ struct Viewer {
     struct Cr3SaveMenu {
         int mode = 0;     // 0 play, 1 copy source, 2 copy destination, 3 delete, 5 NG+ destination
         int focus = kCr3SaveSlots; // kCr3SaveSlots: no file picked
+        int footerFocus = -1; // Vita's Copy / Delete row, -1 while over files
         int page = 0;
         int source = -1;  // (copy: the file copied)
         int ask = 0;      // 0 none, 1 play, 2 copy there, 3 delete, 4 delete - surely, 5 NG+, 6 cleared file
@@ -20453,12 +20865,33 @@ struct Viewer {
                 else if (k == SDLK_ESCAPE || k == SDLK_BACKSPACE) chooseSave(kTapSaveNo);
                 return true;
             }
-            if (m.ask == 5 && (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_UP || k == SDLK_DOWN)) m.askFocus ^= 1;
+            if ((vitaButtons() || m.ask == 5) && (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_UP || k == SDLK_DOWN)) m.askFocus ^= 1, audio.playSe("com_002", false);
             else if (k == SDLK_Y) chooseSave(kTapSaveYes);
-            else if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) chooseSave(m.ask == 5 && m.askFocus == 1 ? kTapSaveNo : kTapSaveYes);
+            else if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) chooseSave((vitaButtons() || m.ask == 5) && m.askFocus == 1 ? kTapSaveNo : kTapSaveYes);
             else if (k == SDLK_ESCAPE || k == SDLK_BACKSPACE || k == SDLK_N) chooseSave(kTapSaveNo);
             return true;
         }
+        if (vitaButtons() && m.footerFocus >= 0) {
+            if (k == SDLK_LEFT || k == SDLK_RIGHT) m.footerFocus ^= 1, audio.playSe("com_002", false), SDL_Log("title: save footer %s", m.footerFocus ? "delete" : "copy");
+            else if (k == SDLK_DOWN) {
+                m.footerFocus = -1, m.focus = kCr3SaveSlots;
+                saveMenuKey(SDLK_DOWN);
+            } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) {
+                const int mode = m.mode;
+                chooseSave(m.footerFocus ? kTapSaveDelete : kTapSaveCopy);
+                if (mode == m.mode) audio.playSe("com_005", false);
+                else m.footerFocus = -1;
+            } else if (k == SDLK_BACKSPACE || k == SDLK_ESCAPE) m.footerFocus = -1, chooseSave(-1);
+            else if (k == SDLK_PAGEUP || k == SDLK_PAGEDOWN) m.footerFocus = -1, chooseSave(k == SDLK_PAGEUP ? kTapSavePrev : kTapSaveNext);
+            return true;
+        }
+        if (vitaButtons() && k == SDLK_UP && (m.focus == kCr3SaveSlots || m.focus % kCr3SavePageSize == 0) && m.mode != 2 && m.mode != 5) {
+            m.footerFocus = 0;
+            audio.playSe("com_002", false);
+            SDL_Log("title: save footer copy");
+            return true;
+        }
+        if (vitaButtons() && k == SDLK_DOWN && m.focus < kCr3SaveSlots && m.focus % kCr3SavePageSize == kCr3SavePageSize - 1) return true;
         if (k == SDLK_UP || k == SDLK_DOWN) { // (the next file that can be picked)
             for (int step = 1; step <= kCr3SaveSlots; ++step) {
                 const int from = m.focus < kCr3SaveSlots ? m.focus
@@ -20722,7 +21155,9 @@ struct Viewer {
             for (const auto& [joint, fig, id, on] : {std::tuple<const char*, const char*, int, bool>{"call_ttlDataCopy", "ttldatacopy", kTapSaveCopy, m.mode == 1 || m.mode == 2},
                                                      {"call_ttlDatadelete", "ttldatadelete", kTapSaveDelete, m.mode == 3}}) {
                 if (!cr3UiCall(file, joint, cx, cy)) continue;
+                if (vitaButtons() && m.footerFocus == (id == kTapSaveCopy ? 0 : 1)) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
                 UiFig& b = cr3UiPut(fig, "", float(on ? 1 : 0) / 30, cx, cy, view);
+                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
                 if (cr3UiCall(b, "tapAreaS01", ax, ay) && cr3UiCall(b, "tapAreaE01", bx, by)) saveTaps.push_back({ax, ay, bx, by, id});
             }
         }
@@ -20782,7 +21217,7 @@ struct Viewer {
             std::snprintf(nb, sizeof nb, "%02d", m.askSlot + 1);
             if (const size_t at = ask.find("{number}"); at != std::string::npos) ask.replace(at, 8, nb);
             saveTaps.clear();
-            drawCr3Asked(ask, m.askSince, m.ask == 5 ? m.askFocus : 0, true, kTapSaveYes, kTapSaveNo, w, h, view, &saveTaps);
+            drawCr3Asked(ask, m.askSince, vitaButtons() || m.ask == 5 ? m.askFocus : 0, true, kTapSaveYes, kTapSaveNo, w, h, view, &saveTaps);
         }
     }
 
@@ -21022,7 +21457,9 @@ struct Viewer {
         if (planet && cr3UiCall(btnPos, "call_spBtnMenu", x, y)) {
             UiFig& bm = cr3UiPut("spbtnmenu", "", 0, x, y, view);
             if (cr3UiCall(bm, "call_spListBtn", cx, cy)) {
+                if (vitaButtons()) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
                 UiFig& lb = cr3UiPut("splistbtn", "", 0, cx, cy, view);
+                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
                 if (cr3UiCall(lb, "tapAreaS01", ax, ay) && cr3UiCall(lb, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapWorldList});
             }
         }
@@ -21631,7 +22068,8 @@ struct Viewer {
                 ws.row = open[size_t((at + (key == SDLK_RIGHT ? 1 : int(open.size()) - 1)) % int(open.size()))];
                 worldAim(ws.row);
                 audio.playSe("com_002", false);
-            } else if (enter && !open.empty()) chooseWorldSelect(*ev, kTapWorldPoint + (worldOpen(ws.row) ? ws.row : open[0]));
+            } else if (enter && vitaButtons()) chooseWorldSelect(*ev, kTapWorldList);
+            else if (enter && !open.empty()) chooseWorldSelect(*ev, kTapWorldPoint + (worldOpen(ws.row) ? ws.row : open[0]));
             else if (key == SDLK_L) chooseWorldSelect(*ev, kTapWorldList);
             else if (key == SDLK_G && !open.empty()) chooseWorldSelect(*ev, kTapWorldGift + (worldOpen(ws.row) ? ws.row : open[0]));
             else if (back) chooseWorldSelect(*ev, -1);
@@ -22963,6 +23401,7 @@ struct Viewer {
         float dragY = 0;
         bool dragging = false;
         int pressed = 0;      // (the menu's frame: the button)
+        int buttonFocus = 0, presentButton = 0, askFocus = 0;
         int ask = 0;          // (1 / 2: the button asked about)
         bool vs = false;      // (opened in the VS mode: GameMain +0x24b)
         std::string told;
@@ -22984,6 +23423,7 @@ struct Viewer {
     void openMyPage() {
         myPage = Cr3MyPage();
         myPage.vs = vs.screen != 0;
+        myPage.buttonFocus = myPage.vs ? 1 : 2;
         cr3Camp.stage = 10, cr3Camp.since = 0;
         audio.playSe("com_003", false);
         if (game.cr3Presents.size() > 79) myPage.told = menuAnnounce(0x2f5); // (MyPageNewTopMain 1: DAT_0143a080 over 0x4f)
@@ -23085,7 +23525,7 @@ struct Viewer {
         }
         // (the menu)
         if (cr3UiCall(pos, "call_mpTopMenu", x, y, w, h)) {
-            UiFig& menu = cr3UiPut("mptopmenu", "", float(mp.pressed) / 30, x, y, view);
+            UiFig& menu = cr3UiPut("mptopmenu", "", float(mp.pressed ? mp.pressed : vitaButtons() ? mp.buttonFocus : 0) / 30, x, y, view);
             const auto put = [&](const char* joint, const char* fig, float frame = 0) {
                 float px, py;
                 if (cr3UiCall(menu, joint, px, py)) cr3UiPut(fig, "", frame, px, py, view);
@@ -23113,7 +23553,7 @@ struct Viewer {
             }
         }
         drawCr3CampFooter(w, h, view);
-        if (mp.ask) drawCr3Asked(menuAnnounce(mp.ask == 1 ? 0x2ee : 0x2ef), t, 0, true, 500, 501, w, h, view);
+        if (mp.ask) drawCr3Asked(menuAnnounce(mp.ask == 1 ? 0x2ee : 0x2ef), t, vitaButtons() ? mp.askFocus : 0, true, 500, 501, w, h, view);
         if (!mp.told.empty()) drawCr3Told(mp.told, mp.toldSince, 502, w, h, view);
         drawCr3Header(t, 8, std::string(), w, h, view);
     }
@@ -23152,7 +23592,7 @@ struct Viewer {
         if (!myPageButtonOn(b)) return (void)audio.playSe("com_005", false);
         audio.playSe("com_003", false);
         mp.pressed = b;
-        if (b <= 2) mp.ask = b;
+        if (b <= 2) mp.ask = b, mp.askFocus = 0;
         else if (b == 3) openPresents();
         else openGeneIndex();
     }
@@ -23174,7 +23614,46 @@ struct Viewer {
     // at typeM_L01 .. L12, broken at its \ - Cr3UtilNPrint -, a mpCatRarity_fr00 for each of N ..
     // its own grade - frame 2n chosen, 2n + 1 not; the arrows the list's next or last gene, looked
     // at too); tapped outside it, the profile closes
+    int bookCursor = 0;
+    bool bookTabsFocus = false;
+    bool geneIndexKey(SDL_Keycode key) {
+        if (!vitaButtons() || myPage.screen != 3 || cardView.gene) return false;
+        auto& mp = myPage;
+        const bool up = key == SDLK_UP, down = key == SDLK_DOWN, left = key == SDLK_LEFT, right = key == SDLK_RIGHT;
+        const bool enter = key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE;
+        if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseGeneIndex(-1), true;
+        if (mp.profile > 0) {
+            if (left || right) chooseGeneIndex(right ? 701 : 700);
+            else if (up || down) {
+                const auto* gi = game.cr3Db ? game.cr3Db->geneInfo(mp.profile) : nullptr;
+                const int to = std::clamp(mp.rarity + (down ? 1 : -1), 0, gi ? gi->grade : 0);
+                if (to != mp.rarity) chooseGeneIndex(800 + to);
+            } else if (enter) chooseGeneIndex(903);
+            return true;
+        }
+        if (bookTabsFocus) {
+            if (up) bookTabsFocus = false;
+            else if (left || right) chooseGeneIndex(600 + (mp.bookTab + (right ? 1 : 7)) % 8);
+            return true;
+        }
+        // A spread has two pages, each a two-column, three-row grid.
+        int had = 0;
+        const auto cards = geneIndexCards(had);
+        const int n = std::min(12, std::max(int(cards.size()) - mp.bookPage * 6, 0));
+        bookCursor = std::clamp(bookCursor, 0, std::max(n - 1, 0));
+        const int old = bookCursor, page = bookCursor / 6, at = bookCursor % 6;
+        if (down && at / 2 == 2) bookTabsFocus = true;
+        else if (up || down) bookCursor = std::clamp(bookCursor + (down ? 2 : -2), page * 6, std::min(page * 6 + 5, std::max(n - 1, 0)));
+        else if (left || right) {
+            if (right && at % 2 == 1 && page == 0 && n > 6) bookCursor += 5;
+            else if (left && at % 2 == 0 && page == 1) bookCursor -= 5;
+            else bookCursor = std::clamp(bookCursor + (right ? 1 : -1), page * 6, std::min(page * 6 + 5, std::max(n - 1, 0)));
+        } else if (enter && n) chooseGeneIndex(1000 + mp.bookPage * 6 + bookCursor);
+        if (old != bookCursor || bookTabsFocus) audio.playSe("com_002", false), SDL_Log("gene index: cursor %d%s", bookCursor, bookTabsFocus ? " tabs" : "");
+        return true;
+    }
     void openGeneIndex() {
+        bookCursor = 0, bookTabsFocus = false;
         Cr3MyPage& mp = myPage;
         mp.screen = 3, mp.screenSince = 0, mp.pressed = 0, mp.bookTab = 7, mp.bookPage = 0, mp.profile = 0;
         SDL_Log("my page: gene index (%zu lines)", game.cr3Db ? game.cr3Db->book().size() : size_t(0));
@@ -23270,6 +23749,7 @@ struct Viewer {
                 u.fig.place.m[3] = px, u.fig.place.m[7] = py;
                 poseUi(u, "mpcattopmat_fr00", float(k) / 30);
                 u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = on ? 1.0f : 0.5f;
+                if (vitaButtons() && bookTabsFocus && on) u.fig.tint[0] = 0.5f, u.fig.tint[1] = 1, u.fig.tint[2] = 1.5f;
                 drawFigure(u.fig, view.data());
                 u.fig.tint[0] = u.fig.tint[1] = u.fig.tint[2] = 1.0f;
                 float ax, ay, ex, ey;
@@ -23285,7 +23765,10 @@ struct Viewer {
                 std::snprintf(joint, sizeof joint, "call_mpCatTopCardPanel_%03d", k + 1);
                 float px, py;
                 if (!cr3UiCall(menu, joint, px, py)) continue;
+                const bool cursor = vitaButtons() && !mp.profile && !bookTabsFocus && bookCursor == m * 6 + k;
+                if (cursor) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
                 UiFig& panel = cr3UiPut("mpcattopcardpanel", "", 0, px, py, view);
+                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
                 const int at = (mp.bookPage + m) * 6 + k;
                 if (at >= int(cards.size())) continue;
                 const auto [line, gene] = cards[size_t(at)];
@@ -23563,7 +24046,7 @@ struct Viewer {
                 if (const size_t at = text.find("{itemname}"); at != std::string::npos) text.replace(at, 10, name);
                 if (const size_t at = text.find("{itemnumber}"); at != std::string::npos) text.replace(at, 12, std::to_string(p.gene ? 1 : p.count));
             }
-            drawCr3Asked(text, t, 0, presentTakeable(focused), 500, 501, w, h, view);
+            drawCr3Asked(text, t, vitaButtons() ? mp.presentButton : 0, presentTakeable(focused), 500, 501, w, h, view);
         }
         if (!mp.told.empty()) drawCr3Told(mp.told, mp.toldSince, 502, w, h, view);
         std::string help;
@@ -23693,8 +24176,10 @@ struct Viewer {
     }
     void myPageKey(SDL_Keycode key) {
         Cr3MyPage& mp = myPage;
-        const bool enter = key == SDLK_RETURN || key == SDLK_SPACE, back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
+        const bool enter = key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE, back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
+        if (!mp.told.empty()) return (enter || back) ? chooseMyPage(502) : void();
         if (mp.screen == 3) {
+            if (geneIndexKey(key)) return;
             if (cardView.gene) return (enter || back) ? chooseMyPage(904) : void();
             if (back) return chooseMyPage(-1);
             if (key == SDLK_LEFT || key == SDLK_RIGHT) return chooseMyPage(key == SDLK_LEFT ? 700 : 701);
@@ -23713,8 +24198,13 @@ struct Viewer {
             if (back) return chooseMyPage(-1);
             if (mp.screen == 1) {
                 const int n = int(mp.rows.size());
+                if (vitaButtons() && (key == SDLK_LEFT || key == SDLK_RIGHT)) {
+                    const int to = key == SDLK_RIGHT ? 1 : 0;
+                    if (to != mp.presentButton) mp.presentButton = to, audio.playSe("com_002", false), SDL_Log("my page: present button %d", to);
+                    return;
+                }
                 if ((key == SDLK_UP || key == SDLK_DOWN) && n > 0) return chooseMyPage(300 + std::clamp(mp.row + (key == SDLK_DOWN ? 1 : -1), 0, n - 1));
-                if (enter) return chooseMyPage(500);
+                if (enter) return chooseMyPage(vitaButtons() && mp.presentButton ? 501 : 500);
                 return;
             }
             const int n = int(mp.genes.size());
@@ -23723,7 +24213,27 @@ struct Viewer {
             return;
         }
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseMyPage(myPage.ask ? 501 : -1);
-        if (myPage.ask && (key == SDLK_RETURN || key == SDLK_SPACE)) return chooseMyPage(500);
+        if (myPage.ask && enter) return chooseMyPage(vitaButtons() && mp.askFocus ? 501 : 500);
+        if (vitaButtons()) {
+            if (myPage.ask) {
+                if (key == SDLK_LEFT || key == SDLK_UP || key == SDLK_RIGHT || key == SDLK_DOWN) mp.askFocus ^= 1, audio.playSe("com_002", false);
+                return;
+            }
+            if (key == SDLK_UP || key == SDLK_DOWN) {
+                const int way = key == SDLK_DOWN ? 1 : -1;
+                for (int n = 0, b = mp.buttonFocus; n < 4; ++n) {
+                    b = (b - 1 + way + 4) % 4 + 1;
+                    if (myPageButtonOn(b)) {
+                        if (b != mp.buttonFocus) audio.playSe("com_002", false);
+                        mp.buttonFocus = b;
+                        SDL_Log("my page: the cursor on %d", b);
+                        break;
+                    }
+                }
+                return;
+            }
+            if (enter) return chooseMyPage(200 + mp.buttonFocus);
+        }
         if (key == SDLK_UP || key == SDLK_DOWN) myPageScroll(key == SDLK_DOWN ? 0.48f : -0.48f);
         if (key >= SDLK_1 && key <= SDLK_4) chooseMyPage(200 + int(key - SDLK_1) + 1);
     }
@@ -23731,6 +24241,11 @@ struct Viewer {
     // row - AutoScroll)
     void myPageScroll(float by) {
         myPage.scroll = std::clamp(std::round((myPage.scroll + by) / 0.48f) * 0.48f, 0.0f, 1.92f);
+    }
+    void myPagePadScroll(float axis, float dt) {
+        if (!vitaButtons() || cr3Camp.stage != 10 || myPage.screen != 0 || myPage.ask || !myPage.told.empty()) return;
+        if (std::fabs(axis) >= 0.4f) myPage.scroll = std::clamp(myPage.scroll + (axis > 0 ? 1.0f : -1.0f) * 6.0f * dt, 0.0f, 1.92f);
+        else myPage.scroll = std::clamp(myPage.scroll + (std::round(myPage.scroll / 0.48f) * 0.48f - myPage.scroll) * std::min(dt * 15, 1.0f), 0.0f, 1.92f);
     }
 
     // ---- the camp's Options (OptionMain 0xac, OptionMenu 0xad) ----
@@ -23751,6 +24266,7 @@ struct Viewer {
         int hands = 0; // (Controls: 0 two-handed, 1 one-handed)
         int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
         int top = 0;   // (Graphics: the first row shown)
+        bool footer = false;
         bool asking = false; // (CR3-U's Reset: its question up)
         int askFocus = 1;    // (0 Yes, 1 No)
         float askSince = 0;
@@ -24002,7 +24518,9 @@ struct Viewer {
             for (int k = 0; k < 3; ++k) {
                 float px, py;
                 if (!cr3UiCall(menu, "call_optSltPanel_00" + std::to_string(k + 1), px, py)) continue;
+                if (vitaButtons() && !co.footer && k == optionFocus) cr3UiTintMaterial = "mat_opt_btn_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
                 UiFig& panel = cr3UiPut("optsltpanel", "", 0, px, py, view);
+                cr3UiTintMaterial.clear();
                 cr3UiLabel(panel, "typeM_L00", menuAnnounce(0x198 + k), w, h, 0.26f);
                 if (!cr3UiCall(panel, "call_optSltVolume", cx, cy)) continue;
                 UiFig& vol = cr3UiPut("optsltvolume", "", 0, cx, cy, view);
@@ -24174,7 +24692,7 @@ struct Viewer {
             if (scriptSaves) writeSystem(); // (Cr3Util_Save_SystemData)
             return;
         }
-        if (id >= 400 && id < 400 + kOptionTabs && id - 400 != co.tab) co.tab = id - 400, audio.playSe("com_002", false);
+        if (id >= 400 && id < 400 + kOptionTabs && id - 400 != co.tab) co.tab = id - 400, co.footer = false, audio.playSe("com_002", false);
         if (id >= 500 && id < 502 && id - 500 != co.hands) co.hands = id - 500, audio.playSe("com_003", false);
         if (id == 600 || id == 601) optionQuality = (optionQuality + (id == 600 ? 2 : 1)) % 3, audio.playSe("com_002", false);
         if (id == 1400 || id == 1401) stepLanguage(id == 1400 ? -1 : 1), co.otherRow = 1, audio.playSe("com_002", false);
@@ -24204,21 +24722,41 @@ struct Viewer {
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampOptions(-1);
         if (key == SDLK_TAB) return chooseCampOptions(400 + (co.tab + 1) % kOptionTabs);
         if (key == SDLK_R) return chooseCampOptions(kTapOptionsReset);
+        if (vitaButtons() && co.footer) {
+            if (key == SDLK_UP) co.footer = false, audio.playSe("com_002", false);
+            else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(-1);
+            return;
+        }
+        if (vitaButtons() && co.tab == 0 && (key == SDLK_UP || key == SDLK_DOWN)) {
+            if (key == SDLK_DOWN && optionFocus == 2) co.footer = true;
+            else optionFocus = std::clamp(optionFocus + (key == SDLK_DOWN ? 1 : -1), 0, 2);
+            audio.playSe("com_002", false);
+            SDL_Log("options: sound row %d%s", optionFocus, co.footer ? " footer" : "");
+            return;
+        }
+        if (vitaButtons() && co.tab == 1 && key == SDLK_DOWN) { co.footer = true; audio.playSe("com_002", false); return; }
         if (co.tab == 3) { // (Graphics: up / down a row, left / right / Return change it)
+            if (vitaButtons() && key == SDLK_DOWN && settingsCursor + 1 >= int(settingRows().size())) { co.footer = true; audio.playSe("com_002", false); return; }
             if (key == SDLK_UP || key == SDLK_DOWN) return chooseCampOptions(key == SDLK_UP ? kTapGraphicsUp : kTapGraphicsDown);
             if (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_RETURN || key == SDLK_KP_ENTER)
                 return chooseCampOptions(kTapGraphicsRow + settingsCursor * 2 + (key == SDLK_LEFT ? 0 : 1));
             return;
         }
-        if (co.tab == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) // (the BGM's volume; 1 .. 3 pick which)
-            return chooseCampOptions(800 + optionFocus * 20 + std::clamp(optionVolume[optionFocus] / 10 + (key == SDLK_RIGHT ? 1 : -1), 0, 10));
+        if (co.tab == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) {
+            chooseCampOptions(800 + optionFocus * 20 + std::clamp(optionVolume[optionFocus] / 10 + (key == SDLK_RIGHT ? 1 : -1), 0, 10));
+            if (vitaButtons() && optionFocus == 1) audio.playSe("com_003", false);
+            else if (vitaButtons() && optionFocus == 2) audio.playVoice("j002_110");
+            return;
+        }
         if (co.tab == 0 && key >= SDLK_1 && key <= SDLK_3) optionFocus = int(key - SDLK_1);
         if (co.tab == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(500 + (key == SDLK_RIGHT ? 1 : 0));
         if (co.tab == 2) {
             if (key == SDLK_UP || key == SDLK_DOWN) { // (the Language row only where there are languages to pick)
                 const int rows = languages.size() > 1 ? 3 : 2, at = co.otherRow == 2 ? rows - 1 : co.otherRow;
-                const int next = (at + (key == SDLK_DOWN ? 1 : rows - 1)) % rows;
+                if (vitaButtons() && key == SDLK_DOWN && at == rows - 1) { co.footer = true; audio.playSe("com_002", false); return; }
+                const int next = vitaButtons() ? std::clamp(at + (key == SDLK_DOWN ? 1 : -1), 0, rows - 1) : (at + (key == SDLK_DOWN ? 1 : rows - 1)) % rows;
                 co.otherRow = next == rows - 1 ? 2 : next;
+                if (vitaButtons()) audio.playSe("com_002", false);
             } else if (key == SDLK_I || (co.otherRow == 2 && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))) chooseCampOptions(1300);
             else if (co.otherRow == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 600 : 601);
             else if (co.otherRow == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 1400 : 1401);
@@ -24262,6 +24800,10 @@ struct Viewer {
         int ask = 0;             // (asked: 1 the tournament entered, 2 MP recovered, 3 goods bought, 4 a box opened)
         // (10 the Sp Shop's top, 11 its boxes - LuckyBoxMenu: the box in focus, its buy panels up)
         int boxFocus = 0, boxPanel = 0;
+        int buttonFocus = 0, shopFocus = 0;
+        bool boxCheckFocus = false;
+        std::vector<std::string> boxContents;
+        int boxContentsPage = 0;
         bool boxBuy = false;
         bool shopOnly = false;   // (the Sp Shop opened from the field's Shop button: back closes it)
         std::string told;        // (an alert over it)
@@ -24374,8 +24916,15 @@ struct Viewer {
         if (vs.screen == 10) {
             UiFig& pos = cr3UiPut("sshoppositon", "", t, 0, 0, view);
             if (cr3UiCall(pos, "call_SshopBg", x, y)) cr3UiPut("sshopbg", "", t, x, y, view);
+            const auto focus = [&](int k) {
+                cr3UiScale = !vitaButtons() || vs.shopFocus == k ? 1.0f : 0.9f;
+                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = !vitaButtons() || vs.shopFocus == k ? 1.0f : 0.8f;
+            };
+            focus(0);
             if (cr3UiCall(pos, "call_SshopBox", x, y)) spTap(cr3UiPut("sshopbox", "", t, x, y, view), x, y, 2.5f, 2.0f, 1000);
+            focus(1);
             if (cr3UiCall(pos, "call_SshopItem", x, y)) spTap(cr3UiPut("sshopitem", "", t, x, y, view), x, y, 2.5f, 2.0f, 1001);
+            focus(2);
             // (SetVipPanelControl: 90 days or more - the panel at half, not tappable)
             const bool vipOn = game.cr3VipDays < 90;
             if (cr3UiCall(pos, "call_SshopVipPanel", x, y)) {
@@ -24396,8 +24945,9 @@ struct Viewer {
                         if (cr3UiCallNth(count, "call_SshopVipNum", k, nx, ny)) cr3UiPut("sshopvipnum", "", float(d % 10) / 30, nx - (optionLanguage != 0 ? 0.3f : 0.0f), ny, view);
                     }
                 }
-                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             }
+            cr3UiScale = 1;
+            cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
             drawCr3Header(t, 9, menuAnnounce(0x275), w, h, view);
             return;
         }
@@ -24431,7 +24981,7 @@ struct Viewer {
         }
         dev->clearDepth();
         UiFig& pos = cr3UiPut("mpboxpositon", "", t, 0, 0, view); // (its own animation: the carousel in)
-        if (!vs.boxBuy && cr3UiCall(pos, "ragdoll_call_mpBoxMenu", x, y, w, h)) {
+        if ((!vs.boxBuy || vitaButtons()) && cr3UiCall(pos, "ragdoll_call_mpBoxMenu", x, y, w, h)) {
             UiFig& menu = cr3UiPut("mpboxmenu", "", t, x, y, view);
             const int n = int(boxes.size());
             for (int k = 0; k < 3; ++k) { // (the one before, the one in focus - 1.35 x -, the one after)
@@ -24439,7 +24989,7 @@ struct Viewer {
                 const int b = ((vs.boxFocus + k - 1) % n + n) % n;
                 if (!cr3UiCallNth(menu, "call_mpBoxImagePanel", k, cx, cy)) continue;
                 boxPicture("mpboximage_id00", "mat_cltList_d02", boxes[size_t(b)].texture);
-                cr3UiScale = k == 1 ? 1.35f : 1.0f; // (BoxPanel::SetBoxScale: the one in focus)
+                cr3UiScale = k == 1 && !vs.boxCheckFocus ? 1.35f : 1.0f; // (BoxPanel::SetBoxScale: the one in focus)
                 UiFig& p = cr3UiPut("mpboximagepanel", "", 0, cx, cy, view);
                 float ix, iy;
                 if (cr3UiCall(p, "call_mpBoxImage_id", ix, iy)) cr3UiPut("mpboximage_id00", "", 0, ix, iy, view);
@@ -24466,7 +25016,9 @@ struct Viewer {
                 for (int k = 0; k < 3; ++k) {
                     if (box.amount[k] <= 0 || !cr3UiCallNth(menu, "call_mpBoxBuyPanel", k, cx, cy)) continue;
                     boxPicture("mpboxbuyimage_id00", "mat_cltList_d02", box.texture);
+                    if (vitaButtons() && !vs.boxCheckFocus && k == vs.boxPanel) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
                     UiFig& panel = cr3UiPut("mpboxbuypanel", "", 0, cx, cy, view, k == vs.boxPanel ? 1.0f : 0.8f);
+                    cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
                     float px, py, qx, qy;
                     // (BoxBuyPanel::Pose: the panel's Icon - the amount, 1 / 5 / 10 frames 0 .. 2 -, Size -
                     // the box's picture on its call_mpBoxBuyImage_id -, Num - the currency's
@@ -24495,11 +25047,17 @@ struct Viewer {
                     spTap(panel, cx, cy, 1.6f, 0.6f, 1110 + k);
                 }
             }
+            if (vitaButtons() && box.kind != 2 && cr3UiCall(buyPos, "ragdoll_call_mpBoxChkBtnMenu", x, y, w, h)) {
+                if (vs.boxCheckFocus) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
+                UiFig& check = cr3UiPut("mpboxchkbtnmenu", "", float(box.kind == 0 ? 2 : 1) / 30, x, y, view);
+                spTap(check, x, y, 1.4f, 0.4f, 1120);
+                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+            }
         }
         drawCr3Header(t, 0xb, std::string(), w, h, view);
     }
     void openSpBoxes() {
-        vs.screen = 11, vs.since = 0, vs.boxBuy = false, vs.boxPanel = 0;
+        vs.screen = 11, vs.since = 0, vs.boxBuy = false, vs.boxPanel = 0, vs.boxCheckFocus = false;
         const std::vector<SpBox> boxes = spBoxes();
         vs.boxFocus = 0;
         for (size_t k = 0; k < boxes.size(); ++k) // (the first Lucky Box in focus where there is one)
@@ -24510,6 +25068,39 @@ struct Viewer {
         SDL_Log("shop: the boxes - %zu (%d in focus)", boxes.size(), vs.boxFocus);
     }
     // LuckyBoxMain 4 / 5: yes - the box opened, its price paid, flag 39 set; what came out told
+    void spBoxContentsPage() {
+        // comMsgSMenu has three text lines: the page number and two contents.
+        const int pages = std::max((int(vs.boxContents.size()) + 1) / 2, 1);
+        vs.boxContentsPage = std::clamp(vs.boxContentsPage, 0, pages - 1);
+        vs.told = "(" + std::to_string(vs.boxContentsPage + 1) + "/" + std::to_string(pages) + ")";
+        for (int k = vs.boxContentsPage * 2; k < int(vs.boxContents.size()) && k < vs.boxContentsPage * 2 + 2; ++k) vs.told += "\\n" + vs.boxContents[size_t(k)];
+        vs.toldSince = 0;
+        SDL_Log("shop: box contents page %d of %d", vs.boxContentsPage + 1, pages);
+    }
+    void inspectSpBox() {
+        const auto boxes = spBoxes();
+        if (vs.boxFocus < 0 || vs.boxFocus >= int(boxes.size()) || !game.cr3Db) return;
+        const SpBox& box = boxes[size_t(vs.boxFocus)];
+        vs.boxContents.clear(), vs.boxContentsPage = 0;
+        if (box.kind == 1 && box.id >= 0 && box.id < int(game.cr3Db->itemSheets().size())) {
+            for (const auto& p : game.cr3Db->itemSheets()[size_t(box.id)].entries)
+                vs.boxContents.push_back(p.gene ? cr3NameOf("gene_name.mbe", "GeneName", p.item) : cr3ItemText(p.item, false));
+        } else if (box.kind == 0) {
+            if (const auto* table = game.cr3Db->table("geneboxes"))
+                for (const auto& row : table->items) {
+                    if (row.integer("_id") != box.id) continue;
+                    if (const auto* baskets = row.get("baskets"))
+                        for (const auto& basket : baskets->items)
+                            if (const auto* items = basket.get("items"))
+                                for (const auto& item : items->items) {
+                                    const std::string name = cr3NameOf("gene_name.mbe", "GeneName", item.integer("masterId"));
+                                    if (std::find(vs.boxContents.begin(), vs.boxContents.end(), name) == vs.boxContents.end()) vs.boxContents.push_back(name);
+                                }
+                }
+        }
+        if (!vs.boxContents.empty()) spBoxContentsPage();
+        SDL_Log("shop: box contents (%zu)", vs.boxContents.size());
+    }
     void openSpBox() {
         const std::vector<SpBox> boxes = spBoxes();
         if (vs.boxFocus >= int(boxes.size())) return;
@@ -24703,6 +25294,7 @@ struct Viewer {
             if (std::find(std::begin(vs.wildChosen), std::end(vs.wildChosen), int(k)) == std::end(vs.wildChosen)) return true;
         return false;
     }
+    int vsWildFocus = 0;
     void drawVsWildCards(int w, int h) {
         if (!vs.wildOpen || !game.cr3Db) return;
         Mat4 camera = cr3::mat4Identity();
@@ -24721,7 +25313,9 @@ struct Viewer {
             float x, y;
             if (!uiJoint(null, "VsWildTouch_00" + std::to_string(k + 1), x, y)) continue;
             const bool used = std::find(std::begin(vs.wildChosen), std::end(vs.wildChosen), int(k)) != std::end(vs.wildChosen);
+            cr3UiScale = vitaButtons() && int(k) == vsWildFocus ? 1.08f : 1;
             UiFig& touch = cr3UiPut("vswildtouch", "", 0, x, y, view, used ? 0.4f : 1.0f);
+            cr3UiScale = 1;
             float cx, cy;
             if (cr3UiCall(touch, "call_GeneCard", cx, cy)) {
                 UiFig& card = uiFig("w_card_default");
@@ -24729,7 +25323,7 @@ struct Viewer {
                 std::snprintf(tex, sizeof tex, "w_card_%02d", picked[k]);
                 cr3UiMaterial(card, "picture", tex);
                 card.fig.place = cr3::Mat34();
-                card.fig.place.m[0] = card.fig.place.m[5] = card.fig.place.m[10] = 4.6f; // (its touch area's size)
+                card.fig.place.m[0] = card.fig.place.m[5] = card.fig.place.m[10] = 4.6f * (vitaButtons() && int(k) == vsWildFocus ? 1.08f : 1); // (its touch area's size)
                 card.fig.place.m[3] = cx, card.fig.place.m[7] = cy, card.fig.place.m[11] = 0.5f;
                 poseUi(card, "w_card_default", 0);
                 card.fig.tint[3] = used ? 0.4f : 1.0f;
@@ -24751,8 +25345,13 @@ struct Viewer {
     // a wildcard chosen (WildCardMenu::TouchGestureTap - BtlWildCard::Select), then the battle's
     // boosts and wildcards applied (Apply)
     void chooseVsWildCard(int k) {
+        if (!game.cr3Db || !vs.wildOpen) return;
         const std::vector<int>& picked = game.cr3Db->wildcards();
-        if (k < 0 || k >= int(picked.size())) return;
+        if (k < 0 || k >= int(picked.size()) || std::find(std::begin(vs.wildChosen), std::end(vs.wildChosen), k) != std::end(vs.wildChosen)) {
+            audio.playSe("com_004", false);
+            SDL_Log("vs: wildcard %d unavailable", k);
+            return;
+        }
         vs.wildChosen[std::clamp(vs.battle, 0, 2)] = k;
         vs.wildOpen = false;
         audio.playSe("com_003", false);
@@ -24794,7 +25393,7 @@ struct Viewer {
         }
         for (int slot = 0; slot < 3; ++slot)
             if (slot != vs.battle) applyVsWildCard(slot);
-        vs.wildOpen = vsWildPending(), vs.wildAt = uiClock;
+        vs.wildOpen = vsWildPending(), vs.wildAt = uiClock, vsWildFocus = 0;
         if (vs.wildOpen) {
             audio.playSe("bt_602", false);
             SDL_Log("vs: wildcards up");
@@ -25135,9 +25734,14 @@ struct Viewer {
                 for (const auto& [joint, fig, id] : {std::tuple<const char*, const char*, int>{"call_VsMainBtn01_fr00", "vsmainbtn01_fr00", 1},
                                                      {"call_VsMainBtn02_fr00", "vsmainbtn02_fr00", 2}}) {
                     if (!cr3UiCall(r, joint, cx, cy)) continue;
-                    UiFig& b = cr3UiPut(fig, "", 0, cx, cy, view);
+                    UiFig& b = cr3UiPut(fig, "", vitaButtons() && vs.buttonFocus == id - 1 ? 1.0f / 30 : 0, cx, cy, view);
                     vsTaps.push_back({cx - 1.4f, cy - 0.45f, cx + 1.4f, cy + 0.45f, id}); // (its face: ProvisionalCheckHitTapCollision on the figure)
                     (void)b;
+                }
+                for (int k = 0; k < 4; ++k) {
+                    if (!uiJoint(r, "VsMainBtn05_fr00_00" + std::to_string(k + 1), cx, cy)) continue;
+                    cr3UiPut("vsmainbtn05_fr00", "", float(2 * k + (vitaButtons() && vs.buttonFocus == k + 2 ? 1 : 0)) / 30, cx, cy, view);
+                    vsTaps.push_back({cx - 0.1f, cy + 0.1f, cx + 1.9f, cy - 0.9f, 10 + k});
                 }
                 if (cr3UiCall(r, "call_VsMainChr", cx, cy)) cr3UiPut("vsmainchr", "", 0, cx, cy, view);
             }
@@ -25178,14 +25782,14 @@ struct Viewer {
                 for (const auto& [joint, fig, id] : {std::tuple<const char*, const char*, int>{"call_VsMainBtn03_fr00", "vsmainbtn03_fr00", 3},
                                                      {"call_VsMainBtn04_fr00", "vsmainbtn04_fr00", 4}}) {
                     if (!cr3UiCall(r, joint, cx, cy)) continue;
-                    cr3UiPut(fig, "", 0, cx, cy, view);
+                    cr3UiPut(fig, "", vitaButtons() && vs.buttonFocus == id - 3 ? 1.0f / 30 : 0, cx, cy, view);
                     vsTaps.push_back({cx - 1.4f, cy - 0.45f, cx + 1.4f, cy + 0.45f, id});
                 }
                 // (VsMainBtn05_fr00 x 4 - at frame 0, 2, 4, 6: the gene lab, the camp, MP recovery,
                 // My Page - VsModeMenu's taps 9 .. 0xc)
                 for (int k = 0; k < 4; ++k) {
                     if (!uiJoint(r, "VsMainBtn05_fr00_00" + std::to_string(k + 1), cx, cy)) continue;
-                    cr3UiPut("vsmainbtn05_fr00", "", float(2 * k) / 30, cx, cy, view);
+                    cr3UiPut("vsmainbtn05_fr00", "", float(2 * k + (vitaButtons() && vs.buttonFocus == k + 2 ? 1 : 0)) / 30, cx, cy, view);
                     vsTaps.push_back({cx - 0.1f, cy + 0.1f, cx + 1.9f, cy - 0.9f, 10 + k});
                 }
                 if (cr3UiCall(r, "call_VsMainChr", cx, cy)) cr3UiPut("vsmainchr", "", 0, cx, cy, view);
@@ -25376,7 +25980,7 @@ struct Viewer {
     }
     void chooseVs(int id) {
         if (!vs.told.empty()) {
-            if (id == 602 || id == -1) vs.told.clear();
+            if (id == 602 || id == -1) vs.told.clear(), vs.boxContents.clear();
             return;
         }
         if (vs.ask) {
@@ -25401,13 +26005,15 @@ struct Viewer {
         else if (vs.screen == 10 && id == 1002 && game.cr3VipDays < 90) vs.screen = 12, vs.since = 0, vs.ask = 5, SDL_Log("shop: VIP");
         else if (vs.screen == 11 && id >= 1100 && id < 1103) { // (LuckyBoxMenu: a neighbour turned to; the one in focus - its buy panels)
             const int n = std::max(int(spBoxes().size()), 1);
-            if (id == 1101) vs.boxBuy = true, vs.boxPanel = 0, vs.since = 0;
+            if (id == 1101) vs.boxBuy = true, vs.boxPanel = 0, vs.boxCheckFocus = false, vs.since = 0;
             else vs.boxFocus = ((vs.boxFocus + (id == 1100 ? -1 : 1)) % n + n) % n;
         } else if (vs.screen == 11 && vs.boxBuy && id >= 1110 && id < 1113) {
             vs.boxPanel = id - 1110, vs.ask = 4, vs.since = 0; // (LuckyBoxMain 3: asked 0x123)
-        } else if (vs.screen == 1 && id == 1) vs.screen = 2, vs.since = 0;
+        } else if (vs.screen == 11 && vs.boxBuy && id == 1120) {
+            inspectSpBox();
+        } else if (vs.screen == 1 && id == 1) vs.screen = 2, vs.since = 0, vs.buttonFocus = 0;
         else if (vs.screen == 1 && id == 2) vs.screen = 8, vs.since = 0, vs.row = 0, SDL_Log("vs: sp shop");
-        else if (vs.screen == 2 && id >= 10 && id < 14) {
+        else if ((vs.screen == 1 || vs.screen == 2) && id >= 10 && id < 14) {
             if (id == 11) openCr3Camp(); // (VsModeMain 0xe: the camp, its Gene Swap off)
             else if (id == 12) vs.ask = 2, vs.since = 0;
             else if (id == 10 && areaEvents) { // (VsModeMain 10: CreateGeneSynthesisMainToVS - the lab, the clerk's cutIn115_L01)
@@ -25433,6 +26039,7 @@ struct Viewer {
         } else if (vs.screen == 2 && (id == 3 || id == 4)) vsList(id - 3);
         else if (vs.screen == 3 && id >= 100) {
             const int k = id - 100;
+            if (k < 0 || k >= int(vs.rows.size())) return;
             if (k != vs.row) {
                 vs.row = k;
                 return;
@@ -25506,22 +26113,56 @@ struct Viewer {
             }
         return true;
     }
+    bool vsShoulder(bool right) {
+        if (cr3Camp.stage || vs.screen != 4 || vs.ask || !vs.told.empty() || vs.rows.empty()) return false;
+        const int to = std::clamp(vs.row + (right ? 1 : -1), 0, int(vs.rows.size()) - 1);
+        if (to != vs.row) {
+            vs.row = to, vs.chosen = vs.rows[size_t(to)], vs.since = 0;
+            audio.playSe("com_003", false);
+            SDL_Log("vs: tournament detail %d", to);
+        }
+        return true;
+    }
     bool vsKey(SDL_Keycode key) {
         if (cr3Camp.stage != 0) return false;
-        if (vs.screen == 5 && vs.wildOpen) { // (1 .. 5: a wildcard)
+        if (vs.screen == 5 && vs.wildOpen) { // (the Vita's cards: left / right stop at either end, confirm chooses)
             if (key >= SDLK_1 && key <= SDLK_5) chooseVsWildCard(int(key - SDLK_1));
+            else if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+                const int count = game.cr3Db ? std::min(int(game.cr3Db->wildcards().size()), 5) : 0;
+                if (count > 0) vsWildFocus = std::clamp(vsWildFocus + (key == SDLK_RIGHT ? 1 : -1), 0, count - 1);
+                SDL_Log("vs: wildcard cursor %d", vsWildFocus);
+            } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) chooseVsWildCard(vsWildFocus);
             return true;
         }
         if (vs.screen == 0 || vs.screen == 5) return false;
-        const bool enter = key == SDLK_RETURN || key == SDLK_SPACE;
-        if (!vs.told.empty()) return enter || key == SDLK_ESCAPE ? (chooseVs(602), true) : true;
+        const bool enter = key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE;
+        if (!vs.told.empty()) {
+            if (!vs.boxContents.empty() && (key == SDLK_LEFT || key == SDLK_UP || key == SDLK_RIGHT || key == SDLK_DOWN)) {
+                vs.boxContentsPage += key == SDLK_RIGHT || key == SDLK_DOWN ? 1 : -1;
+                spBoxContentsPage();
+            } else if (enter || key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(602);
+            return true;
+        }
         if (vs.ask) {
             if (enter || key == SDLK_Y) chooseVs(600);
-            else if (key == SDLK_N || key == SDLK_ESCAPE) chooseVs(601);
+            else if (key == SDLK_N || key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(601);
             return true;
         }
         if (vs.screen == 9) return enter ? (chooseVs(301), true) : true;
         if (vs.screen == 10) {
+            if (vitaButtons()) {
+                const int was = vs.shopFocus;
+                if (key == SDLK_RIGHT && vs.shopFocus == 0) vs.shopFocus = 1;
+                else if (key == SDLK_LEFT && vs.shopFocus >= 1) vs.shopFocus = 0;
+                else if (key == SDLK_DOWN && vs.shopFocus == 1) vs.shopFocus = 2;
+                else if (key == SDLK_UP && vs.shopFocus == 2) vs.shopFocus = 1;
+                if (was != vs.shopFocus) SDL_Log("shop: the cursor on %d", vs.shopFocus);
+                if (enter) {
+                    if (vs.shopFocus == 2 && game.cr3VipDays >= 90) audio.playSe("com_005", false);
+                    else chooseVs(1000 + vs.shopFocus);
+                    return true;
+                }
+            }
             if (key == SDLK_1 || key == SDLK_2 || key == SDLK_3) chooseVs(key == SDLK_1 ? 1000 : key == SDLK_2 ? 1001 : 1002);
             else if (enter) chooseVs(1000);
             else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(-1);
@@ -25530,9 +26171,22 @@ struct Viewer {
         if (vs.screen == 11) {
             if (!vs.boxBuy && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseVs(key == SDLK_LEFT ? 1100 : 1102);
             else if (!vs.boxBuy && enter) chooseVs(1101);
-            else if (vs.boxBuy && (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_UP || key == SDLK_DOWN))
-                vs.boxPanel = std::clamp(vs.boxPanel + (key == SDLK_RIGHT || key == SDLK_DOWN ? 1 : -1), 0, 2);
-            else if (vs.boxBuy && enter) chooseVs(1110 + vs.boxPanel);
+            else if (vs.boxBuy && vitaButtons() && (key == SDLK_UP || key == SDLK_DOWN)) {
+                const auto boxes = spBoxes();
+                if (vs.boxFocus < int(boxes.size()) && boxes[size_t(vs.boxFocus)].kind != 2) {
+                    vs.boxCheckFocus = !vs.boxCheckFocus;
+                    audio.playSe("com_002", false);
+                    SDL_Log("shop: box focus %s", vs.boxCheckFocus ? "check" : "buy");
+                }
+            }
+            else if (vs.boxBuy && (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_UP || key == SDLK_DOWN)) {
+                if (!vs.boxCheckFocus) {
+                    const int was = vs.boxPanel;
+                    vs.boxPanel = std::clamp(vs.boxPanel + (key == SDLK_RIGHT || key == SDLK_DOWN ? 1 : -1), 0, 2);
+                    if (was != vs.boxPanel) audio.playSe("com_002", false), SDL_Log("shop: box buy panel %d", vs.boxPanel);
+                }
+            }
+            else if (vs.boxBuy && enter) chooseVs(vs.boxCheckFocus ? 1120 : 1110 + vs.boxPanel);
             else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(-1);
             return true;
         }
@@ -25545,12 +26199,30 @@ struct Viewer {
         }
         if (vs.screen == 3 && key >= SDLK_1 && key <= SDLK_8) return chooseVs(500 + int(key - SDLK_1)), true; // (1 .. 8: a lifeline item)
         if (vs.screen == 6) return enter ? (vsBattleOver(true), true) : true;
+        if (vitaButtons() && (vs.screen == 1 || vs.screen == 2)) {
+            const int was = vs.buttonFocus;
+            if (key == SDLK_UP && was > 0) vs.buttonFocus -= was < 3 ? 1 : 2;
+            else if (key == SDLK_DOWN && was < 5) vs.buttonFocus += was < 2 ? 1 : was < 4 ? 2 : 0;
+            else if (key == SDLK_LEFT && was >= 2 && (was & 1)) --vs.buttonFocus;
+            else if (key == SDLK_RIGHT && was >= 2 && !(was & 1)) ++vs.buttonFocus;
+            if (vs.buttonFocus != was) audio.playSe("com_002", false), SDL_Log("vs: the cursor on %d", vs.buttonFocus);
+            if (enter) {
+                SDL_Log("vs: the cursor presses %d", vs.buttonFocus);
+                chooseVs(vs.buttonFocus < 2 ? vs.buttonFocus + (vs.screen == 1 ? 1 : 3) : vs.buttonFocus + 8);
+                return true;
+            }
+        }
         if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(-1);
         else if (vs.screen == 1 && enter) chooseVs(1);
         else if (vs.screen == 2 && (key == SDLK_1 || key == SDLK_2)) chooseVs(key == SDLK_1 ? 3 : 4);
         else if (vs.screen == 3 && (key == SDLK_UP || key == SDLK_DOWN) && !vs.rows.empty())
             vs.row = std::clamp(vs.row + (key == SDLK_DOWN ? 1 : -1), 0, int(vs.rows.size()) - 1);
         else if (vs.screen == 3 && enter && !vs.rows.empty()) chooseVs(100 + vs.row);
+        else if (vs.screen == 3 && vitaButtons() && key == SDLK_TAB && !vs.rows.empty()) {
+            chooseVs(100 + vs.row);
+            if (vs.screen == 4) chooseVs(200);
+        }
+        else if (vs.screen == 3 && vitaButtons() && key == SDLK_LEFT) chooseVs(-1);
         else if (vs.screen == 4 && enter) chooseVs(200);
         else if (vs.screen == 7 && enter) chooseVs(300);
         return true;
@@ -25579,7 +26251,8 @@ struct Viewer {
             for (int k = 0; k < 2; ++k) {
                 float px, py;
                 if (!cr3UiCall(pm, "call_btRsltPointPanel_num00_00" + std::to_string(k + 1), px, py)) continue;
-                const std::string digits = std::to_string(std::max(k ? cr3ResultMoney : cr3ResultExp, 0));
+                const int total = std::max(k ? cr3ResultMoney : cr3ResultExp, 0);
+                const std::string digits = std::to_string(int(float(total) * std::clamp(t / 1.5f, 0.0f, 1.0f)));
                 const int n = std::min(int(digits.size()), 5);
                 char lay[32];
                 std::snprintf(lay, sizeof lay, "btrsltpointpanel_num%02d", n);
@@ -25718,8 +26391,13 @@ struct Viewer {
                     // (Escape where forbidden; Options: not in yet; a command its status effects
                     // forbid - BtlStatus::OpenMenuInterface: comBtn::SelectableSet(false), its parts'
                     // diffuse (0.549, 0.549, 0.655))
-                    const bool off = asking ? false : getSet ? (b == 1 && !cr3EscapeAllowed()) || b == 2 : !cr3Rules.menuEnabled(cr3Chooser, b);
+                    const bool off = asking ? false : getSet ? (b == 1 && !cr3EscapeAllowed()) : !cr3Rules.menuEnabled(cr3Chooser, b);
                     cr3UiTint[0] = cr3UiTint[1] = off ? 0.549f : 1.0f, cr3UiTint[2] = off ? 0.655f : 1.0f; // (cr3UiPut's tint)
+                    if (vitaButtons() && b == cr3Focus) {
+                        cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+                        cr3UiTintMaterial = "mat_com_menuBtn_02";
+                        cr3UiMaterialTint[0] = off ? 0.17f : 0.5f, cr3UiMaterialTint[1] = off ? 0.33f : 1.0f, cr3UiMaterialTint[2] = off ? 0.5f : 1.5f;
+                    }
                     UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
                     float cx, cy;
                     if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
@@ -25729,6 +26407,8 @@ struct Viewer {
                     if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
                     float ax, ay, bx, by;
                     if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, b});
+                    cr3UiTintMaterial.clear();
+                    cr3UiMaterialTint[0] = cr3UiMaterialTint[1] = cr3UiMaterialTint[2] = 1;
                 }
                 cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1.0f;
             }
@@ -25738,13 +26418,15 @@ struct Viewer {
             UiFig& pos = cr3UiPut("bttgtposition", "", 0, 0, 0, view);
             if (cr3UiCall(pos, "call_btTgtMenu", x, y, w, h)) {
                 UiFig& menu = cr3UiPut("bttgtmenu", "bttgtmenu_in", cr3BattleClock - cr3MenuStart, x, y, view);
-                const std::vector<int> alive = cr3LivingMonsters();
+                const std::vector<int> alive = cr3Targets();
+                cr3::Cr3Command selected;
+                const bool all = cr3Rules.command(cr3ChosenCommand, selected) && selected.all;
                 for (size_t i = 0; i < alive.size() && i < 3; ++i) {
                     const cr3::Cr3Fighter& ft = cr3Rules.fighters[size_t(alive[i])];
                     const cr3::Cr3BattleUnit& bu = cr3Battle.units[size_t(ft.unit)];
                     float px, py;
                     if (!cr3UiCall(menu, "call_btTgtPanel_00" + std::to_string(i + 1), px, py)) continue;
-                    UiFig& panel = cr3UiPut("bttgtpanel", "", 0, px, py, view, int(i) == cr3Focus ? 1.0f : 0.85f);
+                    UiFig& panel = cr3UiPut("bttgtpanel", "", 0, px, py, view, (all ? cr3Focus == 0 : int(i) == cr3Focus) ? 1.0f : 0.85f);
                     float cx, cy;
                     const float pct = ft.maxHp > 0 ? float(cr3HpShown[size_t(alive[i])]) * 100 / float(ft.maxHp) : 0;
                     if (cr3UiCall(panel, "call_btTgtBar_per", cx, cy)) cr3UiPut("bttgtbar_per", "", pct / 30, cx, cy, view);
@@ -25757,10 +26439,24 @@ struct Viewer {
                     if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
                     if (cr3UiCall(panel, "typeM_C01", cx, cy)) {
                         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                        drawUiText(cr3MonsterName(ft.id), 30, cx / 10, cy / 10, w, h, false, 0.3f); // (dark on the panel)
+                        drawUiText(cr3FighterName(ft), 30, cx / 10, cy / 10, w, h, false, 0.3f); // (dark on the panel)
                     }
                     float ax, ay, bx, by;
                     if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(i)});
+                }
+                if (cr3TargetCanChange()) {
+                    const bool focused = cr3Focus == (all ? 1 : int(alive.size()));
+                    float px, py, cx, cy;
+                    if (cr3UiCall(menu, "call_btTgtChangePanel", px, py)) {
+                        if (focused) {
+                            cr3UiTintMaterial = "mat_bt_parts_03";
+                            cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+                        }
+                        UiFig& change = cr3UiPut("bttgtchangepanel", "", 0, px, py, view);
+                        if (cr3UiCall(change, "call_btTgtChange_fr", cx, cy)) cr3UiPut("bttgtchange_fr00", "", cr3TargetChanged ? 1.0f / 30 : 0, cx, cy, view);
+                        cr3UiTintMaterial.clear();
+                        cr3UiMaterialTint[0] = cr3UiMaterialTint[1] = cr3UiMaterialTint[2] = 1;
+                    }
                 }
             }
         }
@@ -25777,7 +26473,7 @@ struct Viewer {
                 // 0 Genes, 1 Items)
                 if (cr3UiCall(menu, "call_comListCategoryPanel", lx, ly)) {
                     UiFig& cat = cr3UiPut("comlistcategorypanel", "", 0, lx, ly, view);
-                    const float frame = (cr3ListItems ? 1.0f : 0.0f) / 30;
+                    const float frame = (cr3ListItems ? float(1 + cr3ItemCategory) : 0.0f) / 30;
                     float cx, cy;
                     if (cr3UiCall(cat, "call_comListCBg_fr00", cx, cy)) cr3UiPut("comlistcbg_fr00", "", frame, cx, cy, view);
                     if (cr3UiCall(cat, "call_comListCIcon_fr00", cx, cy)) cr3UiPut("comlistcicon_fr00", "", frame, cx, cy, view);
@@ -25792,7 +26488,7 @@ struct Viewer {
                         UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view);
                         float tx, ty;
                         const Cr3ListRow& row = cr3List[size_t(cr3Focus)];
-                        const std::string text = row.item ? cr3NameOf("item_help.mbe", "ItemHelp", row.item)
+                        const std::string text = row.item ? cr3ItemText(row.item, true)
                                                           : cr3NameOf("command_help.mbe", "CommandHelp", row.command);
                         if (!text.empty() && cr3UiCall(help, "typeM_L01", tx, ty)) {
                             dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
@@ -25898,7 +26594,7 @@ struct Viewer {
         std::string name;
         float clock = 0, skipShown = -10;
         int shown = 0; // (pictures decoded)
-        bool ended = false;
+        bool ended = false, paused = false;
         cr3::Texture tex;
         std::vector<uint8_t> rgba;
         std::vector<cr3::Subtitle> subs;
@@ -25965,6 +26661,7 @@ struct Viewer {
             inputScript.pop_front();
             return endMovie();
         }
+        if (movie.paused) return;
         movie.clock += dt;
         // the pictures due by now (the movie's clock; the last one decoded shown)
         bool fresh = false;
@@ -25987,6 +26684,39 @@ struct Viewer {
         if (!movie.mv) return false;
         if (uiClock - movie.skipShown < 3.0f) endMovie();
         else movie.skipShown = uiClock;
+        return true;
+    }
+    bool moviePad(SDL_GamepadButton button) {
+        if (!vitaButtons() || !movie.mv) return false;
+        if (button == SDL_GAMEPAD_BUTTON_NORTH) {
+            movie.paused = !movie.paused;
+            audio.pauseMovieSound(movie.paused);
+            SDL_Log("movie: %s at %.2f", movie.paused ? "paused" : "resumed", double(movie.clock));
+        } else if (button == SDL_GAMEPAD_BUTTON_WEST) endMovie();
+        return true; // movie owns the pad; Circle is not a touch on Vita
+    }
+    float vistaControlsUntil = -1;
+    bool vistaPad(SDL_GamepadButton button) {
+        if (!vitaButtons() || !eventMode || !event) return false;
+        if (event->vistaPaused) {
+            if (button == SDL_GAMEPAD_BUTTON_NORTH) {
+                event->vistaPaused = false;
+                audio.pauseSceneSound(false);
+                SDL_Log("vista: resumed at frame %d", event->frame());
+            }
+            return true;
+        }
+        if (button != SDL_GAMEPAD_BUTTON_NORTH || !event->windowOpen(cr3::EventRuntime::Vista)) return false;
+        // FastForwardButton's first hit reveals the controls for three seconds; a later
+        // triangle hit while they are shown toggles GameSystem's pause (8125f47e).
+        if (event->vistaPauseEnabled || uiClock < vistaControlsUntil) {
+            event->vistaPaused = true;
+            audio.pauseSceneSound(true);
+            SDL_Log("vista: paused at frame %d", event->frame());
+        } else {
+            vistaControlsUntil = uiClock + 3;
+            SDL_Log("vista: controls shown");
+        }
         return true;
     }
     void drawMovie(int w, int h) {
@@ -26043,6 +26773,8 @@ struct Viewer {
         if (cr3BattleMode && cr3GameOverAt >= 0) drawCr3GameOver(screenW, screenH);
         cr3::EventRuntime* ev = activeEvents();
         if (!ev || !eventDrawingReady) return;
+        if (vitaButtons() && eventMode && (ev->vistaPaused || (ev->windowOpen(cr3::EventRuntime::Vista) && (ev->vistaPauseEnabled || uiClock < vistaControlsUntil))))
+            drawUiText(ev->vistaPaused ? "Paused" : "Triangle: Pause", 22, 0.33f, 0.27f, screenW, screenH, false);
         struct YesNoLast { // (the buttons over everything else the event shows)
             Viewer* v; cr3::EventRuntime* ev;
             ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawLevelUp(*ev, v->screenW, v->screenH), v->drawKeyBuy(v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH), v->drawInputDialog(v->screenW, v->screenH); }
@@ -26295,6 +27027,7 @@ int inputCancelViewerSelfTest() {
             v.menuSwipe.begin(0.5f, 0.5f, 1);
             v.areaDrag.on = true;
             v.fastHeld = true, v.fastUntil = 100;
+            v.cr3Camp.confirmHeld = true;
             v.iai.stage = v.aim.stage = 2;
             v.keyLock.stage = 1, v.keyLock.pressing = true;
             v.vslash.stage = 1, v.vslash.pressed = true;
@@ -26305,7 +27038,7 @@ int inputCancelViewerSelfTest() {
             SDL_PushEvent(&e);
             const bool consumed = v.consumeInputCancel(watch);
             const bool clean = !v.menuSwipe.down && !v.areaDrag.on && !v.fastHeld && v.fastUntil == 0 &&
-                               v.iai.stage == 1 && v.aim.stage == 1 && !v.keyLock.pressing && !v.vslash.pressed;
+                               v.iai.stage == 1 && v.aim.stage == 1 && !v.keyLock.pressing && !v.vslash.pressed && !v.cr3Camp.confirmHeld;
             const bool unchanged = v.keyLock.stage == 1 && v.vslash.stage == 1 && v.pointerCancelled;
             problems += !consumed + !clean + !unchanged;
             if (!clean) std::printf("viewer input cancel FAILED: event %u retained an active gesture\n", type);
@@ -26562,6 +27295,52 @@ int newSessionSelfTest() {
     return problems ? 1 : 0;
 }
 
+int vistaPauseSelfTest() {
+    const char* data = SDL_getenv("CR3_VITA_DATA");
+    if (!data || !*data) return 77;
+    if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
+    int problems = 0;
+    {
+        Viewer v;
+        std::string error;
+        if (!v.archive.open(data, &error) || !v.vitaButtons()) {
+            std::fprintf(stderr, "Vita pause fixture: %s\n", error.c_str());
+            return 1;
+        }
+        v.event = std::make_unique<cr3::EventRuntime>(v.archive, v.game);
+        v.eventMode = true;
+        cr3::ScriptVM vm;
+        v.event->bindNatives(vm);
+        const char* source = "function open(){EvtWindow.Open(1);} function show(){EvtWindow.SetVistaPauseButtonEnable(true);} function hide(){EvtWindow.SetVistaPauseButtonEnable(false);} function close(){EvtWindow.Close(1);}";
+        if (SQ_FAILED(sq_compilebuffer(vm.vm(), source, SQInteger(std::strlen(source)), "pause-fixture", SQTrue)) || !vm.runMain() || !vm.call("open")) return 1;
+        auto check = [&](bool ok, const char* what) {
+            if (!ok) { ++problems; std::printf("vista pause FAILED: %s\n", what); }
+        };
+        check(!v.event->vistaPauseEnabled, "stop button starts hidden");
+        check(v.vistaPad(SDL_GAMEPAD_BUTTON_NORTH) && !v.event->vistaPaused && v.vistaControlsUntil > v.uiClock,
+              "first triangle reveals controls without requiring script permission");
+        check(v.vistaPad(SDL_GAMEPAD_BUTTON_NORTH) && v.event->vistaPaused, "second triangle pauses");
+        const int frame = v.event->frame();
+        const float eventClock = v.eventClock;
+        v.advance(5, 0, 0, false);
+        check(v.event->frame() == frame && v.eventClock == eventClock, "paused scene does not advance even past the reveal timeout");
+        check(v.vistaPad(SDL_GAMEPAD_BUTTON_EAST) && v.event->vistaPaused, "confirm cannot advance a paused scene");
+        vm.call("hide");
+        check(v.event->vistaPaused, "hiding the stop button does not resume the scene");
+        vm.call("close");
+        check(v.vistaPad(SDL_GAMEPAD_BUTTON_NORTH) && !v.event->vistaPaused, "triangle resumes even after the window closes");
+        check(!v.vistaPad(SDL_GAMEPAD_BUTTON_NORTH), "closed Vista window does not capture triangle");
+        vm.call("open"), vm.call("show");
+        check(v.vistaPad(SDL_GAMEPAD_BUTTON_NORTH) && v.event->vistaPaused, "script-shown pause controls are immediately usable");
+        v.vistaPad(SDL_GAMEPAD_BUTTON_NORTH);
+        v.resetSessionUi();
+        check(v.vistaControlsUntil < 0, "new session clears the reveal deadline");
+    }
+    SDL_Quit();
+    std::printf("vista pause: %d problems\n", problems);
+    return problems ? 1 : 0;
+}
+
 int saveSlotSafetySelfTest() {
     if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
     int problems = 0;
@@ -26630,6 +27409,7 @@ static cr3::SetupGame cr3SetupGame() {
 }
 
 int main(int argc, char** argv) {
+    if (argc>1 && std::strcmp(argv[1],"--selftest-vista-pause")==0) return vistaPauseSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-save-slots")==0) return saveSlotSafetySelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-new-session")==0) return newSessionSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-field-restore")==0) return fieldRestoreSelfTest();
@@ -27001,7 +27781,6 @@ int main(int argc, char** argv) {
         v.languages = cr3::releaseLanguages(v.archive);
         for (size_t i = 0; i < v.languages.size(); ++i)
             if (v.languages[i].id == l.id) v.useLanguage(i, false);
-        if (!movieArg.empty()) v.game.movieRequest = movieArg, v.game.moviePlaying = true;
         v.englishTextures = l.slot == 1; // (the release's own English: its images_eng)
         std::string offered;
         for (const cr3::LanguageChoice& c : v.languages) offered += (offered.empty() ? "" : ", ") + std::string(c.label);
@@ -27447,6 +28226,7 @@ int main(int argc, char** argv) {
         for (float t = 0; t + cr3::EventRuntime::kTick * 0.5f < startTime; t += cr3::EventRuntime::kTick) v.stepEvent();
         startTime = 0;
     }
+    if (!movieArg.empty()) v.game.movieRequest = movieArg, v.game.moviePlaying = true;
     if (!animName.empty()) {
         const std::string want = animName.size() > 5 && animName.compare(animName.size() - 5, 5, ".anim") == 0 ? animName : animName + ".anim";
         const auto it = std::find(v.fig.anims.begin(), v.fig.anims.end(), want);
@@ -27729,6 +28509,9 @@ int main(int argc, char** argv) {
                 else if (e.type == SDL_EVENT_KEY_DOWN) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
+                    if (v.eventMode && v.event && v.event->vistaPaused) continue;
+                    if (v.movie.mv && k != SDLK_RETURN && k != SDLK_KP_ENTER && k != SDLK_ESCAPE) continue;
+                    if (v.lunchKey(k)) continue;
                     if (v.cr3OptionsOver()) { // (CR3-U's Options over the title or a battle: all its keys)
                         v.cr3CampKey(k);
                         continue;
@@ -27801,11 +28584,7 @@ int main(int argc, char** argv) {
                         else if (k >= SDLK_KP_1 && k <= SDLK_KP_3) v.answerChoice(int(k - SDLK_KP_1));
                         continue;
                     }
-                    if (v.yesNoShown()) { // (an event's yes / no: Y or Return yes, N or Backspace no)
-                        if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_Y) v.answerYesNo(true);
-                        else if (k == SDLK_BACKSPACE || k == SDLK_N) v.answerYesNo(false);
-                        continue;
-                    }
+                    if (v.yesNoKey(k)) continue;
                     if ((k == SDLK_PAGEUP || k == SDLK_PAGEDOWN) && v.listShown()) { // (a list's page: four rows on)
                         for (int r = 0; r < 4; ++r) pushKey(k == SDLK_PAGEUP ? SDLK_UP : SDLK_DOWN);
                         continue;
@@ -27879,6 +28658,8 @@ int main(int argc, char** argv) {
                     const SDL_GamepadButton b = SDL_GamepadButton(e.gbutton.button);
                     const SDL_GamepadButton circle = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
                     const SDL_GamepadButton cross = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH;
+                    if (v.moviePad(b) || v.vistaPad(b)) continue;
+                    if (b == SDL_GAMEPAD_BUTTON_WEST && v.goodsPad(false)) continue;
                     const bool shopList = v.shop.stage >= 3 && v.shop.kind > 0; // (ShopCutInPiupiuMenu: L / R the character)
                     using PP = Viewer::PadPress;
                     const PP press = b == circle ? PP::Confirm : b == cross ? PP::Cancel : b == SDL_GAMEPAD_BUTTON_NORTH ? PP::Triangle
@@ -27891,6 +28672,9 @@ int main(int argc, char** argv) {
                     if (b == circle) key = SDLK_RETURN;
                     else if (b == cross) key = SDLK_BACKSPACE;
                     else if (b == SDL_GAMEPAD_BUTTON_NORTH) key = SDLK_TAB;
+                    else if (b == SDL_GAMEPAD_BUTTON_WEST && v.vitaButtons() &&
+                             (v.inMenu() || v.cr3Camp.stage || v.vs.screen || (v.activeEvents() && v.activeEvents()->geneLab().open))) key = SDLK_X;
+                    else if (b == SDL_GAMEPAD_BUTTON_START && v.vitaButtons() && v.activeEvents() && v.activeEvents()->geneLab().open) key = SDLK_O;
                     else if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER && (v.inMenu() || v.cr3Title.stage == 4)) key = shopList ? SDLK_LEFT : SDLK_PAGEUP;
                     else if (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER && (v.inMenu() || v.cr3Title.stage == 4)) key = shopList ? SDLK_RIGHT : SDLK_PAGEDOWN;
                     else if (b == SDL_GAMEPAD_BUTTON_START && v.titleMenu.stage >= 2 && v.titleMenu.stage <= 3) key = SDLK_RETURN;
@@ -28038,7 +28822,14 @@ int main(int argc, char** argv) {
                         padWait.text = text, padWait.seen = false;
                         continue;
                     }
-                    if (w.rfind("lx=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_LEFTX, Sint16(std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
+                    if (w.rfind("hold=", 0) == 0 || w.rfind("release=", 0) == 0) {
+                        const bool hold = w.rfind("hold=", 0) == 0;
+                        if (auto b = kButtons.find(w.substr(hold ? 5 : 8)); b != kButtons.end()) {
+                            testReleases.erase(std::remove_if(testReleases.begin(), testReleases.end(), [&](const auto& release) { return release.second == b->second; }), testReleases.end());
+                            SDL_SetJoystickVirtualButton(testPad, b->second, hold);
+                        }
+                    }
+                    else if (w.rfind("lx=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_LEFTX, Sint16(std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
                     else if (w.rfind("ly=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_LEFTY, Sint16(-std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
                     else if (w.rfind("rx=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_RIGHTX, Sint16(std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
                     else if (w.rfind("ry=", 0) == 0) SDL_SetJoystickVirtualAxis(testPad, SDL_GAMEPAD_AXIS_RIGHTY, Sint16(-std::clamp(std::atof(w.c_str() + 3), -1.0, 1.0) * 32767));
@@ -28071,8 +28862,10 @@ int main(int argc, char** argv) {
                             std::hypot(float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX)), float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY))) >= 0.25f * 32767;
                 for (auto button : {SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_WEST})
                     held = held || SDL_GetGamepadButton(pad, button);
+                held = held || SDL_GetGamepadButton(pad, v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST);
                 if (v.padHeldOver.live(held)) livePad = pad;
             }
+            v.cr3CampPadHeld(livePad && SDL_GetGamepadButton(pad, v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST));
             if (livePad) { // (the d-pad, or the stick pushed all the way: a direction's press, then its repeats)
                 float ax, ay;
                 padStick(ax, ay);
@@ -28106,7 +28899,8 @@ int main(int argc, char** argv) {
             // and without this nothing advanced it - the screen's glass held, Battle_Start_Base never run)
             if (!v.paused && (v.eventMode || v.fieldMode || v.areaMode || v.cr3BattleMode || v.credits.stage || v.titleMenu.stage || v.cr3Title.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
                 const bool* keys = SDL_GetKeyboardState(nullptr);
-                if (keys[SDL_SCANCODE_F] || (livePad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST))) v.fastHeld = true; // (F or □ held: the fast-forward button's)
+                if (keys[SDL_SCANCODE_F] || (livePad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST) &&
+                    v.cr3Camp.stage == 0 && !v.vs.screen && !v.movie.mv && (!v.cr3FieldIdle() || v.game.goodsButtons.empty()))) v.fastHeld = true;
                 else if (!(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK)) v.fastHeld = false;
                 float sx = float((keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) - (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]));
                 float sy = float((keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) - (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]));
@@ -28124,6 +28918,7 @@ int main(int argc, char** argv) {
                 if (livePad) { // (the right stick: the Vita's camera, its 0.25 dead zone)
                     float rx = float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX)) / 32767.0f, ry = float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY)) / 32767.0f;
                     if (std::hypot(rx, ry) < 0.25f) rx = ry = 0;
+                    v.myPagePadScroll(ry, dt);
                     v.areaCamStick(rx, ry, dt);
                 }
                 v.areaDragStick(sx, sy, run); // (a finger's drag: the field's stick)

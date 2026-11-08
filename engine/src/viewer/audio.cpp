@@ -86,6 +86,7 @@ bool AudioPlayer::open(const std::string& archivePath, bool device, std::string*
 }
 
 void AudioPlayer::close() {
+    scenePaused_ = moviePaused_ = false;
     if (!slots_.empty()) soundHooks() = SoundHooks();
     for (Voice& v : slots_) endVoice(v);
     endVoice(movie_);
@@ -216,7 +217,22 @@ void AudioPlayer::playMovieSound(std::vector<int16_t> pcm, int rate, int channel
     if (movie_.stream) SDL_SetAudioStreamGain(movie_.stream, volume_[0]);
 }
 
-void AudioPlayer::stopMovieSound() { endVoice(movie_); }
+void AudioPlayer::stopMovieSound() { pauseMovieSound(false); endVoice(movie_); }
+void AudioPlayer::pauseMovieSound(bool paused) {
+    moviePaused_ = paused;
+    if (device_) {
+        if (scenePaused_ || moviePaused_) SDL_PauseAudioDevice(device_);
+        else SDL_ResumeAudioDevice(device_);
+    }
+}
+void AudioPlayer::pauseSceneSound(bool paused) {
+    if (paused == scenePaused_) return;
+    scenePaused_ = paused;
+    if (device_) {
+        if (scenePaused_ || moviePaused_) SDL_PauseAudioDevice(device_);
+        else SDL_ResumeAudioDevice(device_);
+    }
+}
 
 void AudioPlayer::startClip(Voice& v, SoundData::Bank bank, int clip, bool loop) {
     endVoice(v);
@@ -348,6 +364,7 @@ void AudioPlayer::stopAllVoices(int fadeFrames) {
 bool AudioPlayer::playing(int slot) const { return slot >= 0 && slot < int(slots_.size()) && slots_[size_t(slot)].active; }
 
 void AudioPlayer::update(float dt) {
+    if (scenePaused_) return;
     // the music's fade (in, or out to a stop)
     if (bgmFadeStep_ != 0) {
         bgmFade_ += bgmFadeStep_ * dt;

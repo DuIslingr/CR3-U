@@ -37,13 +37,17 @@ function dirty() {
     EvtWindow.SetMessageText(1, "Previous scene");
     EvtWindow.SetSkipButtonEnable(1, false);
     EvtWindow.SetWaitButtonEnable(1, false);
+    EvtWindow.SetVistaPauseButtonEnable(true);
     VistaEvent.ExecutionEndStart();
 }
 )";
     if (!script(dirty, "dirty")) return 1;
+    check(events.vistaPauseEnabled, "script enables the vista pause button");
+    events.vistaPaused = true;
     check(events.mapAnimPaused && events.effectLine && events.skipButtonShown() && events.finishingSlash(), "old scene setup");
     events.fastForward = true;
     events.reset();
+    check(!events.vistaPauseEnabled && !events.vistaPaused, "old vista pause permission and pause state are gone");
     check(!events.mapAnimPaused && !events.effectLine, "new scene resumes the map and removes the old screen effect");
     check(!events.skipButtonShown() && !events.fastForward, "old skip controls and held state are gone");
     check(!events.awaitingSlash() && !events.finishingSlash(), "execution finale does not survive the scene");
@@ -82,6 +86,13 @@ function menus() {
     check(!events.choiceShown() && !events.skipButtonShown() && !events.inputShown(), "old choice, fast-forward window and text input are closed");
     check(!events.geneGet().open && !events.collectList().open && !events.worldSelect().open && !events.geneLab().open, "old reward, collection and destination menus are closed");
     check(events.levelUpShown() < 0 && !events.keyBuyShown() && !events.clearQuestShown() && events.mapName() < 0, "old banners and quest overlays are gone");
+    if (!script(R"(function tutorialPages(){EvtWindow.SetMessageText(4,"First\\fSecond");})", "tutorialPages")) return 1;
+    check(events.tutorialPage(-1) && events.page() == 0 && events.messageShown(), "tutorial previous stops at first page");
+    check(events.tutorialPage(1) && events.page() == 1 && events.messageShown(), "tutorial next browses without closing the message");
+    check(events.tutorialPage(1) && events.page() == 1 && events.messageShown(), "tutorial next stops at last page");
+    check(events.tutorialPage(-1) && events.page() == 0, "tutorial previous returns to first page");
+    script("function ordinaryMessage(){EvtWindow.SetMessageText(1,\"Ordinary dialogue\");}", "ordinaryMessage");
+    check(!events.tutorialPage(1) && events.page() == 0 && events.messageShown(), "tutorial shoulders cannot page ordinary dialogue");
 #endif
     // reset is idempotent and leaves existing native bindings usable.
     events.reset();

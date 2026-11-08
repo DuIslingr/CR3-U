@@ -131,6 +131,7 @@ bool Cr3Area::load(const MvglArchive& a, const std::string& area, std::string* e
 }
 
 void Cr3GomCamera::reset(const V3& player, float playerYaw) {
+    behindAge_ = -1;
     if (external_) return;
     if (lookDown_) { // (Fld2CameraLookDown::Reset: at once where they go)
         eye = player + V3{ldOffset_[0], ldOffset_[1], ldOffset_[2]}, at = player + V3{0, 1.2f, 0};
@@ -146,15 +147,25 @@ void Cr3GomCamera::reset(const V3& player, float playerYaw) {
 
 void Cr3GomCamera::turn(float dyaw, float dpitch) {
     if (lookDown_ || external_) return;
+    if (dyaw != 0 || dpitch != 0) behindAge_ = -1;
     yaw += dyaw;
     pitch = std::clamp(pitch + dpitch, 0.05f, 1.3f);
 }
 
 void Cr3GomCamera::drag(float dyaw, float dpitch) {
     if (lookDown_ || external_) return;
+    if (dyaw != 0 || dpitch != 0) behindAge_ = -1;
     const float most = 20.0f * 0.01745328f;
     yaw += dyaw;
     pitch = std::clamp(pitch + dpitch, std::min(pitch, -most), std::max(pitch, most));
+}
+
+void Cr3GomCamera::behind(float playerYaw) {
+    if (!turnable()) return;
+    const float base = std::atan2(spring_[0] - at[0], spring_[2] - at[2]);
+    behindAge_ = 0, behindYaw_ = yaw, behindPitch_ = pitch;
+    behindDelta_ = std::remainder(playerYaw + 3.14159265f - base - yaw, 2 * 3.14159265f);
+    swinging_ = false;
 }
 
 void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls, const CollisionWorld* walls) {
@@ -197,7 +208,13 @@ void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt
     const float behind = playerYaw + 3.14159265f; // (the direction behind the player)
     float a = std::remainder(cameraAngle - behind, 2 * 3.14159265f) / kDeg;
     const float mag = std::fabs(a);
-    if (!moving || mag > 150) swinging_ = false;
+    if (behindAge_ >= 0) {
+        behindAge_ = std::min(0.3f, behindAge_ + std::max(0.0f, dt));
+        const float t = behindAge_ / 0.3f;
+        yaw = behindYaw_ + behindDelta_ * t;
+        pitch = behindPitch_ + (0.3f - behindPitch_) * t;
+        if (behindAge_ >= 0.3f) behindAge_ = -1;
+    } else if (!moving || mag > 150) swinging_ = false;
     else if (mag >= 30 || swinging_) {
         swinging_ = true;
         const float rate = std::fabs((mag - 180) / 180) * 1.5f * 60; // (degrees a second)
