@@ -133,3 +133,99 @@ releases (touch alone) have none of, the controller does as the Vita does:
 `CR3_PAD_SCRIPT` also takes `rx=` / `ry=` (the right stick), `until=<text>` (the later steps wait for a log line with it, `_` a
 space, their times counted from then), `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
 
+
+### Not yet as the Vita's (to do)
+
+The audit of the Vita's button code (the callers of the masks `FUN_8128cd9c` pressed,
+`FUN_8128ce86` held, `FUN_8128cf70` released, `FUN_8128d05a` repeating; the list cursor
+`FUN_8128d1ea`) found these still different. Addresses are the Vita build's; readings are from
+the decompilation, to be checked on screen as each is done.
+
+- **Field**
+  - L: GomBehind `0x810c4484` swings the camera behind the player over 0.3 s (yaw to the
+    player's facing the short way, the tilt reset); it needs the Gom camera's swing in
+    `Cr3GomCamera`.
+  - FieldGoodsMenu `0x81144642` / `0x81145a2c`: R steps the focus round the goods' icons
+    (no sound), □ uses the one in focus, ○ the check / talk icon. The port's □ is the
+    fast-forward there.
+- **Battle**
+  - comBtnMenu `0x8112bdc4`: com_002 on each move; com_005 on a disabled button; com_004 on
+    back; the focused button's `mat_com_menuBtn_02` in (0.5, 1, 1.5), a disabled one
+    (0.17, 0.33, 0.5).
+  - comListMenu `0x81137862`: ↑ / ↓ stop at the ends (the port's wrap); L / R the
+    categories where there are several; com_005 on a row that can't be used.
+  - TargetSelectMenu `0x81253dd0`: past either end the cursor reaches the enemy-info part
+    (`mat_bt_parts_03` cyan, ○ PersonalInfo 6); with an all-target command ↑ / ↓ toggle
+    all / info; com_004 on back.
+  - WildCardMenu `0x81277712`: ← / → move between the cards (no wrap, no sound), ○ picks one
+    that can be picked, else com_004. The port takes the keys 1 - 5 only.
+  - phaseVictory `0x81057fec`: ○ cuts the victory camera short.
+  - BattleResultV2Menu `0x8122d28e`: the first ○ runs the tally to its end, a later ○ closes.
+- **Messages**
+  - VistaWindowMenu `0x8125f47e`: △ toggles the vista's pause (SetVistaPauseButtonEnable,
+    not in the port).
+  - TutorialMenu `0x8125c57e`: L / R its pages (direction not yet checked).
+  - An event's yes / no (YNChoiceButton `FUN_812818ca`): ↑ / ↓ between them with com_002,
+    cyan, ○ that one (Yes com_003, No com_004), × No. The port takes Return / Backspace,
+    with no cursor.
+- **Saves**: SaveFileMenu `0x812384a2`. ↑ from the first slot reaches the Copy / Delete row,
+  ← / → between them, ↓ back; ↓ on the last slot stays. The port reaches Copy / Delete by
+  the C / D keys alone; its 12 paged slots are its own.
+- **Movies** (`0x812d6060`): △ pauses / resumes (sceAvPlayerPause / Resume), □ stops; ○ does
+  nothing. The port skips on ○ twice within 3 s.
+- **Lunch** (LunchMain `0x810b2bf0`): ↑ / → the next balloon, ↓ / ← the one before, the
+  focused one pulsing 1.1 - 1.5 x, ○ running it. The port takes clicks only.
+- **Camp**
+  - CampTopMenu `0x81118718`:
+    - ← / → over the party's panels (com_002); → past the last hands focus to the buttons.
+    - Hold ○ on a panel and ← / → to move that member along (the party's order).
+    - CampcomBtnMenu `0x811160a2`: ← from the buttons back to the panels; com_005 on a
+      disabled button.
+  - CampItemMenu `0x8110dd74` / `0x8110ec86`: the count's reels.
+    - ← / → between the tens, the ones and Yes / No; ↑ / ↓ turn the reel in focus (cyan).
+    - ○ the button in focus, × No.
+  - CampEquipFutterMenu `0x81108660`: □ the next character too.
+  - FutterMenu `0x81156662`: L / R the Gene / Skill tab (the skill change menu); □ cycles 6
+    sort orders.
+  - GeneChangeMenu `0x81159e62`:
+    - ← to its change button (`mat_gene_change_01` cyan, the cards dimmed 0.6).
+    - From there a 2 x 4 grid of the gene's skills with their help.
+    - Wearing another's card asks first (0x241); com_005 on one that can't be worn.
+    - GeneSkillListMenu `0x81161726` and GeneStatusMenu `0x81166386` are not in the port.
+  - The gene lab:
+    - GeneSynthesisListMenu `0x8116d6b6`: △ opens the row's gene status; ← back to the left
+      panel. The port's △ is Mix.
+    - NormalSynthesisMenu `0x8117cf06`: ↑ / ↓ over the two materials and the Mix button
+      (cyan).
+    - IntensificationSynthesisMenu `0x81178302`: ← / → between its two buttons (cyan).
+    - GeneSynthesisFutter `0x811690b6`: □ the next tab, START its OK.
+  - GiftSynthesizeListMenu `0x81189cf2`: △ the gene status. GiftSynthesizeMain `0x8118c40a`:
+    ← Yes / → No in focus.
+  - OptionMenu `0x81203e54`:
+    - ↑ / ↓ over the rows, on to the footer (OptionFooterMenu `0x81201416`).
+    - The Sound tab: ← / → ±10, repeating; the SE row plays com_003, Voice j002_110. The
+      port picks the row by the keys 1 - 3.
+    - The focused item's `mat_opt_btn_01` cyan.
+  - PictureBookMenu `0x81211910`:
+    - A card cursor over 2 pages x 6 (com_002); ○ its profile.
+    - ↓ from the bottom row to the 8 tabs (cyan, the others 0.5).
+    - The profile's ↑ / ↓ the rarity.
+- **Shops, My Page, VS**
+  - SShopMenu `0x8124b4e8`: a cursor over Box, Item, VIP.
+    - → / ← between Box and Item; ↓ / ↑ between Item and VIP.
+    - In focus scale 1 and (1, 1, 1); the others 0.9 and (0.8, 0.8, 0.8).
+    - The port's keys 1 - 3 only: Item and VIP can't be reached by a controller.
+  - LuckyBoxMenu `0x811ea496`:
+    - ← / → over the 3 buy panels; ↑ / ↓ to the check button (cyan); com_002 on each move.
+    - The box at 1.35 while the panels have focus.
+  - MyPageNewTopMenu `0x811fb75c`: ↑ / ↓ a cursor over its 4 buttons, round, skipping hidden
+    ones; the right stick scrolls the log. The port's keys 1 - 4.
+  - WorldSelectMenu `0x8127e8e0`: ○ presses List (cyan). The port's Return enters the dungeon;
+    its list is on the L key.
+  - VsModeMenu `0x81272806`: a cursor over 6 places.
+    - Two large buttons, then a 2 x 2 grid; the focused one in its highlight frame.
+    - × back one screen.
+    - A controller is stuck on the port's second screen, which takes the keys 1 / 2.
+  - VsModeListMenu `0x8126adba`: △ picks the row at once; ← out of the list.
+  - TournamentDitailMenu `0x81266bb2`: L / R the tournament before / after.
+  - PresentGet `0x8121a866`: ← / → between OK and Cancel.
