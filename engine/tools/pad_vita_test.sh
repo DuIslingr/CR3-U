@@ -60,5 +60,8 @@ want camera && run right-stick "6:rx=1 7:rx=0 8:ry=-0.4 9:ry=0 10:quit" \
     "yaw -1.50, pitch 0.30|yaw -1.50, pitch 0.35" \
     -- --area d0301
 
+# TitleMenu (0x81256cde): ○ or START its tap
+want title && run title-start "3:start 5:quit" "title: START|title: tapped" -- --title
+
 echo "the Vita's buttons: $problems problems"
 [ "$problems" -eq 0 ]

@@ -128,6 +128,8 @@ releases (touch alone) have none of, the controller does as the Vita does:
   further 1.5 -, the tilt within 20 degrees), as the right half's touch does, with the follow camera.
   (The Vita's L, GomBehind `0x810c4484`, swings it behind the player over 0.3 s: not in yet.)
 
+- **START on the title** (TitleMenu, `0x81256cde`: ○ or START) is its tap, as ○ is.
+
 `CR3_PAD_SCRIPT` also takes `rx=` / `ry=` (the right stick), `until=<text>` (the later steps wait for a log line with it, `_` a
 space, their times counted from then), `shot=<file.bmp>` (the frame then, as `--capture` writes one) and `quit`.
 

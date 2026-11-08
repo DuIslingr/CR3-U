@@ -11208,6 +11208,7 @@ struct Viewer {
         if (t.stage != 2) return true;
         audio.playSe("com_001", false); // (TitleMenuMain 2: the SE alone - the music plays on over the save files)
         t.stage = 3, t.stageClock = 0;
+        SDL_Log("title: tapped");
         return true;
     }
 
@@ -27893,6 +27894,8 @@ int main(int argc, char** argv) {
                     else if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER && (v.inMenu() || v.cr3Title.stage == 4)) key = shopList ? SDLK_LEFT : SDLK_PAGEUP;
                     else if (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER && (v.inMenu() || v.cr3Title.stage == 4)) key = shopList ? SDLK_RIGHT : SDLK_PAGEDOWN;
                     else if (b == SDL_GAMEPAD_BUTTON_START && v.titleMenu.stage >= 2 && v.titleMenu.stage <= 3) key = SDLK_RETURN;
+                    else if (b == SDL_GAMEPAD_BUTTON_START && v.vitaButtons() && v.cr3Title.stage == 2) // (CR3's TitleMenu, 0x81256cde: ○ or START its tap)
+                        key = SDLK_RETURN, SDL_Log("title: START");
                     if (key) pushKey(key);
                 } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION || e.type == SDL_EVENT_FINGER_UP ||
                            e.type == SDL_EVENT_FINGER_CANCELED) { // (the fingers SDL makes no mouse of: the field's second touch)
