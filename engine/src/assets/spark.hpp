@@ -80,12 +80,14 @@ struct SparkMaterial {
 
 struct SparkAsset {
     float fps = 30;                // header +0x10
+    bool centeredRandom = false;   // Vita v103 stores a base and signed random radius
     std::vector<SparkNode> nodes;  // the tree's (types 0 .. 8), the root first
     std::vector<SparkMaterial> materials;
     std::vector<SparkAnim> anims;  // the ANIM chunks, in order
     int root = -1;
     // a channel's value at a frame: its curve's, else `fallback` (SparkUtils::Animate)
     float animate(int anim, int channel, int frame, float fallback) const;
+    float rangeBase(const SparkRange& range) const { return centeredRandom ? (range.min + range.max) * 0.5f : range.min; }
     const SparkMaterial* materialById(uint32_t id) const;
 };
 

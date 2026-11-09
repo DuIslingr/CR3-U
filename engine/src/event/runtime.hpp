@@ -48,6 +48,7 @@ public:
     static constexpr float kTick = 1.0f / 30.0f;
 
     EventRuntime(const MvglArchive& archive, GameState& state);
+    ~EventRuntime();
 
     // the event `function` ("D01_01_0101_evt"): its script loaded and run up to its first wait.
     // False: no script, or it failed (error() says)
@@ -391,6 +392,7 @@ private:
     std::set<int> openWindows_;
     std::set<int> skipOff_; // (SetSkipButtonEnable false)
     std::set<int> pageSendOff_; // (SetWaitButtonEnable false)
+    std::set<int> autoVoiceOff_; // (SetAutoVoiceEnable false)
     bool skipButton_ = false;
     int fastWindow_ = 0; // (the fast-forward window: 0 none, 1 made, 2 shown)
     bool touched_ = false;
@@ -425,6 +427,10 @@ private:
     std::vector<std::pair<int, std::string>> cutInImages_; // (id, image: the first of an id counts)
     int messageWindow_ = Vista;
     int message_ = 0, page_ = 0, revealed_ = 0, messagesSet_ = 0;
+    uint64_t dialogueVoice_ = 0;
+    int dialogueVoiceWindow_ = Vista;
+    int playDialogueVoice(int id, const std::string& name);
+    void stopDialogueVoice();
     size_t stop_ = 0;     // the page's next stop (TextStop)
     bool ended_ = false;  // a \* message ended by itself: still shown, done for CheckMessage
     float stopTime_ = 0;  // (at a \w stop: its time so far)

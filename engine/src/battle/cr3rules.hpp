@@ -103,6 +103,7 @@ struct Cr3Fighter {
     std::vector<int> skills; // (skill_para Skill ids: a guest gene's, a monster's mode's)
     int attackCommand = -1;                     // (a character's +0x10; a monster's mode's +0x14)
     std::vector<int> geneCommands;              // (a character's gene's: a guest's GuestGene row)
+    int geneMaster = -1;                        // (the equipped gene's master ID for the battle card)
     int geneLevel = 0;                          // (VGetGeneLevel: the "Level" step's - a character's gene's, a monster's level)
     std::vector<std::pair<int, int>> commands; // (a monster's: command, ratio)
     // its status effects (BtlStatusEffectList: skill_para StatusEffect ids, the turns left - -1

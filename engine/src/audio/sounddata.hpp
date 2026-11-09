@@ -155,6 +155,10 @@ private:
 // (the viewer's); unset, they do nothing and say so as the game would with no sound - GetState
 // -2 ("none")
 struct SoundHooks {
+    struct DialogueVoice {
+        int slot = -1;
+        uint64_t token = 0;
+    };
     std::function<void(int track, int fadeFrames)> playBgm;
     std::function<void(int fadeFrames)> stopBgm;
     std::function<void()> releaseBgm;
@@ -164,6 +168,9 @@ struct SoundHooks {
     std::function<void(int fadeFrames)> stopAllSe;
     std::function<int(int clip)> playVoice;
     std::function<void(int fadeFrames)> stopAllVoices;
+    // A window owns this particular playback even when its mixer slot is later reused.
+    std::function<DialogueVoice(int clip, const std::string& name)> playDialogueVoice;
+    std::function<void(uint64_t token)> stopDialogueVoice;
     // (CR3's, by name - utils::Sound*: the effects and voices named, the music its number's
     // track m<NN> looping or once; fades in the game's frames, 30 a second)
     std::function<void(int track, int fadeFrames, bool loop)> playBgmOnce;

@@ -35,6 +35,8 @@ int main() {
     hooks.playVoice = [&](int) { return ++voices; };
 #ifdef TEST_CR3
     hooks.playVoiceNamed = [&](const std::string&) { return ++voices; };
+    hooks.playDialogueVoice = [&](int, const std::string&) -> game::SoundHooks::DialogueVoice { return {++voices, 1}; };
+    hooks.stopDialogueVoice = [&](uint64_t token) { if (token == 1) voices = 0, ++stops; };
     const char* script = "function line(){EvtWindow.SetMessageText(0,\"A voiced page\");Cr3Sound.PlayVoice(\"voice\");} function nextvoice(){Cr3Sound.PlayVoice(\"next\");}";
 #else
     const char* script = "function line(){EvtWindow.SetMessageText(0,\"A voiced page\");Cr3Sound.PlayVoice(1);} function nextvoice(){Cr3Sound.PlayVoice(2);}";

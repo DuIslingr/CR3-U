@@ -481,8 +481,9 @@ lab's fields (GetFiledId 37 / 38) gets it from Battle.SetFieldVisualEffect('fe20
 (BtlFieldVisualEffect: the figure at the field's origin, looped).
 
 `fe201am10` is a figure with no meshes plus a **Spark** particle system, `fe201am10.sprk`. The
-file starts with 'SPAK'; header byte +0x10 is the frame rate (30). Chunks follow at +0x18, each a
-tag and its whole size (+4):
+file starts with 'SPAK' and stores its frame rate at +0x10. The wide format starts its chunks
+at +0x18. Vita version 103 starts them at +0x14 and uses shorter node layouts, packed animation
+curves, and random values stored as a base and radius. Each chunk gives its tag and whole size.
 
 - `NODE`: data at +0x10. Data +0 is the type (u16), +2 the size, +4 the id, +8 the name (0x40).
   Type 9 is a texture: the image's name at +0x48. Type 10 is a material: +0x48 r g b a, each a
@@ -557,8 +558,9 @@ their emitter's place, which follows the effect's root each frame. Forces, trail
 the other pivots are not in. The other environment effects fade by their materials' alpha curves:
 Primordia's fe201am09 (ash darkened out - blend 1 - and glow added, alpha 0 -> 0.49 -> 0 over 60
 frames), fe201am02's clouds (field 26), fe201am05's orange sparks (fields 45 / 46 / 55 / 59, corner
-colours on). CR3_SPARK=1 logs the quads drawn twice a second (a test aid). The field draws any effect
-with a `.sprk` (EffectResidentPlay's too). The battle draws Battle.SetFieldVisualEffect's.
+colours on). CR3_SPARK=1 logs the quads drawn twice a second (a test aid). The field draws effects
+with a `.sprk` (EffectResidentPlay's too). The battle draws particles for field effects and for
+action effects such as Leary's projectile.
 
 ### The bomb, rocks and solid gimmicks (CR3)
 
@@ -1784,9 +1786,24 @@ target): the command's CommandDirection +0x2c effect (direction.mbe column 9 - t
 (rand x 2 - 1) x +0x68 + 1, bit 2 the unit's effect scale. `data\effect.mbe` "Effect", 56-byte
 rows: the id, the figure (`be001hit01` ..: geom, skel, its own animation, some with `.sprk`
 particles), two sounds (the first played with it), floats. The figures blend additively (SRC_ALPHA,
-ONE) or take their dark parts off (REVERSE_SUBTRACT). CR3-U plays the figure once at the target's
-DummyDP01 with its sound; not yet the particles, the random turn, the effect scale, the bullets
-(+0x18 / +0x20: a shot's effects by hit) or the other directions' effects (casts, auras).
+ONE) or take their dark parts off (REVERSE_SUBTRACT).
+
+Shot and ShotMagic release a projectile at an animation marker. CommandDirection supplies the
+projectile IDs (+0x18 count, +0x20 array on the 64-bit releases), source and destination effect
+points (+0x30 and +0x34), speed and acceleration (+0x3c and +0x40), and waypoint spread and
+fraction (+0x44 through +0x54). BtlBullet moves along a three-point Hermite curve. Arrival
+dispatches the hit effect at +0x38's point, and its own timer delivers damage. The Ranged
+direction has direct hits and can use the same shooting motion without a projectile.
+
+MagicCast plays the source's motion. AnimDirection supplies the motion sound and any effects
+attached to the caster, such as bm01's card effect on the left hand. It also names the caster
+camera. At the motion's change marker, eligible gene casts show the equipped cards in caster
+and partner order. The one-, two-, and three-card overlays last 35, 38, and 41 frames at 30 Hz.
+If the caster camera ends during the overlay, the battle scene pauses until the cards finish.
+The receiver then uses the camera kind in CommandDirection. It dispatches the effect on the
+target, at the selected side's mean EP5 Z for group magic, or at the field origin for field
+magic. These effects have their own damage timer and animation lifetime.
+Locator rows in `data\\locator.mbe` supply the units' effect joints and offsets.
 
 ### The final battle (CR3)
 
@@ -2199,6 +2216,10 @@ Android's asset packs, the Vita's `bgm/`, `se/`, `voice/*/`). `audio/cr3sound.hp
   PlayBGM wrapper plays on 1 and releases first on 2. The engine's own numbered effects
   (CrxSound::PlaySE(int)) index `crx_se_name_table`: the 1,033 effect names, sorted - the same
   order as the files'.
+- CR3 message files can end in a table of 32-byte voice names, followed by `voi2` and a u32
+  entry count (EvtTextData::Init). EvtWindow::ShowMessage uses the current message's name for
+  automatic voice and respects the window's skip state and SetAutoVoiceEnable. A cue can name
+  a clip absent from that release.
 - A battle (BtlSystem::Init) plays its boot param's music; the victory (phaseVictoryIn) the music
   after (32 unless BattleIn2 said), faded out over a second at the result (phaseResult). The
   field's music is the area script's (`PlayDungeonBGM` from `evt000`, run again on the way back).

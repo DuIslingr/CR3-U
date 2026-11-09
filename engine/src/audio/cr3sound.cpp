@@ -161,6 +161,10 @@ bool Cr3Sound::effect(const std::string& name, Clip& out, std::string* error) co
     return fail(error, name + ": no such effect");
 }
 
+bool Cr3Sound::hasVoice(const std::string& name) const {
+    return db_ && db_->contains("sound\\" + name + (isVita(*db_) ? ".snd1" : ".snd"));
+}
+
 bool Cr3Sound::voice(const std::string& name, Clip& out, std::string* error) const {
     out = Clip();
     auto s = openStream(name, error);

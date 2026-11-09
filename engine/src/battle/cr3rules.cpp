@@ -78,6 +78,7 @@ bool Cr3BattleRules::playerStats(const Cr3BattleTables& t, int character, Cr3Fig
         // Aquinas, Augmented Healing (All), as the reference's list) - its numbers added
         MbeFile::Row g, gi;
         if (r.i(7) > 0 && t.gene.find("GuestGene", r.i(7), kGuestGene, g)) {
+            f.geneMaster = g.i(1);
             f.geneLevel = g.i(2);
             for (size_t k = 3; k + 1 < 19; k += 2) {
                 if (g.i(k + 1) <= 0) continue;
@@ -92,6 +93,7 @@ bool Cr3BattleRules::playerStats(const Cr3BattleTables& t, int character, Cr3Fig
         }
         // (anyone else's: the gene it wears - its level, slots and numbers, the items' additions)
         if (const auto pg = partyGenes.find(character); pg != partyGenes.end() && !(r.i(7) > 0 && t.gene.find("GuestGene", r.i(7), kGuestGene, g))) {
+            f.geneMaster = pg->second.master;
             f.geneLevel = pg->second.level;
             for (const auto& sl : pg->second.slots) (sl[0] == 1 ? f.skills : f.geneCommands).push_back(sl[1]);
             if (t.gene.find("Gene", pg->second.master, kGene, gi)) {

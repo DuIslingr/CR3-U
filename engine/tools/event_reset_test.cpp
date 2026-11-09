@@ -60,6 +60,19 @@ function dirty() {
     events.advance(); // dismiss, without needing a new Open to repair stale permissions
     check(!events.messageShown(), "fresh dialogue advances with a tap");
 #ifdef TEST_CR3
+    // One message with one language and a fixed-width voi2 trailer entry.
+    std::vector<uint8_t> voiced(22 + 32 + 8);
+    voiced[0] = 16, voiced[4] = 20, voiced[8] = 1;
+    voiced[20] = 'x';
+    std::memcpy(voiced.data() + 22, "test_voice", 10);
+    std::memcpy(voiced.data() + 54, "voi2", 4);
+    voiced[58] = 1;
+    game::TextData text;
+    check(text.parse(voiced) && text.message(1, 0) == "x", "named voice trailer preserves dialogue text");
+    check(text.voiceName(1) == "test_voice" && text.voice(1) == -1, "voi2 exposes the named voice");
+    check(text.voiceName(0).empty() && text.voiceName(2).empty(), "voice lookup is one-based and bounded");
+    voiced[58] = 2;
+    check(text.parse(voiced) && text.voiceName(1).empty(), "truncated voice trailer is ignored");
     const char* menus = R"(
 function menus() {
     VistaEvent.LoadSecondMap("old_map");

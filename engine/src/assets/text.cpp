@@ -26,12 +26,27 @@ bool TextData::parse(const std::vector<uint8_t>& data) {
     records_ = u32(data, 0), strings_ = u32(data, 4), count_ = int(u32(data, 8));
     if (records_ > data.size() || strings_ > data.size() || strings_ < records_) return *this = TextData(), false;
     // (a record: a u32 offset per language, the records end where the strings start)
-    languages_ = count_ > 0 ? int((strings_ - records_) / (4u * uint32_t(count_))) : 0;
+    languages_ = count_ > 0 ? int((strings_ - records_) / 4 / uint32_t(count_)) : 0;
     if (count_ > 0 && (languages_ < 1 || languages_ > 8)) return *this = TextData(), false;
-    if (data.size() >= 8 && std::memcmp(&data[data.size() - 8], "voic", 4) == 0) {
+    const size_t trailer = data.size() - 8;
+    const size_t available = trailer >= strings_ ? trailer - strings_ : 0;
+    if (std::memcmp(data.data() + trailer, "voic", 4) == 0) {
         const uint32_t n = u32(data, data.size() - 4);
-        if (size_t(n) * 4 + 8 <= data.size())
-            for (uint32_t k = 0; k < n; ++k) voices_.push_back(int(u32(data, data.size() - 8 - 4 * n + 4 * k)));
+        if (n <= available / 4) {
+            const size_t start = trailer - size_t(n) * 4;
+            for (size_t k = 0; k < n; ++k) voices_.push_back(int(u32(data, start + k * 4)));
+        }
+    } else if (std::memcmp(data.data() + trailer, "voi2", 4) == 0) {
+        constexpr size_t kNameSize = 32;
+        const uint32_t n = u32(data, data.size() - 4);
+        if (n <= available / kNameSize) {
+            const size_t start = trailer - size_t(n) * kNameSize;
+            for (size_t k = 0; k < n; ++k) {
+                const char* name = reinterpret_cast<const char*>(data.data() + start + k * kNameSize);
+                const char* end = static_cast<const char*>(std::memchr(name, 0, kNameSize));
+                voiceNames_.emplace_back(name, end ? end : name + kNameSize);
+            }
+        }
     }
     data_ = data;
     return true;
@@ -46,6 +61,7 @@ std::string TextData::message(int n, int language) const {
 }
 
 int TextData::voice(int n) const { return n >= 1 && size_t(n) <= voices_.size() ? voices_[size_t(n - 1)] : -1; }
+std::string TextData::voiceName(int n) const { return n >= 1 && size_t(n) <= voiceNames_.size() ? voiceNames_[size_t(n - 1)] : std::string(); }
 
 ParsedMessage parseMessage(const std::string& t) {
     ParsedMessage out;

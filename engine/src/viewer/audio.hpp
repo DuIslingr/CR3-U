@@ -65,6 +65,7 @@ private:
         int rate = SoundData::kRate, channels = 1;
         bool loop = false, active = false, voice = false;
         int clip = -1;
+        uint64_t dialogueToken = 0;
         std::string name; // (CR3's: the effect's or voice's)
         float fade = 1, fadeStep = 0; // (a stop's fade: its gain falling by fadeStep a second)
     };
@@ -86,6 +87,7 @@ private:
     float bgmFade_ = 1, bgmFadeStep_ = 0; // (gain, its change a second)
     void feedBgm();
     std::vector<Voice> slots_; // 0..15 effects, 16..31 voices
+    uint64_t nextDialogueToken_ = 0;
     Voice movie_;
     bool scenePaused_ = false, moviePaused_ = false;
     float volume_[3] = {1, 1, 1};

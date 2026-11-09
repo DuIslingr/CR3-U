@@ -19,14 +19,16 @@ public:
     int languages() const { return languages_; }
     // message n (from 1) in a language, raw (its commands in it); "" when there is none
     std::string message(int n, int language = 1) const;
-    // its voice (the trailer's ids; -1 none)
+    // Its automatic voice cue, by numeric ID in voic or by name in voi2.
     int voice(int n) const;
+    std::string voiceName(int n) const;
 
 private:
     std::vector<uint8_t> data_;
     uint32_t records_ = 0, strings_ = 0;
     int count_ = 0, languages_ = 0;
     std::vector<int> voices_;
+    std::vector<std::string> voiceNames_;
 };
 
 struct TextLine {

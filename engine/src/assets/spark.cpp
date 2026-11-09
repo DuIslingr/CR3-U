@@ -59,40 +59,51 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
     auto u32 = [&](size_t p) { uint32_t v = 0; if (p + 4 <= d.size()) std::memcpy(&v, &d[p], 4); return v; };
     auto i16 = [&](size_t p) { int16_t v = 0; if (p + 2 <= d.size()) std::memcpy(&v, &d[p], 2); return int(v); };
     auto f32 = [&](size_t p) { float v = 0; if (p + 4 <= d.size()) std::memcpy(&v, &d[p], 4); return v; };
-    auto range = [&](size_t p) { return SparkRange{f32(p), f32(p + 4)}; };
+    // Vita v103 assets use smaller pointers and store a base and random radius.
+    const bool vita = i16(8) == 103;
+    out.centeredRandom = vita;
+    auto range = [&](size_t p) {
+        const float base = f32(p), other = f32(p + 4);
+        const float radius = std::abs(other);
+        return vita ? SparkRange{base - radius, base + radius} : SparkRange{base, other};
+    };
     auto text = [&](size_t p, size_t n) {
         std::string s;
         for (size_t k = 0; k < n && p + k < d.size() && d[p + k]; ++k) s += char(d[p + k]);
         return s;
     };
     struct Raw {
-        size_t at;
         uint32_t children, childCount, emits, emitCount;
     };
     std::vector<Raw> raw;
     std::map<uint32_t, std::string> textures; // (texture nodes: id -> image)
     std::vector<uint32_t> list;               // NLST: the ids the nodes' lists index
-    for (size_t o = 0x18; o + 8 <= d.size();) {
+    for (size_t o = vita ? 0x14 : 0x18; o + 8 <= d.size();) {
         const uint32_t size = u32(o + 4);
         if (size < 8 || o + size > d.size()) return fail("bad chunk");
         if (std::memcmp(&d[o], "NODE", 4) == 0) {
             const size_t nd = o + 0x10; // (the node's data: type, size, id, name ...)
+            if (size < 0x18) return fail("short node chunk");
             const int type = i16(nd);
             if (type == 9) {
+                if (size < 0x78) return fail("short texture node");
                 textures[u32(nd + 4)] = text(nd + 0x48, 0x20);
             } else if (type == 10) {
+                if (size - 0x10 < (vita ? 0x1b4u : 0x244u)) return fail("short material node");
                 SparkMaterial m;
                 m.id = u32(nd + 4), m.name = text(nd + 8, 0x40);
                 for (int c = 0; c < 4; ++c) m.color[size_t(c)] = range(nd + 0x48 + size_t(c) * 8);
-                const uint32_t f = u32(nd + 0x170);
+                const uint32_t f = u32(nd + (vita ? 0x11c : 0x170));
                 m.blend = f >> 15 & 1, m.depthTest = f >> 17 & 1, m.depthWrite = f >> 18 & 1, m.alphaTest = f >> 19 & 1;
-                m.alphaRef = f32(nd + 0x180), m.blendMode = d[nd + 0x186];
+                m.alphaRef = f32(nd + (vita ? 0x12c : 0x180)), m.blendMode = d[nd + (vita ? 0x132 : 0x186)];
                 m.spriteColor = f >> 7 & 1;
-                m.anim = int(int32_t(u32(nd + 0x240)));
-                m.shaderKey = text(nd + 0x188, 0x40);
-                m.texture = std::to_string(u32(nd + 0xe0)); // (an id until the textures are known)
+                m.anim = int(int32_t(u32(nd + (vita ? 0x1b0 : 0x240))));
+                m.shaderKey = text(nd + (vita ? 0x134 : 0x188), 0x40);
+                m.texture = std::to_string(u32(nd + (vita ? 0xd4 : 0xe0))); // (an id until the textures are known)
                 out.materials.push_back(m);
             } else {
+                const size_t minimum = type == 2 ? (vita ? 0x1c0 : 0x1e2) : type == 3 ? (vita ? 0x258 : 0x275) : (vita ? 0x194 : 0x19c);
+                if (size - 0x10 < minimum) return fail("short Spark node");
                 SparkNode n;
                 n.type = type, n.id = u32(nd + 4), n.name = text(nd + 8, 0x40);
                 for (int a = 0; a < 3; ++a) {
@@ -105,10 +116,24 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                 for (int a = 0; a < 3; ++a)
                     for (int k = 0; k < 2; ++k)
                         n.spin[a][k] = f32(nd + 0xf0 + size_t(a) * 8 + size_t(k) * 4), n.grow[a][k] = f32(nd + 0x108 + size_t(a) * 8 + size_t(k) * 4);
-                n.anim = int(int32_t(u32(nd + 0x198)));
+                n.anim = int(int32_t(u32(nd + (vita ? 0x190 : 0x198))));
                 n.lifeMin = i16(nd + 0x178), n.lifeMax = i16(nd + 0x17a);
-                Raw r{nd, u32(nd + 0x188), u32(nd + 0x190), 0, 0};
-                if (type == 2) {
+                if (vita) { // GetRandomValueI: base + (rand % spread) - spread / 2.
+                    const int base = n.lifeMin, spread = std::max(n.lifeMax, 0);
+                    n.lifeMin = base - spread / 2, n.lifeMax = n.lifeMin + std::max(spread - 1, 0);
+                }
+                Raw r{u32(nd + 0x188), u32(nd + (vita ? 0x18c : 0x190)), 0, 0};
+                if (type == 2 && vita) {
+                    n.order = d[nd + 0x198], n.mode = d[nd + 0x199];
+                    n.countMin = n.countMax = i16(nd + 0x19a);
+                    n.intervalMin = n.intervalMax = std::max(i16(nd + 0x19c), 1);
+                    r.emits = u32(nd + 0x1a8), r.emitCount = u32(nd + 0x1ac);
+                    n.shape = d[nd + 0x1b0];
+                    for (int a = 0; a < 3; ++a) {
+                        const float extent = f32(nd + 0x1b4 + size_t(a) * 4);
+                        n.extent[size_t(a)] = {extent, extent};
+                    }
+                } else if (type == 2) {
                     n.order = d[nd + 0x1a8], n.mode = d[nd + 0x1a9];
                     n.countMin = i16(nd + 0x1ac), n.countMax = i16(nd + 0x1ae);
                     n.intervalMin = std::max(i16(nd + 0x1b0), 1), n.intervalMax = std::max(i16(nd + 0x1b2), 1);
@@ -117,33 +142,41 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                     for (int a = 0; a < 3; ++a) n.extent[size_t(a)] = range(nd + 0x1c8 + size_t(a) * 8);
                     n.maxParticles = int(uint16_t(i16(nd + 0x1e0)));
                 } else if (type == 3) {
-                    n.sizeX = range(nd + 0x1a8), n.sizeY = range(nd + 0x1b0);
+                    n.sizeX = range(nd + (vita ? 0x198 : 0x1a8)), n.sizeY = range(nd + (vita ? 0x1a0 : 0x1b0));
                     for (int c = 0; c < 4; ++c)
-                        for (int k = 0; k < 4; ++k) n.color[size_t(c)][size_t(k)] = range(nd + 0x1d8 + size_t(c) * 0x20 + size_t(k) * 8);
-                    n.material = u32(nd + 0x258);
-                    n.pivot = d[nd + 0x263];
-                    n.flags = u32(nd + 0x268);
-                    n.quadShape = d[nd + 0x274];
+                        for (int k = 0; k < 4; ++k) n.color[size_t(c)][size_t(k)] = range(nd + (vita ? 0x1c8 : 0x1d8) + size_t(c) * 0x20 + size_t(k) * 8);
+                    n.material = u32(nd + (vita ? 0x248 : 0x258));
+                    n.pivot = d[nd + (vita ? 0x24f : 0x263)];
+                    n.flags = u32(nd + (vita ? 0x254 : 0x268));
+                    n.quadShape = vita ? 0 : d[nd + 0x274];
                 }
                 out.nodes.push_back(n);
                 raw.push_back(r);
             }
         } else if (std::memcmp(&d[o], "ANIM", 4) == 0) {
-            // (SparkUtils::BindAnimeData: +0 the curves' count, +0x10 their offsets - u64, from
-            // after the table -; a curve: +0 its channel, +2 / +3 its extrapolations, +4 its keys'
-            // count, keys from +0x10 of 0x18 bytes - +0 frame, +2 interpolation, +4 value, +8 / +0xc
-            // the in handle's frame and value, +0x10 / +0x14 the out handle's)
+            // Vita packs its curves consecutively. The wider format puts an offset table before them.
             const size_t a = o + 0x10;
-            const size_t n = d[a] | size_t(d[a + 1]) << 8, table = a + 0x10;
+            const size_t end = o + size, table = a + 0x10;
+            if (a + (vita ? 8 : 0x10) > end) return fail("short animation chunk");
+            const size_t n = uint16_t(i16(a));
+            const size_t curveHeader = vita ? 0xc : 0x10;
+            size_t next = a + 8;
+            if (!vita && table + n * 8 > end) return fail("short animation table");
             SparkAnim anim;
             for (size_t k = 0; k < n; ++k) {
-                const size_t c = table + n * 8 + u32(table + k * 8);
-                if (c + 0x10 > o + size) break;
+                const size_t c = vita ? next : table + n * 8 + u32(table + k * 8);
+                if (c + curveHeader > end) break;
                 SparkCurve cv;
-                cv.channel = d[c] | d[c + 1] << 8, cv.pre = d[c + 2], cv.post = d[c + 3];
-                const size_t count = d[c + 4] | size_t(d[c + 5]) << 8;
-                for (size_t j = 0; j < count && c + 0x10 + j * 0x18 + 0x18 <= o + size; ++j) {
-                    const size_t q = c + 0x10 + j * 0x18;
+                cv.channel = uint16_t(i16(c)), cv.pre = d[c + 2], cv.post = d[c + 3];
+                if (vita) {
+                    if (cv.channel >= 0x2b && cv.channel <= 0x2c) cv.channel += 2; // Sprite size
+                    else if (cv.channel >= 0x33 && cv.channel <= 0x36) cv.channel += 2; // Material diffuse
+                    else if (cv.channel >= 0x60 && cv.channel <= 0x6f) cv.channel += 0xf; // Sprite colors
+                }
+                const size_t count = uint16_t(i16(c + 4)), keys = c + curveHeader;
+                next = keys + count * 0x18;
+                for (size_t j = 0; j < count && keys + (j + 1) * 0x18 <= end; ++j) {
+                    const size_t q = keys + j * 0x18;
                     cv.keys.push_back({i16(q), int(int8_t(d[q + 2])), f32(q + 4), f32(q + 0xc), f32(q + 0x14)});
                 }
                 anim.push_back(cv);
@@ -205,7 +238,8 @@ SparkEffect::Inst SparkEffect::make(int node) {
     if (n.lifeMax >= 0) {
         const int frames = int(random(float(n.lifeMin), float(n.lifeMax) + 0.999f));
         in.life = float(frames) / asset_->fps;
-        if (n.lifeMin > 0 && n.lifeMax > 0 && frames > 0) in.lifeScale = float(n.lifeMin) / float(frames); // (SparkNode::OnInit +0x474)
+        const int base = asset_->centeredRandom ? n.lifeMin + (n.lifeMax - n.lifeMin + 1) / 2 : n.lifeMin;
+        if (base > 0 && n.lifeMax > 0 && frames > 0) in.lifeScale = float(base) / float(frames); // (SparkNode::OnInit +0x474)
     }
     if (n.type == 3) {
         in.size[0] = random(n.sizeX), in.size[1] = random(n.sizeY);
@@ -249,7 +283,11 @@ void SparkEffect::stepInst(Inst& in, float dt) {
         // the frames this step began (an emitter's work runs once a frame: SparkEmitter::Update)
         const int now = int(std::floor(in.age * asset_->fps + 1e-4f));
         for (int f = in.age - dt <= 0 ? 0 : before + 1; f <= now; ++f) {
-            if (n.mode == 2) {
+            if (asset_->centeredRandom && n.mode == 2) {
+                // Vita's ControlParticles uses the one-based frame to compute a cumulative count.
+                const int target = std::max(n.countMin * (f + 1) / in.interval, 1);
+                if (target > in.emitted) emit(in, target - in.emitted), in.emitted = target;
+            } else if (n.mode == 2) {
                 if (f >= in.lastFrame) {
                     emit(in, int(random(float(n.countMin), float(n.countMax) + 0.999f)));
                     in.lastFrame = f + in.interval;
@@ -293,7 +331,10 @@ Mat34 SparkEffect::local(const Inst& in) const {
     const SparkNode& n = asset_->nodes[size_t(in.node)];
     const int f = frame(in);
     auto curve = [&](int ch, const std::array<SparkRange, 3>& r, float* out) { // (the curves' part: links too)
-        for (int a = 0; a < 3; ++a) out[a] = asset_->animate(n.anim, ch + a, f, r[size_t(a)].min) - r[size_t(a)].min;
+        for (int a = 0; a < 3; ++a) {
+            const float base = asset_->rangeBase(r[size_t(a)]);
+            out[a] = asset_->animate(n.anim, ch + a, f, base) - base;
+        }
     };
     float dp[3], dr[3], ds[3], dv[3];
     curve(1, n.position, dp), curve(4, n.rotation, dr), curve(7, n.scale, ds), curve(10, n.velocity, dv);
@@ -339,12 +380,13 @@ void SparkEffect::collect(const Inst& in, const Mat34& parent, const Mat34& came
         // (SparkSprite::UpdateSize: channels 0x2d / 0x2e; UpdateColor: 0x6f + corner x 4 + r g b a;
         // SparkMaterial::Update: 0x35 .. 0x38 - each at the sprite's frame)
         const int f = frame(in);
-        const float size[2] = {in.size[0] + asset_->animate(n.anim, 0x2d, f, n.sizeX.min) - n.sizeX.min,
-                               in.size[1] + asset_->animate(n.anim, 0x2e, f, n.sizeY.min) - n.sizeY.min};
+        const float sizeX = asset_->rangeBase(n.sizeX), sizeY = asset_->rangeBase(n.sizeY);
+        const float size[2] = {in.size[0] + asset_->animate(n.anim, 0x2d, f, sizeX) - sizeX,
+                               in.size[1] + asset_->animate(n.anim, 0x2e, f, sizeY) - sizeY};
         float mat[4] = {1, 1, 1, 1};
         if (q.material)
             for (int k = 0; k < 4; ++k) {
-                const float lo = q.material->color[size_t(k)].min;
+                const float lo = asset_->rangeBase(q.material->color[size_t(k)]);
                 mat[k] = std::clamp(in.matColor[k] + asset_->animate(q.material->anim, 0x35 + k, f, lo) - lo, 0.0f, 1.0f);
             }
         static const float kCorner[4][2] = {{-0.5f, 0.5f}, {0.5f, 0.5f}, {-0.5f, -0.5f}, {0.5f, -0.5f}};
@@ -354,7 +396,7 @@ void SparkEffect::collect(const Inst& in, const Mat34& parent, const Mat34& came
             for (int k = 0; k < 4; ++k) {
                 float v = 1;
                 if (q.material && q.material->spriteColor) {
-                    const float lo = n.color[size_t(c)][size_t(k)].min;
+                    const float lo = asset_->rangeBase(n.color[size_t(c)][size_t(k)]);
                     v = std::clamp(in.color[c][k] + asset_->animate(n.anim, 0x6f + c * 4 + k, f, lo) - lo, 0.0f, 1.0f);
                 }
                 q.color[c][k] = v * mat[k];

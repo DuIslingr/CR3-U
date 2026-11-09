@@ -20,6 +20,23 @@ AudioPlayer::~AudioPlayer() { close(); }
 
 bool AudioPlayer::openDevice(bool device, std::string* error) {
     slots_.assign(kEffectSlots + kVoiceSlots, Voice());
+    SoundHooks& h = soundHooks();
+    h.playDialogueVoice = [this](int clip, const std::string& name) -> SoundHooks::DialogueVoice {
+        // Many message rows name a voice that the original release does not ship.
+        if (clip < 0 && (!cr3_ || !cr3_->hasVoice(name))) return {};
+        const int slot = clip >= 0 ? playVoice(clip) : playVoice(name);
+        if (slot < 0) return {};
+        slots_[size_t(slot)].dialogueToken = ++nextDialogueToken_;
+        return {slot, nextDialogueToken_};
+    };
+    h.stopDialogueVoice = [this](uint64_t token) {
+        if (!token) return;
+        for (Voice& voice : slots_)
+            if (voice.dialogueToken == token) {
+                endVoice(voice);
+                break;
+            }
+    };
     if (device) {
         if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
             if (error) *error = std::string("SDL audio: ") + SDL_GetError();

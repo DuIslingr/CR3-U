@@ -38,6 +38,20 @@ void EventFade::update() {
 
 EventRuntime::EventRuntime(const MvglArchive& archive, GameState& state) : enteredNames(state.cr3Names), archive_(archive), state_(state) {}
 
+EventRuntime::~EventRuntime() { stopDialogueVoice(); }
+
+int EventRuntime::playDialogueVoice(int id, const std::string& name) {
+    if (!soundHooks().playDialogueVoice) return -1;
+    const SoundHooks::DialogueVoice voice = soundHooks().playDialogueVoice(id, name);
+    dialogueVoice_ = voice.token, dialogueVoiceWindow_ = messageWindow_;
+    return voice.slot;
+}
+
+void EventRuntime::stopDialogueVoice() {
+    if (dialogueVoice_ && soundHooks().stopDialogueVoice) soundHooks().stopDialogueVoice(dialogueVoice_);
+    dialogueVoice_ = 0;
+}
+
 bool EventRuntime::loadText(const std::string& name, TextData& into) {
     std::vector<uint8_t> d;
     textSources_[&into] = name;
@@ -342,14 +356,18 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtWindow", "Open", [this](NativeCall& c) {
         const int w = c.integer(0, Vista);
         if (openWindows_.insert(w).second) opened_[w] = 0, closing_.erase(w);
-        skipOff_.erase(w), pageSendOff_.erase(w); // (EvtWindow::Open: the skip and wait buttons allowed again)
+        skipOff_.erase(w), pageSendOff_.erase(w), autoVoiceOff_.erase(w);
     });
     auto close = [this](int w) {
         if (openWindows_.erase(w)) opened_.erase(w), closing_[w] = 0;
+        if (w == dialogueVoiceWindow_) stopDialogueVoice();
         if (w == messageWindow_) message_ = 0;
     };
     vm.setNative("EvtWindow", "Close", [close](NativeCall& c) { close(c.integer(0, Vista)); });
-    vm.setNative("EvtWindow", "UnloadAll", [this](NativeCall&) { openWindows_.clear(), opened_.clear(), closing_.clear(), message_ = 0; });
+    vm.setNative("EvtWindow", "UnloadAll", [this](NativeCall&) {
+        stopDialogueVoice();
+        openWindows_.clear(), opened_.clear(), closing_.clear(), message_ = 0;
+    });
     // the cut-ins' portraits
     vm.setNative("EvtFace", "SetTexture", [this](NativeCall& c) { cutInImages_.push_back({c.integer(1), c.string(0)}); });
     vm.setNative("EvtFace", "DeleteTexture", [this](NativeCall&) { cutInImages_.clear(); });
@@ -568,19 +586,28 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (k >= 0 && k < kCutIns) cutIns_[size_t(k)].bright = c.number(1, 1);
     });
     vm.setNative("EvtWindow", "SetMessage", [this](NativeCall& c) {
+        stopDialogueVoice();
         messageWindow_ = c.integer(0, Vista);
         message_ = c.integer(1);
         const auto own = windowText_.find(messageWindow_);
         const TextData& td = own != windowText_.end() ? own->second : text_;
         parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(td.message(message_, language)))));
-        // (its voice - the text's trailer: EvtWindow::PlayVoice as its page starts, the last one stopped)
-        if (const int v = td.voice(message_); v >= 0 && soundHooks().playVoice) {
-            if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
-            soundHooks().playVoice(v);
-        }
         page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
-        if (parsed_.pages.empty()) message_ = 0;
-        else ++messagesSet_;
+        if (parsed_.pages.empty()) {
+            message_ = 0;
+            return;
+        }
+        ++messagesSet_;
+        // EvtWindow::ShowMessage suppresses automatic voice while skipping or disabled by script.
+        const bool skipping = !parsed_.noSkip && ((fastForward && fastForwardShown()) || skipHeld());
+        if (skipping || autoVoiceOff_.count(messageWindow_)) return;
+        const int id = td.voice(message_);
+        const std::string name = td.voiceName(message_);
+        if (id >= 0 || !name.empty()) playDialogueVoice(id, name);
+    });
+    vm.setNative("EvtWindow", "SetAutoVoiceEnable", [this](NativeCall& c) {
+        if (c.boolean(1)) autoVoiceOff_.erase(c.integer(0, Vista));
+        else autoVoiceOff_.insert(c.integer(0, Vista));
     });
     // PutParameterI / S(window, key, value): the window's next message has each key ("{next}") in it
     // replaced by the value (EvtWindowMessage::PutParameter - "%d" for a number -, FilterMessage:
@@ -589,6 +616,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtWindow", "PutParameterS", [this](NativeCall& c) { parameters_[c.integer(0, Vista)].push_back({c.string(1), c.string(2)}); });
     // SetMessageText(window, text): the text itself as the message (EvtWindow::SetMessage(char*))
     vm.setNative("EvtWindow", "SetMessageText", [this](NativeCall& c) {
+        stopDialogueVoice();
         messageWindow_ = c.integer(0, Vista), message_ = 0x7fff;
         parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(c.string(1)))));
         page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
@@ -749,9 +777,12 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("Cr3Sound", "StopSEAll", [](NativeCall& c) {
         if (soundHooks().stopAllSe) soundHooks().stopAllSe(c.integer(0));
     });
-    vm.setNative("Cr3Sound", "PlayVoice", [](NativeCall& c) {
+    vm.setNative("Cr3Sound", "PlayVoice", [this](NativeCall& c) {
         if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
-        if (soundHooks().playVoiceNamed) c.result(soundHooks().playVoiceNamed(c.string(0)));
+        if (message_ > 0 && !ended_ && soundHooks().playDialogueVoice) {
+            const bool named = bool(soundHooks().playVoiceNamed);
+            c.result(playDialogueVoice(named ? -1 : c.integer(0), named ? c.string(0) : std::string()));
+        } else if (soundHooks().playVoiceNamed) c.result(soundHooks().playVoiceNamed(c.string(0)));
         else c.result(soundHooks().playVoice ? soundHooks().playVoice(c.integer(0)) : -1);
     });
     vm.setNative("Cr3Sound", "StopVoiceAll", [](NativeCall& c) {
@@ -767,7 +798,8 @@ void EventRuntime::reset() {
     skipButton_ = touched_ = false;
     vistaPauseEnabled = vistaPaused = false;
     touchWait_ = yesNoAge_ = 0;
-    skipOff_.clear(), pageSendOff_.clear();
+    stopDialogueVoice();
+    skipOff_.clear(), pageSendOff_.clear(), autoVoiceOff_.clear();
     itemShown_ = messagesSet_ = 0;
     parsed_ = ParsedMessage();
     executionEnd_ = false;
@@ -976,7 +1008,7 @@ bool EventRuntime::tutorialPage(int direction) {
     if (parsed_.pages.empty()) return true;
     const int next = std::clamp(page_ + direction, 0, int(parsed_.pages.size()) - 1);
     if (next != page_) {
-        if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
+        stopDialogueVoice();
         page_ = next, pageTime_ = stopTime_ = 0, revealed_ = 0, stop_ = 0, ended_ = false;
         if (tutorialPicture_.visible && size_t(next) < tutorialPicture_.images.size()) tutorialPicture_.shown = next;
     }
@@ -1003,7 +1035,7 @@ void EventRuntime::advance() {
         return;
     }
     if (ending()) { // (\*: explicitly skipped by the reader)
-        if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
+        stopDialogueVoice();
         ended_ = true;
         return;
     }
@@ -1011,7 +1043,7 @@ void EventRuntime::advance() {
     revealed_ = 0, stop_ = 0, stopTime_ = 0;
     if (++page_ >= int(parsed_.pages.size())) {
         message_ = 0, page_ = 0;
-        if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(0);
+        stopDialogueVoice();
     }
 }
 

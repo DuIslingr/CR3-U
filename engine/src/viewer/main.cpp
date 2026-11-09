@@ -8293,10 +8293,14 @@ struct Viewer {
         ViewFigure body, head, weapon; // (weapon: a character's - CrxModel::LoadWeapon -, on the body's DummyWP)
         float phase = 0; // (BtlUnitList::Standby: the monsters' stances started apart)
         // its motion (BtlUnit::PlayAnimation: an AnimCommon suffix - bb01 its stance, looped),
-        // from when; held at its end (a fall: bd03), hidden once down
+        // from when; a dedicated knockout motion is held at its end.
         std::string motion = "bb01";
         float motionStart = 0;
         bool motionLoop = true, motionHold = false;
+        bool knockedOut = false;
+        Ramp opacity;
+        cr3::Vec3 meleeOffset{};
+        Ramp meleeStep{0, 0}, meleeTurn{0, 0};
     };
     std::vector<Cr3BattleUnitView> cr3BattleUnits;
     cr3::Cr3BattleCamera cr3BattleCam, cr3BattleOwnCam; // (Cam_bt; a camera figure of its own: Cam_human_getset ...)
@@ -8451,6 +8455,7 @@ struct Viewer {
         bool loop = false, held = false;
         std::array<float, 3> actor{}; // (BtlCameraActor: where it rides, turned by yaw)
         float actorYaw = 0, screenShift = 0; // (the shift in NDC: -1/3 for the command camera)
+        float scale = 1;
         // (BtlCameraActor::SetTarget: the view turned toward a point by this much - a slerp of
         // the motion's rotation toward facing it; 0 none)
         std::array<float, 3> lookAt{};
@@ -8757,7 +8762,7 @@ struct Viewer {
             if (f.dead()) f.effects.clear();
             f.hp = f.maxHp, f.mp = f.maxMp; // (AnnounceBattle 0x2b: HP and MP whole)
             cr3HpShown[k] = f.hp;
-            setCr3Motion(size_t(f.unit), "bb01", true);
+            restoreCr3Unit(size_t(f.unit));
         }
         cr3Rules.gauge = 0, cr3GaugeShown = 0; // (BtlBreakGaugeUI::Even)
         cr3BattleLost = false;
@@ -8953,7 +8958,8 @@ struct Viewer {
         beginCr3Turn();
     }
     bool startCr3Battle(int coupling, int fieldId) {
-        cr3BattleLost = false, cr3ScriptCommands.clear(), cr3NextCoupling = -1, cr3WaveExp = cr3WaveMoney = 0, cr3WaveDrops.clear(), cr3VictoryIn = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1, cr3Fx.clear(); // (BtlSystem::Init: s_ResultParam -1)
+        cr3BattleLost = false, cr3ScriptCommands.clear(), cr3NextCoupling = -1, cr3WaveExp = cr3WaveMoney = 0, cr3WaveDrops.clear(), cr3VictoryIn = false, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1; // (BtlSystem::Init: s_ResultParam -1)
+        clearCr3Effects();
         cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
         cr3BattleVista = false;
         cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
@@ -9024,7 +9030,7 @@ struct Viewer {
     }
 
     void updateCr3Battle(float dt) {
-        cr3BattleClock += dt;
+        cr3BattleClock += stepCr3SpellCardClock(dt);
         if (cr3Glass.running()) cr3Glass.advanceTo(cr3BattleClock - cr3GlassStart);
         if (cr3BattleEvents) { // (at the game's updates)
             cr3BattleEventClock = std::min(cr3BattleEventClock + dt, 0.25f);
@@ -9197,8 +9203,17 @@ struct Viewer {
     float cr3ActionStart = 0, cr3StageStart = 0, cr3MenuStart = 0;
     int cr3Chooser = -1, cr3Focus = 0;
     struct Cr3ActionPlay {
-        float hitAt = 0.5f, hitGap = 0.15f, end = 1.5f;
+        cr3::Cr3BattleTables::ActionTiming timing;
+        size_t nextMotion = 0;
+        size_t nextEffect = 0, nextCastEffect = 0;
+        float end = 1.5f;
         int hitsShown = 0;
+        int directionCommand = -1;
+        bool melee = false;
+        cr3::Cr3BattleTables::MotionTravel returnTravel{};
+        std::vector<int> spellCards;
+        float spellCardAge = -1;
+        bool spellHandoffPending = false, cardWatchesCamera = false, cardPaused = false;
     } cr3ActionPlay;
     // the damage shown (DamageInfo: btNumMenu over the target, btNumMenu_in)
     struct Cr3Popup {
@@ -9252,6 +9267,52 @@ struct Viewer {
     std::string cr3MotionOf(int type) const {
         return type >= 0 && size_t(type) < cr3AnimCommon.size() ? cr3AnimCommon[size_t(type)] : std::string();
     }
+    void startCr3Melee(size_t source, size_t target) {
+        Cr3BattleUnitView& view = cr3BattleUnits[source];
+        const cr3::Cr3BattleUnit& actor = cr3Battle.units[source];
+        const cr3::Cr3BattleUnit& foe = cr3Battle.units[target];
+        const float span = cr3Battle.fieldSpan;
+        const float distance = span + (actor.depth * actor.scale + foe.depth * foe.scale) * 0.5f;
+        if (span <= 0 || distance <= 0 || view.motion != "bo01" || !view.body.animLoaded) return;
+        const std::string back = motionBase(actor.figure) + "_bo04.anim";
+        if (std::find(view.body.anims.begin(), view.body.anims.end(), back) == view.body.anims.end()) return;
+        cr3::Cr3BattleTables::MotionTravel approach;
+        if (!cr3BattleTables.motionTravel(actor.model, 11, approach) ||
+            !cr3BattleTables.motionTravel(actor.model, 14, cr3ActionPlay.returnTravel)) return;
+        // BtlUnit::ChangeTarget preserves each model's half-depth at contact.
+        const float x = foe.home[0] - actor.home[0], z = foe.home[2] - actor.home[2];
+        const float turn = x == 0 && z == 0 ? 0 : turnBetween(actor.yaw, std::atan2(x, z), 1) - actor.yaw;
+        view.meleeOffset = {x * span / distance, 0, z * span / distance};
+        view.meleeStep.begin(cr3BattleClock + approach.stepStart, 0, 1, approach.stepEnd - approach.stepStart);
+        view.meleeTurn.begin(cr3BattleClock + approach.turnStart, 0, turn, approach.turnEnd - approach.turnStart);
+        view.motionHold = true;
+        cr3ActionPlay.melee = true;
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: %s steps toward %s", cr3BattleClock, actor.name.c_str(), foe.name.c_str());
+    }
+    void stepCr3MeleeReturn(size_t source, float actionTime) {
+        if (!cr3ActionPlay.melee || cr3ActionPlay.nextMotion < cr3ActionPlay.timing.motions.size()) return;
+        Cr3BattleUnitView& view = cr3BattleUnits[source];
+        if (view.motion == "bo04") {
+            if (cr3BattleClock < std::max(view.meleeStep.start + view.meleeStep.time, view.meleeTurn.start + view.meleeTurn.time)) return;
+            cr3ActionPlay.melee = false;
+            setCr3Motion(source, "bb01", true);
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: %s returns to stance", cr3BattleClock, cr3Battle.units[source].name.c_str());
+            return;
+        }
+        if (cr3BattleClock - view.motionStart < view.body.anim.duration()) return;
+        setCr3Motion(source, "bo04", false, true);
+        if (view.motion != "bo04" || !view.body.animLoaded) {
+            view.meleeStep = Ramp{0, 0};
+            view.meleeTurn = Ramp{0, 0};
+            cr3ActionPlay.melee = false;
+            setCr3Motion(source, "bb01", true);
+            return;
+        }
+        const auto& back = cr3ActionPlay.returnTravel;
+        view.meleeStep.begin(cr3BattleClock + back.stepStart, view.meleeStep.at(cr3BattleClock), 0, back.stepEnd - back.stepStart);
+        view.meleeTurn.begin(cr3BattleClock + back.turnStart, view.meleeTurn.at(cr3BattleClock), 0, back.turnEnd - back.turnStart);
+        cr3ActionPlay.end = std::max(cr3ActionPlay.end, actionTime + std::max(back.stepEnd, back.turnEnd));
+    }
     // a unit's joint as last posed (DummyCP its camera point, DummyDP01 where its damage shows)
     // the hit effects (BtlDamageTarget::PlaySingleHitEffect -> BtlUnitList::PlayHitEffect): the
     // command's CommandDirection +0x2c (direction.mbe column 9: attack 1, be001hit01), on every hit
@@ -9259,10 +9320,50 @@ struct Viewer {
     // (element + 4) too. Its effect.mbe Effect row: the figure and its sound (+0x10). A random size
     // with +0x58 bit 7 ((rand - 0.5) x 2 x +0x68 + 1). Each a figure of its own animation, played
     // once (the .sprk particles and the random turn - bit 3 - not in)
+    struct Cr3ProjectilePath {
+        cr3::Vec3 from{}, via{}, to{};
+        float speed = 0, acceleration = 0;
+        cr3::Vec3 at(float t) const {
+            const float progress = std::clamp(t * (speed + 0.5f * acceleration * t), 0.0f, 1.0f);
+            cr3::Vec3 a, b, tangent;
+            for (int i = 0; i < 3; ++i) {
+                a[i] = via[i] - from[i];
+                b[i] = to[i] - via[i];
+            }
+            const float lenA = std::hypot(a[0], a[1], a[2]), lenB = std::hypot(b[0], b[1], b[2]);
+            cr3::Vec3 out;
+            if (lenA < 1e-5f || lenB < 1e-5f) {
+                for (int i = 0; i < 3; ++i) out[i] = from[i] + (to[i] - from[i]) * progress;
+                return out;
+            }
+            // MbRNS weights the two Hermite spans by their lengths and shares a unit tangent at the waypoint.
+            for (int i = 0; i < 3; ++i) tangent[i] = a[i] / lenA + b[i] / lenB;
+            const float len = std::hypot(tangent[0], tangent[1], tangent[2]);
+            const float distance = progress * (lenA + lenB);
+            const bool first = distance <= lenA;
+            const float u = first ? distance / lenA : (distance - lenA) / lenB;
+            const float u2 = u * u, u3 = u2 * u;
+            for (int i = 0; i < 3; ++i) {
+                const float middle = len > 1e-5f ? tangent[i] * (first ? lenA : lenB) / len : 0;
+                const float start = first ? from[i] : via[i], end = first ? via[i] : to[i];
+                const float entry = first ? (3 * a[i] - middle) * 0.5f : middle;
+                const float exit = first ? middle : (3 * b[i] - middle) * 0.5f;
+                out[i] = (2 * u3 - 3 * u2 + 1) * start + (u3 - 2 * u2 + u) * entry +
+                         (-2 * u3 + 3 * u2) * end + (u3 - u2) * exit;
+            }
+            return out;
+        }
+    };
     struct Cr3Fx {
         std::string figure;
-        std::array<float, 3> at{};
-        float start = 0, scale = 1;
+        cr3::Vec3 at{};
+        float start = 0, scale = 1, life = -1, yaw = 0;
+        float animStart = 0, animLength = 0;
+        float sparkTime = 0;
+        bool loop = false;
+        int followUnit = -1, point = 0;
+        Cr3ProjectilePath path;
+        ViewSpark spark;
     };
     std::vector<Cr3Fx> cr3Fx;
     std::map<std::string, std::unique_ptr<ViewFigure>> cr3FxFigures;
@@ -9276,18 +9377,88 @@ struct Viewer {
         }
         return slot->meshes.empty() ? nullptr : slot.get();
     }
-    void spawnCr3Effect(int id, const std::array<float, 3>& at, float scale) {
-        static cr3::MbeFile table;
-        static int readIn = -1; // (the language it was read in: textGeneration)
-        if (readIn != textGeneration) table = cr3::MbeFile(), readIn = textGeneration;
-        if (!table.table("Effect")) {
-            std::vector<uint8_t> d;
-            if (archive.read("data\\effect.mbe", d)) table.parse(d);
-        }
+    void clearCr3Effects() {
+        for (Cr3Fx& effect : cr3Fx) dropSpark(effect.spark);
+        cr3Fx.clear();
+    }
+    Cr3Fx* spawnCr3Effect(int id, const cr3::Vec3& at, float scale, float start = -1) {
         cr3::MbeFile::Row r;
-        if (id <= 0 || !table.find("Effect", id, "i_ppp", r) || r.s(1).empty() || !cr3FxFigure(r.s(1))) return;
-        cr3Fx.push_back({r.s(1), at, cr3BattleClock, scale});
+        if (id <= 0 || !cr3BattleTables.effect.find("Effect", id, "i_pppiff", r)) return nullptr;
+        Cr3Fx fx;
+        fx.figure = r.s(1);
+        fx.at = at, fx.start = start < 0 ? cr3BattleClock : start, fx.scale = scale;
+        fx.loop = (r.i(4) & 1) != 0;
+        const ViewFigure* figure = fx.figure.empty() ? nullptr : cr3FxFigure(fx.figure);
+        if (!fx.figure.empty())
+            if (const cr3::SparkAsset* spark = sparkAsset(fx.figure)) fx.spark.fx = std::make_unique<cr3::SparkEffect>(spark, SDL_rand_bits());
+        if (figure && figure->animLoaded) {
+            const float duration = std::max(figure->anim.duration(), 0.0f);
+            const float end = r.f(6) >= 0 ? std::min(r.f(6) / 30, duration) : duration;
+            fx.animStart = std::clamp(r.f(5) / 30, 0.0f, end);
+            fx.animLength = end - fx.animStart;
+        }
         if (!r.s(2).empty()) audio.playSe(r.s(2), false);
+        if (!fx.spark.fx && !figure) return nullptr;
+        cr3Fx.push_back(std::move(fx));
+        return &cr3Fx.back();
+    }
+    cr3::Vec3 cr3EffectPoint(size_t unit, int index) {
+        const cr3::Cr3BattleUnit& bu = cr3Battle.units[unit];
+        const auto point = cr3BattleTables.effectPoint(bu.model, index);
+        const Cr3BattleUnitView& view = cr3BattleUnits[unit];
+        cr3::Mat34 place = view.body.place;
+        const bool found = !point.joint.empty() && (jointWorld(view.body, point.joint, place) ||
+                           jointWorld(view.weapon, point.joint, place) || jointWorld(view.head, point.joint, place));
+        cr3::Vec3 at{place.m[3], found ? place.m[7] : 0.0f, place.m[11]};
+        for (int col = 0; col < 3; ++col) {
+            const float scale = std::hypot(place.m[col], place.m[col + 4], place.m[col + 8]);
+            if (scale > 0)
+                for (int row = 0; row < 3; ++row) at[row] += place.m[row * 4 + col] * point.offset[col] / scale;
+        }
+        return at;
+    }
+    void launchCr3Projectile(size_t source, size_t target, float at) {
+        const auto& shot = cr3ActionPlay.timing.projectile;
+        const cr3::Vec3 from = cr3EffectPoint(source, shot.sourcePoint);
+        const cr3::Vec3 to = cr3EffectPoint(target, shot.targetPoint);
+        Cr3Fx* fx = spawnCr3Effect(shot.effect, from, 1, at);
+        if (!fx) return;
+        float x = shot.spreadX[0] + (shot.spreadX[1] - shot.spreadX[0]) * SDL_randf();
+        float y = shot.spreadY[0] + (shot.spreadY[1] - shot.spreadY[0]) * SDL_randf();
+        const float spread = std::hypot(x, y);
+        if (spread > 0) x *= std::abs(x) * 0.1f / spread, y *= std::abs(y) * 0.1f / spread;
+        const float yaw = cr3Battle.units[source].yaw;
+        cr3::Vec3 via{std::cos(yaw) * x, y, -std::sin(yaw) * x};
+        for (int i = 0; i < 3; ++i) via[i] += from[i] + (to[i] - from[i]) * shot.waypoint;
+        fx->life = shot.duration;
+        fx->path = {from, via, to, shot.speed, shot.acceleration};
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: projectile %s launched", cr3BattleClock, fx->figure.c_str());
+    }
+    void knockOutCr3Unit(size_t k) {
+        Cr3BattleUnitView& view = cr3BattleUnits[k];
+        if (view.knockedOut) return;
+        view.knockedOut = true;
+        const cr3::Cr3BattleUnit& unit = cr3Battle.units[k];
+        // BtlUnit::PlayKnockout chooses the presentation from the model's flags.
+        if (unit.modelFlags & 2) {
+            setCr3Motion(k, cr3MotionOf(6), false, true);
+            if (unit.modelFlags & 16) {
+                const float delay = std::max(cr3BattleTables.animationCueTime(unit.model, 6), 0.0f);
+                view.opacity.begin(cr3BattleClock + delay, 1, 0, 1);
+            }
+        } else {
+            view.opacity.begin(cr3BattleClock, 1, 0, 1);
+            spawnCr3Effect(0xb9, unit.home, unit.effectScale * unit.scale);
+        }
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: %s knocked out", cr3BattleClock, unit.name.c_str());
+    }
+    void restoreCr3Unit(size_t k) {
+        Cr3BattleUnitView& view = cr3BattleUnits[k];
+        const bool revive = view.knockedOut && (cr3Battle.units[k].modelFlags & 2);
+        view.knockedOut = false;
+        view.opacity = Ramp();
+        setCr3Motion(k, "bb01", true);
+        if (revive) setCr3Motion(k, cr3MotionOf(8), false);
     }
     void cr3HitEffects(int command, int element, size_t targetUnit, bool critical) {
         cr3::MbeFile::Row d;
@@ -9296,7 +9467,7 @@ struct Viewer {
         float scale = 1;
         if (flags & 0x80) scale = (SDL_randf() * 2 - 1) * d.f(24) + 1; // (+0x68)
         const std::array<float, 3> at = unitPoint(targetUnit, "DummyDP01", 1.2f);
-        spawnCr3Effect(d.i(9), at, scale);
+        if (cr3ActionPlay.timing.effects.empty()) spawnCr3Effect(d.i(9), at, scale);
         if (flags & 0x100) { // (+0x59 bit 0)
             if (critical) spawnCr3Effect(4, at, scale);
             if (element > 0) spawnCr3Effect(element + 4, at, scale);
@@ -9305,18 +9476,97 @@ struct Viewer {
     void drawCr3Effects(const cr3::Mat34& camera, const Mat4& vp) {
         for (auto it = cr3Fx.begin(); it != cr3Fx.end();) {
             ViewFigure* f = cr3FxFigure(it->figure);
-            const float t = cr3BattleClock - it->start;
-            if (!f || (f->animLoaded ? t > f->anim.duration() : t > 1.0f)) {
+            const float t = std::max(cr3BattleClock - it->start, 0.0f);
+            const float duration = it->animLength;
+            const float life = it->life >= 0 ? it->life : duration > 0 ? duration : 1.0f;
+            if (t > life) {
+                dropSpark(it->spark);
                 it = cr3Fx.erase(it);
                 continue;
             }
-            f->place = cr3::Mat34();
-            for (int c = 0; c < 3; ++c) f->place.m[c * 5] = it->scale;
-            f->place.m[3] = it->at[0], f->place.m[7] = it->at[1], f->place.m[11] = it->at[2];
-            poseView = camera;
-            pose(*f, t, false);
-            drawFigure(*f, vp.data());
+            cr3::Mat34 place;
+            place.m[0] = place.m[10] = std::cos(it->yaw);
+            place.m[2] = std::sin(it->yaw);
+            place.m[8] = -place.m[2];
+            cr3::Vec3 at = it->at;
+            if (it->path.speed > 0 || it->path.acceleration > 0) {
+                at = it->path.at(t);
+                const cr3::Vec3 from = it->path.at(std::max(t - 0.001f, 0.0f));
+                const cr3::Vec3 to = it->path.at(std::min(t + 0.001f, life));
+                const float dx = from[0] - to[0], dy = from[1] - to[1], dz = from[2] - to[2];
+                const float yaw = std::atan2(dx, dz), pitch = -std::atan2(dy, std::hypot(dx, dz));
+                const float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+                place = {{cy, sy * sp, sy * cp, 0, 0, cp, -sp, 0, -sy, cy * sp, cy * cp, 0}};
+            } else if (it->followUnit >= 0 && size_t(it->followUnit) < cr3BattleUnits.size()) {
+                at = cr3EffectPoint(size_t(it->followUnit), it->point);
+            }
+            for (int row = 0; row < 3; ++row) {
+                for (int col = 0; col < 3; ++col) place.m[row * 4 + col] *= it->scale;
+                place.m[row * 4 + 3] = at[row];
+            }
+            if (f) {
+                f->place = place;
+                poseView = camera;
+                const float animTime = it->loop && duration > 0 ? std::fmod(t, duration) : std::min(t, duration);
+                pose(*f, it->animStart + animTime, false);
+                drawFigure(*f, vp.data());
+            }
+            if (it->spark.fx) {
+                it->spark.fx->step(t - it->sparkTime);
+                it->sparkTime = t;
+                drawSpark(it->spark, place, camera, vp.data());
+            }
             ++it;
+        }
+    }
+    void stepCr3CastEffects(size_t source, float t) {
+        auto& play = cr3ActionPlay;
+        const auto& timing = play.timing;
+        while (play.nextCastEffect < timing.castEffects.size() && t >= timing.castEffects[play.nextCastEffect].start) {
+            const auto& cue = timing.castEffects[play.nextCastEffect++];
+            if (Cr3Fx* fx = spawnCr3Effect(cue.effect, cr3EffectPoint(source, cue.point), 1, cr3ActionStart + cue.start)) {
+                if (cue.end > cue.start) fx->life = cue.end - cue.start;
+                if (cue.follow) fx->followUnit = int(source), fx->point = cue.point;
+                SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: cast effect %s", cr3BattleClock, fx->figure.c_str());
+            }
+        }
+    }
+    void stepCr3ActionEffects(const cr3::Cr3Action& action, size_t source, float t) {
+        using Placement = cr3::Cr3BattleTables::ActionTiming::Placement;
+        auto& play = cr3ActionPlay;
+        const auto& timing = play.timing;
+        while (play.nextEffect < timing.effects.size() && t >= timing.effects[play.nextEffect].time) {
+            const auto& cue = timing.effects[play.nextEffect++];
+            const float start = cr3ActionStart + cue.time;
+            if (cue.launch) {
+                for (const auto& target : action.targets)
+                    launchCr3Projectile(source, size_t(cr3Rules.fighters[size_t(target.target)].unit), start);
+                continue;
+            }
+            const auto spawnImpact = [&](const cr3::Vec3& at, float scale) {
+                if (timing.sizeSpread > 0) scale *= 1 + (SDL_randf() * 2 - 1) * timing.sizeSpread;
+                if (Cr3Fx* fx = spawnCr3Effect(timing.hitEffect, at, scale, start)) {
+                    if (timing.placement != Placement::Target) fx->yaw = cr3Battle.units[source].yaw;
+                    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: impact effect %s", cr3BattleClock, fx->figure.c_str());
+                    if (timing.waitEffect) play.end = std::max(play.end, cue.time + fx->animLength);
+                }
+            };
+            if (timing.placement == Placement::Target) {
+                for (const auto& target : action.targets) {
+                    const size_t unit = size_t(cr3Rules.fighters[size_t(target.target)].unit);
+                    const auto& model = cr3Battle.units[unit];
+                    spawnImpact(cr3EffectPoint(unit, timing.targetPoint), timing.scaleToTarget ? model.scale * model.effectScale : 1);
+                }
+            } else if (timing.placement == Placement::Group && action.target >= 0) {
+                const bool side = cr3Rules.fighters[size_t(action.target)].player;
+                float z = 0;
+                int count = 0;
+                for (size_t k = 0; k < cr3Battle.units.size(); ++k)
+                    if (cr3Battle.units[k].player == side) z += cr3EffectPoint(k, 5)[2], ++count;
+                spawnImpact({0, 0, count ? z / count : 0}, 1);
+            } else {
+                spawnImpact({0, 0, 0}, 1);
+            }
         }
     }
     std::array<float, 3> unitPoint(size_t k, const char* joint, float up) {
@@ -9591,9 +9841,123 @@ struct Viewer {
         nextCr3Chooser();
     }
 
-    // an action played (BtlDirection: the source's motion - its command's CommandDirection +8 -
-    // under the attack camera on it, the hits landing on the target - its bd01, the numbers -, a
-    // fall bd03)
+    void playCr3AttackCamera(const cr3::Cr3Action& action, size_t source) {
+        if (action.target < 0) return;
+        const auto& actor = cr3Battle.units[source];
+        const size_t target = size_t(cr3Rules.fighters[size_t(action.target)].unit);
+        const auto& foe = cr3Battle.units[target];
+        const int size = actor.player ? foe.cameraSize : actor.cameraSize;
+        std::string name = cr3Battle.cameras[actor.player ? 2 : 3];
+        cr3::MbeFile::Row row;
+        if (cr3BattleTables.model.find("Camera", size, "ifpppppppppp", row)) name = row.s(actor.player ? 4 : 5);
+        const cr3::Vec3 at{foe.home[0], 0, actor.player ? 0.0f : 2.15f};
+        playCr3Camera(name, cr3ActionPlay.end, false, at, 0, 0);
+        cr3Cam.lookAt = unitPoint(target, "DummyCP", 1.2f);
+        cr3Cam.lookWeight = actor.player ? 0.2f : 0.4f;
+    }
+    void playCr3CasterCamera(const std::string& name, size_t source) {
+        if (name.empty()) return;
+        cr3::Cr3BattleCamera camera;
+        if (!camera.load(archive, name) || !camera.has(name)) return;
+        const auto& caster = cr3Battle.units[source];
+        cr3Cam = Cr3BattleCamPlay();
+        cr3Cam.name = name;
+        cr3Cam.start = cr3BattleClock;
+        cr3Cam.end = camera.duration();
+        cr3Cam.actor = caster.home;
+        cr3Cam.actorYaw = caster.yaw;
+        cr3Cam.scale = caster.scale;
+        cr3BattleOwnCam = std::move(camera);
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: caster camera %s", cr3BattleClock, name.c_str());
+    }
+    void playCr3SpellReceiverCamera(const cr3::Cr3Action& action, size_t source) {
+        const int camera = cr3ActionPlay.timing.receiverCamera;
+        const float duration = cr3BattleCam.duration();
+        if (camera == 7) {
+            playCr3Camera("Cam_bt_field_00", duration, false, {}, 0, 0);
+        } else {
+            if (action.target < 0) return;
+            const size_t target = size_t(cr3Rules.fighters[size_t(action.target)].unit);
+            const auto& foe = cr3Battle.units[target];
+            const auto& actor = cr3Battle.units[source];
+            switch (camera) {
+            case 2: {
+                cr3::MbeFile::Row row;
+                std::string name = "Cam_bt_up_PC_00";
+                if (cr3Battle.cameraSize == 0) name = "Cam_bt_colosseum_00";
+                else if (!foe.player && cr3BattleTables.model.find("Camera", foe.cameraSize, "ifpppppppppp", row)) name = row.s(11);
+                const cr3::Vec3 point = cr3Battle.cameraSize == 0 ? cr3::Vec3{} : unitPoint(target, "DummyCP", 1.0f);
+                playCr3Camera(name, duration, false, point, foe.player ? 0 : foe.yaw, 0);
+                break;
+            }
+            case 4:
+                playCr3Camera(cr3Battle.cameras[4], duration, false, {}, 0, 0);
+                if (cr3Battle.cameraSize != 0) {
+                    cr3Cam.lookAt = unitPoint(actor.player ? target : source, "DummyCP", 1.2f);
+                    cr3Cam.lookWeight = 0.4f;
+                }
+                break;
+            case 5:
+                playCr3Camera(cr3Battle.cameras[foe.player ? 4 : 7], duration, false, {}, 0, 0);
+                break;
+            case 6:
+                playCr3Camera(foe.player ? "Cam_bt_all_PC_00" : cr3Battle.cameras[7], duration, false, {}, 0, 0);
+                break;
+            case 0: case 1: case 8:
+                playCr3AttackCamera(action, source);
+                break;
+            default:
+                return;
+            }
+        }
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: receiver camera %s (kind %d)", cr3BattleClock, cr3Cam.name.c_str(), camera);
+    }
+    float stepCr3SpellCardClock(float dt) {
+        auto& play = cr3ActionPlay;
+        if (cr3BattleStage != Cr3BattleStage::Action || play.spellCardAge < 0) return dt;
+        const float oldAge = play.spellCardAge;
+        const float duration = cr3SpellCardDuration(play.spellCards.size());
+        play.spellCardAge = std::min(oldAge + dt, duration);
+        const float cardStep = play.spellCardAge - oldAge;
+        for (size_t i = 0; i < play.spellCards.size(); ++i)
+            if (oldAge < kCr3SpellCardSoundTimes[i] && play.spellCardAge >= kCr3SpellCardSoundTimes[i]) audio.playSe("bt_007", false);
+        if (!play.cardWatchesCamera) return dt;
+        // BtlCardDirection pauses the scene on the camera's end notification while its UI still advances.
+        const float remaining = std::max(cr3Cam.start + cr3Cam.end - cr3BattleClock, 0.0f);
+        if (remaining < cardStep && !play.cardPaused) {
+            play.cardPaused = true;
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: caster camera held for spell card", cr3BattleClock + remaining);
+        }
+        return dt - std::max(cardStep - remaining, 0.0f);
+    }
+    bool finishCr3SpellHandoff(const cr3::Cr3Action& action, size_t source, float time) {
+        auto& play = cr3ActionPlay;
+        if (!play.spellHandoffPending) return true;
+        if (time < play.timing.spellHandoff) return false;
+        if (!play.spellCards.empty()) {
+            if (play.spellCardAge < 0) {
+                play.spellCardAge = 0;
+                play.cardWatchesCamera = !cr3Cam.held && !cr3Cam.loop && cr3BattleClock < cr3Cam.start + cr3Cam.end;
+                SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: spell card opened (%zu)", cr3BattleClock, play.spellCards.size());
+                return false;
+            }
+            if (play.spellCardAge < cr3SpellCardDuration(play.spellCards.size())) return false;
+            play.spellCardAge = -1;
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: spell card closed", cr3BattleClock);
+        }
+        play.spellHandoffPending = false;
+        // The unit timer can reach a marker before the receiver subscribes. Dispatch the overdue
+        // effect on the handoff and keep its flight and damage intervals relative to that dispatch.
+        if (!play.timing.effects.empty()) {
+            const float delay = std::max(time - play.timing.effects.front().time, 0.0f);
+            for (auto& cue : play.timing.effects) cue.time += delay;
+            for (float& hit : play.timing.hits) hit += delay;
+            play.end = std::max(play.end, play.timing.hits.back() + 0.9f);
+        }
+        playCr3SpellReceiverCamera(action, source);
+        return true;
+    }
+    // BtlDirection plays the source motion and shows the hits under the attack camera.
     void startCr3Action() {
         if (cr3ActionAt >= cr3Actions.size() || cr3ForcedEnd >= 0) return endCr3Actions(); // (a script's forced end: after the direction)
         const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
@@ -9628,31 +9992,47 @@ struct Viewer {
         }
         cr3::Cr3Command c;
         cr3Rules.command(a.command, c);
-        std::string motion = cr3MotionOf(c.motion);
+        size_t mostHits = 0;
+        for (const cr3::Cr3Hit& target : a.targets) mostHits = std::max(mostHits, target.hits.size());
+        cr3ActionPlay.directionCommand = cr3BattleTables.directionCommand(a.command, s.attackCommand);
+        auto timing = cr3BattleTables.actionTiming(bu.model, cr3ActionPlay.directionCommand, std::max(mostHits, size_t(1)), c.repeat, c.element);
+        std::string motion = cr3MotionOf(timing.motions.empty() ? c.motion : timing.motions.front().type);
         if (motion.empty() || motion == "bb01") motion = "bs01"; // (a shot's: BtlShotDirection plays 0xf)
         setCr3Motion(su, motion, false);
         for (int pi : a.partners) setCr3Motion(size_t(cr3Rules.fighters[size_t(pi)].unit), motion, false); // (a cooperation's others: the same)
         if (a.cooperated()) SDL_Log("battle %.2f s: a cooperation of %zu", cr3BattleClock, a.partners.size() + 1);
         const ViewFigure& f = cr3BattleUnits[su].body;
         const float length = f.animLoaded && cr3BattleUnits[su].motion == motion ? f.anim.duration() : 1.2f;
-        cr3ActionPlay.hitAt = std::max(length * 0.45f, 0.3f);
-        cr3ActionPlay.hitGap = a.hits.size() > 1 ? std::min(0.15f, length * 0.4f / float(a.hits.size())) : 0.15f;
-        cr3ActionPlay.end = std::max(length, cr3ActionPlay.hitAt + cr3ActionPlay.hitGap * float(a.hits.size()) + 0.9f);
-        // (the attack camera of the size's set: the party's attack_PC, the monsters' attack_<size>,
-        // on the attacker)
-        // (BtlCameraSystem::PlayPlayerMelee: the target's size's attack_PC, riding (the target's x,
-        // 0, 0) unturned, looking 0.2 of the way to the actor target; PlayEnemyMelee: the
-        // attacker's size's attack_<size> at the target's front - (x, 0, Battle +0 / 10) -,
-        // looking 0.4 of the way)
-        const cr3::Cr3BattleUnit& tu = cr3Battle.units[size_t(cr3Rules.fighters[size_t(std::max(a.target, 0))].unit)];
-        const int size = s.player ? tu.cameraSize : bu.cameraSize;
-        std::string cam = s.player ? cr3Battle.cameras[2] : cr3Battle.cameras[3];
-        cr3::MbeFile::Row row;
-        if (cr3BattleTables.model.find("Camera", size, "ifpppppppppp", row)) cam = row.s(s.player ? 4 : 5);
-        const std::array<float, 3> at = s.player ? std::array<float, 3>{tu.home[0], 0, 0} : std::array<float, 3>{tu.home[0], 0, 2.15f};
-        playCr3Camera(cam, cr3ActionPlay.end, false, at, 0, 0);
-        cr3Cam.lookAt = unitPoint(size_t(cr3Rules.fighters[size_t(std::max(a.target, 0))].unit), "DummyCP", 1.2f);
-        cr3Cam.lookWeight = s.player ? 0.2f : 0.4f;
+        float fallbackTail = 0;
+        if (!timing.hits.empty()) {
+            if (!timing.castSound.empty()) audio.playSe(timing.castSound, false);
+            cr3ActionPlay.nextMotion = 1; // the first animation was started above
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: %s native hit timing (%.3f to %.3f s)",
+                         cr3BattleClock, motion.c_str(), double(timing.hits.front()), double(timing.hits.back()));
+        } else {
+            const float first = std::max(length * 0.45f, 0.3f);
+            const float gap = mostHits > 1 ? std::min(0.15f, length * 0.4f / float(mostHits)) : 0.15f;
+            for (size_t h = 0; h < std::max(mostHits, size_t(1)); ++h) timing.hits.push_back(first + gap * float(h));
+            fallbackTail = mostHits > 0 ? gap : 0;
+        }
+        cr3ActionPlay.end = std::max(length, timing.hits.back() + 0.9f + fallbackTail);
+        cr3ActionPlay.timing = std::move(timing);
+        if (motion == "bo01" && a.targets.size() == 1 && a.partners.empty())
+            startCr3Melee(su, size_t(cr3Rules.fighters[size_t(a.targets.front().target)].unit));
+        auto& play = cr3ActionPlay;
+        if (play.timing.spellHandoff < 0 || cr3TurnItems.count(a.source)) {
+            playCr3AttackCamera(a, su);
+            return;
+        }
+        play.spellHandoffPending = true;
+        playCr3CasterCamera(play.timing.castCamera, su);
+        if ((bu.modelFlags & 8) && s.geneMaster >= 0) {
+            play.spellCards.push_back(s.geneMaster);
+            for (int partner : a.partners) {
+                const int gene = cr3Rules.fighters[size_t(partner)].geneMaster;
+                if (gene >= 0 && play.spellCards.size() < kCr3SpellCardSoundTimes.size()) play.spellCards.push_back(gene);
+            }
+        }
     }
     bool cr3PendingStart = false; // (an action to start once the battle's script is over)
     void stepCr3Action() {
@@ -9662,11 +10042,24 @@ struct Viewer {
         }
         if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
         const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
+        const size_t source = size_t(cr3Rules.fighters[size_t(a.source)].unit);
         const float t = cr3BattleClock - cr3ActionStart;
+        const auto& timing = cr3ActionPlay.timing;
+        while (cr3ActionPlay.nextMotion < timing.motions.size() && t >= timing.motions[cr3ActionPlay.nextMotion].time) {
+            const auto& next = timing.motions[cr3ActionPlay.nextMotion++];
+            const std::string motion = cr3MotionOf(next.type);
+            setCr3Motion(source, motion, false, cr3ActionPlay.melee);
+            for (int partner : a.partners) setCr3Motion(size_t(cr3Rules.fighters[size_t(partner)].unit), motion, false);
+            if (cr3BattleUnits[source].motion == motion && cr3BattleUnits[source].body.animLoaded)
+                cr3ActionPlay.end = std::max(cr3ActionPlay.end, t + cr3BattleUnits[source].body.anim.duration());
+        }
+        stepCr3CastEffects(source, t);
+        if (!finishCr3SpellHandoff(a, source, t)) return;
+        stepCr3ActionEffects(a, source, t);
         size_t mostHits = 0;
         for (const cr3::Cr3Hit& th : a.targets) mostHits = std::max(mostHits, th.hits.size());
-        while (a.target >= 0 && cr3ActionPlay.hitsShown < int(mostHits) &&
-               t >= cr3ActionPlay.hitAt + cr3ActionPlay.hitGap * float(cr3ActionPlay.hitsShown)) {
+        while (a.target >= 0 && cr3ActionPlay.hitsShown < int(mostHits) && size_t(cr3ActionPlay.hitsShown) < timing.hits.size() &&
+               t >= timing.hits[size_t(cr3ActionPlay.hitsShown)]) {
             const size_t h = size_t(cr3ActionPlay.hitsShown++);
             for (const cr3::Cr3Hit& th : a.targets) { // (each target the hit lands on at once)
                 if (h >= th.hits.size()) continue;
@@ -9685,26 +10078,33 @@ struct Viewer {
                     continue;
                 }
                 cr3Popups.push_back({std::abs(d), unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock});
+                SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: %d damage on %s", cr3BattleClock, d, cr3Battle.units[tu].name.c_str());
                 if (flags & 1) cr3Popups.push_back({-1, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock, 5});
                 {
                     cr3::Cr3Command hc;
                     cr3Rules.command(a.command, hc);
-                    cr3HitEffects(a.command, hc.element, tu, flags & 1);
+                    cr3HitEffects(cr3ActionPlay.directionCommand, hc.element, tu, flags & 1);
                 }
-                if (d < 0) continue; // (a heal: no flinch)
-                const bool last = h + 1 == th.hits.size();
-                if (last && th.killed) rollCr3Drop(th.target);
-                if (last && th.killed) setCr3Motion(tu, "bd03", false, true);
-                else setCr3Motion(tu, "bd01", false);
+                if (d >= 0) setCr3Motion(tu, "bd01", false);
+                else if (shown > 0 && cr3BattleUnits[tu].knockedOut) restoreCr3Unit(tu);
             }
             audio.playSe(0x164, false);
-            if (cr3ActionPlay.hitsShown == int(mostHits)) announceCr3Effects(a); // (after the last: BtlDamageTargetList's)
+            if (cr3ActionPlay.hitsShown == int(mostHits)) {
+                announceCr3Effects(a);
+                // BtlDirection::playKnockout follows the hit sequence, including misses.
+                for (const cr3::Cr3Hit& th : a.targets) {
+                    if (!th.killed) continue;
+                    rollCr3Drop(th.target);
+                    knockOutCr3Unit(size_t(cr3Rules.fighters[size_t(th.target)].unit));
+                }
+            }
         }
-        if (mostHits == 0 && cr3ActionPlay.hitsShown == 0 && t >= cr3ActionPlay.hitAt) { // (no hits - its effects alone)
+        if (mostHits == 0 && cr3ActionPlay.hitsShown == 0 && !timing.hits.empty() && t >= timing.hits.front()) { // (no hits - its effects alone)
             cr3ActionPlay.hitsShown = 1;
             announceCr3Effects(a);
         }
-        if (t >= cr3ActionPlay.end) {
+        stepCr3MeleeReturn(source, t);
+        if (t >= cr3ActionPlay.end && !cr3ActionPlay.melee) {
             for (const cr3::Cr3Hit& th : a.targets) cr3HpShown[size_t(th.target)] = th.hpAfter;
             cr3GaugeShown = a.gaugeAfter;
             ++cr3ActionAt;
@@ -9804,7 +10204,7 @@ struct Viewer {
                     cr3Popups.push_back({f.hp - before, unitPoint(size_t(f.unit), "DummyDP01", 1.2f), cr3BattleClock});
                 }
                 cr3HpShown[k] = f.hp;
-                if (fallen) setCr3Motion(size_t(f.unit), "bb01", true);
+                if (fallen && f.hp > 0) restoreCr3Unit(size_t(f.unit));
             }
             SDL_Log("battle %d: script command %d played (target %d)", cr3Battle.coupling, id, target);
         }
@@ -10027,6 +10427,7 @@ struct Viewer {
     void endCr3Battle() {
         for (int& c : game.next.cr3BattleParty) c = -1; // (GameMain::SM_ChangeMode: cleared)
         cr3BattleMode = false;
+        clearCr3Effects();
         cr3::GameState::Next& n = game.next;
         const int next = n.battleNext;
         n.battleNext = 1;
@@ -10056,6 +10457,7 @@ struct Viewer {
         float fovDeg = 45, zn = 0.1f, zf = 7000;
         const bool own = cr3Cam.name.find("Cam_bt") == std::string::npos;
         if (!(own ? cr3BattleOwnCam : cr3BattleCam).at(cr3Cam.name, t, cw, fovDeg, zn, zf)) cw.m[3] = 0, cw.m[7] = 3, cw.m[11] = 8;
+        cw.m[3] *= cr3Cam.scale, cw.m[7] *= cr3Cam.scale, cw.m[11] *= cr3Cam.scale;
         zn = 0.1f, zf = 7000; // (BtlCamera::Initialize: its own planes; the motion gives the field of view alone)
         const float c = std::cos(cr3Cam.actorYaw), s = std::sin(cr3Cam.actorYaw);
         cr3::Mat34 actor;
@@ -10101,12 +10503,19 @@ struct Viewer {
         for (size_t k = 0; k < cr3BattleUnits.size() && k < cr3Battle.units.size(); ++k) {
             const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
             Cr3BattleUnitView& u = cr3BattleUnits[k];
-            const float yc = std::cos(bu.yaw) * bu.scale, ys = std::sin(bu.yaw) * bu.scale;
+            const float opacity = u.opacity.at(cr3BattleClock);
+            if (opacity <= 0) continue;
+            const float yaw = bu.yaw + u.meleeTurn.at(cr3BattleClock);
+            const float step = u.meleeStep.at(cr3BattleClock);
+            const float yc = std::cos(yaw) * bu.scale, ys = std::sin(yaw) * bu.scale;
             for (ViewFigure* part : {&u.body, &u.head}) {
                 if (part->meshes.empty()) continue;
                 part->place = cr3::Mat34();
                 part->place.m[0] = yc, part->place.m[2] = ys, part->place.m[8] = -ys, part->place.m[10] = yc, part->place.m[5] = bu.scale;
-                part->place.m[3] = bu.home[0], part->place.m[7] = bu.home[1], part->place.m[11] = bu.home[2];
+                part->place.m[3] = bu.home[0] + u.meleeOffset[0] * step;
+                part->place.m[7] = bu.home[1];
+                part->place.m[11] = bu.home[2] + u.meleeOffset[2] * step;
+                part->tint[3] = opacity;
                 const float mt = u.motionLoop ? cr3BattleClock + u.phase : cr3BattleClock - u.motionStart;
                 pose(*part, mt, u.motionLoop);
                 drawFigure(*part, vp.data());
@@ -18318,7 +18727,9 @@ struct Viewer {
             l.name = joints[j].substr(16);
             for (int a = 0; a < 3; ++a) {
                 const float half = std::sqrt(m.m[a] * m.m[a] + m.m[4 + a] * m.m[4 + a] + m.m[8 + a] * m.m[8 + a]) * 0.1f * 0.5f; // (its scale x 0.1 x 0.5 each way)
-                l.lo[a] = m.m[a * 4 + 3] - half, l.hi[a] = m.m[a * 4 + 3] + half;
+                // GetMinimapLayer expands each box to include [-1, 1] on every axis.
+                l.lo[a] = std::min(-1.0f, m.m[a * 4 + 3] - half);
+                l.hi[a] = std::max(1.0f, m.m[a * 4 + 3] + half);
             }
             minimapLayers.push_back(l);
         }
@@ -18360,7 +18771,8 @@ struct Viewer {
     }
     void drawCr3Minimap(int w, int h, const Mat4& view) {
         if (!areaWalker) return;
-        const cr3::Vec3 p = areaWalker->position();
+        cr3::Vec3 p = areaWalker->position();
+        p[1] -= areaWalker->radius; // GetMinimapLayer takes the model's position, at its feet.
         if (const int l = minimapLayerAt(p); l >= 0) minimapLayer = l; // (UpdateMinimap: kept where none says)
         float x, y, cx, cy;
         UiFig& pos = cr3UiPut("femappositon", "", std::min(uiClock - minimapAt, 5.0f), 0, 0, view);
@@ -26294,6 +26706,76 @@ struct Viewer {
         }
     }
 
+    static constexpr std::array<float, 3> kCr3SpellCardSoundTimes = {10.0f / 30, 15.0f / 30, 20.0f / 30};
+    static float cr3SpellCardDuration(size_t count) {
+        // BattleCardCutInMenu ends when its position (one card) or menu (two/three) animation ends.
+        constexpr std::array<float, 4> frames = {0, 35, 38, 41};
+        return frames[std::min(count, frames.size() - 1)] / 30;
+    }
+
+    void drawCr3SpellCards(int w, int h, float elapsed, const std::vector<int>& geneIds) {
+        const size_t count = std::min(geneIds.size(), kCr3SpellCardSoundTimes.size());
+        if (count == 0 || elapsed < 0 || elapsed >= cr3SpellCardDuration(count)) return;
+
+        // BattleCardCutInMenu's CustomFigure dims the scene behind the portrait strips.
+        static constexpr float screen[] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1,
+                                           -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+        const float dim[] = {0, 0, 0, 0.5f};
+        if (white.id) fullFrameQuad(white, screen, dim);
+        dev->clearDepth();
+        dev->setLighting(cr3::SceneLighting());
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+
+        const std::string layout = "btcardcutin" + (count == 1 ? std::string() : std::to_string(count));
+        const std::string position = layout + "position";
+        const std::string menu = layout + "menu";
+        const float previousZ = cr3UiZ;
+        cr3UiZ = 0;
+        UiFig& pos = cr3UiPose(position, count == 1 ? position + "_in" : position, elapsed, 0, 0);
+        float x, y;
+        if (cr3UiCall(pos, "call_btCardCutIn", x, y)) {
+            cr3UiZ = 0.1f;
+            UiFig& strips = cr3UiPose(menu, count == 1 ? menu : menu + "_in", elapsed, x, y);
+            for (size_t k = 0; k < count; ++k) {
+                cr3::Mat34 anchor;
+                if (!cr3JointMatrix(strips, "call_btCardCutIn_id00_00" + std::to_string(k + 1), anchor)) continue;
+                cr3UiZ = anchor.m[11];
+                UiFig& portrait = cr3UiPose("btcardcutin_id00", "", 0, anchor.m[3], anchor.m[7]);
+                const auto* gene = game.cr3Db ? game.cr3Db->geneInfo(geneIds[k]) : nullptr;
+                char imageName[32];
+                std::snprintf(imageName, sizeof imageName, "cutin_%03d", gene ? gene->series : geneIds[k]);
+                cr3UiMaterial(portrait, "mat_cutin_001", imageName);
+                portrait.fig.tint[3] = 1;
+                drawFigure(portrait.fig, view.data());
+            }
+        }
+
+        // BattleCard3CutInMenu keeps its own 1.2-second lifetime and delays each subsequent
+        // nameplate by one frame. The rarity emblem holds the frame of the gene's grade.
+        if (elapsed < 1.2f) {
+            cr3UiZ = 0;
+            UiFig& names = cr3UiPose("btcardnameposition", "", 0, 0, 0);
+            for (size_t k = 0; k < count; ++k) {
+                const float nameTime = elapsed - float(k) / 30;
+                if (nameTime < 0) break;
+                cr3::Mat34 anchor;
+                if (!cr3JointMatrix(names, "call_btCardCutInPMenu_00" + std::to_string(k + 1), anchor)) continue;
+                cr3UiZ = anchor.m[11] + 0.1f;
+                UiFig& panel = cr3UiPut("btcardcutinpmenu", "", nameTime, anchor.m[3], anchor.m[7], view);
+                if (const auto* gene = game.cr3Db ? game.cr3Db->geneInfo(geneIds[k]) : nullptr;
+                    gene && cr3JointMatrix(panel, "call_btCardCutInR_fr00", anchor)) {
+                    cr3UiZ = anchor.m[11] + 0.1f;
+                    cr3UiPut("btcardcutinr_fr00", "", float(gene->grade) / 30, anchor.m[3], anchor.m[7], view);
+                }
+                if (cr3UiCall(panel, "typeM_C01", x, y))
+                    drawUiText(cr3NameOf("gene_name.mbe", "GeneName", geneIds[k]), 30, x / 10, y / 10, w, h, false, 1.0f, 0.28f);
+            }
+        }
+        cr3UiZ = previousZ;
+    }
+
     void drawCr3BattleHud(int w, int h) {
         if (!cr3BattleMode) return;
         const bool hud = cr3BattleStage >= Cr3BattleStage::Menu && cr3BattleStage <= Cr3BattleStage::Action;
@@ -26768,6 +27250,8 @@ struct Viewer {
             }
         }
         drawCr3BattleHud(screenW, screenH);
+        if (cr3BattleMode && cr3BattleStage == Cr3BattleStage::Action && cr3ActionPlay.spellCardAge >= 0)
+            drawCr3SpellCards(screenW, screenH, cr3ActionPlay.spellCardAge, cr3ActionPlay.spellCards);
         drawCr3OptionsOver(screenW, screenH); // (the Options over a battle)
         if (cr3BattleMode && cr3Ctn.stage != 0) drawCr3Continue(screenW, screenH);
         if (cr3BattleMode && cr3GameOverAt >= 0) drawCr3GameOver(screenW, screenH);
@@ -28223,7 +28707,10 @@ int main(int argc, char** argv) {
     if (battleId > 0 && fightMode) v.startFight(fightMode == 3 ? 2 : fightMode, fightSeed);
     if (!eventName.empty()) {
         if (!v.startEvent(eventName, vista, page)) return 1;
-        for (float t = 0; t + cr3::EventRuntime::kTick * 0.5f < startTime; t += cr3::EventRuntime::kTick) v.stepEvent();
+        for (float t = 0; t + cr3::EventRuntime::kTick * 0.5f < startTime; t += cr3::EventRuntime::kTick) {
+            v.stepEvent();
+            v.audio.update(cr3::EventRuntime::kTick);
+        }
         startTime = 0;
     }
     if (!movieArg.empty()) v.game.movieRequest = movieArg, v.game.moviePlaying = true;

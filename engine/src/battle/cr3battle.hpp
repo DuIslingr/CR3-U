@@ -24,7 +24,49 @@ namespace cr3 {
 struct Cr3BattleTables {
     MbeFile model, monster, coupling, field, battle, character, command, direction, gene, item, skill;
     MbeFile attachment; // (attachment_para.mbe's Attachment: an alteration's item - MbItemInfo +0x20; empty where a release lacks it)
+    MbeFile battleAnim, effect, locator;
     bool load(const MvglArchive& archive, std::string* error = nullptr);
+    // The animation's authored cue, used for hit generation and the knockout fade. Returns -1 if absent.
+    float animationCueTime(int modelId, int motion) const;
+    struct MotionTravel {
+        float stepStart, stepEnd, turnStart, turnEnd;
+    };
+    bool motionTravel(int modelId, int motion, MotionTravel& out) const;
+    int directionCommand(int commandId, int basicAttack) const;
+    struct EffectPoint {
+        std::string joint;
+        std::array<float, 3> offset{};
+    };
+    EffectPoint effectPoint(int modelId, int point) const;
+    struct Projectile {
+        int effect = -1, sourcePoint = 0, targetPoint = 0;
+        float speed = 0, acceleration = 0, waypoint = 0;
+        std::array<float, 2> spreadX{}, spreadY{};
+        float duration = 0;
+    };
+    struct ActionTiming {
+        struct Motion { int type; float time; };
+        struct EffectCue { float time; bool launch; };
+        enum class Placement { Target, Group, Field };
+        struct CastEffect { int effect, point; float start, end; bool follow; };
+        std::vector<Motion> motions;
+        std::vector<float> hits;
+        std::vector<EffectCue> effects;
+        int hitEffect = -1, targetPoint = 0;
+        bool waitEffect = false;
+        bool scaleToTarget = false;
+        float sizeSpread = 0;
+        Placement placement = Placement::Target;
+        Projectile projectile;
+        float spellHandoff = -1;
+        int receiverCamera = -1;
+        std::string castCamera;
+        std::string castSound;
+        std::vector<CastEffect> castEffects;
+    };
+    // Source animation cues followed by any delay in the hit effect's own timer. Empty hits means
+    // the direction or its timing data could not be resolved.
+    ActionTiming actionTiming(int modelId, int directionCommand, size_t hitCount, int repeats, int element = 0) const;
     // an attachment's effect (MbItemInfo::GetConstant: the row's +0x0c category - 0 weight, 1 break
     // power, 2 .. 7 a weapon's element lowered (element - 1), 8 .. 13 an armour's element resisted
     // (element - 7), 14 .. 19 an accessory's HP, MP, attack, guard, speed, luck - and +0x10 its
@@ -58,6 +100,8 @@ struct Cr3BattleUnit {
     bool player = false;    // (the party's side: BtlUnit +0xe4)
     int character = -1, monster = -1;
     float width = 0, depth = 0, scale = 1; // (model.mbe +0x18, +0x1c / 10; +0x24 x the unit's)
+    float effectScale = 1; // (Model row +0x28, before multiplying by the unit's scale)
+    int modelFlags = 0;    // (Model row +0x30: bit 0 parts, bits 1 and 4 knockout presentation)
     int cameraSize = 0;     // (model.mbe +0x20: MbCameraSize)
     std::array<float, 3> home{};
     float yaw = 0;          // (0: facing +z - the monsters -; pi the party)
@@ -74,6 +118,7 @@ struct Cr3Battle {
     int cameraSize = -1;               // the largest unit's (BtlCameraSystem::ChangeLargerCameraSize)
     std::array<std::string, 10> cameras; // model.mbe Camera's names for that size: 0 the get-set, 1 command, ...
     float getSetEnd = 4.16667f;        // (its +0x04: PlayBattleIn's end time)
+    float fieldSpan = 4.0f;           // (MbBattleInfo::GetFieldLength)
     // party: the characters in the party's slots (Cr3System.SetParty: char_para ids, 0 none);
     // armours, weapons: theirs where the game has set one (else Cr3BattleTables::defaultArmour, weaponOf)
     bool setup(const Cr3BattleTables& t, int coupling, int fieldId, const std::vector<int>& party, uint32_t seed,

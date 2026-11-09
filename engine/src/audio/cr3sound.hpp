@@ -51,6 +51,7 @@ public:
     // any .snd (music or a voice) as a stream, without the loop
     std::unique_ptr<MusicStream> openStream(const std::string& name, std::string* error = nullptr) const;
     bool effect(const std::string& name, Clip& out, std::string* error = nullptr) const;
+    bool hasVoice(const std::string& name) const;
     bool voice(const std::string& name, Clip& out, std::string* error = nullptr) const;
 
 private:

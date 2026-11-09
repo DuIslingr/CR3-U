@@ -38,6 +38,14 @@ int main(int argc, char** argv) {
         problems += audio.playing(voice) || !audio.playing(effect);
         audio.stopAllSe(0);
         problems += audio.playing(effect);
+        auto& hooks = game::soundHooks();
+        const auto first = hooks.playDialogueVoice(-1, source.voices().front());
+        problems += !first.token || !audio.playing(first.slot);
+        hooks.stopDialogueVoice(first.token);
+        problems += audio.playing(first.slot);
+        const int next = audio.playVoice(source.voices().front());
+        hooks.stopDialogueVoice(first.token);
+        problems += next != first.slot || !audio.playing(next);
         audio.playBgm(1,0);
         problems += audio.bgmState()!=2;
         audio.close();
