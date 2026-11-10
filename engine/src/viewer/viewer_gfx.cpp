@@ -1111,6 +1111,7 @@ void Viewer::draw(int fw, int fh) {
     }
     drawScene(frameW, frameH); // (the scene: all of the frame)
     dev->endScene();
+    applySceneBloom(fw, fh); // (PostEffectBloom: GameMain::Render's, before the blurs)
     applySceneBlur(fw, fh); // (PostEffectBlur: before the cross-fade, under the UI)
     if (const cr3::EventRuntime* ev = activeEvents(); ev && ev->crossFade().active && crossFadeTexture.id) {
         const float alpha = ev->crossFade().alpha(eventLead());
@@ -1153,6 +1154,52 @@ void Viewer::blurQuad(const cr3::Texture& t, int fw, int fh, float scale, float 
     if (additive) dev->setQuadAdditive(true);
     fullFrameQuad(t, q, rgba);
     if (additive) dev->setQuadAdditive(false);
+}
+
+void Viewer::applySceneBloom(int fw, int fh) {
+    SceneBloom& b = sceneBloom;
+    if (!game.bloom) {
+        if (b.logged) SDL_Log("scene bloom: off at %.2f s", double(uiClock)), b.logged = false;
+        return;
+    }
+    if (b.unsupported) return;
+    using Filter = cr3::RenderDevice::Filter;
+    cr3::RenderDevice::FilterParams none;
+    if (!dev->copyFrame(b.scene) || !dev->beginFilters()) {
+        b.unsupported = true;
+        SDL_Log("scene bloom: not on this renderer");
+        return;
+    }
+    const float limit = float(game.bloomLimit) * 0.01f, offset = float(game.bloomOffset) * 0.01f, scale = float(game.bloomScale) * 0.01f;
+    bool ok = dev->filterPass(Filter::Copy, b.scene, b.r512, 512, 512, none) && dev->filterPass(Filter::Copy, b.r512, b.r32[b.read ^ 1], 32, 32, none);
+    // (ReadColorBufferImage: the buffer drawn last frame - the toggle's other; a device that can't
+    // read one back: the term's 1 - it can only be 0.995 .. 1.001)
+    float key = 1;
+    std::vector<uint8_t> px;
+    if (ok && b.r32[b.read].id && dev->readTexture(b.r32[b.read], px)) {
+        float sum = 0;
+        for (size_t k = 0; k + 3 < px.size(); k += 4) {
+            const float s = float(px[k]) / 255.0f + float(px[k + 1]) / 255.0f + float(px[k + 2]) / 255.0f;
+            if (s > 0) sum += std::log(s);
+        }
+        key = std::exp(sum / 1023.0f * (1.0f / 1024.0f));
+    }
+    b.read ^= 1;
+    cr3::RenderDevice::FilterParams bright;
+    bright.limit = key + limit;
+    ok = ok && dev->filterPass(Filter::Bright, b.r512, b.rt[0], 128, 128, bright);
+    const float f = offset * 0.01f;
+    const int from[5] = {0, 1, 2, 0, 1}, to[5] = {1, 2, 0, 1, 2};
+    for (int k = 0; ok && k < 5; ++k) {
+        cr3::RenderDevice::FilterParams blur;
+        blur.offset[0] = (k & 1) ? f : 0.0f, blur.offset[1] = (k & 1) ? 0.0f : f, blur.scale = scale;
+        ok = dev->filterPass(Filter::Blur, b.rt[from[k]], b.rt[to[k]], 128, 128, blur);
+    }
+    dev->endFilters(b.scene);
+    if (!ok) return;
+    if (!b.logged)
+        SDL_Log("scene bloom: on at %.2f s - offset %.2f, limit %.2f, scale %.2f", double(uiClock), double(offset), double(limit), double(scale)), b.logged = true;
+    blurQuad(b.rt[2], fw, fh, 1.0f, 0, 1.0f, true); // (RenderBloom's +0x98: RT2 added, ONE / ONE)
 }
 
 // GameMain::PostEffectBlur (0x0096ca54), after the scene (its bloom) and before the cross-fade and
@@ -1409,6 +1456,8 @@ void Viewer::pointerActivate(float fx, float fy) {
     else if (cr3Title.stage == 2) tap(); // (CR3's title: a click anywhere is its tap)
     else if (titleMenu.stage) titleClick(fx, fy);
     else if (geneGetTap()) {}
+    else if (geneSelectorClick(fx, fy)) {} // (the VS tutorial's gene cards)
+    else if (scriptGeneClick(fx, fy)) {} // (an event's gene status / disposal: modal)
     else if (collectClick(fx, fy)) {}
     else if (yesNoClick(fx, fy)) {}
     else if (choiceClick(fx, fy)) {}
@@ -1530,6 +1579,10 @@ void Viewer::advance(float dt, float sx, float sy, bool run) {
     if (titleMenu.stage) return updateTitle(dt);
     if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt, campOptions.askSince += dt; // (its clock: the field's camp keeps its own)
     if (cr3Title.stage) return updateCr3Title(dt);
+    if (eventMode && cr3CampEvent && cr3Camp.stage != 0) cr3Camp.since += dt; // (the camp over a vista: its clock - the field's is updateArea's)
+    geneDisposal.since += dt; // (an event's gene disposal: its windows' clock)
+    geneSelector.since += dt; // (the VS tutorial's gene cards - a vista's: out once taken)
+    if (geneSelector.open && geneSelector.closeAt >= 0 && geneSelector.since >= geneSelector.closeAt) geneSelector.open = false;
     // (Battle Speed, Field Speed: the battles, and the field while the player walks it - nothing
     // running or open over it -, that many times as fast)
     if (cr3BattleMode) return updateCr3Battle(dt * float(optionsOpen || settingsOpen || cr3OptionsOver() ? 1 : settings.battleSpeed));

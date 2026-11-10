@@ -113,6 +113,12 @@ int main() {
         commands.chunks.push_back({{12, {301}}});
         commands.rows.push_back({{0,724}, {1,2}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,4}, {33,1}, {38,13}, {39,1}});
         commands.chunks.push_back({{40, {777}}});
+        // Round 10: 760 a one-hit attack that always hits and downs and can lead into a finisher (+0xbd bit 1 -
+        // flags bit 9), 761 a Last Attack (flags 0x414, as command_para's 11 .. 35)
+        commands.rows.push_back({{0,760}, {1,0}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,0x244}, {33,1}});
+        commands.chunks.push_back({});
+        commands.rows.push_back({{0,761}, {1,0}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,0x414}, {33,1}});
+        commands.chunks.push_back({});
         Table formulas{"CommandFomula", "iiii", {
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
             {{0,8},{2,8}}, {{0,12},{2,12}}, {{0,13},{2,13}}, {{0,16},{2,16}}, {{0,17},{2,18}},
@@ -442,6 +448,43 @@ int main() {
             rules.monstersWait = true;
             rules.turn({{0, 30, 2}, {1, -1, -1}});
             check(rules.gauge == 0, "passive skill kind 70 resets Break Gauge to 0 when party acts");
+        }
+        // Round 10: BtlCommandManager::addLastAttack - two linked actions (the second a combo on the downed
+        // target), the last's command able to lead into one, the next from the other side: the last
+        // attacker's Last Attack before it, marked; a gauge at the side's full advantage and none with
+        // Finest Arts: still the Last Attack; one action alone, or no combo: none
+        {
+            cr3::Cr3BattleRules rules; check(rules.setup(t, battle, 1, 31), "setup finisher battle");
+            auto reset = [&] {
+                for (size_t k = 0; k < 4; ++k) {
+                    auto& f = rules.fighters[k];
+                    f.player = k < 2, f.hp = f.maxHp = 5000, f.mp = f.maxMp = 100, f.attack = 50, f.defence = 50, f.luck = 0;
+                    f.speed = k < 2 ? 10 : 200 - int(k), f.attackCommand = 30, f.comboChance = false, f.combo = 0, f.chain = 0;
+                    f.effects.clear(), f.lastAttack = k >= 2 ? 761 : -1, f.finestArts = -1;
+                }
+                rules.fighters[1].hp = 0; // (one to hit: the party's first)
+                rules.scripted.clear(), rules.monstersWait = false;
+            };
+            reset();
+            rules.scripted[2].push_back(760), rules.scripted[3].push_back(760);
+            auto acts = rules.turn({{0, 30, 2}});
+            std::vector<std::array<int, 3>> seen; // (source, command, finisher)
+            for (const auto& a : acts) seen.push_back({a.source, a.command, int(a.finisher)});
+            check(seen.size() == 4 && seen[0][1] == 760 && seen[1][1] == 760 && !acts[0].combo && acts[1].combo &&
+                      seen[2][0] == seen[1][0] && seen[2][1] == 761 && seen[2][2] == 1 && seen[3][0] == 0,
+                  "a comboing pair's last attacker's Last Attack comes before the other side's action, marked a finisher");
+            reset();
+            rules.gauge = -1000; // (the monsters' full advantage: Finest Arts first - none here, so the Last Attack)
+            rules.scripted[2].push_back(760), rules.scripted[3].push_back(760);
+            acts = rules.turn({{0, 30, 2}});
+            check(acts.size() == 4 && acts[2].finisher && acts[2].command == 761, "at full advantage without Finest Arts, still the Last Attack");
+            reset();
+            rules.fighters[3].hp = 0; // (one action alone: no finisher)
+            rules.scripted[2].push_back(760);
+            acts = rules.turn({{0, 30, 2}});
+            bool any = false;
+            for (const auto& a : acts) any |= a.finisher;
+            check(!any, "a single action leads into no finisher");
         }
         std::cout << "battle target side: all checks passed\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }

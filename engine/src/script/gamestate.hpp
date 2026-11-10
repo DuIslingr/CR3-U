@@ -163,12 +163,24 @@ struct GameState {
     float viewportPos[2] = {0.52f, 0.27f}, viewportSize[2] = {0.46f, 0.46f};
     // Ace Coupling persistent levels (Fld2TaskEncount::SaveAceCoupling / LoadAceCoupling)
     std::map<int, int> cr3AceLevels;
+    // a character's Last Attack / Finest Arts tier (Cr3System.SetLastAttackLevel / SetFinestArtsLevel:
+    // CrxCharacterData +0x14 / +0x18, by the scripts' character number) - saved; the battles' finishers
+    // that read them (BtlCommandManager::addLastAttack) are not in CR3-U yet
+    std::map<int, int> cr3LastAttackLevel, cr3FinestArtsLevel;
     // the battle transition's glass shatter pattern (Cr3System.SetGlassEffectPattern - GameMain::SetGlassEffect, 0..5) - not saved
     int glassPattern = 1;
     // the scene's feedback blurs (Cr3System.SetMotionBlur(motion, zoom) / SetSpecialBlur: utils::
     // SetMotionBlur 0x0092b3c4 / SetSpecialBlur 0x0092b3f4 - GameSystem +0x68 / +0x69 / +0x6a,
     // drawn by GameMain::PostEffectBlur 0x0096ca54) - not saved
     bool motionBlur = false, zoomBlur = false, specialBlur = false;
+    // the bloom (Cr3System.SetBloom(on, offset, limit, scale): utils::SetBloom 0x0092b43c - GameSystem
+    // +0x10 on, +0x34 offset, +0x30 limit, +0x38 scale, each x 100 as an int -; the GameSystem
+    // ctor's off, 60, 160, 90; drawn by GameMain::PostEffectBloom 0x0096c618) - not saved
+    bool bloom = false;
+    // the VS tournament picked (DAT_0149ef7c: vsTournaments()'s index; VsModeMain's choice, VsBattleIn's
+    // id's - FldUtilReserveVsBattleIN 0x872630 -, -1 none) - not saved
+    int vsSelected = -1;
+    int bloomOffset = 60, bloomLimit = 160, bloomScale = 90;
     // Cr3GimmickData.Setup (Fld2TaskGimmick::SetGimmick): reload the active area's gimmicks when quest state changes - not saved
     bool gimmickSetupRequested = false;
     // the area last entered (FldUtil's: GetDungeonNum - 0 the town - and GetAreaNum, from 0)

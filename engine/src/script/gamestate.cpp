@@ -150,6 +150,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         case 16:
             if (db) db->getVSMission(state), db->getVSTournaments(state, std::time(nullptr));
             break;
+        case 17: // (utils::Invoke 0x92f8e8: request 0x69 - BeginVSTournament on DAT_0149ef7c; the VS tutorial's)
+            if (db && state.vsSelected >= 0) db->beginVSTournament(state, state.vsSelected, {}, std::time(nullptr));
+            else if (db) db->finish(kDbOk);
+            break;
         default:
             if (db) db->finish(kDbOk);
         }
@@ -344,6 +348,21 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         });
         vm.setNative("Cr3System", std::string("Unequip") + name, [m](NativeCall& c) { m->erase(c.integer(0)); });
     }
+    // (utils::CheckDisposeMenu 0x0092e5bc: GameMain::GetCurrentMode - 0x16 < 3, the disposal menu
+    // utils::Unequip* opens - DisposeControlTask, CrxModeFactory 0x16 .. 0x18 - when the bag was
+    // already full - IsWeaponFull: more than 94 held besides those worn. CR3-U's bags have no such
+    // limit, so an unequip never opens it and the scripts' wait ends at once)
+    vm.setNative("Cr3System", "CheckDisposeMenu", [](NativeCall& c) { c.result(false); });
+    // (utils::SetLastAttackLevel 0x00930040 / SetFinestArtsLevel 0x00930060: the character's
+    // CrxCharacterData +0x14 / +0x18 - crx_game_data +0x15ba0, 0x2c a character -, no check; read by
+    // CrxCharacter::GetLastAttackCommandId 0x00931b20 / GetFinestArtsCommandId 0x00931d7c: the
+    // LastAttack / FinestArts rows - command_para.mbe - of a required level no higher)
+    vm.setNative("Cr3System", "SetBloom", [&state](NativeCall& c) {
+        state.bloom = c.boolean(0);
+        state.bloomOffset = int(c.number(1) * 100.0), state.bloomLimit = int(c.number(2) * 100.0), state.bloomScale = int(c.number(3) * 100.0);
+    });
+    vm.setNative("Cr3System", "SetLastAttackLevel", [&state](NativeCall& c) { state.cr3LastAttackLevel[c.integer(0)] = c.integer(1); });
+    vm.setNative("Cr3System", "SetFinestArtsLevel", [&state](NativeCall& c) { state.cr3FinestArtsLevel[c.integer(0)] = c.integer(1); });
     vm.setNative("Cr3System", "ItemCheck", [&state](NativeCall& c) {
         const int id = c.integer(0);
         c.result(id > 0 && state.cr3Items.count(id) ? state.cr3Items.at(id) : 0);
@@ -663,6 +682,12 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
         for (const auto& [id, lv] : cr3AceLevels) o << ' ' << id << ' ' << lv;
         o << '\n';
     }
+    for (const auto& [key, levels] : {std::pair<const char*, const std::map<int, int>*>{"cr3lastattack", &cr3LastAttackLevel}, {"cr3finestarts", &cr3FinestArtsLevel}}) {
+        if (levels->empty()) continue;
+        o << key;
+        for (const auto& [ch, lv] : *levels) o << ' ' << ch << ' ' << lv;
+        o << '\n';
+    }
     const Cr3Records& r = cr3Records;
     o << "cr3records " << static_cast<long long>(r.playSeconds) << ' ' << r.kills << ' ' << r.maxDamage << ' ' << r.vsMatches << ' ' << r.genesObtained << ' '
       << r.merges << ' ' << r.fusions << '\n';
@@ -850,6 +875,9 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
             for (int ch, mp; l >> ch >> mp;) cr3Mp[ch] = mp;
         } else if (key == "cr3aces") {
             for (int id, lv; l >> id >> lv;) cr3AceLevels[id] = std::clamp(lv, 1, 999);
+        } else if (key == "cr3lastattack" || key == "cr3finestarts") {
+            std::map<int, int>& levels = key == "cr3lastattack" ? cr3LastAttackLevel : cr3FinestArtsLevel;
+            for (int ch, lv; l >> ch >> lv;) levels[ch] = lv;
         } else if (key == "cr3name") {
             std::string k;
             l >> k;

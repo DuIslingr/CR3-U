@@ -15,6 +15,13 @@
 // X(return type, name, parameter list)
 #define CR_GL_FUNCTIONS(X) \
     X(void, Viewport, (GLint x, GLint y, GLsizei w, GLsizei h)) \
+    X(void, GetIntegerv, (GLenum pname, GLint* data)) \
+    X(void, Uniform2f, (GLint loc, GLfloat x, GLfloat y)) \
+    X(void, GenFramebuffers, (GLsizei n, GLuint* ids)) \
+    X(void, DeleteFramebuffers, (GLsizei n, const GLuint* ids)) \
+    X(void, BindFramebuffer, (GLenum target, GLuint fb)) \
+    X(void, FramebufferTexture2D, (GLenum target, GLenum attachment, GLenum textarget, GLuint tex, GLint level)) \
+    X(GLenum, CheckFramebufferStatus, (GLenum target)) \
     X(void, Scissor, (GLint x, GLint y, GLsizei w, GLsizei h)) \
     X(void, ClearColor, (GLfloat r, GLfloat g, GLfloat b, GLfloat a)) \
     X(void, Clear, (GLbitfield mask)) \

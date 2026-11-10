@@ -573,6 +573,16 @@ struct Viewer {
         float zoom = 1;
     } sceneBlur;
     void applySceneBlur(int fw, int fh);
+    // GameMain::PostEffectBloom (PostEffects::RenderBloom 0x00b90908): the scene copied to 512 x 512,
+    // that to 32 x 32 (its luminance read back - the other buffer's, a frame late), the bright pass
+    // into 128 x 128 (bloomLimit: exp(sum ln(r + g + b) / 1023 / 1024) + the limit), five blurs
+    // (V, H, V, H, V: blurOffset the offset x 0.01, x the scale), added onto the scene (ONE, ONE)
+    struct SceneBloom {
+        cr3::Texture scene, r512, r32[2], rt[3];
+        int read = 0;
+        bool logged = false, unsupported = false;
+    } sceneBloom;
+    void applySceneBloom(int fw, int fh);
     void blurQuad(const cr3::Texture& t, int fw, int fh, float scale, float roll, float alpha, bool additive);
     void grabCrossFade(int fw, int fh, cr3::EventRuntime& ev);
     void draw(int fw, int fh);
@@ -1356,6 +1366,48 @@ struct Viewer {
     void bindQuakeNatives(cr3::ScriptVM& vm);
     void applyQuake(Mat4& proj);
     void bindAreaNatives(cr3::ScriptVM& vm);
+    // the field and camp natives an area's events and a vista's share (area: the field mode's -
+    // Fld2Main's mode type 1 -, where Fld2* natives act; a vista's mode, VistaMain's 0xe, leaves them be)
+    void bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area);
+    // (Fld2ChangePlayerEquip 0x00870038 -> Fld2TaskPlayer::ChangePlayer: the field's leader - the
+    // party's first - built again in its armour's body where it stands)
+    void cr3RebuildLeader();
+    std::string cr3LeaderBody() const;
+    bool areaPlayerShown = true; // (Fld2SetPlayerVisible 0x0086d4e0: Fld2TaskPlayer's flag 0x400; ChangeArea sets it)
+    // InterfaceWindow.SetCampWindowParty (InterfaceMain::SetCampWindowParty 0x008f00dc): the camp's
+    // top over an event - CampTopMenu +0xf5 -, the scripts waiting while it's open
+    // (CheckAliveCampWindowParty); LockCampTopCharacterPanel(slot) / UnLock (InterfaceMain +0x288 ..
+    // +0x28c, not saved): a party slot's panel kept where it is - SetPanelLock: grey (SetSelectStatus 3,
+    // 0.5 0.5 0.5), not taken up (CheckTopArea), not swapped with (TouchSimpleMove)
+    bool cr3CampEvent = false;
+    std::string campTopTold; // (the camp top's alert - 0x307: a member without a gene, in the VS mode)
+    float campTopToldAt = 0;
+    std::array<bool, 5> cr3PanelLock{};
+    bool cr3PanelLocked(int member) const; // (a panel - the party's members in order - its slot's lock)
+    // An event's gene windows (round 9). InterfaceWindow.CreateGeneStatusSCModalMenu(gene, level, skills)
+    // (InterfaceMain::CreateGeneStatusSCModalMenu 0x8dbee4: GeneStatusMenu 0xa7 - CrxGeneManager::GetGene
+    // at that level, geneCngStsMenu's status and its card -; a tap closes it, the skill slots' help on a
+    // tap when skills is true) and AliveGeneStatusMenu (a Func0: while it's there). CreateDisposalEquipMenu_Gene
+    // (CreateDisposalMain(0x14) 0x8f2688: DisposalEquipMain 0xc5) with GetDisposalEquipMenuResult
+    // (InterfaceMain +0x290: 0 running, 8 done - no cancel): the box not full (IsGeneFull), done at
+    // once; full, told 0x218 ({categoryname} 0x303), a held gene picked (CreateBaseGeneSelectMenu),
+    // asked 0x236, DBSystem::RemoveGene, told 0x237 - then done. Before a story's or a quest's
+    // CardGet_Msg, so its GeneGet finds room
+    bool scriptGeneStatus = false;
+    struct ScriptGeneDisposal {
+        int stage = 0;    // 0 none, 1 told 0x218, 2 the genes, 3 told 0x237
+        int result = 0;   // (GetDisposalEquipMenuResult)
+        int focus = 0, asked = -1;
+        float since = 0;
+        std::string told;
+        std::vector<int> genes; // (cr3Genes indices: the box's, the stock not)
+    } geneDisposal;
+    void openScriptGeneStatus(int master, int level);
+    void openScriptGeneDisposal();
+    void drawCr3ScriptGenes(int w, int h);
+    bool scriptGeneClick(float fx, float fy);
+    bool scriptGeneKey(SDL_Keycode key);
+    void chooseScriptGene(int id);
     // the motions asked for, put on their people and objects
     // the people turning (Fld2DirectionManager::Update: an update's share - 20 a second - of the
     // turn, the shorter way round)
@@ -3285,6 +3337,7 @@ struct Viewer {
         float cglSince = 0, prizeAt = -1; // (prizeAt: when the prize's New mark came - after the window)
     } collectList;
     std::vector<Cr3GeneLabTap> collectTaps;
+    std::vector<Cr3GeneLabTap> scriptGeneTaps; // (an event's gene status / disposal: its taps)
     static constexpr int kTapCollectClose = 799, kTapCollect = 800; // (+ kind x 10 + its slot: 0 item, 1 gift, 2 gene, 3 the prize)
     static constexpr int kWorldPoints = 15;
     static constexpr int kWorldStar[kWorldPoints] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 1, 99};
@@ -3708,6 +3761,48 @@ struct Viewer {
     } vs;
     std::vector<Cr3GeneLabTap> vsTaps;
     std::string vsText(const char* file, int id);
+    // The VS mode's own scripts (round 10; VSMain 0x96e25c / 0x96e2dc, VsModeMain::Update 0xb6b600):
+    // on each entry vs.nut's evt000 (the tutorial's steps: SetVistaEvent - a vista, VS again after
+    // it), else the menu; the menu's hooks run over it (state 0x24: its taps held) - VS_Top on the top
+    // (entered, back from the camp or the gene lab), VS_Top2 on Battle, VS_Normal_Top on the normal
+    // list, VS_Normal_SelectedFullItem once four lifeline items are chosen, VS_MPRecovery_End after
+    // BuyMP -, and VS_BattleIn as a tournament starts: its vista (s910_t01_99999 / 00801) reserves
+    // the battle (Cr3System.VsBattleIn - its battles after the vista). The menu's buttons greyed and
+    // shut by flags 3601 .. 3612 (SetButtonDiffuse 0xb5f4e8: 0.5); CreateOverLay's mask (OverLayMain
+    // 0xdf: black at 0.7, under the script's windows)
+    std::unique_ptr<cr3::EventRuntime> vsEvents;
+    float vsEventClock = 0;
+    bool vsOverlay = false;
+    bool vsFromVista = false;     // (a vista VS reserved: back to VS after it - its battle, or VSMain anew)
+    int vsPendingTournament = -1; // (VsBattleIn's id: the tournament's battles once the vista's over)
+    bool vsCampOpened = false, vsLabOpened = false;
+    bool vsBattleHookPending = false; // (VS_BattleIn running: its battles once it's over)
+    void vsEnter();               // (VSMain: evt000, then the vista it reserved or the menu)
+    void openVsMenu();
+    void runVsScript(const std::string& function);
+    bool vsScriptRunning() const;
+    void stepVsScript(float dt);
+    bool vsVistaReserved();       // (after a VS script: a vista it reserved started)
+    void vsScriptEnded();
+    void bindVsNatives(cr3::ScriptVM& vm);
+    bool vsButtonLocked(int id) const;
+    // InterfaceWindow.CreateGeneCardSelector(gene, text, gene, text, gene, text) (OpenGeneCardSelector
+    // 0x8f8778, menu 0xe1): three gene cards on VsWildNull's VsWildTouch_002 .. 004, AnnounceBattle
+    // 0x32 above; a press puts one in focus (its text shown), a press on it again takes it - the
+    // others dimmed, com_003 and bt_603 -, no way back; GetGeneCardSelectorResult its index (-1 till
+    // then), CheckAliveGeneCardSelector while it's up (its out: 0.5 s)
+    struct GeneCardSelector {
+        bool open = false;
+        int genes[3] = {}, texts[3] = {};
+        int focus = -1, result = -1;
+        float since = 0, closeAt = -1;
+        cr3::EventRuntime* events = nullptr; // (whose shared text the cards' are)
+    } geneSelector;
+    std::vector<Cr3GeneLabTap> geneSelectorTaps;
+    void drawGeneSelector(int w, int h);
+    bool geneSelectorClick(float fx, float fy);
+    bool geneSelectorKey(SDL_Keycode key);
+    void chooseGeneSelector(int k);
     void openVs();
     void openPremiumShop();
     // ---- the Sp Shop (Fld2Main::SM_Shop - CreatePiucomTop: HeaderMenu 0x42 title 9, SShopMenu 0x74) ----

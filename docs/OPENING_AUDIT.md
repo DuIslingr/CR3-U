@@ -211,6 +211,104 @@ party stayed locked. Stub lines in headless battles went from `2..31` to none.
 | `Battle.OpenUI` / `CloseUI`, `BattleCommand.SetStart`, `Battle.IsWildCard` (`0x009a8290` / `0x009a82ac` / `0x009a6044` / `0x009a8414`) | The status and break-gauge UI; an opening command through `phaseGetSetStart` into `phaseCalculate`; the VS tournament row's `+0x6c` | Stubs | HUD panels hidden / shown; the command opens the first turn (sorted with the monsters' - where the original puts it UNKNOWN); `IsWildCard` "this tournament deals wildcards" (`+0x6c`'s meaning UNKNOWN) |
 | Addition-unit natives, `BattleUnit.DeleteEffect` (`0x009a7af8` .. `0x009a7fb4`) | Effects on addition units (battle 54's cards) | Stubs | Documented no-ops: CR3-U has no addition units |
 
+### 11. Round 8 parity audit (the events' remaining natives)
+
+The Round 4 replay's stub list counted calls made by each script's top-level code, which
+`cr3tool events` runs in a bare VM without the game's natives. `Cr3System.GetAreaNum` was one of
+these: it is bound (`bindGameState`) and no event reached it unbound. `CR3_EVENT_STUBS=1 cr3tool
+events <release> all` now lists each event's own unbound natives with their counts
+(`stubs <script>:<event> <native> <n>`). The census was compared with the viewer's own bindings
+(`bindAreaNatives` for an area's events, the quake alone for a vista's). Six natives and two sets
+were traced from their `Cr3Bind*` binders by a delegated REA pass
+(`/tmp/cr3-opening-audit/libcrx-audit-round8-evidence.json`, 33 records). Seven of those functions
+were re-decompiled here, plus `addLastAttack`, `CampCharaPanel::SetSelectStatus` / `SetPanelLock`,
+and `VistaMain` / `Fld2Main::GetModeType`
+(`/tmp/cr3-opening-audit/libcrx-audit-round8-verify.json`). The script side was read with
+`tools/nut.py dis`: `PartyEquip(chr)` (`SetEquip`, `ChangePlayerEquip`, `SetLastAttackLevel(chr, 2)`),
+`SetCampWindowParty` / `WaitCamp` / `LockPanel`, and `UnEquip*`'s `while (CheckDisposeMenu())`.
+
+Walkthrough playlist (gocalibergaming, about 89 parts): Daisuke and Leary join (`s100_t01_00501_evt`,
+`PartyEquip`) at the end of Part 2, `22:50`. Part 3 then shows the new party's first field (`d01`)
+and battle (`11:20..17:00`, the Break Gauge tutorial).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `Cr3System.SetLastAttackLevel(chr, lv)` / `SetFinestArtsLevel` (`utils::` `0x00930040` / `0x00930060`) | The character's `CrxCharacterData +0x14` / `+0x18` (`crx_game_data +0x15ba0`, `0x2c` per character), saved. `CrxCharacter::GetLastAttackCommandId` `0x00931b20` filters the character's `LastAttack` rows (`command_para.mbe`, 18 rows) on required level (`+8`) no higher than its own and gene value (`+0xc`) no higher than the worn gene's `MbGeneInfo +8`, then picks one weighted by `+0x10` (20 / 30 / 40). `PartyEquip`'s `(chr, 2)` opens all three tiers | Stubs (5 events) | `GameState::cr3LastAttackLevel` / `cr3FinestArtsLevel`, saved (`cr3lastattack` / `cr3finestarts` lines). The finishers that read them are not in CR3-U (*Not settled*) |
+| `Cr3System.CheckDisposeMenu` (`0x0092e5bc`) and `Unequip*` (`0x0092e3ac` ..) | `GetCurrentMode - 0x16 < 3`: true while the disposal menu (`DisposeControlTask`, modes `0x16..0x18`) is open. `Unequip*` opens that menu when the bag was already full (`IsWeaponFull` `0x009537fc`: more than 94 held besides the worn) | Stub (8 events; the scripts' wait ended on `null`) | `false`: CR3-U's bags have no such limit, so an unequip never needs the menu |
+| `Cr3GimmickData.ChangePlayerEquip` (`Fld2ChangePlayerEquip` `0x00870038` -> `Fld2TaskPlayer::ChangePlayer` `0x00877d70` / `0x0087612c`) | Field mode only (mode type 1; a vista's `VistaMain` is `0xe`): the leader (party slot 0) rebuilt in its armour's body (`BuildCharacter`'s `<name>b<NN>`) where it stands, idle loop again | Stub (3 events) | `Viewer::cr3RebuildLeader` in an area's events (the `loadArea` leader choice, now `cr3LeaderBody`). A no-op in a vista |
+| `Cr3FieldMapCharacter.SetVisible` (`Fld2SetPlayerVisible` `0x0086d4e0`) / `SetPos_p000` / `SetRot_p000` (`0x00842fac` / `0x00842fcc`) | `SetVisible`: `Fld2TaskPlayer` flag `0x400`, field mode only, set again by `ChangeArea`. `SetPos_p000` / `SetRot_p000`: `Func0`, their arguments dropped; only an `EvtScene` made if there is none | Stubs (e00 / d02) | `areaPlayerShown` (reset by `loadArea`), area events only. `SetPos_p000` / `SetRot_p000` are no-ops |
+| `Cr3FieldMapCamera.SetMode` / `Scroll` / `ScrollTo` (`0x0086f068` / `0x00870c64` / `0x00870cec`) | Act only on `Fld2CameraOrtho`: the map table's (`0x00f3e568`) type 2, `e0013` and `e0015` (`CreateArea2D`). `Scroll(x, y)` jumps to `(xmax x, -ymax y)`; `ScrollTo` tweens over `frames / 30` s in mode 1. Elsewhere they do nothing | Stubs (e00 / d02, CR2-style calls such as `SetPos(0, -1200)`) | No-ops: CR3-U draws `e0013` / `e0015` with the 3D camera (*Not settled*) |
+| `InterfaceWindow.SetCampWindowParty` / `CheckAliveCampWindowParty` (`InterfaceMain` `0x008f00dc` / `0x008f0620`) | `CampTopMenu` (`0x33`) with `CampcomBtnMenu` over the event in its event mode (`+0xf5`). The scripts wait while it exists (`Func0`: their `true` dropped) | Stubs: the party window never opened and the wait ended at once (13 events, area and vista - `q074_d05_00104_evt`) | `openCr3Camp` with `cr3CampEvent`, drawn and stepped over a vista too. `CheckAlive` is true while the camp is open; closing it lets the event go on (`camp-event-lock`) |
+| `InterfaceWindow.LockCampTopCharacterPanel(slot)` / `UnLock` (`0x008f06ac` / `0x008f0764`; `CampCharaPanel::SetPanelLock` `0xa34244`) | `InterfaceMain +0x288 + slot` (party slot `0..4`, not saved). The panel and its parts are drawn at `SetSelectStatus(3)`'s diffuse `(0.5, 0.5, 0.5)` (`DAT_00f63890` / `0x00f638a0`: status 0 `1,1,1`, 1 `0.714,0.714,0.851`, 3 grey). It can't be taken up (`CheckTopArea`) and is skipped as a swap target (`TouchSimpleMove`) | Stubs (15 / 14 events) | `cr3PanelLock`: the panel greyed, the Vita's held-○ move skips it, and a locked panel won't move |
+| `Cr3System.SetBloom(flg, offset, scale, limit)` (`0x0092b43c`; `GameMain::PostEffectBloom` `0x0096c618`, `PostEffects::RenderBloom` `0x00b90908`) | Off by default (`GameSystem +0x10 = 0`; defaults 160 / 60 / 90). On, it adds a bloom to the 3D scene before the blur and cross-fade: a 512 copy, a 32x32 luminance read a frame late (`exp(Σ ln(rgb)/1023/1024) + scale`), a bright pass and five 128x128 blur passes (step `offset * 0.01`, `limit`), then added ONE/ONE | Stub (8+ events: `s100_t01_00501`, `s902_d02_01103`, ...) | Still unbound (*Not settled*): passes `5` / `6` are built-in MVGL shaders not yet recovered |
+
+### 12. Round 9 parity audit (an event's gene windows; the VS tutorial)
+
+Round 8's census left two groups of natives. Both were traced from `Cr3BindInterfaceWindow` /
+`Cr3BindSystem` by a delegated REA pass (`/tmp/cr3-opening-audit/libcrx-audit-round9-evidence.json`,
+18 records). The scripts were read with `tools/nut.py dis`.
+
+- **The gene windows around a reward.** A story event (`s481_d16_00104_evt`, gene 378 at level 100)
+  or a quest's report (`quest_report`: quest 58's gene 230 at level 40, and others) first calls
+  `CreateDisposalEquipMenu_Gene`, waiting while `GetDisposalEquipMenuResult() == 0`. It then calls
+  `CardGet_Msg`, which gives the gene through `Cr3System.GeneGet` and shows the gene-get window
+  (both already bound). Last comes `CreateGeneStatusSCModalMenu(gene, level, false)`, waiting
+  while `AliveGeneStatusMenu(true)`.
+- **This was a bug in CR3-U:** `GeneGet` returns −1 and drops the gene when 50 are held. The
+  original's disposal step exists to make room first, so before this round a full box silently
+  lost the reward.
+- **The reference:** walkthrough Part 3 (`Q-i3K6JUxqY`) shows the same status window at `17:20`,
+  after the first gift fusion ("Nobunaga", level 001, over Fuse Gifts).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `InterfaceWindow.CreateDisposalEquipMenu_Gene` / `GetDisposalEquipMenuResult` (`InterfaceMain::CreateDisposalMain(0x14)` `0x8f2688`, `DisposalEquipMain::Update` `0xa60188`; `Func0` / `Func0<int>`) | `DisposalEquipMain` (`0xc5`); the result is `InterfaceMain +0x290`: 0 running, 8 done, no cancel. The box not full (`CrxGameData::IsGeneFull` `0x954f6c`: 50 slots) is done at once. A full box shows told `0x218` (`{categoryname}` `0x303`), then a held gene picked (`CreateBaseGeneSelectMenu`, header sentence `0x2f6`, no back), asked `0x236` (`{genename}`; No returns to the list), `DBSystem::RemoveGene`, told `0x237`, then done | Stubs (3 events and `quest_report`). The wait ended on `null` and the reward's `GeneGet` failed on a full box | `openScriptGeneDisposal`: done at once with room (`GeneGet`'s own rule, so the discard always makes room). Full, the same steps over the event (the presents' discard pieces: `drawCr3CampGenes`, `drawCr3Told`, `drawCr3Asked`) |
+| `InterfaceWindow.CreateGeneStatusSCModalMenu(gene, level, skills)` / `AliveGeneStatusMenu` (`0x8dbee4` / `0x8dbaf4`; `Func3<int, int, bool>` / `Func0<bool>`) | `GeneStatusMenu` (`0xa7`, `Initialize` `0xa9b5ec`). It shows `CrxGeneManager::GetGene(gene, level)` on `mixStsPositon`: `geneCngStsMenu` at `call_geneCngStsMenu_fit0`, the portrait `mixGeneIcon_id00` (`mat_card_001` = `card_<series>`) at `call_geneCngCharaIcon_fr00`, then name, level (MAX at the cap), HP / MP, four stats and the eight skills (unlearned dim). No element, lock or card beside it. Any tap or back closes it (0.2 s fade). With `skills`, a tap on a skill slot shows its help in the header instead | Stubs: never shown | `openScriptGeneStatus` with `drawGeneBase`'s new `GeneStatusMenu` layout, over an area's or a vista's event; any tap, ○ or back closes it. Matches Part 3's `17:20` frame (panel and portrait in place). The `skills` help taps aren't in |
+| VS tutorial natives: `CreateGeneCardSelector` (menu `0xe1`, `Func6<int>`; three `CardModel`s on `VsWildNull`'s `VsWildTouch_002..004`, `bt_602`; press, then press again to pick; result: the index, −1 till then; no cancel), `CreateOverLay` / `DeleteOverLay` (`OverLayMain` `0xdf`: a modal container, an RGBA `(0, 0, 0, 0.7)` mask on layer `0x12`, later windows inside it; immediate), `GetSelectTournamentID` (`InterfaceMain +0x704`, −1 until a tournament is picked), `Cr3System.VsBattleIn(id, p2, p3)` (`FldUtilReserveVsBattleIN` `0x872630`, `Func3<int>`: a battle reserved from the VS tournament row, black battle-entry colour, `SetGlassEffect`) | Run by the VS tutorial: `VSMain::OnUpdate` `0x96e2dc` loads `vs.nut` and runs `evt000` before the VS menu exists. That chains `s910_t01_00101_set` (flags `3501` ..: the starter-gene choice, `CreateGeneCardSelector(1, 17, 4, 18, 7, 19)` -> `Sync2('tuto_get_gene1..3')`) and `00201` (`VsBattleIn(1, -1, 1)`); `VsModeMain`'s states call `VS_Top`, `VS_Top2`, `VS_Normal_Top`, `VS_BattleIn` for the rest. `DBSystem::SM_SkipVSTuto` `0x814ad0` is the skip | Stubs; CR3-U's VS mode (`openVs`) doesn't run `vs.nut` or its hooks, so none of it is reached | Unchanged: the tutorial flow is *Not settled* (binding these alone would change nothing) |
+
+### 13. Round 10 parity audit (finishers; bloom)
+
+Two delegated REA passes traced the finishers (`/tmp/cr3-opening-audit/libcrx-audit-round10-lastattack.json`,
+51 records) and the bloom (`/tmp/cr3-opening-audit/libcrx-audit-round10-bloom.json`, 20 records; five
+records from a dropped REA connection are lost, their findings re-checked with `llvm-objdump`).
+
+**Finishers.** `BtlCommandManager::calculateCommands` `0x007db93c` calls `addLastAttack` `0x007dbfc8`
+before each next command. `command_para.mbe` has the data: 55 commands with `+0xbd` bit 1 (the
+characters' attacks 1..9, physical skills 201..235, and a few others). The `LastAttack` rows (commands
+11..18 at level 0 with any gene, 21..25 at level 1 / gene stage 1, 31..35 at level 2 / stage 2; weights
+20 / 30 / 40) and `FinestArts` rows (101 .. 127) are ordinary commands. Their CommandDirection kinds (9
+LastAttack, 10 MultiLastAttack, 11 SingleFinestArts, 12 FinestArts, 20, 30, 39) play them; the only
+announcement is the command name.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| When (`addLastAttack` `0x007dbfc8`, `BtlDamageChunk::HaveChanceReset` `0x0097e56c`, `calculateCommand` `0x007dc424`, `BtlCommandList::VInsertTop` `0x007e4fd8`) | Before each next command, from the last action not itself inserted (`+0x188`) and the combo's participants (`+0xb8`: an actor added after a comboing action, alone after any other). It fires when all of these hold: at least two participants; the last command's `+0xbd` bit 1 and its combo; the next command not inserted and breaking the chain (the other side, its actor under status effect `0x1f`, or none of the same units hit); the first target standing. The finisher goes in before the next command, marked inserted (`+0x1a`), so it leads into none | None | `Cr3BattleRules::turn`: the same, the finisher entry marked `2`, `Cr3Action::finisher` set; battle 22 at team level 20 (party 1, 2, 3) played two, command 13 |
+| Which (`BtlBreakGaugeUI::HaveAdvantageOver` `0x0099d41c`, `CrxCharacter::GetLastAttackCommandId` `0x00931b20` / `GetFinestArtsCommandId` `0x00931d7c`, `BtlStatus::GetLastAttackCommandId` `0x009b722c`, `MbMonsterInfo` `0x00913b98` / `0x00913ba8`) | With the side's gauge at its full advantage (`+-1000`), a random participant with Finest Arts uses them (`+0x24`). Otherwise the last attacker's Last Attack: the character's `Char` row ids whose level is at most `CrxCharacter +0x1c` and gene requirement at most the worn gene's stage (`gene_para` `+8`; -1 no gene), picked by weight; Finest Arts take the highest allowed level, ties at random. Status effect `0x3f` means none, `0x40` command 18. A monster's are its mode's `MonsterCommand` `+0x18` / `+0x1c` (Finest Arts -1 in all 1132 rows). Levels start at 0 (`CrxGameData::Init` `0x0094f764`) | None (round 8 kept the levels only) | `lastAttackCommand` / `finestArtsCommand`, the levels from `GameState` by the `Char` row's save slot; `battle-target-tests` checks the order, the mark, the full-advantage fallback and a lone action's none (and fails when the expected command is changed) |
+
+**Bloom.** `SetBloom`'s argument order is offset, limit, scale. Round 8's table had the last two the
+other way round; the debug HUD's names fix it ("Bloom Limit" `+0x30`, "Bloom Offset" `+0x34`,
+"Bloom Scale" `+0x38`). The shaders are MVGL's built-in GLSL in `.rodata` (`DefaultVP` / `DefaultFP`
+`0xba00a4` / `0xba00d4`).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `Cr3System.SetBloom(on, offset, limit, scale)` / `GameMain::PostEffectBloom` `0x0096c618` / `PostEffects::RenderBloom` `0x00b90908` | Into RGB565 targets (clamped, linear, never cleared, blending off): the scene copied to 512x512, then that to 32x32 (read back a frame late: `key = exp(sum ln(r + g + b) / 1023 / 1024)`). Then `filterBrightFP` from the 512 into 128x128 (`c = colour x 2`, kept where `c.r + c.g + c.b > key + limit`), and five `filterBlurFP` passes (taps `0.0545 / 0.2442 / 0.4026` at `-2 .. 2 x blurOffset`, `x scale`; V, H, V, H, V, offset `x 0.01` UV). The last one is added onto the scene (ONE, ONE), before the blurs, under the UI. Off by default (160 / 60 / 90) | Stub: no bloom | `RenderDevice` filters (`beginFilters`, `filterPass` copy / bright / blur, `endFilters`, `readTexture`): GL FBOs on RGB565 with the original shaders, Vulkan offscreen RGBA8 images (`filter.vert` / `filter.frag`); `Viewer::applySceneBloom` runs the same passes and adds RT2 back. `s902_d02_01103_evt` (offset, limit and scale 0.8) glows on Vulkan, Vulkan with MSAA 4x (the frame drawn back) and GL alike, and the validation layer (with synchronisation checks) reports nothing |
+
+**The VS tutorial.** A third delegated pass (`/tmp/cr3-opening-audit/libcrx-audit-round10-vs.json`,
+31 records; some lost to a shared REA session, marked there) traced `VSMain` / `VsModeMain` and
+`vs.nut`. Walkthrough Part 7 ("Battle Mode: Normal Battle", `roh96Zm3saM`, local `part7.mp4`) plays it:
+the gene cards at `0:55`, the party window at `2:00`, `00601`'s overlay messages at `5:05`, the camp's
+Gene Swap at `5:25`, then Battle and the lifeline items.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| VS entry (`VSMain::Init` `0x96e25c` / `OnUpdate` `0x96e2dc`) | `vs.nut`'s `evt000` first, before the menu. Its `_set` functions reserve the tutorial's vistas in turn (`s910_t01_00101_evt` in `t0102f`, `00201` in `t0151bt`; `SetVistaFuncName`): the game goes to the vista and back to `VSMain` anew after it (next mode `0x19`). Otherwise the menu comes up (request `0x66`, `DAT_0149ef7c` -1) | The menu at once; `vs.nut` never run | `Viewer::vsEnter`: `evt000` on its own runtime (`vsEvents`), then `vsVistaReserved` (the field kept, the vista on its map's area's script) or `openVsMenu`; a VS vista's end goes back through `vsEnter` |
+| The menu's hooks (`VsModeMain::Update` `0xb6b600`, state `0x24`) | `VS_Top` on the top (entered, back from the camp, from the gene lab), `VS_Top2` on Battle, `VS_Normal_Top` / `VS_Special_Top` on the lists, `VS_Normal_SelectedFullItem` (four lifeline items), `VS_MPRecovery_End`. While one runs the menu keeps drawing but takes no taps. Its windows draw over `OverLayMain`'s mask (`0xdf`: black `0.7`, layer `0x12`; `CreateOverLay` / `DeleteOverLay` at once). A reserved vista closes the menu | None | `runVsScript` at the same points; `activeEvents()` gives the VS script's windows the screen and taps; `drawEventUi` draws the menu, the mask, then the windows |
+| Buttons (`VsModeMenu::SetButtonDiffuse` `0xb5f4e8`) | Flags 3601 .. 3612 grey (`0.5`) and shut the top's and Battle's buttons (`PleaseCampPush`: only the camp; `PleaseNormalBattleStart`: only Battle and Normal). The MP / My Page row (part `+0x60`) appears only with flag 33 (`VS_TutoAllClear`): Part 7 has no such row | All up | `vsButtonLocked`; the row hidden and shut until flag 33 |
+| The gene cards (`OpenGeneCardSelector` `0x8f8778`, menu `0xe1`) | `CreateGeneCardSelector(1, 17, 4, 18, 7, 19)`: three `CardModel`s (4.5, in focus 5.4) on `VsWildNull`'s `VsWildTouch_002 .. 004`. `AnnounceBattle 0x32` ("Select a card.") goes in the battle announcement bar, the focused card's shared text (17 .. 19: "Michael (Ice)") in its place. A press focuses, a second takes (`com_003`, `bt_603`). The result is the index, then `Sync2('tuto_get_gene1..3')` gives gene 1 / 4 / 7 and its status window shows | Stubs: `null` never -1, so no branch, no starter gene | `geneSelector` with `drawGeneSelector` (`btHelpMenu` for the text); Part 7's `1:00` frame and CR3-U's match (cards, focus, text) |
+| `Cr3System.VsBattleIn(id, p2, p3)` (`FldUtilReserveVsBattleIN` `0x872630`) and `Invoke(16 / 17)` (`0x92f8e8`) | Reserves the tournament's battles after the vista (`DAT_0149ef7c` its index; `p2` / `p3` the colosseum's commentators). `00201`'s `(1, -1, -1)` then `Invoke(17)` (BeginVSTournament) until 200: tournament 1's couplings 2001 .. 2003. Every tournament also goes through `VS_BattleIn`'s vista (`99999`, or `00801` for the tutorial's second), whose `VsBattleIn` reserves its battles. Afterwards `VSMain` anew (results, then `evt000`) | Stub; tournaments started at once from the menu | The vista's end runs the reserved tournament (`vsNextBattle`); the menu's start runs `VS_BattleIn` and its vista first; the prizes' end returns through `vsEnter`; `Invoke(17)` begins `GameState::vsSelected` |
+| The VS camp's close (`CampTopMenu::SetParamNumber` 2 `0xa389cc`) | Flag 42 off: every member wearing a gene sets 42 and 3505 (the tutorial's `00702` next); one without gets alert `0x307` and the camp stays | Closed as always | The same (`campTopTold`) |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -278,6 +376,10 @@ Deterministic REA evidence bundles are stored outside the repository at
 | `PostEffectRenderer::Build` / `Render` / `SetScale` / `SetAlpha` / `SetBlur` / `GameMain::Render` | `0x00ef856c` / `0x00ef8d80` / `0x00ef8c38` / `0x00ef8d38` / `0x00ef8b50` / `0x0096b46c` | Passes `0..5` (`{blend on, src, dst, FUNC_ADD 0x8006}`, shader types `0, 0, 6, 8, 5, 0`; pass `5` alpha `0.5`); `SetScale` scales the figure's size about its centre, `SetAlpha` `+0x1fc`; the render order (scene target, then effect / bloom / mask / blur / cross-fade, then layer `0xc` and the UI). | `/tmp/cr3-opening-audit/libcrx-audit-round6-blur-evidence.json` (`17` records: `ev_047314557070de1248aaa37067f7bc2624ccd3584fb933a20619f35f8eb02c7d`, `ev_1d5f91241ccd0e44d392dbced259241f1e1d9fca85ceb8be8bfeafa5f7b6f6a8`, `ev_2b261c051cb71f2fd58b14ebe569fc272507fbaba2e4bb35ec72e7a2f2e570fd`) |
 | `BtlDamageTarget::Hold` / `BtlDirection::holdTarget` / `BtlHoldDirection::VUpdate` | `0x00988474` / `0x0098cbdc` / `0x0099317c` | Attach only via Hold directions and the script. | `/tmp/cr3-opening-audit/libcrx-audit-round6-battle-natives.json` (`ev_c5f34083f2b6...`, `ev_30b6e36b05cc...`, `ev_4764cf4b466b...`, `ev_c9f97aabc698...`, `ev_68c98be14d78...`, `ev_5c834f645829...`) |
 | `BtlStatusList::PlayRelease` (callers) / `BattleCommand::HasStart` (callers) / VS tournament globals | `0x009bf930` / `0x009a60a4` / `0x0149ef7c` | WaitDie, HoldLastAttack and Release directions release; `isOpening`, `phaseStart`, `phaseGetSetStart`; Begin / EndVSTournament. | same bundle (`ev_2af59b43dcae...`, `ev_c20e870d0174...`, `ev_8e34f055a6af...`, `ev_9694dbd05261...`, `ev_715488982049...`) |
+| `utils::SetLastAttackLevel` / `CrxCharacter::GetLastAttackCommandId` / `utils::SetBloom` / `utils::CheckDisposeMenu` / `Fld2SetPlayerVisible` / `Cr3EvtSceneSetFieldMapPos` / `InterfaceMain::LockCampTopCharacterPanel` | `0x00930040` / `0x00931b20` / `0x0092b43c` / `0x0092e5bc` / `0x0086d4e0` / `0x00842fac` / `0x008f06ac` | Round 8, re-decompiled here: `(&DAT_014bde64)[chr * 0xb] = level`; level- and gene-filtered weighted pick; `GameSystem +0x10 / +0x34 / +0x30 / +0x38`; `mode - 0x16 < 3`; flag `0x400` in mode 1; `Func0` making an `EvtScene` only; `+0x288 + slot` and message `(0x33, 7)`. | `ev_ebe1f653524a7f37c8d46d2b9b12ba9ad79090ccc7ed631447091801f48043cb` (`/tmp/cr3-opening-audit/libcrx-audit-round8-verify.json`) |
+| `BtlCommandManager::addLastAttack` / `BtlCharacterStatus::VGetLastAttackCommandId` / `CampCharaPanel::SetSelectStatus` / `SetPanelLock` / `VistaMain::GetModeType` / `Fld2Main::GetModeType` | `0x007dbfc8` / `0x009b29a8` / `0xa33f70` / `0xa34244` / `0x008609e4` / `0x0087e9a4` | After a command with `MbCommandInfo +0xbd` bit 1 whose chunk combo'd (`+0x9e`) and `HaveChanceReset`, with the first target alive: a random ally's Finest Arts under the player's Break advantage, else the actor's Last Attack (none at `-1`). Panel status colours `(t1[s], t1[s], t2[s])`; vista mode `0xe`, field `1`. | `ev_077566f1d3f24a0508b2face97dbe1441d7cf92f9e1da0ec1be75f8240c4825f`, `ev_6d13aef8f38258ec6ce9998ea80ad69f9aa3ffbce9b8a47f9d822c89bb773de8`, `ev_7c99574ed2728276cde5d5779dac041105d074ad9c1201479d6b0382fa989148` |
+| Round 8's delegated trace: `Cr3BindSystem` `0x0084bcfc`, `Cr3BindGimmickData` `0x00850e24`, `Cr3BindInterfaceWindow` `0x00853664`, `Cr3BindFieldMapCharacter` `0x00852714`, `GameMain::SetBloomEnable` `0x0096d99c`, `PostEffects::Build` `0x00b8f91c`, `GameSystem` ctor `0x00938fdc`, `IsWeaponFull` `0x009537fc`, `Fld2TaskPlayer::ChangePlayer` `0x00877d70` / `0x0087612c`, `CampTopMenu::Initialize` `0x00a37cc0` | (as listed) | The bindings' `Sqrat` wrappers (from the binders' disassembly and GOT relocations), the bloom defaults and buffers, the full-bag disposal path, the field leader's rebuild, the camp's event mode and the lock's use. Vita: `utils::SetBloom` `0x812abeba`, `RenderBloom` `0x813324da`, `DisposeControlTask` `0x812b335c`, `Fld2ChangePlayerEquip` `0x810df6e0`, `Fld2SetPlayerVisible` `0x810ddb16`, `CampTopMenu::Initialize` `0x81117f48` | `/tmp/cr3-opening-audit/libcrx-audit-round8-evidence.json` (33 records) |
+| Round 9's delegated trace: `CRXInterfaceEvent_CreateGeneStatusSCModalMenu` `0xa9f11c` -> `InterfaceMain::CreateGeneStatusSCModalMenu` `0x8dbee4`, `AliveGeneStatusMenu` `0x8dbaf4`, `GeneStatusMenu::Initialize` `0xa9b5ec` / `SetGeneParamerter` `0xa9d4fc`; `CreateDisposalMain` `0x8f2688`, `DisposalEquipMain::Update` `0xa60188`, `CrxGameData::IsGeneFull` `0x954f6c`; `OpenGeneCardSelector` `0x8f8778` (result `0x8f8838`, alive `0x8f88c0`); `CreateOverLay` `0x8f9ee8` / `DeleteOverLay` `0x8f9f18`; `VsModeMain::Update` `0xb6b600`; `FldUtilReserveVsBattleIN` `0x872630`; `VSMain::Init` / `OnUpdate` `0x96e25c` / `0x96e2dc`; `DBSystem::SM_SkipVSTuto` `0x814ad0` | (as listed) | Wrappers from `Sqrat::Object::BindFunc` `0x857e70`'s GOT slots (no `sq_setparamscheck`: extra script arguments are dropped). The gene windows' menus, parts, results and closing; the VS tutorial's start (`vs.nut` `evt000` before the menu) and its hooks. `VsBattleIn` reads the tournament row before it looks up the new id (the previous index; the tutorial's own source index UNKNOWN). The `%c%03d_%s%03d_%s_%03d%02d` event name is the debug launcher's (`OnEventStart` `0x95b57c`) | `/tmp/cr3-opening-audit/libcrx-audit-round9-evidence.json` (18 records) |
 | `BtlStatusEffectList::HasProhibitedTarget` / `MbGetCommandInfo` / `MbCommandInfo::CreateDirection` | `0x009b88cc` / `0x00912020` / `0x00912438` | Required effects one-of, forbidden any, kind `72` vs `HaveRemovesStatusEffect` / `DisableNonTarget`; command info `+0x60a20 + id * 0x20`, its `+0x18` the CommandDirection row (`+0x60a38`). | `ev_e3fc4585634207165f3ef2fd47ccab38f947c9d7aa1bfb46a53e104fb40301cc`, `ev_014221d6622f743c0fdcc8eea1857c706905a04bc829dc429c80e6cfca1600a7` |
 
 ## Not settled
@@ -287,13 +389,44 @@ Deterministic REA evidence bundles are stored outside the repository at
   (`BtlUnit::PlayCamera` `0x009dd234`) are not modelled. Round 7's approximations: the held unit's
   rotation, the release's timing, `SetStart`'s place in the turn, `IsWildCard`, and the addition
   units (above).
-- **Unbound natives (Round 4 replay)**: `Cr3System.SetBloom` (`8`; `GameMain::PostEffectBloom` /
-  `PostEffectBloomMask`, not decompiled yet - the blurs are round 6's); `InterfaceWindow.Lock/UnLockCampTopCharacterPanel`,
-  `SetCampWindowParty`, `CheckAliveCampWindowParty`, `CreateOverLay` / `DeleteOverLay`,
-  `CreateGeneStatusSCModalMenu`, `AliveGeneStatusMenu`, `CreateGeneCardSelector` (+ result / alive),
-  `CreateDisposalEquipMenu_Gene` (+ result), `GetSelectTournamentID`; `Cr3System.CheckDisposeMenu`,
-  `SetLastAttackLevel`, `VsBattleIn`; `Cr3GimmickData.ChangePlayerEquip`; `Cr3FieldMapCamera.Scroll`
-  / `ScrollTo`.
+- **Unbound natives (Round 10)**: none in the census; the VS tutorial's are bound by the viewer (its
+  `vsEvents` and the vistas).
+- **The VS tutorial (Round 10)**: these parts aren't in or aren't traced.
+  - Not in: `VsBattleIn`'s commentators (`p2` / `p3`: `BtlBootParam +0x38 / +0x3c`, colosseum voices
+    in `BtlSystem::Init`); `VSMain`'s results state (`0xb`, `CreateVsAchieveProductionMenu`) before
+    `evt000` (CR3-U's own results and prizes come first, then `vsEnter`).
+  - Not traced: the overlay's exact quad (`CustomFigure` 14 x 14 at depth 5); whether `CreateInterface`
+    routes the script's message windows into the overlay (CR3-U draws them over it); who sends
+    `SM_SkipVSTuto` (request `0x97`).
+  - Never called: `s910_t01_00602 .. 00605` and `00704` (dead code in every script).
+  - `VS_Special_Top` only prints.
+  - `FldUtilReserveVsBattleIN` reads the tournament row at the old index before looking the new
+    id up (the tutorial's: the `.bss` 0, tournament 1 anyway).
+  - The pad case stops when tournament 1's battles start. Its battles, `00701`'s join and
+    `00601`'s locks run as VS's own (the battles' wildcard and score screens are CR3-U's).
+- **Gene windows (Round 9)**: the `skills` help taps on `GeneStatusMenu`'s skill slots aren't in.
+  The disposal list's header title isn't traced (CR3-U shows Gene Swap's). Fullness follows
+  `GeneGet`'s count (all held), while `IsGeneFull` counts the 50 box slots. They differ only when the
+  stock holds genes, and `GeneGet`'s own rule then refuses earlier than the original's.
+- **Finishers (Round 10)**: three parts aren't modelled. The Finest Arts directions' `BtlField::Hide`
+  (the stage hidden) and their commentator voice (`PlayClimax`) aren't in. `CalculateForceBreakPoint(true)`'s
+  `BtlCalculator +0xa5` (a Finest Arts' break points) is UNKNOWN. The finisher check runs only before a
+  next command in the same turn (the original's also carries `+0x188` to the turn-end list).
+  `CR3-U`'s `wouldHit` treats a random target's side as all of it (`CollectDamageTarget`'s random pick
+  isn't traced). Status effects `0x1f`, `0x3f` and `0x40` are tested by id; their names are UNKNOWN.
+- **Bloom (Round 10)**: Vulkan's targets are RGBA8, not the original's RGB565 (no 5/6/5 quantising),
+  and Vulkan doesn't read the 32x32 luminance back (its term taken as 1: it can only be 0.995 .. 1.001).
+  `PostEffectBloomMask` (`GS +0x55`, off by default, its writer unknown) and `PostEffectBloom2` / `3`
+  are separate effects, not traced.
+- **The 2D areas' camera (Round 8)**: `e0013` / `e0015` use `Fld2CameraOrtho` in the original
+  (`Scroll` / `ScrollTo` / `SetMode`). CR3-U draws them with the 3D camera, and the three natives are
+  no-ops.
+- **Camp event mode (Round 8)**: in `CampTopMenu`'s event mode button 2 becomes 7, and a Yes/No
+  (`0x1f0`) or an alert (`0x307`) can appear. What each button does there is UNKNOWN; CR3-U keeps
+  the camp's normal buttons. The Vita focus tint `(0.5, 1, 1.5)` is CR3-U's own; the original's
+  status-1 colour is `(0.714, 0.714, 0.851)`. A visible armour change by `ChangePlayerEquip` wasn't
+  exercised headless (`s001_t02_00101`'s armour 83 is j001's default body, `b02`); the rebuild reuses
+  `loadArea`'s figure loading.
 - **Quake reference height**: the original's shake is `offset / 2` *device* pixels, so it shrinks on
   denser displays; CR3-U fixes the divisor at the playthrough's `720` so the look matches the
   reference at any window size.
@@ -334,12 +467,30 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`30/30` cases, `0 problems`)**:
+- **Controller & UI integration suite (`35/35` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 30 headless controller cases across field bar, choices, options/gift tabs, continue
+  passes all 35 headless controller cases. Round 10 added `vs-tutorial` (a fresh game's VS:
+  `evt000`'s gene-card vista, the middle card focused and taken, gene 4's status, `00201`'s party
+  window, `VsBattleIn`'s tournament 1 started) and `vs-tutorial-camp` (after 3501 / 3502:
+  `00701`'s vista, `VS_Top`'s `00601`, Battle shut). `vs-cursor` / `vs-detail` now play a player
+  past the tutorial (`VStuto_Clear`'s flags). The VS and camp groups pass on the Japanese Vita and
+  iOS releases (14 / 14 each). Round 9 added `gene-event-status` (`s481_d16_00104_evt`
+  with room in the box: the disposal done at once, gene 378's status at level 100, ○ closing it, the
+  event ended) and `gene-event-disposal` (50 held: told `0x218`, the cursor, asked `0x236`, one
+  discarded - 49 held -, told `0x237`, then the reward and its status). The camp group, both
+  included, passes on the Japanese Vita and iOS releases too (10/10 each). Round 8 added `camp-event-lock`: `q074_d05_00104_evt`'s camp
+  over its vista - slot 0 locked and greyed, held ○ skipping it, the swap with the next, the locked
+  panel refused, × closing it and the vista going on to its battle - also on the Japanese Vita and
+  iOS releases) across field bar, choices, options/gift tabs, continue
   menu, `Fld2CameraGom` right-stick tilt & `L` reset, title/save footer, movies, field goods, lunch
   balloons, Spaceport shop/boxes/My Page/VS, camp panels/sound/equipment/genes/reels/index, and
   battle cursor/item categories/list boundaries/victory/result confirm.
+- **Round 8 event census**: `CR3_EVENT_STUBS=1 engine/build/cr3tool events <Android 1.1.3> all` -
+  `4127/4127` ended; `SetLastAttackLevel`, `SetFinestArtsLevel` and `CheckDisposeMenu` gone
+  from it (the viewer's natives, which `cr3tool` doesn't load, checked in `cr3view` with `CR3_STUBS=1`:
+  `s100_t01_00501_evt` - ended at `192.1 s` -, `e00:s111_d02_00202`, `s484_t01_00101_evt` and
+  `s902_d02_01103_evt` leave only `Cr3System.SetBloom`). `event-reset-tests` adds the levels' roundtrip
+  through `GameState::save` / `load` and `CheckDisposeMenu`'s `false`.
 - **Full-archive & cross-release event replay (`4127/4127` events passed)**:
   `CR3_STUBS=1 engine/build/cr3tool events /home/duislingr/Downloads/Archive/CR3_android_1.1.3 all`
   completes all `4127` events cleanly with zero `EvtScene.*`, `EvtWindow.*`, `Cr3Sound.*`, or

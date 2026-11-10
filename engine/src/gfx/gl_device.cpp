@@ -38,6 +38,66 @@ void main() {
 }
 )";
 
+// The bloom's filters (MVGL's built-in GLSL - filterCopyVP / filterCopyFP / filterBrightFP /
+// filterBlurVP / filterBlurFP, libcrx.so .rodata 0xf79ebd ..): the quad's position its UV
+const char* kFilterVertex = R"(
+layout(location = 0) in vec2 aPos;
+uniform vec2 blurOffset;
+out vec2 vTexcoord0;
+out vec2 vTexcoord1;
+out vec2 vTexcoord2;
+out vec2 vTexcoord3;
+out vec2 vTexcoord4;
+void main() {
+    gl_Position = vec4(aPos, 0.0, 1.0);
+    vec2 uv = (aPos + 1.0) * 0.5;
+    vec2 doubleBlurOffset = blurOffset * 2.0;
+    vTexcoord0 = uv - doubleBlurOffset;
+    vTexcoord1 = uv - blurOffset;
+    vTexcoord2 = uv;
+    vTexcoord3 = uv + blurOffset;
+    vTexcoord4 = uv + doubleBlurOffset;
+}
+)";
+const char* kFilterFragment[3] = {
+    R"(
+in vec2 vTexcoord2;
+uniform sampler2D uTex;
+out vec4 fragColor;
+void main() {
+    fragColor = texture(uTex, vTexcoord2);
+}
+)",
+    R"(
+in vec2 vTexcoord2;
+uniform sampler2D uTex;
+uniform float bloomLimit;
+out vec4 fragColor;
+void main() {
+    vec4 color = texture(uTex, vTexcoord2) * 2.0;
+    float lum = color.x + color.y + color.z;
+    fragColor = color * float(lum > bloomLimit);
+}
+)",
+    R"(
+in vec2 vTexcoord0;
+in vec2 vTexcoord1;
+in vec2 vTexcoord2;
+in vec2 vTexcoord3;
+in vec2 vTexcoord4;
+uniform sampler2D uTex;
+uniform float bloomScale;
+out vec4 fragColor;
+void main() {
+    vec4 sum = 0.05448868 * texture(uTex, vTexcoord0);
+    sum += 0.24420134 * texture(uTex, vTexcoord1);
+    sum += 0.40261995 * texture(uTex, vTexcoord2);
+    sum += 0.24420134 * texture(uTex, vTexcoord3);
+    sum += 0.05448868 * texture(uTex, vTexcoord4);
+    fragColor = sum * bloomScale;
+}
+)"};
+
 // The game's shading (shading.glsl, after shade_flags.h) or the fixed path: GL ES 1.1-style
 // texture modes (uTexMode: 0 replace, 1 add, 2 blend, 3 decal, 4 modulate, -1 untextured), an
 // alpha test, a directional light
@@ -211,6 +271,7 @@ public:
         if (!replacement || SDL_GL_GetCurrentWindow() != window_) return false;
         ctx_ = replacement;
         program_ = meshProgram_ = vao_ = vbo_ = 0;
+        filterProgram_[0] = filterProgram_[1] = filterProgram_[2] = 0, filterFbos_.clear(), inFilters_ = false; // (the lost context's)
         ubo_ = 0;
         for (auto& [handle, rec] : textures_) rec.name = 0;
         for (auto& [handle, rec] : meshes_) rec.vao = rec.vbo = rec.ebo = 0;
@@ -287,6 +348,10 @@ public:
     }
 
     void destroy(Texture& tex) override {
+        if (const auto fb = filterFbos_.find(tex.id); fb != filterFbos_.end()) {
+            gl::DeleteFramebuffers(1, &fb->second);
+            filterFbos_.erase(fb);
+        }
         auto it = textures_.find(tex.id);
         if (it != textures_.end()) {
             gl::DeleteTextures(1, &it->second.name);
@@ -406,6 +471,107 @@ public:
         gl::BindTexture(GL_TEXTURE_2D, textureName(tex.id));
         gl::Uniform4f(uColor_, rgba[0], rgba[1], rgba[2], rgba[3]);
         gl::DrawArrays(GL_TRIANGLES, 0, 6);
+    }
+
+    // ---- the bloom's filters: an FBO on an RGB565 texture each ----
+    unsigned filterProgram_[3] = {};
+    int uFilterOffset_[3] = {-1, -1, -1}, uFilterLimit_ = -1, uFilterScale_ = -1;
+    std::unordered_map<unsigned, unsigned> filterFbos_; // (texture id -> its framebuffer)
+    GLint filterPrevFbo_ = 0;
+    bool inFilters_ = false;
+
+    bool beginFilters() override {
+        if (!filterProgram_[0])
+            for (int k = 0; k < 3; ++k) {
+                filterProgram_[k] = link(kFilterVertex, kFilterFragment[k]);
+                if (!filterProgram_[k]) return false;
+                gl::UseProgram(filterProgram_[k]);
+                gl::Uniform1i(gl::GetUniformLocation(filterProgram_[k], "uTex"), 0);
+                uFilterOffset_[k] = gl::GetUniformLocation(filterProgram_[k], "blurOffset");
+            }
+        uFilterLimit_ = gl::GetUniformLocation(filterProgram_[1], "bloomLimit");
+        uFilterScale_ = gl::GetUniformLocation(filterProgram_[2], "bloomScale");
+#ifndef GL_FRAMEBUFFER_BINDING
+#define GL_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+        gl::GetIntegerv(GL_FRAMEBUFFER_BINDING, &filterPrevFbo_); // (SDL's default framebuffer isn't 0 everywhere)
+        inFilters_ = true;
+        return true;
+    }
+
+    bool filterPass(Filter f, const Texture& src, Texture& dst, int w, int h, const FilterParams& p) override {
+        if (!inFilters_ || w <= 0 || h <= 0 || !src.id) return false;
+#ifndef GL_UNSIGNED_SHORT_5_6_5
+#define GL_UNSIGNED_SHORT_5_6_5 0x8363
+#endif
+        if (!dst.id || dst.width != w || dst.height != h || !textures_.count(dst.id) || !filterFbos_.count(dst.id)) {
+            destroy(dst);
+            Image img;
+            img.width = w, img.height = h;
+            img.rgba.assign(size_t(w) * size_t(h) * 4, 0);
+            dst = upload(img);
+            const auto it = textures_.find(dst.id);
+            if (!dst.id || it == textures_.end()) return false;
+            gl::BindTexture(GL_TEXTURE_2D, it->second.name); // (RenderTarget's: GL_RGB / UNSIGNED_SHORT_5_6_5, clamped, linear)
+            gl::TexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
+            unsigned fbo = 0;
+            gl::GenFramebuffers(1, &fbo);
+            gl::BindFramebuffer(GL_FRAMEBUFFER, fbo);
+            gl::FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, it->second.name, 0);
+            if (gl::CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                gl::DeleteFramebuffers(1, &fbo);
+                gl::BindFramebuffer(GL_FRAMEBUFFER, GLuint(filterPrevFbo_));
+                destroy(dst);
+                return false;
+            }
+            filterFbos_[dst.id] = fbo;
+            dst.bottomUp = true;
+        }
+        gl::BindFramebuffer(GL_FRAMEBUFFER, filterFbos_[dst.id]);
+        gl::Viewport(0, 0, w, h);
+        gl::Disable(GL_DEPTH_TEST);
+        gl::Disable(GL_CULL_FACE);
+        gl::Disable(GL_BLEND);
+        gl::Disable(GL_SCISSOR_TEST);
+        gl::ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        const int k = f == Filter::Copy ? 0 : f == Filter::Bright ? 1 : 2;
+        gl::UseProgram(filterProgram_[k]);
+        gl::Uniform2f(uFilterOffset_[k], f == Filter::Blur ? p.offset[0] : 0.0f, f == Filter::Blur ? p.offset[1] : 0.0f);
+        if (f == Filter::Bright) gl::Uniform1f(uFilterLimit_, p.limit);
+        if (f == Filter::Blur) gl::Uniform1f(uFilterScale_, p.scale);
+        gl::ActiveTexture(GL_TEXTURE0);
+        gl::BindTexture(GL_TEXTURE_2D, textureName(src.id));
+        gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        static const float kQuad[24] = {-1, -1, 0, 0, 1, -1, 0, 0, 1, 1, 0, 0, -1, -1, 0, 0, 1, 1, 0, 0, -1, 1, 0, 0};
+        gl::BindVertexArray(vao_);
+        gl::BindBuffer(GL_ARRAY_BUFFER, vbo_);
+        gl::BufferData(GL_ARRAY_BUFFER, sizeof kQuad, kQuad, GL_DYNAMIC_DRAW);
+        gl::DrawArrays(GL_TRIANGLES, 0, 6);
+        return true;
+    }
+
+    void endFilters(const Texture&) override {
+        if (!inFilters_) return;
+        gl::BindFramebuffer(GL_FRAMEBUFFER, GLuint(filterPrevFbo_));
+        gl::Viewport(0, 0, drawableW_, drawableH_);
+        gl::Enable(GL_BLEND);
+        inFilters_ = false;
+    }
+
+    bool readTexture(const Texture& tex, std::vector<uint8_t>& rgba) override {
+        const auto fb = filterFbos_.find(tex.id);
+        if (fb == filterFbos_.end()) return false;
+        GLint prev = 0;
+        gl::GetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+        gl::BindFramebuffer(GL_FRAMEBUFFER, fb->second);
+        rgba.assign(size_t(tex.width) * size_t(tex.height) * 4, 0);
+        gl::PixelStorei(GL_PACK_ALIGNMENT, 1);
+        gl::ReadPixels(0, 0, tex.width, tex.height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data()); // (ReadColorBufferImage 0xba0038)
+        gl::BindFramebuffer(GL_FRAMEBUFFER, GLuint(prev));
+        return true;
     }
 
     void drawMesh(const GpuMesh& mesh, const Texture* tex, const float* mvp, const MeshShading& sh,

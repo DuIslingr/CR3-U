@@ -225,6 +225,9 @@ public:
     // utils::FilterMessage (both message windows' SetStringData, the name too): {name}, {team},
     // {pet}, {food} the entered names ({goldkey} the gold keys held - iOS's FilterMessage)
     std::string filterMessage(std::string text) const;
+    // a message of the shared text (LoadSharedTextData's), its lines joined by newlines - the VS
+    // tutorial's gene card selector's (its cards' text ids)
+    std::string sharedLine(int n) const;
     std::string takeParameters(int window, std::string text); // (PutParameterI / S's, used up)
     std::string warnKeys(std::string text) const;              // (CR3_STUBS: a {key} left logged)
     int language = 1; // (Cr3UtilOptionLanguage: 1 English)

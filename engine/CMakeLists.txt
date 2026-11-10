@@ -290,7 +290,7 @@ if(Vulkan_FOUND AND GLSLC AND NOT ANDROID) # (Android: GLES 3)
     set(SHADER_OUT ${CMAKE_CURRENT_BINARY_DIR}/shaders)
     file(MAKE_DIRECTORY ${SHADER_OUT})
     set(SHADER_INCS)
-    foreach(s quad.vert quad.frag mesh.vert mesh.frag)
+    foreach(s quad.vert quad.frag mesh.vert mesh.frag filter.vert filter.frag)
         add_custom_command(OUTPUT ${SHADER_OUT}/${s}.inc
             COMMAND ${GLSLC} -O -mfmt=c -I ${SHADER_DIR} ${SHADER_DIR}/${s} -o ${SHADER_OUT}/${s}.inc
             DEPENDS ${SHADER_DIR}/${s} ${SHADER_DIR}/common.glsl ${SHADER_DIR}/shading.glsl ${SHADER_DIR}/shade_flags.h

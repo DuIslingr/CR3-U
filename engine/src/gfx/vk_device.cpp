@@ -35,6 +35,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace cr3 {
@@ -52,6 +53,12 @@ const uint32_t kMeshVert[] =
     ;
 const uint32_t kMeshFrag[] =
 #include "mesh.frag.inc"
+    ;
+const uint32_t kFilterVert[] =
+#include "filter.vert.inc"
+    ;
+const uint32_t kFilterFrag[] =
+#include "filter.frag.inc"
     ;
 const uint32_t kSceneQuadVert[] =
 #include "scene_quad.vert.inc"
@@ -254,7 +261,7 @@ public:
         vkDestroyDescriptorSetLayout(device_, uboLayout_, nullptr);
         vkDestroyDescriptorPool(device_, pool_, nullptr);
         for (VkShaderModule m : {quadVert_, quadFrag_, meshVert_, meshFrag_, sceneQuadVert_, sceneQuadFrag_, sceneMeshVert_,
-                                 sceneMeshFrag_})
+                                 sceneMeshFrag_, filterVert_, filterFrag_})
             if (m) vkDestroyShaderModule(device_, m, nullptr);
         vkDestroyFence(device_, uploadFence_, nullptr);
         vkDestroyCommandPool(device_, cmdPool_, nullptr);
@@ -930,6 +937,144 @@ public:
         vkCmdDraw(cmd_, 6, 1, 0, 0);
     }
 
+    // ---- the bloom's filters: RGBA8 images, rendered to and sampled (the original's are RGB565) ----
+    VkPipeline makeFilterPipeline() {
+        if (!filterVert_) filterVert_ = module(kFilterVert, sizeof kFilterVert);
+        if (!filterFrag_) filterFrag_ = module(kFilterFrag, sizeof kFilterFrag);
+        if (!filterVert_ || !filterFrag_) return VK_NULL_HANDLE;
+        VkPipelineShaderStageCreateInfo stages[2]{};
+        for (int i = 0; i < 2; ++i) stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, stages[i].pName = "main";
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT, stages[0].module = filterVert_;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT, stages[1].module = filterFrag_;
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vp.viewportCount = vp.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL, rs.cullMode = VK_CULL_MODE_NONE, rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        VkPipelineColorBlendAttachmentState att{};
+        att.colorWriteMask = 0xF; // (blending off)
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1, cb.pAttachments = &att;
+        const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dy.dynamicStateCount = 2, dy.pDynamicStates = dyn;
+        VkPipelineRenderingCreateInfo rci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        rci.colorAttachmentCount = 1, rci.pColorAttachmentFormats = &kColorFormat; // (no depth)
+        VkGraphicsPipelineCreateInfo pi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        pi.pNext = &rci;
+        pi.stageCount = 2, pi.pStages = stages;
+        pi.pVertexInputState = &vi, pi.pInputAssemblyState = &ia, pi.pViewportState = &vp, pi.pRasterizationState = &rs;
+        pi.pMultisampleState = &ms, pi.pDepthStencilState = &ds, pi.pColorBlendState = &cb, pi.pDynamicState = &dy;
+        pi.layout = layout_;
+        VkPipeline p = VK_NULL_HANDLE;
+        if (!ok(vkCreateGraphicsPipelines(device_, pipelineCache_, 1, &pi, nullptr, &p))) return VK_NULL_HANDLE;
+        cacheDirty_ = true;
+        return p;
+    }
+
+    // a w x h image to render into and sample (shader-read between passes)
+    bool makeFilterTarget(Texture& t, int w, int h) {
+        Image img;
+        img.width = w, img.height = h;
+        img.rgba.assign(size_t(w) * size_t(h) * 4, 0);
+        t = upload(img); // (its slot, memory and view; its image remade with the attachment's use)
+        if (!t.id) return false;
+        TextureRec& rec = textures_[t.id - 1];
+        vkDestroyImageView(device_, rec.view, nullptr);
+        vkDestroyImage(device_, rec.image, nullptr);
+        freeAlloc(rec.mem);
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D, ii.format = kColorFormat, ii.extent = {uint32_t(w), uint32_t(h), 1};
+        ii.mipLevels = 1, ii.arrayLayers = 1, ii.samples = VK_SAMPLE_COUNT_1_BIT, ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        rec.view = VK_NULL_HANDLE, rec.mips = 1;
+        if (!ok(vkCreateImage(device_, &ii, nullptr, &rec.image))) return rec.live = false, rec.image = VK_NULL_HANDLE, t = {}, false;
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(device_, rec.image, &req);
+        if (!allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, rec.mem) ||
+            !ok(vkBindImageMemory(device_, rec.image, blocks_[size_t(rec.mem.block)].memory, rec.mem.offset))) {
+            vkDestroyImage(device_, rec.image, nullptr);
+            rec = TextureRec();
+            t = {};
+            return false;
+        }
+        rec.view = makeView(rec.image, kColorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+        barrier(cmd_, rec.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0,
+                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        filterTargets_.insert(t.id);
+        t.width = w, t.height = h;
+        return true;
+    }
+
+    bool beginFilters() override {
+        if (!inFrame_ || inScene_ || !cmd_ || !filterPipeline_ || inFilters_) return false;
+        vkCmdEndRendering(cmd_); // (the frame's rendering paused: its image stays an attachment)
+        inFilters_ = true;
+        return true;
+    }
+
+    bool filterPass(Filter f, const Texture& src, Texture& dst, int w, int h, const FilterParams& p) override {
+        if (!inFilters_ || w <= 0 || h <= 0 || !src.id || src.id > textures_.size() || !textures_[src.id - 1].live) return false;
+        if (!dst.id || dst.id > textures_.size() || !textures_[dst.id - 1].live || !filterTargets_.count(dst.id) || dst.width != w ||
+            dst.height != h) {
+            if (dst.id) filterTargets_.erase(dst.id), destroy(dst);
+            if (!makeFilterTarget(dst, w, h)) return false;
+        }
+        const TextureRec& out = textures_[dst.id - 1];
+        barrier(cmd_, out.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = out.view, color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, color.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // (every pixel drawn)
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {uint32_t(w), uint32_t(h)}};
+        ri.layerCount = 1, ri.colorAttachmentCount = 1, ri.pColorAttachments = &color;
+        vkCmdBeginRendering(cmd_, &ri);
+        const VkViewport view{0, 0, float(w), float(h), 0, 1};
+        const VkRect2D sc{{0, 0}, {uint32_t(w), uint32_t(h)}};
+        vkCmdSetViewport(cmd_, 0, 1, &view);
+        vkCmdSetScissor(cmd_, 0, 1, &sc);
+        bind(filterPipeline_);
+        ScenePushConstants pc{};
+        pc.base.color[0] = f == Filter::Blur ? p.offset[0] : 0.0f, pc.base.color[1] = f == Filter::Blur ? p.offset[1] : 0.0f;
+        pc.base.color[2] = p.limit, pc.base.color[3] = p.scale;
+        pc.base.texMode = f == Filter::Copy ? 0 : f == Filter::Bright ? 1 : 2;
+        pushConstants(pc);
+        bindTexture(0, src.id - 1, 15); // clamp, linear
+        vkCmdDraw(cmd_, 6, 1, 0, 0);
+        vkCmdEndRendering(cmd_);
+        barrier(cmd_, out.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        return true;
+    }
+
+    // the frame's rendering resumed (MSAA: its samples not kept - the frame copy drawn back first)
+    void endFilters(const Texture& frame) override {
+        if (!inFilters_) return;
+        inFilters_ = false;
+        beginFramePass(false);
+        const VkViewport view{0, 0, float(targetW_), float(targetH_), 0, 1};
+        const VkRect2D sc{{0, 0}, {uint32_t(targetW_), uint32_t(targetH_)}};
+        vkCmdSetViewport(cmd_, 0, 1, &view);
+        vkCmdSetScissor(cmd_, 0, 1, &sc);
+        if (msColorImage_ && frame.id) {
+            static const float kBack[24] = {-1, -1, 0, 1, 1, -1, 1, 1, 1, 1, 1, 0, -1, -1, 0, 1, 1, 1, 1, 0, -1, 1, 0, 0};
+            static const float kId[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            static const float kWhite[4] = {1, 1, 1, 1};
+            const bool additive = quadAdditive_;
+            quadAdditive_ = false;
+            drawQuad(frame, kBack, kId, kWhite);
+            quadAdditive_ = additive;
+        }
+    }
+
     void drawMesh(const GpuMesh& mesh, const Texture* tex, const float* mvp, const MeshShading& sh,
                   const DrawState& st) override {
         if (!cmd_ || !mesh.vao || mesh.vao > meshes_.size()) return;
@@ -1334,6 +1479,7 @@ private:
 
     // 2D quads: alpha blending (GL's BlendFunc applies to alpha too)
     bool createQuadPipelines() {
+        filterPipeline_ = makeFilterPipeline(); // (the bloom's: none - no bloom)
         quadPipeline_ = makePipeline(true, kQuadKey);
         quadAddPipeline_ = makePipeline(true, kQuadAddKey);
         if (upscaleCaps_) {
@@ -1404,6 +1550,8 @@ private:
         if (quadAddPipeline_) vkDestroyPipeline(device_, quadAddPipeline_, nullptr);
         if (sceneQuadAddPipeline_) vkDestroyPipeline(device_, sceneQuadAddPipeline_, nullptr);
         quadPipeline_ = sceneQuadPipeline_ = quadAddPipeline_ = sceneQuadAddPipeline_ = VK_NULL_HANDLE;
+        if (filterPipeline_) vkDestroyPipeline(device_, filterPipeline_, nullptr);
+        filterPipeline_ = VK_NULL_HANDLE;
     }
 
     // key: bit 0 colour writes, bit 1 blending, bits 4-7 source factor, bits 8-11 destination,
@@ -2063,6 +2211,10 @@ private:
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkShaderModule quadVert_ = VK_NULL_HANDLE, quadFrag_ = VK_NULL_HANDLE, meshVert_ = VK_NULL_HANDLE,
                    meshFrag_ = VK_NULL_HANDLE;
+    VkShaderModule filterVert_ = VK_NULL_HANDLE, filterFrag_ = VK_NULL_HANDLE;
+    VkPipeline filterPipeline_ = VK_NULL_HANDLE;
+    std::unordered_set<unsigned> filterTargets_; // (texture ids made by filterPass: colour attachments too)
+    bool inFilters_ = false;
     VkPipeline quadPipeline_ = VK_NULL_HANDLE, bound_ = VK_NULL_HANDLE;
     VkPipeline quadAddPipeline_ = VK_NULL_HANDLE, sceneQuadAddPipeline_ = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, 4> boundSets_{}; // per set number

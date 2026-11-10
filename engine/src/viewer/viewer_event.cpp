@@ -8,6 +8,7 @@ cr3::EventRuntime* Viewer::activeEvents() {
     if ((battleMode || campOpen) && manualStage == 2 && manualEvents) return manualEvents.get(); // (the manual's tutorial)
     if (battleMode && battleScript) return &battleScript->events(); // (the battle's talks)
     if (cr3BattleMode && cr3BattleEvents) return cr3BattleEvents.get(); // (CR3's battle: its script's)
+    if (!eventMode && areaMode && vs.screen != 0 && vsEvents && (vsEvents->running() || vsEvents->messageShown())) return vsEvents.get(); // (the VS menu's script)
     if (!eventMode && areaMode && areaEvents) return areaEvents.get(); // (CR3's field: its area script's)
     return eventMode ? event.get() : script ? &script->events() : nullptr;
 }
@@ -353,7 +354,7 @@ bool Viewer::startVista(const std::string& function, const std::string& map) {
     vistaMapTime = 0;
     event = std::make_unique<cr3::EventRuntime>(archive, game);
     event->autoPage = pageSeconds, event->askYesNo = true;
-    event->extraNatives = [this](cr3::ScriptVM& vm) { bindQuakeNatives(vm); };
+    event->extraNatives = [this](cr3::ScriptVM& vm) { bindQuakeNatives(vm), bindCr3FieldUiNatives(vm, false), bindVsNatives(vm); };
     event->language = optionLanguage; // (the release's language's slot: the Vita's Japanese is 0)
     // CR3: an area script's event, "<script>:<function>" (t01:s000_t01_00101_evt)
     // - a bare one (the next vista's: BranchAfterVista) in the script eventScriptOf finds
@@ -502,6 +503,31 @@ void Viewer::stepEvent() {
                 event->battle() >= 0 ? (": battle " + std::to_string(event->battle())).c_str() : "");
         if (playMode && eventScript.empty()) {
             branchAfterVista();
+            return;
+        }
+        // (VistaMain::BranchAfterVista / SetNextModeAfterVista: a vista VS reserved - the VS battle it
+        // reserved (VsBattleIn: mode 3, back to 0x19 after), else VSMain anew)
+        if (vsFromVista && !eventScript.empty()) {
+            vsFromVista = false;
+            game.next = cr3::GameState::Next();
+            eventMode = false;
+            if (!savedArea.empty() && !loadArea(savedArea, "")) SDL_Log("area %s: not entered", savedArea.c_str());
+            if (vsPendingTournament >= 0 && game.cr3Db && game.vsSelected >= 0) {
+                const int k = game.vsSelected;
+                const bool begun = vs.chosen == k && vs.battle == 0; // (VS_BattleIn's: begun from the menu)
+                if (!begun) {
+                    vs = Cr3VsMode();
+                    vs.chosen = k;
+                    game.cr3Db->pickWildcard();
+                }
+                vs.battle = 0, vs.lost = false;
+                std::fill(std::begin(vs.wildChosen), std::end(vs.wildChosen), -1);
+                vsPendingTournament = -1;
+                SDL_Log("vs: the reserved tournament %d's battles", game.cr3Db->vsTournaments()[size_t(k)].id);
+                vsNextBattle();
+            } else {
+                vsEnter();
+            }
             return;
         }
         // (CR3, VistaMain::BranchAfterVista: the battle it reserved - BattleIn2 -, its
@@ -1749,7 +1775,9 @@ auto Viewer::saveInfo(const char* file) -> SaveInfo {
 void Viewer::resetSessionUi() {
     audio.pauseSceneSound(false);
     endMovie();
-    geneInspectOpen = false;
+    geneInspectOpen = scriptGeneStatus = false;
+    geneDisposal = ScriptGeneDisposal();
+    cr3CampEvent = false;
     goodsFocus = -1;
     lunchFocus.clear();
     lunchActive = lunchWaitLogged = false;
@@ -3676,6 +3704,15 @@ void Viewer::drawEventUi() {
             fullFrameQuad(white, kScreen, rgba);
         }
     };
+    if (ev == vsEvents.get()) { // (the VS menu under its script's windows, OverLayMain's mask between)
+        drawVs(screenW, screenH);
+        if (vsOverlay && white.id) {
+            static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+            const float rgba[4] = {0, 0, 0, 0.7f};
+            fullFrameQuad(white, kScreen, rgba);
+        }
+        dev->clearDepth();
+    }
     drawEventFade(ev->backFade()); // (BackFadeWindowMenu: passes 0xd..0xf, behind cut-ins and menus)
     const bool message = ev->messageShown() && ev->page() < int(ev->message().pages.size());
     const bool onVista = message && ev->messageWindow() == cr3::EventRuntime::Vista;
@@ -3700,11 +3737,13 @@ void Viewer::drawEventUi() {
     drawCr3Shop(*ev, screenW, screenH, true);
     if (ev == event.get()) drawLunchBalloons(screenW, screenH); // (a lunch's)
     drawCr3WorldSelect(*ev, screenW, screenH);
-    if (ev == areaEvents.get()) drawCr3Field(screenW, screenH); // (the field's buttons, the camp)
+    if (ev == areaEvents.get() || (cr3CampEvent && ev == event.get())) drawCr3Field(screenW, screenH); // (the field's buttons, the camp - a vista's too)
     if (ev == areaEvents.get()) drawCr3TownMove(screenW, screenH); // (the town map)
     if (ev == areaEvents.get()) drawAreaDrag(screenW, screenH);  // (the drag's controller)
     if (ev == areaEvents.get()) drawVs(screenW, screenH);      // (the VS mode's menus)
     drawCr3ScriptCollect(screenW, screenH);                     // (a script's collection)
+    drawCr3ScriptGenes(screenW, screenH);                       // (an event's gene status, its gene disposal)
+    drawGeneSelector(screenW, screenH);                         // (the VS tutorial's gene cards)
     drawCr3GeneGet(screenW, screenH);                           // (over them all)
     if (ev->windowOpen(cr3::EventRuntime::CutIn) || ev->windowClosing(cr3::EventRuntime::CutIn)) {
         const bool onConversation = message && ev->messageWindow() == cr3::EventRuntime::CutIn;

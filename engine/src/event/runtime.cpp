@@ -1022,6 +1022,14 @@ void EventRuntime::reset() {
 
 bool EventRuntime::start(const std::string& function) { return start(function, function); }
 
+std::string EventRuntime::sharedLine(int n) const {
+    const ParsedMessage m = parseMessage(filterMessage(text_.message(n, language)));
+    std::string out;
+    for (const auto& page : m.pages)
+        for (const auto& line : page.lines) out += (out.empty() ? "" : "\n") + line.text;
+    return out;
+}
+
 bool EventRuntime::start(const std::string& name, const std::string& function) {
     error_.clear();
     reset();

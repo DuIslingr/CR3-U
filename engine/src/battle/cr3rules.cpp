@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <tuple>
 
 namespace cr3 {
 
@@ -157,6 +158,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
                     MbeFile::Row m;
                     if (!t.monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != u.monster || m.i(1) != 0) continue;
                     f.attackCommand = m.i(5);
+                    f.lastAttack = m.i(6), f.finestArts = m.i(7); // (+0x18 / +0x1c: the finishers)
                     for (size_t c = 0; c < 8; ++c)
                         if (m.i(8 + c * 3) >= 0) f.commands.emplace_back(m.i(8 + c * 3), std::max(m.i(9 + c * 3), 0));
                     for (size_t k = 32; k < 40; ++k)
@@ -303,6 +305,65 @@ int Cr3BattleRules::hpCost(const Cr3Fighter& f, const Cr3Command& c) const {
     case 3: return c.hpCost > 0 ? std::max(int(float(c.hpCost) * f.consumption), 1) : 0;
     default: return 0;
     }
+}
+
+namespace {
+constexpr const char* kCharFinishers = "iiiiiiiii_ip_ip"; // 2 the save slot (+0x08), 9 / 10 the LastAttack ids (+0x28 / +0x30), 11 / 12 the FinestArts ids
+} // namespace
+
+// (the worn gene's MbGeneInfo +8 - gene_para Gene, 0 .. 2 -; no gene -1, one without its row 0)
+static int finisherGeneValue(const Cr3BattleTables& t, const Cr3Fighter& f) {
+    if (f.geneMaster < 0) return -1;
+    MbeFile::Row g;
+    return t.gene.find("Gene", f.geneMaster, "iii", g) ? g.i(2) : 0;
+}
+
+int Cr3BattleRules::lastAttackCommand(int fi) {
+    if (!tables_ || fi < 0 || size_t(fi) >= fighters.size()) return -1;
+    const Cr3Fighter& f = fighters[size_t(fi)];
+    if (hasEffect(fi, 0x3f)) return -1;
+    if (hasEffect(fi, 0x40)) return 18;
+    if (!f.player) return f.lastAttack;
+    MbeFile::Row ch;
+    if (!tables_->character.find("Char", f.id, kCharFinishers, ch)) return -1;
+    const auto lv = lastAttackLevel.find(ch.i(2));
+    const int level = lv != lastAttackLevel.end() ? lv->second : 0, gene = finisherGeneValue(*tables_, f);
+    std::vector<std::pair<int, int>> rows; // (command, weight so far)
+    int total = 0;
+    for (int k = 0; k < ch.i(9); ++k) {
+        MbeFile::Row r; // (LastAttack: id, command, level, gene value, weight)
+        if (!tables_->command.find("LastAttack", ch.element(10, size_t(k)), "iiiii", r) || r.i(2) > level || r.i(3) > gene) continue;
+        total += r.i(4), rows.emplace_back(r.i(1), total);
+    }
+    if (rows.empty() || total <= 0) return -1;
+    const int pick = std::min(int(random() * float(total)), total - 1); // (CrxRandom::GenerateUInt32 % the weights')
+    for (const auto& [cmd, upTo] : rows)
+        if (pick < upTo) return cmd;
+    return rows.back().first;
+}
+
+int Cr3BattleRules::finestArtsCommand(int fi) {
+    if (!tables_ || fi < 0 || size_t(fi) >= fighters.size()) return -1;
+    const Cr3Fighter& f = fighters[size_t(fi)];
+    if (!f.player) return f.finestArts;
+    if (hasEffect(fi, 0x3f) || hasEffect(fi, 0x40)) return -1; // (BtlCharacterStatus 0x009b29b0)
+    MbeFile::Row ch;
+    if (!tables_->character.find("Char", f.id, kCharFinishers, ch)) return -1;
+    const auto lv = finestArtsLevel.find(ch.i(2));
+    const int level = lv != finestArtsLevel.end() ? lv->second : 0, gene = finisherGeneValue(*tables_, f);
+    std::vector<std::pair<int, int>> rows; // (command, its level)
+    for (int k = 0; k < ch.i(11); ++k) {
+        MbeFile::Row r; // (FinestArts: id, command, level, gene value)
+        if (tables_->command.find("FinestArts", ch.element(12, size_t(k)), "iiii", r) && r.i(2) <= level && r.i(3) <= gene) rows.emplace_back(r.i(1), r.i(2));
+    }
+    if (rows.empty()) return -1;
+    // (shuffled, sorted by level - comparator 0x00932050 -, the last: the highest level's, at random among equals)
+    int top = rows.front().second;
+    for (const auto& r : rows) top = std::max(top, r.second);
+    std::vector<int> best;
+    for (const auto& [cmd, l] : rows)
+        if (l == top) best.push_back(cmd);
+    return best[std::min(size_t(random() * float(best.size())), best.size() - 1)];
 }
 
 bool Cr3BattleRules::hasEffect(int fi, int id) const {
@@ -690,6 +751,7 @@ void Cr3BattleRules::changeMode(int fi, int mode) {
         MbeFile::Row m;
         if (!tables_->monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != f.id || m.i(1) != mode) continue;
         f.attackCommand = m.i(5), f.element = m.i(2), f.mode = mode;
+        f.lastAttack = m.i(6), f.finestArts = m.i(7);
         f.commands.clear(), f.skills.clear();
         for (size_t c = 0; c < 8; ++c)
             if (m.i(8 + c * 3) >= 0) f.commands.emplace_back(m.i(8 + c * 3), std::max(m.i(9 + c * 3), 0));
@@ -773,12 +835,94 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     int lastSide = -1; // (BtlCommandManager::Clear: none yet this turn)
     bool lastHadChance = false, lastContinued = false;
     std::vector<int> lastTargets;
+    // The finishers (BtlCommandManager::calculateCommands 0x007db93c: addLastAttack 0x007dbfc8 before
+    // each next command). The last action not itself inserted - this +0x188 - and the combo's
+    // participants - +0xb8: the actor added after a comboing action, alone after any other
+    // (calculateCommand 0x007dc424)
+    struct FinisherChunk {
+        bool set = false;
+        int attacker = -1, firstTarget = -1, command = -1;
+        bool combo = false;
+        std::vector<int> hit;
+    } chunk;
+    std::vector<int> comboActors;
+    size_t recorded = 0;
+    int resolvingFrom = 0; // (the order entry in course: its inserted mark - BtlCommand +0x1a)
+    // (BtlStatusList::CollectDamageTarget: those the next command would hit - its chosen one, or
+    // its side's where it hits them all or picks one at random)
+    auto wouldHit = [&](int src, int cmd, int tgt) {
+        std::vector<int> out;
+        if (cmd < 0) return std::vector<int>{src};
+        Cr3Command c;
+        if (!command(cmd, c)) c.target = 3;
+        const Cr3Fighter& s = fighters[size_t(src)];
+        const bool own = c.ally() || c.target == 1 || c.target == 2 || c.target == 12 || c.target == 13;
+        if (c.target == 0) return std::vector<int>{src};
+        if (!c.all && tgt >= 0 && size_t(tgt) < fighters.size() && !fighters[size_t(tgt)].dead()) return std::vector<int>{tgt};
+        for (size_t k = 0; k < fighters.size(); ++k)
+            if (!fighters[k].dead() && (c.target == 5 || fighters[k].player == (c.target == 10 || c.target == 11 ? true : own ? s.player : !s.player)))
+                out.push_back(int(k));
+        return out;
+    };
     for (size_t at = 0; at < order.size(); ++at) {
+        if (out.size() > recorded) { // (the action just resolved: the chunk and the combo's actors)
+            const Cr3Action& done = out.back();
+            if (done.command != -2 && done.source >= 0) {
+                if (!done.combo) comboActors.clear();
+                comboActors.push_back(done.source);
+                if (resolvingFrom == 0) {
+                    chunk.set = true, chunk.attacker = done.source, chunk.firstTarget = done.target;
+                    chunk.command = done.command < 0 ? 51 : done.command, chunk.combo = done.combo, chunk.hit.clear();
+                    for (const Cr3Hit& h : done.targets) chunk.hit.push_back(h.target);
+                }
+            }
+            recorded = out.size();
+        }
+        // (addLastAttack: two linked actions at least; the last one's command able to lead into one -
+        // MbCommandInfo +0xbd bit 1 -, its combo; the next not inserted and breaking the chain -
+        // BtlDamageChunk::HaveChanceReset 0x0097e56c: the other side, its actor under status effect
+        // 0x1f, or none of the same units hit -; the first target standing)
+        if (chunk.set && comboActors.size() >= 2 && chunk.combo && order[at][3] == 0) {
+            Cr3Command lc;
+            const auto& [nSrc, nCmd, nTgt, nFrom] = order[at];
+            bool reset = command(chunk.command, lc) && (lc.flags & 0x200);
+            if (reset) {
+                const bool otherSide = fighters[size_t(chunk.attacker)].player != fighters[size_t(nSrc)].player;
+                Cr3Command nc;
+                bool shared = false;
+                if (!otherSide && !hasEffect(nSrc, 0x1f) && (nCmd < 0 || command(nCmd, nc)))
+                    for (int t : wouldHit(nSrc, nCmd, nTgt))
+                        shared |= std::find(chunk.hit.begin(), chunk.hit.end(), t) != chunk.hit.end();
+                reset = !shared;
+            }
+            const int first = chunk.firstTarget;
+            if (reset && first >= 0 && size_t(first) < fighters.size() && !fighters[size_t(first)].dead()) {
+                // (the side's gauge pinned at its full advantage - BtlBreakGaugeUI::HaveAdvantageOver
+                // 0x0099d41c: +-1000 -: a participant's Finest Arts, at random; else the attacker's Last Attack)
+                int actor = -1, finisher = -1;
+                if (gauge == (fighters[size_t(chunk.attacker)].player ? 1000 : -1000)) {
+                    std::vector<std::pair<int, int>> arts;
+                    for (int p : comboActors)
+                        if (const int fa = finestArtsCommand(p); fa >= 0) arts.emplace_back(p, fa);
+                    if (!arts.empty()) std::tie(actor, finisher) = arts[std::min(size_t(random() * float(arts.size())), arts.size() - 1)];
+                }
+                if (finisher < 0) actor = chunk.attacker, finisher = lastAttackCommand(actor);
+                if (finisher >= 0 && actor >= 0 && !fighters[size_t(actor)].dead()) {
+                    // (BtlCommandList::VInsertTop 0x007e4fd8: before the next, marked inserted - 2 here,
+                    // a finisher: it leads into no other)
+                    order.insert(order.begin() + long(at), {actor, finisher, first, 2});
+                    if (at < bucket0End) ++bucket0End;
+                    chunk.set = false;
+                }
+            }
+        }
+        resolvingFrom = order[at][3];
         const auto [src, cmd, tgt, fromSkill] = order[at];
         Cr3Fighter& s = fighters[size_t(src)];
         if (s.dead()) continue;
         Cr3Action a;
         a.source = src, a.command = cmd;
+        a.finisher = fromSkill == 2; // (a Last Attack or Finest Arts addLastAttack put in)
         // (MbStatusEffectInfo::IsNoAction: a kind 31 effect - stunned, asleep - and it does nothing;
         // a skill's command plays all the same)
         if (hasKind(s, 31) && !fromSkill) {

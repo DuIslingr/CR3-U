@@ -215,6 +215,23 @@ public:
     // made (or remade) at the drawable's size and read with alpha 1; drawing goes on after it.
     // For frame feedback: the original's PostEffectBlur ping-pong buffers. false: not supported
     virtual bool copyFrame(Texture& /*tex*/) { return false; }
+    // Full-screen filters into small targets of their own (the bloom's - MVGL::Draw::PostEffects:
+    // CustomFigure types 4 copy, 5 filterBrightFP, 6 filterBlurVP / FP - into RGB565 render targets,
+    // linear and clamped, blending off, nothing cleared). Between beginFilters() and endFilters():
+    // filterPass draws `src` (a texture, a frame copy or another pass's target) through the filter
+    // into `dst`, made (or remade) w x h; endFilters goes back to drawing the frame (`frame`: the
+    // frame copied just before - drawn back where the frame's samples aren't kept). readTexture: a
+    // target's pixels, RGBA, row 0 the bottom; false where it can't. false throughout: unsupported
+    enum class Filter { Copy, Bright, Blur };
+    struct FilterParams {
+        float limit = 0;           // (Bright: bloomLimit - colour x 2 kept where r + g + b exceeds it)
+        float offset[2] = {0, 0};  // (Blur: blurOffset, UV - taps at -2, -1, 0, 1, 2 times it)
+        float scale = 1;           // (Blur: bloomScale, the sum's gain)
+    };
+    virtual bool beginFilters() { return false; }
+    virtual bool filterPass(Filter /*f*/, const Texture& /*src*/, Texture& /*dst*/, int /*w*/, int /*h*/, const FilterParams& /*p*/) { return false; }
+    virtual void endFilters(const Texture& /*frame*/) {}
+    virtual bool readTexture(const Texture& /*tex*/, std::vector<uint8_t>& /*rgba*/) { return false; }
     // The scene's projection (temporal upscalers turn depth into distance with it) and a cut:
     // last frame's pixels say nothing about this one
     virtual void setCamera(float /*near*/, float /*far*/, float /*fovY*/) {}

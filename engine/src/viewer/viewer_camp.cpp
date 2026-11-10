@@ -1422,6 +1422,12 @@ std::vector<int> Viewer::cr3PartyMembers() const {
 
 // (Gene Swap - CampcomBtnMenu::SetVisibleGeneChangeButton: once flag 41 is set, and in the VS mode
 // or once a gift has been merged, flag 21)
+bool Viewer::cr3PanelLocked(int member) const {
+    for (int slot = 0, k = 0; slot < 5; ++slot)
+        if (game.cr3Party[slot] > 0 && k++ == member) return cr3PanelLock[size_t(slot)];
+    return false;
+}
+
 bool Viewer::cr3CampButtonOn(int id) const { return id != 2 || (game.flag(41) && (vs.screen != 0 || game.flag(21))); }
 
 void Viewer::openCr3Camp() {
@@ -1461,8 +1467,16 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
                 continue;
             }
             if (!cr3UiCall(chara, "call_camTopCharaPanel_00" + std::to_string(k + 1), cx, cy)) continue;
+            // (SetPanelLock: SetSelectStatus(3) - the panel and its parts' diffuse 0.5 0.5 0.5, the
+            // status colours DAT_00f63890 / 0x00f638a0's -, kept till unlocked)
+            const bool locked = cr3PanelLocked(k);
+            struct Restore {
+                float* t;
+                ~Restore() { t[0] = t[1] = t[2] = 1; }
+            } restore{cr3UiTint};
+            if (locked) cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 0.5f;
             UiFig& panel = cr3UiPut("camtopcharapanel", "", 0, cx, cy, view);
-            if (vitaButtons() && k == cr3Camp.panel) {
+            if (vitaButtons() && k == cr3Camp.panel && !locked) {
                 cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
                 cr3UiPut("camtopcharapanel", "", 0, cx, cy, view);
                 cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
@@ -1512,6 +1526,7 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
         }
     }
     if (cr3Camp.stage == 1 && cr3UiCall(top, "call_camTopFramMenu", x, y, w, h)) cr3UiPut("camtopframmenu", "", 0, x, y, view);
+    if (cr3Camp.stage == 1 && !campTopTold.empty()) drawCr3Told(campTopTold, uiClock - campTopToldAt, 502, w, h, view, &cr3CampTaps);
     // (CampcomBtnMenu: its buttons)
     if (cr3Camp.stage == 1) {
         UiFig& bp = cr3UiPut("combtnsposition", "", 0, 0, 0, view);
@@ -1715,6 +1730,25 @@ void Viewer::chooseCr3Camp(int id) {
         return;
     }
     if (cr3Camp.stage == 10) return chooseMyPage(id);
+    if (!campTopTold.empty()) { // (an alert over the top: any press puts it away)
+        if (id == 502 || id == -1 || id >= 200) campTopTold.clear(), audio.playSe("com_004", false);
+        return;
+    }
+    // (CampTopMenu::SetParamNumber 2 0xa389cc: the VS mode's camp closing - not the event's party
+    // window - with flag 42 off: every member wearing a gene sets 42 and 3505 (the VS tutorial's
+    // next step); one without, alert 0x307 and the camp stays)
+    if (id == -1 && cr3Camp.stage == 1 && vs.screen != 0 && !cr3CampEvent && !game.flag(42)) {
+        bool all = true;
+        for (int m : cr3PartyMembers()) all = all && game.wornGene(m) >= 0;
+        if (!all) {
+            campTopTold = menuAnnounce(0x307), campTopToldAt = uiClock;
+            audio.playSe("com_004", false);
+            SDL_Log("camp: a member without a gene - 0x307");
+            return;
+        }
+        game.setFlag(42, true), game.setFlag(3505, true);
+        SDL_Log("camp: every member wears a gene - flags 42, 3505");
+    }
     if (id == -1) {
         audio.playSe("com_004", false);
         cr3Camp.stage = cr3Camp.stage == 3 ? 2 : cr3Camp.stage == 2 ? 1 : 0, cr3Camp.since = 0;
@@ -1869,8 +1903,15 @@ bool Viewer::cr3CampKey(SDL_Keycode key) {
         if (vitaButtons() && (key == SDLK_LEFT || key == SDLK_RIGHT)) {
             if (cr3Camp.panel < 0) { if (key == SDLK_LEFT && n) cr3Camp.panel = n - 1; }
             else {
-                const int to = cr3Camp.panel + (key == SDLK_RIGHT ? 1 : -1);
-                if (to >= 0 && to < n) {
+                const int dir = key == SDLK_RIGHT ? 1 : -1;
+                int to = cr3Camp.panel + dir;
+                // (a locked panel: not taken up - CheckTopArea -, and passed over by the one moved -
+                // TouchSimpleMove skips it as a place to swap with)
+                if (cr3Camp.confirmHeld)
+                    while (to >= 0 && to < n && cr3PanelLocked(to)) to += dir;
+                if (to >= 0 && to < n && cr3Camp.confirmHeld && cr3PanelLocked(cr3Camp.panel)) {
+                    SDL_Log("camp: party panel %d is locked", cr3Camp.panel);
+                } else if (to >= 0 && to < n) {
                     if (cr3Camp.confirmHeld) {
                         int positions[5], count = 0;
                         for (int slot = 0; slot < 5; ++slot) if (game.cr3Party[slot] > 0) positions[count++] = slot;

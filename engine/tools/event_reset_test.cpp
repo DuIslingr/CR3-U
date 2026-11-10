@@ -395,6 +395,22 @@ function round3Scene() {
         std::map<std::string, std::string> extra;
         check(loaded.load(saved, &extra) && loaded.dungeonLevel == 9 && loaded.cr3AceLevels[12] == 45,
               "dungeonLevel and cr3AceLevels roundtrip cleanly across GameState::save/load");
+        // Round 8: PartyEquip's SetLastAttackLevel(chr, 2), the story's (5, 2) - CrxCharacterData +0x14 / +0x18 -,
+        // saved; UnEquipWeapon's wait on CheckDisposeMenu ends at once (no full-bag disposal menu)
+        check(run2("function la(){Cr3System.SetLastAttackLevel(3, 2); Cr3System.SetLastAttackLevel(5, 2); Cr3System.SetFinestArtsLevel(3, 1);"
+                   " if(Cr3System.CheckDisposeMenu()) throw \"disposal menu\";}", "la") &&
+                  gsSave.cr3LastAttackLevel[3] == 2 && gsSave.cr3LastAttackLevel[5] == 2 && gsSave.cr3FinestArtsLevel[3] == 1,
+              "SetLastAttackLevel / SetFinestArtsLevel set the character's tiers; CheckDisposeMenu is false");
+        // Round 10: utils::SetBloom(on, offset, limit, scale) - GameSystem +0x10, +0x34, +0x30, +0x38 x 100
+        check(!gsSave.bloom && gsSave.bloomLimit == 160 && gsSave.bloomOffset == 60 && gsSave.bloomScale == 90 &&
+                  run2("function bl(){Cr3System.SetBloom(true, 0.75, 0.5, 0.25);}", "bl") && gsSave.bloom && gsSave.bloomOffset == 75 &&
+                  gsSave.bloomLimit == 50 && gsSave.bloomScale == 25 && run2("function bo(){Cr3System.SetBloom(false, 0.6, 1.6, 0.9);}", "bo") &&
+                  !gsSave.bloom,
+              "SetBloom's defaults (off, 60 / 160 / 90) and its order: offset, limit, scale x 100");
+        game::GameState loaded2;
+        check(loaded2.load(gsSave.save({{"area", "t0101"}}), &extra) && loaded2.cr3LastAttackLevel == gsSave.cr3LastAttackLevel &&
+                  loaded2.cr3FinestArtsLevel == gsSave.cr3FinestArtsLevel,
+              "Last Attack / Finest Arts tiers roundtrip across GameState::save/load");
     }
 #endif
     // reset is idempotent and leaves existing native bindings usable.

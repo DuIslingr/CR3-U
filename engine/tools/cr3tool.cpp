@@ -243,6 +243,10 @@ int events(const char* path, const char* only, int seconds) {
                 ++outcomes["ended"];
             }
             if (!why.empty() && std::getenv("CR3_EVENTS_LIST")) std::printf("%s:%s  %s\n", script.c_str(), fn.c_str(), why.c_str());
+            // (the not-bound natives this event itself called, with their counts - the scripts'
+            // top-level code, run here without the field's natives, kept out)
+            if (std::getenv("CR3_EVENT_STUBS"))
+                for (const auto& [name, c] : rt.stubCalls()) std::printf("stubs %s:%s %s %d\n", script.c_str(), fn.c_str(), name.c_str(), c);
         }
     }
     std::printf("%d events:", total);

@@ -2001,6 +2001,79 @@ void Viewer::bindAreaNatives(cr3::ScriptVM& vm) {
                 if (vm.baseMaterial.hash == hash) vm.baseMaterial.params[0x55] = speed, vm.material.params[0x55] = speed, ++n;
         SDL_Log("area %s: %s scrolls (%.2f %.2f) on %d meshes", area.name.c_str(), c.string(0).c_str(), double(speed[0]), double(speed[1]), n);
     });
+    bindCr3FieldUiNatives(vm, true);
+}
+
+// (Fld2TaskPlayer: Fld2CharaNameTbl[the party's first - 1], 15 its last)
+std::string Viewer::cr3LeaderBody() const {
+    static const char* const kCharaNames[6] = {"j001", "j002", "j003", "j004", "j005", "c101"};
+    const int lead = game.cr3Party[0] == 15 ? 6 : game.cr3Party[0];
+    return lead >= 1 && lead <= 6 ? kCharaNames[lead - 1] : "c101";
+}
+
+void Viewer::cr3RebuildLeader() {
+    if (!areaMode || eventMode || !areaWalker || !areaPlayerArgName.empty()) return; // (Fld2ChangePlayerEquip: the field's mode, its player)
+    std::string body = cr3LeaderBody();
+    if (body[0] == 'j' && body.size() == 4) body = cr3PartsBody(body);
+    if (body == areaPlayerName) return;
+    std::string err;
+    unload(areaPlayer), unload(areaPlayerHead);
+    areaPlayer = ViewFigure(), areaPlayerHead = ViewFigure();
+    areaPlayerName = body;
+    if (!loadFigure(areaPlayerName + ".geom", areaPlayer, &err)) SDL_Log("player %s: %s", areaPlayerName.c_str(), err.c_str());
+    if (areaPlayerName.size() >= 7 && areaPlayerName[4] == 'b' && archive.contains(areaPlayerName.substr(0, 4) + "h01.geom") &&
+        !loadFigure(areaPlayerName.substr(0, 4) + "h01.geom", areaPlayerHead, &err))
+        SDL_Log("player head: %s", err.c_str());
+    areaMotionSet = false;
+    setAreaMotion(cr3::Cr3Motion::Idle); // (ChangePlayer: the idle loop again - Fld2AnimeNameTbl[0] -, where it stood, as it faced)
+    SDL_Log("field: the leader now %s", areaPlayerName.c_str());
+}
+
+void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
+    // (Cr3BindGimmickData 0x00850e24: Fld2ChangePlayerEquip - main mode 1 alone)
+    vm.setNative("Cr3GimmickData", "ChangePlayerEquip", [this, area](cr3::NativeCall&) {
+        if (area) cr3RebuildLeader();
+    });
+    // (Cr3BindFieldMapCharacter 0x00852714: SetVisible - Fld2SetPlayerVisible, main mode 1 alone;
+    // SetPos_p000 / SetRot_p000 - Cr3EvtSceneSetFieldMapPos / Rot 0x00842fac / 0x00842fcc, Func0:
+    // their arguments dropped, an EvtScene made if there's none - no place, no turn)
+    vm.setNative("Cr3FieldMapCharacter", "SetVisible", [this, area](cr3::NativeCall& c) {
+        if (area && areaMode && !eventMode) areaPlayerShown = c.boolean(0, true);
+    });
+    vm.setNative("Cr3FieldMapCharacter", "SetPos_p000", [](cr3::NativeCall&) {});
+    vm.setNative("Cr3FieldMapCharacter", "SetRot_p000", [](cr3::NativeCall&) {});
+    // (Cr3BindFieldMapCamera 0x00851d20: SetMode / Scroll / ScrollTo - Fld2SetFieldMapCameraMode
+    // 0x0086f068, Fld2CameraScroll 0x00870c64, Fld2CameraScrollTo 0x00870cec - act on the camera
+    // only when it's Fld2CameraOrtho, the map table's type 2: e0013 and e0015, CreateArea2D's.
+    // CR3-U draws those two as the others, so here they're the no-ops they are everywhere else)
+    for (const char* name : {"SetMode", "Scroll", "ScrollTo"}) vm.setNative("Cr3FieldMapCamera", name, [](cr3::NativeCall&) {});
+    // the camp's top over an event (InterfaceMain::SetCampWindowParty: PauseFieldInterface, the
+    // camp's windows - CampTopMenu in its event mode -, Cr3FadeIn(0, 5))
+    vm.setNative("InterfaceWindow", "SetCampWindowParty", [this](cr3::NativeCall&) {
+        openCr3Camp();
+        cr3CampEvent = true;
+        SDL_Log("camp: opened by the event (SetCampWindowParty)");
+    });
+    // (0x008f0620, a Func0 - the scripts' argument dropped: true while CampTopMenu is there)
+    vm.setNative("InterfaceWindow", "CheckAliveCampWindowParty", [this](cr3::NativeCall& c) {
+        if (cr3Camp.stage == 0) cr3CampEvent = false;
+        c.result(cr3Camp.stage != 0);
+    });
+    vm.setNative("InterfaceWindow", "LockCampTopCharacterPanel", [this](cr3::NativeCall& c) {
+        const int slot = c.integer(0);
+        if (slot >= 0 && slot < 5) cr3PanelLock[size_t(slot)] = true;
+        SDL_Log("camp: party slot %d's panel locked", slot);
+    });
+    vm.setNative("InterfaceWindow", "UnLockCampTopCharacterPanel", [this](cr3::NativeCall&) {
+        cr3PanelLock.fill(false);
+        SDL_Log("camp: party panels unlocked");
+    });
+    // (round 9: the gene status window and the gene disposal before a reward - Func3<int, int, bool>,
+    // Func0 bool, Func0, Func0 int; the skill slots' help - the bool - isn't in, any tap closes it)
+    vm.setNative("InterfaceWindow", "CreateGeneStatusSCModalMenu", [this](cr3::NativeCall& c) { openScriptGeneStatus(c.integer(0), c.integer(1)); });
+    vm.setNative("InterfaceWindow", "AliveGeneStatusMenu", [this](cr3::NativeCall& c) { c.result(scriptGeneStatus && geneInspectOpen); });
+    vm.setNative("InterfaceWindow", "CreateDisposalEquipMenu_Gene", [this](cr3::NativeCall&) { openScriptGeneDisposal(); });
+    vm.setNative("InterfaceWindow", "GetDisposalEquipMenuResult", [this](cr3::NativeCall& c) { c.result(geneDisposal.result); });
 }
 
 void Viewer::stepAreaTurns(float dt) {
@@ -2233,10 +2306,8 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
     initEventDrawing(); // (the area's script's windows and fades)
     // the player: Fld2TaskPlayer::CreatePlayer (Fld2CharaNameTbl's model; a hero's body b01)
     areaPlayerArgName = player;
-    // (Fld2TaskPlayer: Fld2CharaNameTbl[the party's first - 1], 15 its last)
-    static const char* const kCharaNames[6] = {"j001", "j002", "j003", "j004", "j005", "c101"};
-    const int lead = game.cr3Party[0] == 15 ? 6 : game.cr3Party[0];
-    areaPlayerName = player.empty() ? (lead >= 1 && lead <= 6 ? kCharaNames[lead - 1] : "c101") : player;
+    areaPlayerShown = true; // (ChangeArea: Fld2TaskPlayer's flag 0x400 set with the player's place)
+    areaPlayerName = player.empty() ? cr3LeaderBody() : player;
     if (areaPlayerName[0] == 'j' && areaPlayerName.size() == 4) areaPlayerName = cr3PartsBody(areaPlayerName);
     unload(areaPlayer), unload(areaPlayerHead);
     areaPlayer = ViewFigure(), areaPlayerHead = ViewFigure();
@@ -2762,6 +2833,8 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
             setupAreaGimmicks(area.name);
         }
     }
+    stepVsScript(dt); // (the VS menu's script, its gene cards)
+    if (eventMode || !areaMode) return;
     const bool scripted = areaEvents && areaEvents->running();
     if (scripted) sx = sy = 0; // (PauseMove: the player held while the area's script runs)
     // (the gene lab: its clock since it opened, the screen's; --input lab:talk / combine / sell /
@@ -3217,7 +3290,7 @@ void Viewer::drawArea(int w, int h) {
     // the player: where it walks, facing its way
     for (ViewFigure* fp : {&areaPlayer, &areaPlayerHead}) {
         ViewFigure& f = *fp;
-        if (f.meshes.empty()) continue;
+        if (f.meshes.empty() || !areaPlayerShown) continue;
         const cr3::Vec3 p = areaWalker->position();
         f.place = cr3::Mat34();
         const float c = std::cos(areaYaw), s = std::sin(areaYaw);

@@ -29,3 +29,23 @@ want camp && run camp-gene-lock "4:left 4.5:east 5:east 5.5:right 6:east 6.5:sou
 want camp && run camp-index "3:right 3.5:down 4:down 4.5:down 5:left 5.5:up 6:quit" \
     "my page: gene index|gene index: cursor 1|gene index: cursor 3|gene index: cursor 5|gene index: cursor 5 tabs" \
     -- --area t0101 --flag 27 --input "camp:mypage camp:id204"
+
+# InterfaceWindow.SetCampWindowParty over a quest's vista (q074_d05_00104_evt: LockPanel(0), then the
+# camp's top in its event mode, the script waiting on CheckAliveCampWindowParty): ○ held moves a panel
+# past slot 0's locked one (TouchSimpleMove), the locked one isn't taken up (CheckTopArea), × closes the
+# camp and the vista goes on to its battle
+want camp && run camp-event-lock "0:until=opened_by_the_event 0.5:left 1:left 1.5:left 2:left 2.5:hold=east 3:left 3.5:right 4:release=east 4.5:left 5:left 5.5:hold=east 6:right 6.5:release=east 7:south 12:quit" \
+    "camp: party slot 0's panel locked|camp: opened by the event|camp: party panel 1|camp: party panel 1|camp: party order moved 1 to 2|camp: party panel 0 is locked|camp: closed (CR3)|event ended at frame" \
+    -- --event d05:q074_d05_00104_evt --page 0.3
+
+# An event's gene windows (round 9; s481_d16_00104_evt's reward, gene 378 at level 100): with room,
+# CreateDisposalEquipMenu_Gene is done at once and CreateGeneStatusSCModalMenu's status (GeneStatusMenu
+# 0xa7) waits for a press; with 50 held, DisposalEquipMain's 0x218 told, a gene picked, 0x236 asked,
+# RemoveGene, 0x237 told - then the reward and its status
+want camp && run gene-event-status "0:until=at_level_100 1:east 15:quit" \
+    "gene disposal: room in the box|gene: status 378 at level 100|gene: status closed|event ended at frame" \
+    -- --event d16:s481_d16_00104_evt --page 0.05
+full_box=$(k=1; while [ $k -le 50 ]; do printf ' --cr3-gene 0:%d' $((k % 20 + 1)); k=$((k + 1)); done)
+want camp && run gene-event-disposal "0:until=a_gene_to_discard 1:east 2:right 2.5:east 3.5:east 4.5:east 5.5:until=at_level_100 1:east 15:quit" \
+    "gene disposal: the box full (50)|- 49 held|gene disposal: done|gene: status 378 at level 100|gene: status closed|event ended at frame" \
+    -- --event d16:s481_d16_00104_evt --page 0.05 $full_box

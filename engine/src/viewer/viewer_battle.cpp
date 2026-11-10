@@ -932,6 +932,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) : uint32_t(SDL_GetTicks()) | 1u;
     cr3PartyRules();
     cr3Rules.partyMpLeft = game.cr3Mp; // (the MP the last battle left)
+    cr3Rules.lastAttackLevel = game.cr3LastAttackLevel, cr3Rules.finestArtsLevel = game.cr3FinestArtsLevel; // (the finishers' tiers: CrxCharacterData +0x14 / +0x18)
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
     for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
         const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
@@ -1904,6 +1905,7 @@ void Viewer::startCr3Action() {
             for (int h : x.hits) sum += h;
         SDL_Log("battle %.2f s: action %zu - %d -> %d, command %d, %zu hits, %d", cr3BattleClock, cr3ActionAt, cr3Actions[cr3ActionAt].source,
                 cr3Actions[cr3ActionAt].target, cr3Actions[cr3ActionAt].command, cr3Actions[cr3ActionAt].hits.size(), sum);
+        if (cr3Actions[cr3ActionAt].finisher) SDL_Log("battle: a finisher - command %d (addLastAttack)", cr3Actions[cr3ActionAt].command);
     }
     const cr3::Cr3Fighter& s = cr3Rules.fighters[size_t(a.source)];
     if (a.command == kCr3ReleaseDirection || a.command == kCr3WaitDieDirection) {

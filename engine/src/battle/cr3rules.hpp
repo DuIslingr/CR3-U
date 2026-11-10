@@ -134,6 +134,9 @@ struct Cr3Fighter {
     int combo = 0;            // (its combo count: +1 a downing hit; the magic chain bonus's)
     int chain = 0;            // (BtlBasicStatus +0x80: +1 each landed hit; reset on side change; calculatePhisicalChainBonus)
     int mode = 0;             // (BtlMonsterStatus +0x1fc: its mode - VChangeMode's; a character's VGetMode 0)
+    // a monster's finishers (MbMonsterInfo::GetLastAttackCommandId / GetFinestArtsCommandId 0x00913b98 /
+    // 0x00913ba8: its mode's MonsterCommand row +0x18 / +0x1c; -1 none)
+    int lastAttack = -1, finestArts = -1;
     bool dead() const { return hp <= 0; }
 };
 
@@ -161,6 +164,7 @@ struct Cr3Action {
     // already downed - BtlDamageTarget::notifyCombo, HaveComboChanceById -; 3 - +0xa8, WasBreak -
     // its break points broke the gauge - BtlBreakPoint::Add's +0x31, the jump across 0)
     bool combo = false, broke = false;
+    bool finisher = false; // (BtlCommandManager::addLastAttack's: a Last Attack or a Finest Arts, played as its command's own)
     bool cooperated() const { return !partners.empty(); } // (BtlDamageChunk::IsCooperation)
 };
 
@@ -184,6 +188,16 @@ public:
     // info, its constant added to theirs), by the equipment's full id: the item attached
     std::map<int, int> attachments;
     int teamLevel = 1; // (every character's level: CrxCharacter::initialize's DAT_014c6ab0)
+    // the characters' finisher tiers (CrxCharacterData +0x14 / +0x18 - Cr3System.SetLastAttackLevel /
+    // SetFinestArtsLevel; 0 to begin with - CrxGameData::Init), by the Char row's +0x08 (its save slot)
+    std::map<int, int> lastAttackLevel, finestArtsLevel;
+    // a fighter's finisher: BtlStatus::GetLastAttackCommandId 0x009b722c (status effect 0x3f none, 0x40
+    // command 18; a character's CrxCharacter::GetLastAttackCommandId 0x00931b20 - its Char row's
+    // LastAttack rows of a level and gene value no higher, picked by weight -, a monster's row's) and
+    // GetFinestArtsCommandId (0x00931d7c: the FinestArts rows allowed, the highest level's, ties at
+    // random; a character's none under 0x3f / 0x40); -1 none
+    int lastAttackCommand(int fighter);
+    int finestArtsCommand(int fighter);
     bool playerStats(const Cr3BattleTables& tables, int character, Cr3Fighter& out) const;
     // the VS mode's tallies (BtlStatus::TakeDamageToDirection: the party's damage to the monsters -
     // the battle's score, DAT_014a7d88, 9999999 at most; ConsumeMpToDirection: the party's MP used -

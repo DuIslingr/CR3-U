@@ -1715,6 +1715,8 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     if ((k == SDLK_RETURN || k == SDLK_SPACE || k == SDLK_ESCAPE || k == SDLK_BACKSPACE) && v.geneGetTap()) continue; // (the gene obtained window's)
+                    if (v.scriptGeneKey(k)) continue; // (an event's gene status / disposal)
+                    if (v.geneSelectorKey(k)) continue; // (the VS tutorial's gene cards)
                     if ((k == SDLK_RETURN || k == SDLK_SPACE || k == SDLK_ESCAPE || k == SDLK_BACKSPACE) && v.collectList.open && v.collectList.scripted) {
                         v.chooseCollectList(-1); // (a script's collection: closed)
                         continue;
