@@ -201,7 +201,10 @@ int events(const char* path, const char* only, int seconds) {
         cr3::ScriptVM vm;
         if (!a.read(*a.find(e.name), data) || !vm.load(data, e.name) || !vm.runMain()) continue;
         for (const std::string& fn : vm.rootFunctions()) {
-            if (!std::regex_match(fn, eventName) || (script == "vs" && elsewhere.count(fn))) continue;
+            // (CR3_EVENTS_ALL: every function of the script - the gimmicks', the people's, the
+            // helpers' too -, not the events alone; main, the script's own top level, left out)
+            static const bool all = std::getenv("CR3_EVENTS_ALL") != nullptr;
+            if ((!all && !std::regex_match(fn, eventName)) || fn == "main" || (script == "vs" && elsewhere.count(fn))) continue;
             ++total;
             cr3::GameState state;
             cr3::EventRuntime rt(a, state);

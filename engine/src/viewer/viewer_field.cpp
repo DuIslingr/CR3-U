@@ -2011,9 +2011,9 @@ std::string Viewer::cr3LeaderBody() const {
     return lead >= 1 && lead <= 6 ? kCharaNames[lead - 1] : "c101";
 }
 
-void Viewer::cr3RebuildLeader() {
+void Viewer::cr3RebuildLeader(const std::string& forced) {
     if (!areaMode || eventMode || !areaWalker || !areaPlayerArgName.empty()) return; // (Fld2ChangePlayerEquip: the field's mode, its player)
-    std::string body = cr3LeaderBody();
+    std::string body = forced.empty() ? cr3LeaderBody() : forced;
     if (body[0] == 'j' && body.size() == 4) body = cr3PartsBody(body);
     if (body == areaPlayerName) return;
     std::string err;
@@ -2040,6 +2040,77 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
     vm.setNative("Cr3FieldMapCharacter", "SetVisible", [this, area](cr3::NativeCall& c) {
         if (area && areaMode && !eventMode) areaPlayerShown = c.boolean(0, true);
     });
+    // (Cr3BindGimmickData: SetEventEnable / GetEventEnable - Fld2SetGimmickEventEnable 0x0086dba0 /
+    // Fld2GetGimmickEventEnable 0x0086dc5c: the field's gimmick of that name, its +8 - its event,
+    // CheckBalloon's tap and a box walked into -; the field mode's alone, false elsewhere)
+    vm.setNative("Cr3GimmickData", "SetEventEnable", [this, area](cr3::NativeCall& c) {
+        if (!area || !areaMode || eventMode) return;
+        const std::string name = c.string(0);
+        const bool on = c.boolean(1, true);
+        if (on ? areaEventOff.erase(name) > 0 : areaEventOff.insert(name).second)
+            SDL_Log("area %s: %s's event %s", this->area.name.c_str(), name.c_str(), on ? "on" : "off");
+    });
+    vm.setNative("Cr3GimmickData", "GetEventEnable", [this, area](cr3::NativeCall& c) {
+        const std::string name = c.string(0);
+        bool found = false;
+        for (const AreaGimmick& g : areaGimmicks) found |= g.function == name || g.boxName == name;
+        c.result(area && areaMode && !eventMode && found && !areaEventOff.count(name));
+    });
+    // (SetFaceMotion - Fld2SetGimmickFaceMotion 0x0086e680 -> Fld2NPC::SetEventFaceAnim 0x00a030c0: a
+    // person's face animation, looped, blended in over a sixth of a second; CR3-U draws no face
+    // animations - an event's neither -: noted, not shown)
+    vm.setNative("Cr3GimmickData", "SetFaceMotion", [this](cr3::NativeCall& c) {
+        SDL_Log("area %s: %s's face %s (not drawn)", this->area.name.c_str(), c.string(0).c_str(), c.string(1).c_str());
+    });
+    vm.setNative("Cr3FieldMapCharacter", "MoveTo", [this, area](cr3::NativeCall& c) {
+        if (!area || !areaMode || eventMode || !areaWalker) return;
+        const std::string point = c.string(0);
+        std::vector<uint8_t> d;
+        cr3::Skeleton sk;
+        const std::string fig = this->area.name + "p";
+        if (!archive.read(fig + ".skel", d) || !cr3::parseSkeleton(d, sk)) return;
+        std::vector<std::string> names;
+        if (archive.read(fig + ".name", d)) names = cr3::parseJointNames(d);
+        const std::vector<cr3::Mat34> w = sk.world(sk.basePose);
+        for (size_t j = 0; j < names.size() && j < w.size(); ++j)
+            if (names[j] == point) { // (Fld2TaskGimmick::GetPositionFromFigure: the map gimmick model's joint, y + 0.2)
+                areaMoveTo.on = true, areaMoveTo.t = 0;
+                areaMoveTo.from = areaWalker->position();
+                areaMoveTo.to = {w[j].m[3], w[j].m[7] + areaWalker->radius, w[j].m[11]};
+                areaMoveTo.seconds = std::max(float(c.integer(1, 30)), 1.0f) / 30.0f;
+                SDL_Log("area %s: the player moves to %s over %.2f s", this->area.name.c_str(), point.c_str(), double(areaMoveTo.seconds));
+                return;
+            }
+        SDL_Log("area %s: MoveTo %s - no such point", this->area.name.c_str(), point.c_str());
+    });
+    vm.setNative("Cr3System", "SetEncount", [this, area](cr3::NativeCall&) {
+        if (area && areaMode && !eventMode) areaHeld = true, SDL_Log("area %s: held for the battle (SetEncount)", this->area.name.c_str());
+    });
+    // (Fld2RemoveBomb 0x0086da70 -> Fld2BombManager::Clear 0x9f58c0: the three bombs gone, the fuse's SE with them)
+    vm.setNative("Cr3GimmickData", "RemoveBomb", [this](cr3::NativeCall&) {
+        for (FieldBomb& b : fieldBombs) b = FieldBomb();
+        audio.stopSe("fe_011", 0);
+    });
+    vm.setNative("Cr3GimmickData", "SetBoxDrawing", [this](cr3::NativeCall&) { boxRedraw = true; });
+    // (Fld2UpdatePlayerModel 0x0086ee48 -> Fld2Main::UpdatePlayerModel 0x0087d854: a town's - map id
+    // under 0x29, t0101 .. t0502 - the hero, j001; elsewhere the party's first)
+    vm.setNative("Cr3System", "UpdatePlayerModel", [this, area](cr3::NativeCall&) {
+        if (!area) return;
+        const bool town = this->area.name.size() == 5 && this->area.name[0] == 't';
+        cr3RebuildLeader(town ? cr3PartsBody("j001") : std::string());
+    });
+    // (the toy camera - goods button 2, Fld2CameraToy, map camera type 5 - isn't in CR3-U: its
+    // enable (Fld2SetFieldToyCameraEnable 0x0086f788) and end (Fld2EndToyCamera 0x0086dae4) have
+    // nothing to act on; QuakeStop is the original's own no-op, FldUtilFieldMapCameraQuakeStop 0x00872078)
+    vm.setNative("Cr3FieldMapCamera", "SetToyCameraEnable", [](cr3::NativeCall&) {});
+    vm.setNative("Cr3GimmickData", "EndToyCamera", [](cr3::NativeCall&) {});
+    vm.setNative("Cr3FieldMapCamera", "QuakeStop", [](cr3::NativeCall&) {});
+    vm.setNative("Cr3FieldMapCamera", "QuakeStart", [](cr3::NativeCall&) {});
+    // (the season event's and the colosseum's talk ends - SeasonEventMain 0xb7 / ColosseumMain 0x81
+    // messages 6 / 4 -: menus CR3-U doesn't have; the download menu's alive check: none offline)
+    vm.setNative("InterfaceWindow", "EndTalkNextSeasonEventMenu", [](cr3::NativeCall&) {});
+    vm.setNative("InterfaceWindow", "EndColosseumTalk", [](cr3::NativeCall&) {});
+    vm.setNative("InterfaceWindow", "CheckAliveDownLoadMenuMain", [](cr3::NativeCall& c) { c.result(false); });
     vm.setNative("Cr3FieldMapCharacter", "SetPos_p000", [](cr3::NativeCall&) {});
     vm.setNative("Cr3FieldMapCharacter", "SetRot_p000", [](cr3::NativeCall&) {});
     // (Cr3BindFieldMapCamera 0x00851d20: SetMode / Scroll / ScrollTo - Fld2SetFieldMapCameraMode
@@ -2330,7 +2401,8 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
     // (Cr3System.GetDungeonNum / GetAreaNum: the dungeon - the Field_ table's, t01 0, d01 5 - and the area from 0)
     game.dungeon = cr3::cr3DungeonNum(name);
     game.area = std::atoi(name.substr(3, 2).c_str()) - 1;
-    if (game.dungeon != lastAreaDungeon) { // (Fld2Main SM_Init / the dungeon changed: Fld2TBoxList::Drawing)
+    if (game.dungeon != lastAreaDungeon || boxRedraw) { // (Fld2Main SM_Init / the dungeon changed - or SetBoxDrawing's +0xfa: Fld2TBoxList::Drawing)
+        boxRedraw = false;
         game.cr3Boxes.clear(), game.cr3OpenBox = -1;
         if (game.dungeon > 4) drawCr3Boxes(name);
     }
@@ -2339,6 +2411,8 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
     areaEvents->language = optionLanguage, areaEvents->autoPage = pageSeconds, areaEvents->askYesNo = true;
     areaEvents->extraNatives = [this](cr3::ScriptVM& vm) { bindAreaNatives(vm); };
     areaScriptCam = AreaScriptCam(), areaMotions.clear();
+    areaEventOff.clear(); // (each gimmick made with its event on - Fld2Gimmick's ctor: +8 1)
+    areaMoveTo = AreaMoveTo(), areaHeld = false; // (Fld2System::Init: +0x342 0)
     areaEventClock = 0;
     game.gimmickSetupRequested = false;
     areaBaseWalls = area.walls;
@@ -2836,7 +2910,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
     stepVsScript(dt); // (the VS menu's script, its gene cards)
     if (eventMode || !areaMode) return;
     const bool scripted = areaEvents && areaEvents->running();
-    if (scripted) sx = sy = 0; // (PauseMove: the player held while the area's script runs)
+    if (scripted || areaMoveTo.on || areaHeld) sx = sy = 0; // (PauseMove: the player held while the area's script runs - its MoveTo, SetEncount's hold)
     // (the gene lab: its clock since it opened, the screen's; --input lab:talk / combine / sell /
     // repository / back / normal / enhance - its buttons -, lab:card<n> / row<n> / tab<n> / mix /
     // ok / yes / no / down / up, for tests)
@@ -3141,6 +3215,16 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         areaWalker->step(dt / float(steps));
     }
     setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
+    if (areaMoveTo.on) { // (SM_MoveTo: set on the line - no walls, no fall -, facing its way, walking)
+        AreaMoveTo& mv = areaMoveTo;
+        mv.t += dt;
+        const float k = std::min(mv.t / mv.seconds, 1.0f);
+        areaWalker->setPosition({mv.from[0] + (mv.to[0] - mv.from[0]) * k, mv.from[1] + (mv.to[1] - mv.from[1]) * k, mv.from[2] + (mv.to[2] - mv.from[2]) * k});
+        areaWalker->setVelocity({0, 0, 0});
+        if (std::hypot(mv.to[0] - mv.from[0], mv.to[2] - mv.from[2]) > 1e-4f) areaYaw = std::atan2(mv.to[0] - mv.from[0], mv.to[2] - mv.from[2]);
+        setAreaMotion(k < 1 ? cr3::Cr3Motion::Walk : cr3::Cr3Motion::Idle);
+        if (k >= 1) mv.on = false, SDL_Log("area %s: the player's move over", area.name.c_str());
+    }
     const cr3::Vec3 p = areaWalker->position();
     const bool touchMove = moving && areaDrag.on && areaDragFree() && !areaCam.on && !areaCamSticking;
     areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, moveAngle, moving, dt, &area.cameraWalls, &area.walls, touchMove);
@@ -3160,10 +3244,12 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
             g.inside = in;
             continue;
         }
-        if (g.eventBox && in && !g.inside && !scripted) runAreaFunction(g.function);
+        // (Fld2Gimmick +8, its event - Fld2SetGimmickEventEnable: off, walking in or tapping does nothing)
+        const bool eventOn = !areaEventOff.count(g.function) && (g.boxName.empty() || !areaEventOff.count(g.boxName));
+        if (g.eventBox && in && !g.inside && !scripted && eventOn) runAreaFunction(g.function);
         // (a check object: near it across - Fld2TaskPlayer's gimmick ghost, a sphere of 1.0,
         // against its box; the nearest within range taken)
-        if (!g.eventBox && game.gimmickVisible(g.boxName.empty() ? g.function : g.boxName) &&
+        if (!g.eventBox && eventOn && game.gimmickVisible(g.boxName.empty() ? g.function : g.boxName) &&
             !(g.box >= 0 && size_t(g.box) < game.cr3Boxes.size() && game.cr3Boxes[size_t(g.box)].opened)) {
             const float across = std::hypot(p[0] - g.world.m[3], p[2] - g.world.m[11]);
             const float half = std::sqrt(g.world.m[0] * g.world.m[0] + g.world.m[4] * g.world.m[4] + g.world.m[8] * g.world.m[8]) * 0.05f;

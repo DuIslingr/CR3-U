@@ -1371,9 +1371,23 @@ struct Viewer {
     void bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area);
     // (Fld2ChangePlayerEquip 0x00870038 -> Fld2TaskPlayer::ChangePlayer: the field's leader - the
     // party's first - built again in its armour's body where it stands)
-    void cr3RebuildLeader();
+    void cr3RebuildLeader(const std::string& forced = std::string());
     std::string cr3LeaderBody() const;
     bool areaPlayerShown = true; // (Fld2SetPlayerVisible 0x0086d4e0: Fld2TaskPlayer's flag 0x400; ChangeArea sets it)
+    std::set<std::string> areaEventOff; // (Cr3GimmickData.SetEventEnable false: those gimmicks' events off - Fld2Gimmick +8)
+    // Cr3FieldMapCharacter.MoveTo(point, frames) (Fld2MoveTo 0x0086fbc8 -> Fld2TaskPlayer::MoveTo
+    // 0x00878dfc / SM_MoveTo 0x00874750): the player straight to <area>p's joint over frames / 30 s -
+    // set there each update, no walls, no falling, turned the way it goes, walking (motion 2) -, then
+    // idle; nothing waits on it (the events' last call: often into an exit)
+    struct AreaMoveTo {
+        bool on = false;
+        cr3::Vec3 from{}, to{};
+        float seconds = 1, t = 0;
+    } areaMoveTo;
+    // Cr3System.SetEncount (Fld2SetEncount 0x0086eeb4: Fld2System +0x342): the field held - the player,
+    // the gimmicks, the tabs - till Fld2System::Init (the field again after the battle the script starts)
+    bool areaHeld = false;
+    bool boxRedraw = false; // (Cr3GimmickData.SetBoxDrawing - Fld2EnableTrasureBoxDrawing 0x0086ed60: Fld2Main +0xfa, the boxes drawn again at the next area change)
     // InterfaceWindow.SetCampWindowParty (InterfaceMain::SetCampWindowParty 0x008f00dc): the camp's
     // top over an event - CampTopMenu +0xf5 -, the scripts waiting while it's open
     // (CheckAliveCampWindowParty); LockCampTopCharacterPanel(slot) / UnLock (InterfaceMain +0x288 ..

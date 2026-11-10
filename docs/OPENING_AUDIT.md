@@ -309,6 +309,27 @@ Gene Swap at `5:25`, then Battle and the lifeline items.
 | `Cr3System.VsBattleIn(id, p2, p3)` (`FldUtilReserveVsBattleIN` `0x872630`) and `Invoke(16 / 17)` (`0x92f8e8`) | Reserves the tournament's battles after the vista (`DAT_0149ef7c` its index; `p2` / `p3` the colosseum's commentators). `00201`'s `(1, -1, -1)` then `Invoke(17)` (BeginVSTournament) until 200: tournament 1's couplings 2001 .. 2003. Every tournament also goes through `VS_BattleIn`'s vista (`99999`, or `00801` for the tutorial's second), whose `VsBattleIn` reserves its battles. Afterwards `VSMain` anew (results, then `evt000`) | Stub; tournaments started at once from the menu | The vista's end runs the reserved tournament (`vsNextBattle`); the menu's start runs `VS_BattleIn` and its vista first; the prizes' end returns through `vsEnter`; `Invoke(17)` begins `GameState::vsSelected` |
 | The VS camp's close (`CampTopMenu::SetParamNumber` 2 `0xa389cc`) | Flag 42 off: every member wearing a gene sets 42 and 3505 (the tutorial's `00702` next); one without gets alert `0x307` and the camp stays | Closed as always | The same (`campTopTold`) |
 
+### 14. Round 11 parity audit (the field's own natives)
+
+The census so far covered the events. Two new ones cover the field.
+- **Area loads:** all 252 areas loaded headless with `CR3_STUBS=1` (the area's entry and gimmick
+  setup). Only `Cr3GimmickData.SetEventEnable` (72 areas) and `SetFaceMotion` (5) were unbound.
+- **Every function:** `CR3_EVENTS_ALL=1` makes `cr3tool events` run every function of every area
+  script, not just the events (20195 runs). The natives the viewer binds were filtered out; what
+  remained was traced by a delegated REA pass (`/tmp/cr3-opening-audit/libcrx-audit-round11-evidence.json`)
+  and, for the gimmick flag, here (`/tmp/cr3-opening-audit/libcrx-audit-round11-gimmicks.json`).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `Cr3GimmickData.SetEventEnable` / `GetEventEnable` (`Fld2SetGimmickEventEnable` `0x0086dba0` / `0x0086dc5c`; the areas' `BornCollision` / `DeleteCollision`) | The named gimmick's `+8` (`Fld2Gimmick`'s ctor: 1). `CheckBalloon` `0xa07910` offers no tap for one that's off; the scripts switch event boxes (`evt103` / `104` / `106` / `107`), people (`c112`) and effects. A fresh t0101 turns `evt103_00` and `evt110_00` off | Stubs: every box and check object always live (107 events left on across 72 areas) | `areaEventOff`, cleared with each area: an event box isn't set off and a check object isn't offered while off; `Get` false outside the field |
+| `Cr3FieldMapCharacter.MoveTo(point, frames)` (`Fld2MoveTo` `0x0086fbc8` -> `Fld2TaskPlayer::MoveTo` `0x00878dfc` / `SM_MoveTo` `0x00874750`) | The player in a straight line to the area's `<area>p` joint (`+ 0.2` y) over `frames / 30` s. Set there each update (no walls, no falling), input ignored, turned the way it goes, walking (motion 2; ride-walk with 4105), then idle. Nothing waits on it: it's the events' last call, often into the next event's box | Stub: the player stayed | `areaMoveTo` after the walker's own step. `d02:evt111_00` walks to `d0202_p4` over 2 s and the next event starts there |
+| `Cr3System.SetEncount` (`Fld2SetEncount` `0x0086eeb4`) | Only `Fld2System +0x342`: the player, gimmicks, tabs and goods held till `Fld2System::Init` (the field after the battle the script's `BattleIn` starts) | Stub | `areaHeld` (the player's input), cleared with the area |
+| `Cr3GimmickData.RemoveBomb` (`Fld2RemoveBomb` `0x0086da70` -> `Fld2BombManager::Clear` `0x9f58c0`; `DungeonExit`'s) | The three bombs cleared, the fuse's `fe_011` stopped | Stub | `fieldBombs` cleared, `fe_011` stopped |
+| `Cr3GimmickData.SetBoxDrawing` (`Fld2EnableTrasureBoxDrawing` `0x0086ed60`) | Not drawing to the screen: `Fld2Main +0xfa`, and `SM_ChangeArea` draws the treasure boxes' lots again (and the gold boxes, the ace couplings) at the next area change | Stub | `boxRedraw`: `drawCr3Boxes` again at the next area load (the ace couplings not redrawn) |
+| `Cr3System.UpdatePlayerModel` (`Fld2UpdatePlayerModel` `0x0086ee48` -> `Fld2Main::UpdatePlayerModel` `0x0087d854`; `ReserveShopMenu` / `ReserveReModelingMenu`) | The field's leader rebuilt: map id under `0x29` (t0101 .. t0502, the map table `0x00f3e568`'s first 41) the hero `j001`, elsewhere the party's first | Stub | `cr3RebuildLeader` with that rule |
+| `Cr3FieldMapCamera.QuakeStop` / `QuakeStart`, `SetToyCameraEnable`, `Cr3GimmickData.EndToyCamera`, `InterfaceWindow.EndTalkNextSeasonEventMenu` / `EndColosseumTalk` / `CheckAliveDownLoadMenuMain` | The quake's own no-ops; the toy camera's enable and end; the season event's and colosseum's talks ended; the download menu's alive check | Stubs | No-ops (`false` for the download menu): the toy camera, the season event and colosseum menus and the download menu aren't in CR3-U |
+| `Cr3GimmickData.SetFaceMotion` (`Fld2SetGimmickFaceMotion` `0x0086e680` -> `Fld2NPC::SetEventFaceAnim` `0x00a030c0`) | A person's face animation, looped, blended over a sixth of a second | Stub | Logged only: CR3-U draws no face animations |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -418,6 +439,18 @@ Deterministic REA evidence bundles are stored outside the repository at
   and Vulkan doesn't read the 32x32 luminance back (its term taken as 1: it can only be 0.995 .. 1.001).
   `PostEffectBloomMask` (`GS +0x55`, off by default, its writer unknown) and `PostEffectBloom2` / `3`
   are separate effects, not traced.
+- **The field (Round 11)**: these are traced but not in CR3-U.
+  - **Vehicles** (`VehicleRide` / `VehicleOut` -> `Fld2TaskPlayer::SetStateRide` `0x00878858`): the
+    ride's `Fld2Animal` (`c602`), ride states 5 .. 7 at 1.5x the speeds, the `vch` / `vct` collision,
+    the camera's 1.6 / 24, the goods buttons.
+  - **The toy camera** (goods button 2: `ChangeToyCamera` `0x9ebd2c`, `Fld2CameraToy` - drag limits,
+    focus within 15, the shutter's `SetNextEvent(cam_NN)`).
+  - **Face animations** (events' and people's).
+  - **The block gimmicks' `SetMotionLoopPoint`** (d16's bomb switches: frames 115 .. 120 looped).
+  - **The season event and colosseum menus.**
+
+  `SetEncount` holds only the player's input, not the gimmicks. `SetBoxDrawing` doesn't redraw the
+  ace couplings.
 - **The 2D areas' camera (Round 8)**: `e0013` / `e0015` use `Fld2CameraOrtho` in the original
   (`Scroll` / `ScrollTo` / `SetMode`). CR3-U draws them with the 3D camera, and the three natives are
   no-ops.
