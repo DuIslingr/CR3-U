@@ -144,6 +144,26 @@ alternating `+11.6` / `-8.2` px deltas at the end (`1.7` px/frame camera drift),
 | Battle quakes (`BattleDeathDirection` in `battle_0004`, `0008`, `0013`, ... - `162` `StartQuake(10, 0.2, 1.0, 143)` sites) | Same root `QuakeControl` task, battle layers `5..9` | Battle scripts' `Cr3System.StartQuake` / `StopQuake` were stubs and the battle projection never shook | Battle `extraNatives` bind `bindQuakeNatives`; `drawCr3Battle` applies `applyQuake` (`quake: 10 wide, 0.2 -> 1 over 143 frames` at battle 4's boss death) |
 | `Cr3FieldMapCamera.QuakeStart` / `QuakeStop` (`Cr3BindFieldMapCamera` `0x00851d20`, `FldUtilFieldMapCameraQuakeStart` `0x00872074`) | CR2's 2D field-map quake left as **no-ops** in CR3 (`return param_1`); the scripts' `CameraQuake` / `vCameraQuake` wrappers are never called | `FieldScript` steps a 2D map quake (`frames * 0.05`, CR2's 20 Hz) | Unchanged (unreachable from CR3's scripts); recorded here |
 
+### 8. Round 5 parity audit (battle script staging: boss deaths, event cameras)
+
+A census of the 157 battle scripts' native calls against CR3-U's bindings found the boss-death
+staging (`BattleDeathDirection`, from `Battle_Victory` in 22 battles), the event camera after a
+last attack (`ChangeCameraAfterLastAttack`, 38 battles), and the scripted events' `StopAuto`
+(`BattleEventStartSet`, 62 battles) all landing on stubs. The six natives were traced from
+`Cr3BindBattle` (`0x00854b98`). Battle 4's boss death (`m212`) now plays as walkthrough Part 3's
+does at `14:24..14:30`: the boss's own camera (`Cam_d02_m235_00`) with the light pillars
+(effect `186`) and the quake, the party hidden, the field empty once the boss is hidden, then
+the finisher's solo victory pose.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `BattleUnit.PlayAnimation(id, type)` (`BtlScript::BattleUnit::PlayAnimation` `0x009a7b5c`, `BtlUnitList::PlayAnimation` `0x009d802c`, `BtlUnit::updateAnimationEnd` `0x009e10c4`, `SetDie` `0x009da470`) | `AnimCommon`'s type from its start, no blend; at its end types `1, 3, 4, 5, 7..10, 14..17` (mask `0x3c7aa`, or `4`) go back to the stance, the rest hold; type `6` (death) marks the unit dying first | Stub | `setCr3Motion(cr3MotionOf(type))`, type `0` looped, the mask's types back to the stance, the rest held; type `6` keeps the unit in sight (its knockout fade undone) |
+| `BattleUnit.PlayEffect(id, effect, point, scale)` (`0x009a7d24` -> `BtlUnit::PlayHitEffect` `0x009de81c` -> `BtlVisualEffectSystem::PlayHit` `0x009e1d50`) | `Effect`'s figure at the model's effect point (`0..7`, its locator plus offset), placed once in world space (not following), scaled uniformly, its own sound and end | Stub | `spawnCr3Effect(effect, cr3EffectPoint(unit, point), scale)` |
+| `BattleUnit.Hide(id)` (`0x009a7c30` -> `BtlUnit::DisableDraw` `0x009e02b8`; `EnableDraw` `0x009e0238`) | Undrawn at once, no fade, no script-level Show; the victory's finisher drawn again | Stub | `Cr3BattleUnitView::scriptHidden`; cleared for the victory's finisher |
+| `BattleCamera.Play(name)` / `SetPosition(x, y, z)` (`0x009a65f0` -> `BtlCameraSystem::Play` `0x009772dc`; `0x009a665c` -> `SetPosition` `0x009792d0`) | The clip's own figure (`CRDBpak1/<name>.geom/.anim`; a `Cam_bt` name the battle's), from the origin, not looped, held at its end until another `Play`; `SetPosition` moves its origin in world space at once (after `Play`, which resets it) | Stubs; the victory then put its "all" camera over the boss's | Own-figure clip from the origin for its duration, `cr3Cam.actor` = the position; `cr3ScriptCamera` keeps the victory's default camera off a script's |
+| `BattleArgument.GetActionType` (`0x009a4d38` -> `BtlDamageChunk::GetActionType` `0x0097e450`) | The damage chunk's (else the last direction's) command's `CommandFomula +0x04`, `-1` without; `5..8` / `22` read `0x20..0x24` when the chunk's `+0x20` is set | Stub, so `ChangeCameraAfterLastAttack` never cut to `Cam_event_start` after action types `9, 10, 20, 30, 39` | `Cr3Command::action` of the argument's action (the remap not modelled: no script tests those values) |
+| `Battle.StopAuto` (`0x009a82f4` -> `BtlInterfaceSystem::StopAuto` `0x009a4028`) | Clears the player's auto battle (`+0xd4`) and closes the command buttons | Stub | Bound as a no-op: CR3-U has no in-game auto battle |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -206,13 +226,19 @@ Deterministic REA evidence bundles are stored outside the repository at
 | `Cr3BindFieldMapCamera` / `FldUtilFieldMapCameraQuakeStart` / `Fld2SetFieldScriptCamera` / `Fld2TaskCamera::ChangeScriptCamera` | `0x00851d20` / `0x00872074` / `0x0086f518` / `0x009ebc18` | Field-map quake natives are no-ops; script camera `frames * 1/30`, toy camera dropped, character movement paused and field UI hidden while it's on. | `ev_e1bad8b85ee3e09974a5bfa76428cd01b06e84c7df4436fd2f9b0f658053bf2b` |
 | `utils::SetMotionBlur` / `SetSpecialBlur` / `GameMain::PostEffectBlur` | `0x0092b3c4` / `0x0092b3f4` / `0x0096ca54` | `GameSystem +0x68` / `+0x69` / `+0x6a` flags drive a ping-pong feedback blur (buffers `4|5`, pass `5` at scale `1.0` / `1.2`; special: pass `1` scale `1.1`, roll `0.01`, alpha `min(n/50 + 0.5, 0.8)`, layer `0xc` zoom `min(1 + n/1000, 1.02)`). | `ev_9f3ab6a0c15ee3a6fbb9bdb3898c9a04b116dfbc3ce71fea6fd763dcb2daa406` |
 | `MVGL::Draw::Camera::GetScreenMatrix` / `SetGraphicLevel` / `SM_SetupGraphics` | `0x00b8f184` / `0x0096ac18` / `0x00969360` | Screen translation = camera `+0x248 / DisplayInfo width`, `+0x24c / DisplayInfo height` (device pixels; the scene buffer `GameSystem +0x70 x +0x74` is the display or `80%` of it). | static `re/android/arm64/decomp.c` read (`848708..848794`, `381426..381520`, `380299..380440`) |
+| `Cr3BindBattle` / `BattleUnit::PlayAnimation` / `PlayEffect` / `Hide` / `BattleCamera::Play` / `SetPosition` / `Battle::StopAuto` | `0x00854b98` / `0x009a7b5c` / `0x009a7d24` / `0x009a7c30` / `0x009a65f0` / `0x009a665c` / `0x009a82f4` | Sqrat `Func2<int,int>`, `Func5<int,int,int,float,..>`, `Func1<int>`, `Func1<const char*>`, `Func3<float,float,float>`, `Func0`; the behaviour in round 5's table (`BtlUnitList::SetDie` `0x009da470`, `BtlUnit::changeRequest` `0x009dc958`, `loadRequestAnimation` `0x009dcb88`, `changeAnimation` `0x009dcc14`, `updateAnimationEnd` `0x009e10c4`, `PlayHitEffect` `0x009de81c`, `BtlVisualEffect::Initialize` `0x009e23fc`, `DisableDraw` `0x009e02b8`, `BtlCameraSystem::Play` `0x009772dc`, `SetPosition` `0x009792d0`, `BtlInterfaceSystem::StopAuto` `0x009a4028`). | `/tmp/cr3-opening-audit/libcrx-audit-round5-battle-natives.json` (`11` records: `ev_dfc6da68...`, `ev_32c6cb2c...`, `ev_6620ad0d...`, `ev_098762407...`, `ev_2b71f4cb...`, `ev_17f38a89...`, `ev_3256c819...`) |
+| `BattleArgument::GetActionType` / `BtlDamageChunk::GetActionType` | `0x009a4d38` / `0x0097e450` | `MbGetCommandInfo(+0x1c) +0x18 -> +0x04`; the chunk's `+0x20` remap of `5..8`, `22`. | static `re/android/arm64/decomp.c` read |
 
 ## Not settled
 
-- **`BattleDeathDirection`'s staging (Round 4)**: the boss deaths' `BattleUnit.PlayAnimation`,
-  `PlayEffect`, `Hide`, `BattleCamera.Play`, `SetPosition`, and `Battle.StopAuto` are still stubs in
-  the battle VM, so only the quake (and the result) of the close-up seen at Part 3 `14:24..14:28`
-  (camera on the boss, light pillars, units hidden) plays.
+- **Battle staging still open (Round 5)**: `BattleUnit.PlayAnimation` type `6`'s `notify(4)` at the
+  white-fade frame (`BtlUnit::updateWhiteFade` `0x009e1028`) and a model's own camera on a motion
+  (`BtlUnit::PlayCamera` `0x009dd234`) are not modelled; `BattleUnit.GetAttachId`,
+  `BattleDirection.InsertWaitDie` / `InsertRelease` / `GetNextCommandId`, `BattleStatus.AddMp` /
+  `GetMode` / `HasEffect`, `BattleModel.*`, and `Battle.OpenUI` / `CloseUI` / `AddFieldObject` are
+  still stubs in the battle VM (1-5 scripts each), as are the in-battle choice menus
+  (`InterfaceWindow.CreateSelectTwo/ThreeChoiceMenu` behind `Msg_Choice2` / `Msg_Choice3`: 31 calls
+  in 16 battles).
 - **Unbound natives (Round 4 replay)**: `Cr3System.SetMotionBlur` (`150` calls), `SetSpecialBlur`
   (`40`), `SetBloom` (`8`) - the post effects above -; `InterfaceWindow.Lock/UnLockCampTopCharacterPanel`,
   `SetCampWindowParty`, `CheckAliveCampWindowParty`, `CreateOverLay` / `DeleteOverLay`,

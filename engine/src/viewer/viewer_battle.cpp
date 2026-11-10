@@ -87,6 +87,63 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
         // gauge as shown, the field)
         vm.setNative("Battle", "GetTurn", [this](cr3::NativeCall& c) { c.result(cr3Turn); });
         bindQuakeNatives(vm); // (a battle's Cr3System.StartQuake - BattleDeathDirection's, the bosses' -: the root's QuakeControlTask)
+        // (BtlScript's BattleUnit / BattleCamera - Cr3BindBattle 0x00854b98 -: the bosses' deaths -
+        // BattleDeathDirection -, the event cameras - ChangeCameraAfterLastAttack's Cam_event_start)
+        auto unitOf = [this](int id) -> int {
+            return id >= 0 && size_t(id) < cr3Rules.fighters.size() && cr3Rules.fighters[size_t(id)].unit >= 0 &&
+                           size_t(cr3Rules.fighters[size_t(id)].unit) < cr3BattleUnits.size()
+                       ? cr3Rules.fighters[size_t(id)].unit
+                       : -1;
+        };
+        // (BattleUnit::PlayAnimation 0x009a7b5c -> BtlUnitList::PlayAnimation 0x009d802c: AnimCommon's
+        // type, played from its start without a blend; at its end - BtlUnit::updateAnimationEnd
+        // 0x009e10c4 - types 1, 3, 4, 5, 7 .. 10, 14 .. 17 back to the stance, the rest held. Type 6
+        // the death - BtlUnitList::SetDie 0x009da470 first -: the unit stays in sight for it)
+        vm.setNative("BattleUnit", "PlayAnimation", [this, unitOf](cr3::NativeCall& c) {
+            const int k = unitOf(c.integer(0)), type = c.integer(1);
+            const std::string suffix = cr3MotionOf(type);
+            if (k < 0 || suffix.empty()) return;
+            const bool back = type == 4 || (type >= 0 && type < 32 && ((0x3c7aau >> type) & 1u) != 0);
+            if (type == 6) cr3BattleUnits[size_t(k)].opacity = Ramp();
+            setCr3Motion(size_t(k), suffix, type == 0, !back);
+        });
+        // (BattleUnit::PlayEffect 0x009a7d24 -> BtlUnit::PlayHitEffect 0x009de81c: Effect's figure
+        // at the model's effect point - placed once, not following -, scaled, its own end)
+        vm.setNative("BattleUnit", "PlayEffect", [this, unitOf](cr3::NativeCall& c) {
+            const int k = unitOf(c.integer(0));
+            if (k >= 0) spawnCr3Effect(c.integer(1), cr3EffectPoint(size_t(k), c.integer(2)), float(c.number(3, 1.0)));
+        });
+        // (BattleUnit::Hide 0x009a7c30 -> BtlUnit::DisableDraw 0x009e02b8: at once, no fade)
+        vm.setNative("BattleUnit", "Hide", [this, unitOf](cr3::NativeCall& c) {
+            if (const int k = unitOf(c.integer(0)); k >= 0) cr3BattleUnits[size_t(k)].scriptHidden = true;
+        });
+        // (BattleCamera::Play 0x009a65f0 -> BtlCameraSystem::Play 0x009772dc: the clip's own figure -
+        // a Cam_bt one the battle's -, from the origin, not looped, held at its end until another)
+        vm.setNative("BattleCamera", "Play", [this](cr3::NativeCall& c) {
+            const std::string name = c.string(0);
+            cr3ScriptCamera = true;
+            if (name.find("Cam_bt") != std::string::npos) {
+                playCr3Camera(name, std::max(cr3BattleCam.duration(), 0.1f), false, {0, 0, 0}, 0, 0);
+                return;
+            }
+            cr3::Cr3BattleCamera camera;
+            if (!camera.load(archive, name) || !camera.has(name)) {
+                SDL_Log("battle camera %s: not found", name.c_str());
+                return;
+            }
+            cr3Cam = Cr3BattleCamPlay();
+            cr3Cam.name = name, cr3Cam.start = cr3BattleClock, cr3Cam.end = camera.duration();
+            cr3BattleOwnCam = std::move(camera);
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: script camera %s", cr3BattleClock, name.c_str());
+        });
+        // (BattleCamera::SetPosition 0x009a665c -> BtlCameraSystem::SetPosition 0x009792d0: the
+        // clip's origin moved there at once - world space; Play put it back at 0)
+        vm.setNative("BattleCamera", "SetPosition", [this](cr3::NativeCall& c) {
+            cr3Cam.actor = {float(c.number(0)), float(c.number(1)), float(c.number(2))};
+        });
+        // (Battle::StopAuto 0x009a82f4 -> BtlInterfaceSystem::StopAuto 0x009a4028: the player's
+        // auto battle off before a scripted event - CR3-U has no auto battle to stop)
+        vm.setNative("Battle", "StopAuto", [](cr3::NativeCall&) {});
         vm.setNative("Battle", "GetNumberOfKilledNonPlayer", [this](cr3::NativeCall& c) {
             int n = 0;
             for (const cr3::Cr3Fighter& f : cr3Rules.fighters) n += !f.player && f.dead();
@@ -122,6 +179,15 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
         };
         vm.setNative("BattleArgument", "GetSource", [this](cr3::NativeCall& c) { c.result(cr3ArgSource); });
         vm.setNative("BattleArgument", "GetCommand", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a ? a->command : -1); });
+        // (BattleArgument::GetActionType 0x009a4d38 -> BtlDamageChunk::GetActionType 0x0097e450:
+        // the chunk's - else the last direction's - command's CommandFomula +0x04, -1 without one;
+        // 5..8 and 22 read 0x20..0x24 when the chunk's +0x20 is set - not modelled: the scripts ask
+        // only after 9, 10, 20, 30 and 39 - ChangeCameraAfterLastAttack's Cam_event_start)
+        vm.setNative("BattleArgument", "GetActionType", [this, argAction](cr3::NativeCall& c) {
+            const auto* a = argAction();
+            cr3::Cr3Command cmd;
+            c.result(a && a->command >= 0 && cr3Rules.command(a->command, cmd) ? cmd.action : -1);
+        });
         vm.setNative("BattleArgument", "WasCooperated", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a && a->cooperated()); });
         vm.setNative("BattleArgument", "WasDown", [argAction](cr3::NativeCall& c) {
             bool down = false;
@@ -885,6 +951,7 @@ void Viewer::updateCr3Battle(float dt) {
             cr3VictorUnit = victor >= 0 ? cr3Rules.fighters[size_t(victor)].unit : -1;
             cr3VictoryDuration = 2.5f;
             if (cr3VictorUnit >= 0 && size_t(cr3VictorUnit) < cr3Battle.units.size()) {
+                cr3BattleUnits[size_t(cr3VictorUnit)].scriptHidden = false; // (BtlUnit::EnableDraw: a death direction's Hide undone for the finisher)
                 setCr3Motion(size_t(cr3VictorUnit), cr3MotionOf(2), false, true);
                 const std::string soloCam = cr3BattleTables.victoryCamera(cr3Battle.units[size_t(cr3VictorUnit)].model);
                 if (!soloCam.empty()) {
@@ -1865,8 +1932,9 @@ void Viewer::endCr3Actions() {
             }
     if (outcome == 1) { // (BtlSysStateAction::phaseVictoryEventStart: Battle_Victory_Base)
         cr3BattleStage = Cr3BattleStage::Won, cr3StageStart = cr3BattleClock, cr3VictoryIn = false;
+        cr3ScriptCamera = false;
         runCr3BattleScript("Battle_Victory_Base");
-        for (size_t k = 0; k < cr3Battle.units.size(); ++k)
+        for (size_t k = 0; k < cr3Battle.units.size() && !cr3ScriptCamera; ++k) // (a boss's death camera kept)
             if (cr3Battle.units[k].player) {
                 playCr3Camera(cr3Battle.cameras[7], 4.0f, false, {0, 0, 0}, 0, 0); // (the all camera)
                 break;
@@ -2254,7 +2322,7 @@ void Viewer::drawCr3Battle(int w, int h) {
         const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
         Cr3BattleUnitView& u = cr3BattleUnits[k];
         const float opacity = u.opacity.at(cr3BattleClock);
-        if (opacity <= 0) continue;
+        if (opacity <= 0 || u.scriptHidden) continue;
         const float yaw = bu.yaw + u.meleeTurn.at(cr3BattleClock);
         const float step = u.meleeStep.at(cr3BattleClock);
         const float yc = std::cos(yaw) * bu.scale, ys = std::sin(yaw) * bu.scale;

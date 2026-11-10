@@ -1452,6 +1452,7 @@ struct Viewer {
         float motionStart = 0;
         bool motionLoop = true, motionHold = false;
         bool knockedOut = false;
+        bool scriptHidden = false; // (BattleUnit.Hide - BtlUnit::DisableDraw: undrawn at once, for the battle's rest)
         Ramp opacity;
         cr3::Vec3 meleeOffset{};
         Ramp meleeStep{0, 0}, meleeTurn{0, 0};
@@ -1483,6 +1484,7 @@ struct Viewer {
         std::array<float, 3> lookAt{};
         float lookWeight = 0;
     } cr3Cam;
+    bool cr3ScriptCamera = false; // (a battle script's BattleCamera.Play since its event started: the victory's own camera not put over it)
     void playCr3Camera(const std::string& name, float end, bool loop, const std::array<float, 3>& actor, float yaw, float shift);
 
     // The screen breaking into the battle (GameMain::SetGlassEffect at the reservation: the next
