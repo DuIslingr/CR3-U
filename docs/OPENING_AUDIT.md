@@ -236,9 +236,9 @@ Deterministic REA evidence bundles are stored outside the repository at
   (`BtlUnit::PlayCamera` `0x009dd234`) are not modelled; `BattleUnit.GetAttachId`,
   `BattleDirection.InsertWaitDie` / `InsertRelease` / `GetNextCommandId`, `BattleStatus.AddMp` /
   `GetMode` / `HasEffect`, `BattleModel.*`, and `Battle.OpenUI` / `CloseUI` / `AddFieldObject` are
-  still stubs in the battle VM (1-5 scripts each), as are the in-battle choice menus
-  (`InterfaceWindow.CreateSelectTwo/ThreeChoiceMenu` behind `Msg_Choice2` / `Msg_Choice3`: 31 calls
-  in 16 battles).
+  still stubs in the battle VM (1-5 scripts each). (The in-battle choice menus behind `Msg_Choice2` /
+  `Msg_Choice3` are bound - `EventRuntime` registers `"CreateSelect" + n + "ChoiceMenu"` -, so a
+  literal-name census misses them.)
 - **Unbound natives (Round 4 replay)**: `Cr3System.SetMotionBlur` (`150` calls), `SetSpecialBlur`
   (`40`), `SetBloom` (`8`) - the post effects above -; `InterfaceWindow.Lock/UnLockCampTopCharacterPanel`,
   `SetCampWindowParty`, `CheckAliveCampWindowParty`, `CreateOverLay` / `DeleteOverLay`,
