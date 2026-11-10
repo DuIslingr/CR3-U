@@ -161,7 +161,7 @@ the finisher's solo victory pose.
 | `BattleUnit.PlayEffect(id, effect, point, scale)` (`0x009a7d24` -> `BtlUnit::PlayHitEffect` `0x009de81c` -> `BtlVisualEffectSystem::PlayHit` `0x009e1d50`) | `Effect`'s figure at the model's effect point (`0..7`, its locator plus offset), placed once in world space (not following), scaled uniformly, its own sound and end | Stub | `spawnCr3Effect(effect, cr3EffectPoint(unit, point), scale)` |
 | `BattleUnit.Hide(id)` (`0x009a7c30` -> `BtlUnit::DisableDraw` `0x009e02b8`; `EnableDraw` `0x009e0238`) | Undrawn at once, no fade, no script-level Show; the victory's finisher drawn again | Stub | `Cr3BattleUnitView::scriptHidden`; cleared for the victory's finisher |
 | `BattleCamera.Play(name)` / `SetPosition(x, y, z)` (`0x009a65f0` -> `BtlCameraSystem::Play` `0x009772dc`; `0x009a665c` -> `SetPosition` `0x009792d0`) | The clip's own figure (`CRDBpak1/<name>.geom/.anim`; a `Cam_bt` name the battle's), from the origin, not looped, held at its end until another `Play`; `SetPosition` moves its origin in world space at once (after `Play`, which resets it) | Stubs; the victory then put its "all" camera over the boss's | Own-figure clip from the origin for its duration, `cr3Cam.actor` = the position; `cr3ScriptCamera` keeps the victory's default camera off a script's |
-| `BattleArgument.GetActionType` (`0x009a4d38` -> `BtlDamageChunk::GetActionType` `0x0097e450`) | The damage chunk's (else the last direction's) command's `CommandFomula +0x04`, `-1` without; `5..8` / `22` read `0x20..0x24` when the chunk's `+0x20` is set | Stub, so `ChangeCameraAfterLastAttack` never cut to `Cam_event_start` after action types `9, 10, 20, 30, 39` | `Cr3Command::action` of the argument's action (the remap not modelled: no script tests those values) |
+| `BattleArgument.GetActionType` (`0x009a4d38` -> `BtlDamageChunk::GetActionType` `0x0097e450`) | The damage chunk's (else the last direction's) command's `MbCommandInfo +0x18 -> +0x04` - its **CommandDirection** row's kind (`MbGetCommandInfo` `0x00912020`: `+0x60a20 + id * 0x20`; `CreateDirection` `0x00912438` fills `+0x60a38`) -, `-1` without; `5..8` / `22` read `0x20..0x24` when the chunk's `+0x20` is set | Stub, so `ChangeCameraAfterLastAttack` never cut to `Cam_event_start` after kinds `9, 10, 20, 30, 39` | Round 5 read `CommandFomula +0x04` (0 for nearly every command - wrong); round 7 reads the CommandDirection kind, so the cut follows finishing moves |
 | `Battle.StopAuto` (`0x009a82f4` -> `BtlInterfaceSystem::StopAuto` `0x009a4028`) | Clears the player's auto battle (`+0xd4`) and closes the command buttons | Stub | Bound as a no-op: CR3-U has no in-game auto battle |
 
 ### 9. Round 6 parity audit (the scene's feedback blurs)
@@ -187,6 +187,29 @@ and zoom, Daisuke's "Aaaaangh...", 41.0..46.0 s, 298 frames) shows the outward t
 scene with the cut-in portrait and the window crisp; `vs:s221_t01_00702_evt` (special, 72 frames)
 shows the additive, slightly turning feedback. A display faster than 60 Hz runs the feedback per
 drawn frame, as `GameMain::Render` does, so its trails are shorter in time there.
+
+### 10. Round 7 parity audit (the rest of the battle scripts' natives)
+
+Done in a separate worktree by a delegated agent (REA bundle
+`/tmp/cr3-opening-audit/libcrx-audit-round6-battle-natives.json`), reviewed and re-checked here
+(`HasProhibitedTarget` and `MbGetCommandInfo` / `CreateDirection` re-decompiled). Battle 7 (the
+tutorial with the grab: command `1749` holds both heroes with status effect `32`) could not be won
+at team level 60: its follow-up `1755` and its release `1844` were dropped by targeting, so the
+party stayed locked. Stub lines in headless battles went from `2..31` to none.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Required target effects (`BtlStatusEffectList::HasProhibitedTarget` `0x009b88cc`, `MbCommandInfo::DisableNonTarget` `0x009124d0`) | **Any one** of the command's required effects is enough; any forbidden one blocks; a unit under a kind-`72` effect is targetable only by a command that removes it or (`DisableNonTarget`) requires it | All required effects needed; kind `72` passed only for removers | One-of; `DisableNonTarget` honoured (`1844` needs `32` or `43`; `1755` requires `32`) |
+| `BattleUnit.GetAttachId` / `Attach` (`0x009a8080`, `0x009a7ca0` -> `BtlUnitList` `0x009da9a8` / `0x009d9e70`) | `BtlUnit +0x238` the held: Hold directions `0x11` / `0x1e` on targets with effect `32` (`UpdateHold`), or the script; `poseChild` puts the held on the holder's effect point | Stubs (null) - battle 7 never matched | Holder -> held map from Hold directions and `Attach`; the held drawn on the effect point (its rotation not followed) |
+| `BattleDirection.InsertRelease` / `InsertWaitDie` (`0x009a4d98` / `0x009a4dc0` -> `Insert` `0x009915a4`) | A direction `0x27` / `0x28` after the current one; `PlayRelease` `0x009bf930`: detach, hit effect `0x34`, animation `8` or the knockout | Stubs | Inserted actions, the release at their end (the original's at its timing event 3); `0x13` commands (`1844`) release too |
+| `BattleDirection.GetNextCommandId` (`0x009a4de8` -> `0x009922ac`) | The next direction's command, `-1` none | Stub | The next non-guard action's command |
+| `BattleStatus.GetMode` / `HasEffect` / `AddMp` (`0x009a6434` / `0x009a64b0` / `0x009a6260`) | `VGetMode` (a monster's `+0x1fc`, a character's `0`); a status-effect or skill kind; MP added | Stubs | `Cr3Fighter::mode` (`changeMode`); effect or skill kind; MP clamped and shown |
+| `BattleArgument.IsCombo` / `WasBreak` / `WasHitStatusEffect` / `GetElement` (`0x009a4ccc` / `0x009a4d0c` / `0x009a4cf8` / `0x009a4ce4`) | Chunk `+0x9e` / `+0xa8` (target-list events 2, 3 - `notifyCombo`, `BtlBreakPoint::Add`'s break), any effect landed, chunk `+0x24` | Stubs | `Cr3Action::combo` / `broke` from the rules (`addBreak` returns the break); effects given; the command's element |
+| `Battle.AddFieldObject` / `SetFieldAnimatorEndTime` / `ResetFieldAnimatorLooping` (`0x009a82c8` / `0x009a8198` / `0x009a81bc`) | A figure on a field joint, looped; the field animator's end time; looping off | Stubs | Drawn on the joint; the field's time stepped and held (battle 69's joints are the final field `e0054b`'s - not seen drawn under `--battle 69`'s `d1251b`) |
+| `BattleModel.Create` / `PlayAnimation` / `SetPosition` / `SetRotation` / `PlayEffect` (`0x009a6960` .. `0x009a6c6c`) | The script's own models; an `Effect` at a point | Stubs | Drawn (battle 15's guest `c104`); the effect upright; the x/y/z order unverified (every call passes 0) |
+| `BattleUnit.SetHomePosition` / `HideMesh` (`0x009a7fec` / `0x009a7c68`) | Home moved and `ReturnHome`; `SetVisible` of `Model +0x10`'s mesh | Stubs | Home moved at once; `HideMesh` a no-op (`m222_sub`, the only name, is in no figure of the release) |
+| `Battle.OpenUI` / `CloseUI`, `BattleCommand.SetStart`, `Battle.IsWildCard` (`0x009a8290` / `0x009a82ac` / `0x009a6044` / `0x009a8414`) | The status and break-gauge UI; an opening command through `phaseGetSetStart` into `phaseCalculate`; the VS tournament row's `+0x6c` | Stubs | HUD panels hidden / shown; the command opens the first turn (sorted with the monsters' - where the original puts it UNKNOWN); `IsWildCard` "this tournament deals wildcards" (`+0x6c`'s meaning UNKNOWN) |
+| Addition-unit natives, `BattleUnit.DeleteEffect` (`0x009a7af8` .. `0x009a7fb4`) | Effects on addition units (battle 54's cards) | Stubs | Documented no-ops: CR3-U has no addition units |
 
 ## Original-code evidence
 
@@ -253,17 +276,17 @@ Deterministic REA evidence bundles are stored outside the repository at
 | `Cr3BindBattle` / `BattleUnit::PlayAnimation` / `PlayEffect` / `Hide` / `BattleCamera::Play` / `SetPosition` / `Battle::StopAuto` | `0x00854b98` / `0x009a7b5c` / `0x009a7d24` / `0x009a7c30` / `0x009a65f0` / `0x009a665c` / `0x009a82f4` | Sqrat `Func2<int,int>`, `Func5<int,int,int,float,..>`, `Func1<int>`, `Func1<const char*>`, `Func3<float,float,float>`, `Func0`; the behaviour in round 5's table (`BtlUnitList::SetDie` `0x009da470`, `BtlUnit::changeRequest` `0x009dc958`, `loadRequestAnimation` `0x009dcb88`, `changeAnimation` `0x009dcc14`, `updateAnimationEnd` `0x009e10c4`, `PlayHitEffect` `0x009de81c`, `BtlVisualEffect::Initialize` `0x009e23fc`, `DisableDraw` `0x009e02b8`, `BtlCameraSystem::Play` `0x009772dc`, `SetPosition` `0x009792d0`, `BtlInterfaceSystem::StopAuto` `0x009a4028`). | `/tmp/cr3-opening-audit/libcrx-audit-round5-battle-natives.json` (`11` records: `ev_dfc6da68...`, `ev_32c6cb2c...`, `ev_6620ad0d...`, `ev_098762407...`, `ev_2b71f4cb...`, `ev_17f38a89...`, `ev_3256c819...`) |
 | `BattleArgument::GetActionType` / `BtlDamageChunk::GetActionType` | `0x009a4d38` / `0x0097e450` | `MbGetCommandInfo(+0x1c) +0x18 -> +0x04`; the chunk's `+0x20` remap of `5..8`, `22`. | static `re/android/arm64/decomp.c` read |
 | `PostEffectRenderer::Build` / `Render` / `SetScale` / `SetAlpha` / `SetBlur` / `GameMain::Render` | `0x00ef856c` / `0x00ef8d80` / `0x00ef8c38` / `0x00ef8d38` / `0x00ef8b50` / `0x0096b46c` | Passes `0..5` (`{blend on, src, dst, FUNC_ADD 0x8006}`, shader types `0, 0, 6, 8, 5, 0`; pass `5` alpha `0.5`); `SetScale` scales the figure's size about its centre, `SetAlpha` `+0x1fc`; the render order (scene target, then effect / bloom / mask / blur / cross-fade, then layer `0xc` and the UI). | `/tmp/cr3-opening-audit/libcrx-audit-round6-blur-evidence.json` (`17` records: `ev_047314557070de1248aaa37067f7bc2624ccd3584fb933a20619f35f8eb02c7d`, `ev_1d5f91241ccd0e44d392dbced259241f1e1d9fca85ceb8be8bfeafa5f7b6f6a8`, `ev_2b261c051cb71f2fd58b14ebe569fc272507fbaba2e4bb35ec72e7a2f2e570fd`) |
+| `BtlDamageTarget::Hold` / `BtlDirection::holdTarget` / `BtlHoldDirection::VUpdate` | `0x00988474` / `0x0098cbdc` / `0x0099317c` | Attach only via Hold directions and the script. | `/tmp/cr3-opening-audit/libcrx-audit-round6-battle-natives.json` (`ev_c5f34083f2b6...`, `ev_30b6e36b05cc...`, `ev_4764cf4b466b...`, `ev_c9f97aabc698...`, `ev_68c98be14d78...`, `ev_5c834f645829...`) |
+| `BtlStatusList::PlayRelease` (callers) / `BattleCommand::HasStart` (callers) / VS tournament globals | `0x009bf930` / `0x009a60a4` / `0x0149ef7c` | WaitDie, HoldLastAttack and Release directions release; `isOpening`, `phaseStart`, `phaseGetSetStart`; Begin / EndVSTournament. | same bundle (`ev_2af59b43dcae...`, `ev_c20e870d0174...`, `ev_8e34f055a6af...`, `ev_9694dbd05261...`, `ev_715488982049...`) |
+| `BtlStatusEffectList::HasProhibitedTarget` / `MbGetCommandInfo` / `MbCommandInfo::CreateDirection` | `0x009b88cc` / `0x00912020` / `0x00912438` | Required effects one-of, forbidden any, kind `72` vs `HaveRemovesStatusEffect` / `DisableNonTarget`; command info `+0x60a20 + id * 0x20`, its `+0x18` the CommandDirection row (`+0x60a38`). | `ev_e3fc4585634207165f3ef2fd47ccab38f947c9d7aa1bfb46a53e104fb40301cc`, `ev_014221d6622f743c0fdcc8eea1857c706905a04bc829dc429c80e6cfca1600a7` |
 
 ## Not settled
 
 - **Battle staging still open (Round 5)**: `BattleUnit.PlayAnimation` type `6`'s `notify(4)` at the
   white-fade frame (`BtlUnit::updateWhiteFade` `0x009e1028`) and a model's own camera on a motion
-  (`BtlUnit::PlayCamera` `0x009dd234`) are not modelled; `BattleUnit.GetAttachId`,
-  `BattleDirection.InsertWaitDie` / `InsertRelease` / `GetNextCommandId`, `BattleStatus.AddMp` /
-  `GetMode` / `HasEffect`, `BattleModel.*`, and `Battle.OpenUI` / `CloseUI` / `AddFieldObject` are
-  still stubs in the battle VM (1-5 scripts each). (The in-battle choice menus behind `Msg_Choice2` /
-  `Msg_Choice3` are bound - `EventRuntime` registers `"CreateSelect" + n + "ChoiceMenu"` -, so a
-  literal-name census misses them.)
+  (`BtlUnit::PlayCamera` `0x009dd234`) are not modelled. Round 7's approximations: the held unit's
+  rotation, the release's timing, `SetStart`'s place in the turn, `IsWildCard`, and the addition
+  units (above).
 - **Unbound natives (Round 4 replay)**: `Cr3System.SetBloom` (`8`; `GameMain::PostEffectBloom` /
   `PostEffectBloomMask`, not decompiled yet - the blurs are round 6's); `InterfaceWindow.Lock/UnLockCampTopCharacterPanel`,
   `SetCampWindowParty`, `CheckAliveCampWindowParty`, `CreateOverLay` / `DeleteOverLay`,
