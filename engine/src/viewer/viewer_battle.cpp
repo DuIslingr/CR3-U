@@ -86,6 +86,7 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
         // multiplied -, the end forced - BtlSystem::s_ResultParam 0 won, 3 over -, the break
         // gauge as shown, the field)
         vm.setNative("Battle", "GetTurn", [this](cr3::NativeCall& c) { c.result(cr3Turn); });
+        bindQuakeNatives(vm); // (a battle's Cr3System.StartQuake - BattleDeathDirection's, the bosses' -: the root's QuakeControlTask)
         vm.setNative("Battle", "GetNumberOfKilledNonPlayer", [this](cr3::NativeCall& c) {
             int n = 0;
             for (const cr3::Cr3Fighter& f : cr3Rules.fighters) n += !f.player && f.dead();
@@ -2237,6 +2238,7 @@ void Viewer::drawCr3Battle(int w, int h) {
         shift[12] = cr3Cam.screenShift;
         proj = cr3::mat4Multiply(shift, proj);
     }
+    applyQuake(proj); // (battle layers 5..9: QuakeControlTask::Render)
     const Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
     cr3BattleVP = vp;
     cr3::SceneLighting l = lighting;

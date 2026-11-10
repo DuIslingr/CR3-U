@@ -1583,8 +1583,7 @@ void Viewer::stepFieldBombs(float dt) {
         if (!hit) continue;
         npc.broken = true, npc.brokenAt = areaClock;
         game.brokenRocks.insert(area.name + ":" + npc.name);
-        fieldQuake = FieldQuake();
-        fieldQuake.on = true, fieldQuake.width = 20, fieldQuake.from = 1, fieldQuake.to = 0, fieldQuake.seconds = 1.0f; // (StartQuake(20, 1, 0, 30))
+        startQuake(20, 1, 0, 30); // (Fld2Rock::UpdateBlast: StartQuake(20, 1, 0, 30))
         auto rnd = []() { return float(std::rand()) / float(RAND_MAX); };
         for (int k = 0; k < 30; ++k) {
             AreaNpc::Chip c;
@@ -1626,7 +1625,6 @@ void Viewer::stepFieldBombs(float dt) {
             if (!c.bounced && c.vel[1] < 0 && c.pos[1] < npc.place.m[7]) c.bounced = true, c.vel = {c.vel[0] * 0.7f, -c.vel[1] * 0.7f, c.vel[2] * 0.7f};
         }
     }
-    if (fieldQuake.on && (fieldQuake.time += dt) >= fieldQuake.seconds) fieldQuake.on = false;
 }
 
 void Viewer::drawFieldBombs(const float* vp) {
@@ -1883,23 +1881,51 @@ void Viewer::stepAreaScriptCam(float dt) {
 }
 
 // (StartQuake / StopQuake: the field's, and a vista's - QuakeControlTask shakes whatever's drawn)
-void Viewer::bindQuakeNatives(cr3::ScriptVM& vm) {
-    vm.setNative("Cr3System", "StartQuake", [this](cr3::NativeCall& c) {
-        fieldQuake.on = true, fieldQuake.width = float(c.number(0)), fieldQuake.from = float(c.number(1)), fieldQuake.to = float(c.number(2));
-        fieldQuake.seconds = std::max(float(c.number(3)), 1.0f) / 30.0f, fieldQuake.time = 0;
-    });
-    vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; });
+// (QuakeControlTask::Start 0x00944188 from utils::StartQuake 0x0092d33c: width, from, to, and
+// frames x GameSystem +0x148 - 1/30 s -, the time and the way reset)
+void Viewer::startQuake(float width, float from, float to, float frames) {
+    const float sinceUpdate = fieldQuake.sinceUpdate;
+    fieldQuake = FieldQuake(); // (+0xc4 time, +0xcc way and +0xd0 drawn cleared)
+    fieldQuake.on = true, fieldQuake.width = width, fieldQuake.from = from, fieldQuake.to = to;
+    fieldQuake.seconds = frames / 30.0f, fieldQuake.sinceUpdate = sinceUpdate;
+    SDL_Log("quake: %g wide, %g -> %g over %g frames", double(width), double(from), double(to), double(frames));
 }
 
-// (QuakeControlTask::Render: the layer's offset, 640 high - each frame the other way)
+// (QuakeControlTask::OnUpdate 0x00944084, at each of the game's 60-Hz ChildUpdates - the time
+// only at every other's 1/30 s: the time on, off once it reaches seconds - unless those are
+// below 0 -, held at |seconds|; the way flipped when a frame was drawn since the last)
+void Viewer::stepQuake(float dt) {
+    if (!fieldQuake.on) return;
+    fieldQuake.time += dt;
+    if (fieldQuake.seconds >= 0 && fieldQuake.time >= fieldQuake.seconds) fieldQuake.on = false;
+    fieldQuake.time = std::min(fieldQuake.time, std::fabs(fieldQuake.seconds));
+    for (fieldQuake.sinceUpdate += dt; fieldQuake.sinceUpdate >= 1.0f / 60.0f; fieldQuake.sinceUpdate -= 1.0f / 60.0f)
+        if (fieldQuake.drawn) fieldQuake.drawn = false, fieldQuake.parity = (fieldQuake.parity + 1) % 2;
+    fieldQuake.sinceUpdate = std::min(fieldQuake.sinceUpdate, 1.0f / 60.0f);
+}
+
+void Viewer::bindQuakeNatives(cr3::ScriptVM& vm) {
+    vm.setNative("Cr3System", "StartQuake", [this](cr3::NativeCall& c) {
+        startQuake(float(c.number(0)), float(c.number(1)), float(c.number(2)), float(c.number(3)));
+    });
+    vm.setNative("Cr3System", "StopQuake", [this](cr3::NativeCall&) { fieldQuake.on = false; }); // (QuakeControlTask::Stop)
+}
+
+// (QuakeControlTask::Render 0x009440f8 on layers 5..9 and 0 - GameMain's draw -: the layer's
+// RenderLayerScreen y offset (+0x88, then the camera's +0x24c) = width x (from + (to - from) x
+// time / |seconds|), down on the way's 0, up on its 1; MVGL Camera::GetScreenMatrix 0x00b8f184
+// moves clip space by that / DisplayInfo's height. That height the reference playthrough's: its
+// boss deaths' StartQuake(10, 0.2, 1.0, 143) measure 4.95 px of 720 at the end - 10 / 727)
 void Viewer::applyQuake(Mat4& proj) {
     if (!fieldQuake.on) return;
-    const float k = fieldQuake.from + (fieldQuake.to - fieldQuake.from) * std::min(fieldQuake.time / std::max(fieldQuake.seconds, 1e-3f), 1.0f);
+    constexpr float kQuakeDisplayHeight = 720.0f;
+    const float span = std::fabs(fieldQuake.seconds);
+    const float k = fieldQuake.from + (fieldQuake.to - fieldQuake.from) * (span > 0 ? fieldQuake.time / span : 0.0f);
     Mat4 shift{};
     shift[0] = shift[5] = shift[10] = shift[15] = 1;
-    shift[13] = (fieldQuake.parity ? 1.0f : -1.0f) * fieldQuake.width * k * 2.0f / 640.0f;
+    shift[13] = (fieldQuake.parity ? 1.0f : -1.0f) * fieldQuake.width * k / kQuakeDisplayHeight;
     proj = cr3::mat4Multiply(shift, proj);
-    fieldQuake.parity ^= 1;
+    fieldQuake.drawn = true;
 }
 
 void Viewer::bindAreaNatives(cr3::ScriptVM& vm) {

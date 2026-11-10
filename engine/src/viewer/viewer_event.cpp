@@ -478,7 +478,6 @@ void Viewer::drawLunchBalloons(int w, int h) {
 // one of the game's updates, the figures following the scene's models
 void Viewer::stepEvent() {
     if (eventEnded) return;
-    if (fieldQuake.on && (fieldQuake.time += cr3::EventRuntime::kTick) >= fieldQuake.seconds) fieldQuake.on = false; // (the field's own steps it outside a vista)
     if (!event->tick()) {
         SDL_Log("event: %s", event->error().c_str());
         eventEnded = true;

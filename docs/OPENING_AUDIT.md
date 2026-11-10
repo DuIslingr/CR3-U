@@ -124,6 +124,26 @@ shatter -> `BtlSysStateBattleIn` -> `BtlSysStateStart` -> `BtlSysStateSelect` ->
 | CR3 skill IDs, Formula `12` `extraType 18`, mid-turn MP abort, Break `extraType 13` / skill `70`, & `BtlTotalDamageUI` (`0x009af9cc`, `0x007e1c8c`, `0x009a4744`, `0x00867d88`) | Uses CR3 skill/status IDs (`35` Gravity resist, `81`/`82` hit/evade, `44` crit, `83` status land, `85` party drop boost, `104`/`105` hit counts); Formula `12` `extraType 18` adds `+20` power per matching target status; aborts mid-turn (`-2`) if drained below `mpCost`; supports `extraType 13` Break force-set & skill `70` Break Reset; renders `BtlTotalDamageUI` (`bttopanel`), `BattleInColor`, Gene level-up `RecoverBonusMP`, and Ace Coupling level-up | Used several CR2 skill IDs (`89`, `17..19`, `49`), missed `extraType 18`/`13`, skill `70`/`85`/`104`/`105`, mid-turn MP abort, `BtlTotalDamageUI`, Gene `RecoverBonusMP`, and Ace Coupling level-up | Aligned all CR3 skill/status IDs and formulas, added mid-turn `HaveEnoughMp` / `47` / `67` checks, rendered `BtlTotalDamageUI` (`bttoposition_io` -> `bttopanel`, `bttohp01/02_per`, `bttonum`, `bthitnum`), and wired `BattleInColor`, `RecoverBonusMP`, and Ace Coupling progression |
 | Camp Equipment/Items, Gene Lab lock/worn filter, Field encounters & Minimap, and `DBSystem` presents/daily items (`0x00a9388c`, `0x00a1da3c`, `0x00a2c2f0`, `0x00886a38`, `0x008677d8`, `0x00ad838c`, `0x00ad8654`, `0x0081fb78`, `0x0082e48c`) | Blocks locked/worn genes as Combine bases (`0x00a9388c`); draws `CampEquip` Step 0 `comlistcategorypanel` (`"Equipment"`), Step 1 `Weapons`/`Armor`/`Accessory` tabs, and full-width 16:9 `comftrequipmenu`; unwraps key gifts `600065`/`600067`/`600068`, party-wide MP items, and Command/Skill cards; averages equipped Gene levels (`CalcAveLevel`), rolls Ace encounters (`!d01`), filters minimap boxes/gimmicks/`d09` layers; fixes Oz-Coin presents (`COIN_MAX`), partial-stack daily items (`-> 99`), `mergeGene` flag `34`, and `CheckNewGene` timing | Allowed locked/worn Combine bases; omitted `CampEquip` category headers and left a 16:9 footer gap; lacked key-gift unwrapping & card slot learning; used character levels for encounters; showed unopened/hidden minimap icons; inserted bogus item `-2` on Oz-Coin presents and blocked partial-stack daily items | Enforces Gene Lab Combine base rules, `CampEquip` headers & 16:9 footer stretch, camp gift/MP/card item flows, `CalcAveLevel` & Ace encounters, minimap filtering, Oz-Coin/`COIN_MAX` presents, partial-stack `getDailyItem`, `mergeGene` flag `34`, and `Invoke(1)` `cr3GeneBook` sync |
 
+### 7. Round 4 parity audit (screen quake, field-map quake no-ops, unbound natives)
+
+Round 4 re-ran the full `4127`-event replay with `CR3_STUBS=1` and looked past the `EvtScene` /
+`EvtWindow` / `Cr3Sound` / `VistaEvent` namespaces that Rounds 1-3 cleared. Some natives the replay
+reports as stubs (`Cr3FieldMapCamera.SetScriptCamera*`, `Cr3System.StartQuake` in fields and
+vistas) are bound by the viewer (`bindAreaNatives`, `bindQuakeNatives`), which `cr3tool` doesn't
+load; the rest are listed under *Not settled*. The quake was checked against walkthrough Part 3
+(`Q-i3K6JUxqY`, 720p): the boss death at `14:24..14:28` is `BattleDeathDirection`'s
+`StartQuake(10, 0.2, 1.0, 143)`, and frame-to-frame phase correlation of its static left band gives
+alternating `+11.6` / `-8.2` px deltas at the end (`1.7` px/frame camera drift), an amplitude of
+`4.95` px of `720`.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `Cr3System.StartQuake` magnitude (`QuakeControlTask::Render` `0x009440f8`, `RenderLayerScreen::Offset` `0x00f168a4`, `MVGL::Draw::Camera::GetScreenMatrix` `0x00b8f184`) | Writes `width * (from + (to - from) * time / |seconds|)` to the 3D layers' (`5..9`, `0`) `RenderLayerScreen` y offset (`+0x88`, the camera's `+0x24c`); the screen matrix (`clip = Screen * Proj * View`) moves clip space by that **/ `DisplayInfo` height**, i.e. `offset / 2` device pixels; measured on the playthrough as `10 / 727` NDC | `width * k * 2 / 640` NDC, **2.25x** the playthrough's shake | `width * k / 720` NDC (`kQuakeDisplayHeight`, the playthrough's display) |
+| Quake time, end, and held quakes (`utils::StartQuake` `0x0092d33c`, `QuakeControlTask::Start` `0x00944188`, `OnUpdate` `0x00944084`, `Stop` `0x009441ac`) | `seconds = frames * GameSystem+0x148` (`1/30`), negative held at `to` until `StopQuake` (time clamped to `|seconds|`, no end); one root task stepped by every `ChildUpdate`, whatever the scene | `max(frames, 1) / 30` (a negative count ended after one frame); stepped separately by the field (`dt * 5` while skip was held) and `stepEvent`, not at all in battle | `Viewer::startQuake` / `stepQuake` in `Viewer::advance` (the root task's place): signed seconds, `|seconds|` clamp, real-time `dt` |
+| Shake parity (`QuakeControlTask::Render` sets `+0xd0`; `OnUpdate` flips `+0xcc` only when it's set) | The way flips at the first 60-Hz update **after a drawn frame**; the first frame after `Start` goes down (`-width * k`) | Flipped inside `applyQuake`, so two 3D passes in one frame (field + vista sub-viewport) cancelled out, and the flip rate followed the display's | `applyQuake` only marks the frame drawn; `stepQuake` flips at 60-Hz boundaries after a drawn frame |
+| Battle quakes (`BattleDeathDirection` in `battle_0004`, `0008`, `0013`, ... - `162` `StartQuake(10, 0.2, 1.0, 143)` sites) | Same root `QuakeControl` task, battle layers `5..9` | Battle scripts' `Cr3System.StartQuake` / `StopQuake` were stubs and the battle projection never shook | Battle `extraNatives` bind `bindQuakeNatives`; `drawCr3Battle` applies `applyQuake` (`quake: 10 wide, 0.2 -> 1 over 143 frames` at battle 4's boss death) |
+| `Cr3FieldMapCamera.QuakeStart` / `QuakeStop` (`Cr3BindFieldMapCamera` `0x00851d20`, `FldUtilFieldMapCameraQuakeStart` `0x00872074`) | CR2's 2D field-map quake left as **no-ops** in CR3 (`return param_1`); the scripts' `CameraQuake` / `vCameraQuake` wrappers are never called | `FieldScript` steps a 2D map quake (`frames * 0.05`, CR2's 20 Hz) | Unchanged (unreachable from CR3's scripts); recorded here |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -131,7 +151,8 @@ Ghidra image base), cross-checked against local PS Vita (`re/vita/decomp.c`) and
 Deterministic REA evidence bundles are stored outside the repository at
 `/tmp/cr3-opening-audit/libcrx-audit-evidence.json` (`38` Round 1 records, `0` unknowns),
 `/tmp/cr3-opening-audit/libcrx-audit-round2-evidence.json` (`46` Round 2 records, `0` unknowns), and
-`/tmp/cr3-opening-audit/libcrx-audit-round3-evidence.json` (`5` batched Round 3 records covering `26` procedures, `0` unknowns).
+`/tmp/cr3-opening-audit/libcrx-audit-round3-evidence.json` (`5` batched Round 3 records covering `26` procedures, `0` unknowns), and
+`/tmp/cr3-opening-audit/libcrx-audit-round4-evidence.json` (`7` Round 4 records, `0` unknowns).
 
 | Target | SHA-256 |
 |---|---|
@@ -180,8 +201,28 @@ Deterministic REA evidence bundles are stored outside the repository at
 | `calculateProportionalToStatusEffectNumber` / `GetSameElementCorrection` / `ChangeElementToCalculation` / `BtlTotalDamageUI` | `0x007e1c8c` / `0x009b0648` / `0x0097b9b0` / `0x009a4744` | Formula `12` `extraType 18` (`+20` power/status), skill `103` (`+-c%`), post-damage element shift respecting `102`, and `bttopanel` combo HUD. | `ev_78b15d7fc8549df31f9abd9de8293720e0728f5f2dc3273b35ea38ece41c669c` |
 | `GeneCardMenu::SetCardLockView` / `CampEquip2Menu::Update` / `CampItemMain::Update` / `CrxUtilAddMP` | `0x00a9388c` / `0x00a1da3c` / `0x00a2c2f0` / `0x00886a38` | Combine lock/worn base block, `CampEquip` Step 0/1 category headers, key-gift unwrapping (`600065`/`600067`/`600068`), party MP items (`0xa24` mask), and Command/Skill card learning. | `ev_78b15d7fc8549df31f9abd9de8293720e0728f5f2dc3273b35ea38ece41c669c`, `ev_7fe959299602a3235299fcf5388c40ca93b8e1bc1a6064292f3e8f385eaebdc3` |
 | `Fld2TaskEncount::CalcAveLevel` / `AceCouplingLevelUp` / `MiniMapMenu::ChangeMapTexture` & `SetGimickPointDataView` | `0x008677d8` / `0x00867d88` / `0x00ad838c` / `0x00ad8654` | Equipped-Gene average encounter level, Ace Coupling post-victory level-up, `d0904`/`d0908`/`d0912` negative-layer minimap guard, and box/gimmick icon filtering. | `ev_7fe959299602a3235299fcf5388c40ca93b8e1bc1a6064292f3e8f385eaebdc3` |
+| `utils::StartQuake` / `StopQuake` / `QuakeControlTask` (`Start` / `OnUpdate` / `Render` / `Stop`) | `0x0092d33c` / `0x0092d3e0` / `0x00944188` / `0x00944084` / `0x009440f8` / `0x009441ac` | `frames * 1/30` seconds, negative held; time clamped to `|seconds|`; way flipped after a drawn frame; layer `+0x88` offset `width * lerp(from, to)`; defaults `0.005`, `1.0`. | `ev_68de576b287f7abeaee7c129177cb3f108cdd48b454c9e4cdc91c7a675e22417` |
+| `RenderLayer::RenderLayer` / `RenderSystem::Render` / `RenderLayerScreen::Offset` / `RenderSystem::GetLayer` / `OnQuake` | `0x00f168fc` / `0x00f13804` / `0x00f168a4` / `0x00f14358` / `0x0095b150` | 0x90-byte layers, `RenderLayerScreen` at `+0x7c` added to the camera's `+0x240..+0x250` (x/y scale, x/y offset, roll) for the pass; debug `OnQuake` `Start(10, 1, 0, 3 s)`. | `ev_2695d5bf159c1049d41c11805ba043addf1066433c5ba93b6f77cfbffd476ae9`, `ev_ccfd601f3698f29c18af53b3cbf337bc92cffa5460e7ec7ecae83a601273f31a` |
+| `Cr3BindFieldMapCamera` / `FldUtilFieldMapCameraQuakeStart` / `Fld2SetFieldScriptCamera` / `Fld2TaskCamera::ChangeScriptCamera` | `0x00851d20` / `0x00872074` / `0x0086f518` / `0x009ebc18` | Field-map quake natives are no-ops; script camera `frames * 1/30`, toy camera dropped, character movement paused and field UI hidden while it's on. | `ev_e1bad8b85ee3e09974a5bfa76428cd01b06e84c7df4436fd2f9b0f658053bf2b` |
+| `utils::SetMotionBlur` / `SetSpecialBlur` / `GameMain::PostEffectBlur` | `0x0092b3c4` / `0x0092b3f4` / `0x0096ca54` | `GameSystem +0x68` / `+0x69` / `+0x6a` flags drive a ping-pong feedback blur (buffers `4|5`, pass `5` at scale `1.0` / `1.2`; special: pass `1` scale `1.1`, roll `0.01`, alpha `min(n/50 + 0.5, 0.8)`, layer `0xc` zoom `min(1 + n/1000, 1.02)`). | `ev_9f3ab6a0c15ee3a6fbb9bdb3898c9a04b116dfbc3ce71fea6fd763dcb2daa406` |
+| `MVGL::Draw::Camera::GetScreenMatrix` / `SetGraphicLevel` / `SM_SetupGraphics` | `0x00b8f184` / `0x0096ac18` / `0x00969360` | Screen translation = camera `+0x248 / DisplayInfo width`, `+0x24c / DisplayInfo height` (device pixels; the scene buffer `GameSystem +0x70 x +0x74` is the display or `80%` of it). | static `re/android/arm64/decomp.c` read (`848708..848794`, `381426..381520`, `380299..380440`) |
 
 ## Not settled
+
+- **`BattleDeathDirection`'s staging (Round 4)**: the boss deaths' `BattleUnit.PlayAnimation`,
+  `PlayEffect`, `Hide`, `BattleCamera.Play`, `SetPosition`, and `Battle.StopAuto` are still stubs in
+  the battle VM, so only the quake (and the result) of the close-up seen at Part 3 `14:24..14:28`
+  (camera on the boss, light pillars, units hidden) plays.
+- **Unbound natives (Round 4 replay)**: `Cr3System.SetMotionBlur` (`150` calls), `SetSpecialBlur`
+  (`40`), `SetBloom` (`8`) - the post effects above -; `InterfaceWindow.Lock/UnLockCampTopCharacterPanel`,
+  `SetCampWindowParty`, `CheckAliveCampWindowParty`, `CreateOverLay` / `DeleteOverLay`,
+  `CreateGeneStatusSCModalMenu`, `AliveGeneStatusMenu`, `CreateGeneCardSelector` (+ result / alive),
+  `CreateDisposalEquipMenu_Gene` (+ result), `GetSelectTournamentID`; `Cr3System.CheckDisposeMenu`,
+  `SetLastAttackLevel`, `VsBattleIn`; `Cr3GimmickData.ChangePlayerEquip`; `Cr3FieldMapCamera.Scroll`
+  / `ScrollTo`.
+- **Quake reference height**: the original's shake is `offset / 2` *device* pixels, so it shrinks on
+  denser displays; CR3-U fixes the divisor at the playthrough's `720` so the look matches the
+  reference at any window size.
 
 - Sub-frame interpolation between odd (`0.0f`) and even (`1/30f`) 60-Hz `ChildUpdate` passes is
   collapsed into CR3-U's `EventRuntime::update` (`1/30 s`) plus `eventLead()` render interpolation,
@@ -190,9 +231,11 @@ Deterministic REA evidence bundles are stored outside the repository at
 
 ## Checks
 
-- **CTest suite (`24/24` passed)**:
+- **CTest suite (`25/25` passed)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 ctest --test-dir engine/build --output-on-failure -E viewer-pad-vita`
-  passes all 24 suites (`battle-target-side`, `vita-import`, `input-cancel`, `lifecycle-clock`,
+  passes all 25 suites (Round 4's `viewer-quake`: first frame down by `width * from / 720`, flip
+  only after a drawn frame, `from .. to` ramp, end at `frames / 30`, negative frames held at `to`,
+  `StopQuake`; and `battle-target-side`, `vita-import`, `input-cancel`, `lifecycle-clock`,
   `gl-context-recovery`, `viewer-input-cancel`, `viewer-lifecycle-clock`, `audio-player`,
   `viewer-scene-audio`, `viewer-session-ui`, `viewer-field-restore`, `viewer-new-session`,
   `viewer-save-slots`, `viewer-vista-pause`, `gom-camera`, `atomic-file`, `hd-texture`, `card-art`,

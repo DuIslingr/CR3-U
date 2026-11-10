@@ -447,6 +447,49 @@ int newSessionSelfTest() {
     return problems ? 1 : 0;
 }
 
+// utils::StartQuake / QuakeControlTask (OnUpdate 0x00944084, Render 0x009440f8, Start 0x00944188):
+// the layer's y offset width x (from .. to) / the display's height, the way flipped at a 60-Hz
+// update only after a drawn frame, below-0 frames held, Stop
+int quakeSelfTest() {
+    if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
+    int problems = 0;
+    {
+        Viewer v;
+        cr3::ScriptVM vm;
+        v.bindQuakeNatives(vm);
+        const char* source = "function start(){Cr3System.StartQuake(10, 0.2, 1.0, 143);} function held(){Cr3System.StartQuake(30, 0.1, 0.3, -10);} "
+                             "function stop(){Cr3System.StopQuake();}";
+        if (SQ_FAILED(sq_compilebuffer(vm.vm(), source, SQInteger(std::strlen(source)), "quake-fixture", SQTrue)) || !vm.runMain()) return 1;
+        auto check = [&](bool ok, const char* what) {
+            if (!ok) { ++problems; std::printf("quake FAILED: %s\n", what); }
+        };
+        auto offset = [&]() {
+            Mat4 p = cr3::mat4Identity();
+            v.applyQuake(p);
+            return p[13];
+        };
+        auto near = [](float a, float b) { return std::fabs(a - b) < 1e-6f; };
+        vm.call("start");
+        check(v.fieldQuake.on && near(v.fieldQuake.seconds, 143.0f / 30.0f), "StartQuake: frames / 30 s");
+        check(near(offset(), -10 * 0.2f / 720), "the first frame down by width x from / 720");
+        v.stepQuake(1.0f / 60);
+        check(near(offset(), 10 * (0.2f + 0.8f * (1.0f / 60) / (143.0f / 30)) / 720), "after a drawn frame's update: up, from .. to by the time");
+        v.stepQuake(1.0f / 60), v.stepQuake(1.0f / 60);
+        check(v.fieldQuake.parity == 0, "no second flip without another drawn frame");
+        v.stepQuake(143.0f / 30);
+        check(!v.fieldQuake.on, "off at its frames");
+        check(near(offset(), 0), "nothing moved once off");
+        vm.call("held");
+        v.stepQuake(5.0f);
+        check(v.fieldQuake.on && near(std::fabs(offset()), 30 * 0.3f / 720), "below-0 frames: held at `to` past the time");
+        vm.call("stop");
+        check(!v.fieldQuake.on, "StopQuake");
+    }
+    SDL_Quit();
+    std::printf("quake: %d problems\n", problems);
+    return problems ? 1 : 0;
+}
+
 int vistaPauseSelfTest() {
     const char* data = SDL_getenv("CR3_VITA_DATA");
     if (!data || !*data) data = SDL_getenv("CR3_DATA");
@@ -563,6 +606,7 @@ static cr3::SetupGame cr3SetupGame() {
 
 int main(int argc, char** argv) {
     if (argc>1 && std::strcmp(argv[1],"--selftest-vista-pause")==0) return vistaPauseSelfTest();
+    if (argc > 1 && std::strcmp(argv[1], "--selftest-quake") == 0) return quakeSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-save-slots")==0) return saveSlotSafetySelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-new-session")==0) return newSessionSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-field-restore")==0) return fieldRestoreSelfTest();

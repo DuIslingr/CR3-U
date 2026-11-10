@@ -1401,6 +1401,7 @@ void Viewer::advance(float dt, float sx, float sy, bool run) {
     if (!vistaPaused && (!eventMode || !event || !event->windowOpen(cr3::EventRuntime::Vista))) vistaControlsUntil = -1;
     audio.pauseSceneSound(vistaPaused);
     if (vistaPaused) return;
+    stepQuake(dt); // (the root's QuakeControlTask: whichever script started it)
     // (tests: --input's language@s - the options' language one on at s seconds, as its arrow)
     if (!inputScript.empty() && inputScript.front().compare(0, 9, "language@") == 0 && uiClock >= float(std::atof(inputScript.front().c_str() + 9)))
         inputScript.pop_front(), optionTap(3106);

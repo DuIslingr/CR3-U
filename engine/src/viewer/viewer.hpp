@@ -1250,11 +1250,17 @@ struct Viewer {
     };
     std::array<FieldBomb, 3> fieldBombs;
     std::vector<std::string> fieldPendingFunctions; // (gimmicks' functions set off while another ran)
-    struct FieldQuake { // (utils::StartQuake - QuakeControlTask: the layer moved up and down by width x (from .. to over the time), each frame the other way)
-        bool on = false;
-        float width = 0, from = 0, to = 0, time = 0, seconds = 0;
+    // (utils::StartQuake - the root's QuakeControlTask, the field's, a battle's and a vista's alike:
+    // the 3D layers 5..9 and 0 moved up and down by width x (from .. to over the time) - seconds
+    // = frames / 30, below 0 held at `to` until StopQuake -, the way flipped at each 60-Hz update
+    // after a drawn frame)
+    struct FieldQuake {
+        bool on = false, drawn = false;
+        float width = 0, from = 0, to = 0, time = 0, seconds = 0, sinceUpdate = 0;
         int parity = 0;
     } fieldQuake;
+    void startQuake(float width, float from, float to, float frames);
+    void stepQuake(float dt);
     float fieldAnimDuration(const std::string& model);
     void putBomb();
     static float bombDist(const cr3::Vec3& a, const cr3::Vec3& b);
