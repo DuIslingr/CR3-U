@@ -11,8 +11,9 @@ namespace cr3 {
 namespace {
 
 constexpr int kEffectSlots = 16, kVoiceSlots = 16;
-constexpr float kUpdates = 20.0f; // (the game's updates a second: what fades count)
-constexpr float kBgmAhead = 0.5f; // (seconds of the music kept queued)
+constexpr float kUpdates = 20.0f;    // (CR2's updates a second: what its fades count)
+constexpr float kCr3Updates = 30.0f; // (CR3's frames a second: utils::SoundPlayBGM / StopBGM)
+constexpr float kBgmAhead = 0.5f;    // (seconds of the music kept queued)
 
 } // namespace
 
@@ -48,22 +49,21 @@ bool AudioPlayer::openDevice(bool device, std::string* error) {
     return true;
 }
 
-// CR3's hooks: the scripts' fades count the game's frames (30 a second), these the updates (20)
+// CR3's hooks: both script and viewer fades count the game's 30 frames a second
 bool AudioPlayer::openCr3(const Cr3Sound& sound, bool device, std::string* error) {
     close();
     cr3_ = &sound;
     const bool ok = openDevice(device, error);
-    const auto frames = [](int f) { return f > 0 ? std::max(1, (f * 2 + 1) / 3) : 0; };
     SoundHooks& h = soundHooks();
-    h.playBgm = [this, frames](int t, int f) { playBgm(t, frames(f)); };
-    h.playBgmOnce = [this, frames](int t, int f, bool loop) {
+    h.playBgm = [this](int t, int f) { playBgm(t, f); };
+    h.playBgmOnce = [this](int t, int f, bool loop) {
         if (t < 0) return;
         char n[16];
         std::snprintf(n, sizeof n, "m%02d", t);
-        playBgm(n, frames(f), loop);
+        playBgm(n, f, loop);
         track_ = t;
     };
-    h.stopBgm = [this, frames](int f) { stopBgm(frames(f)); };
+    h.stopBgm = [this](int f) { stopBgm(f); };
     h.releaseBgm = [this] { releaseBgm(); };
     h.state = [this](int which) { // (utils::SoundGetState: 2 the music on / a voice on, else 1)
         if (which == 0) return bgmPlaying_ ? 2 : 1;
@@ -72,11 +72,11 @@ bool AudioPlayer::openCr3(const Cr3Sound& sound, bool device, std::string* error
         return 1;
     };
     h.playSe = [this](int c, bool loop) { return playSe(c, loop); };
-    h.stopSe = [this, frames](int s, int f) { stopSe(s, frames(f)); };
-    h.stopAllSe = [this, frames](int f) { stopAllSe(frames(f)); };
-    h.stopAllVoices = [this, frames](int f) { stopAllVoices(frames(f)); };
-    h.playSeNamed = [this, frames](const std::string& n, bool loop, int f) { return playSe(n, loop, frames(f)); };
-    h.stopSeNamed = [this, frames](const std::string& n, int f) { stopSe(n, frames(f)); };
+    h.stopSe = [this](int s, int f) { stopSe(s, f); };
+    h.stopAllSe = [this](int f) { stopAllSe(f); };
+    h.stopAllVoices = [this](int f) { stopAllVoices(f); };
+    h.playSeNamed = [this](const std::string& n, bool loop, int f) { return playSe(n, loop, f); };
+    h.stopSeNamed = [this](const std::string& n, int f) { stopSe(n, f); };
     h.playVoiceNamed = [this](const std::string& n) { return playVoice(n); };
     h.playingNamed = [this](const std::string& n) { return playingNamed(n); };
     h.bgmNo = [this] { return bgmPlaying_ ? track_ : -1; };
@@ -167,7 +167,8 @@ void AudioPlayer::playBgm(const std::string& name, int fadeFrames, bool loop) {
 void AudioPlayer::startMusic(std::unique_ptr<MusicStream> o, int fadeFrames) {
     bgmPlaying_ = true, bgmPos_ = 0;
     bgmFade_ = fadeFrames > 0 ? 0.0f : 1.0f;
-    bgmFadeStep_ = fadeFrames > 0 ? kUpdates / float(fadeFrames) : 0.0f;
+    const float rate = cr3_ ? kCr3Updates : kUpdates;
+    bgmFadeStep_ = fadeFrames > 0 ? rate / float(fadeFrames) : 0.0f;
     if (device_) {
         SDL_AudioSpec spec{};
         spec.format = SDL_AUDIO_S16, spec.channels = o->channels(), spec.freq = o->rate();
@@ -211,7 +212,7 @@ void AudioPlayer::stopBgm(int fadeFrames) {
         bgmPlaying_ = false;
         return;
     }
-    bgmFadeStep_ = -kUpdates / float(fadeFrames);
+    bgmFadeStep_ = -(cr3_ ? kCr3Updates : kUpdates) / float(fadeFrames);
 }
 
 void AudioPlayer::releaseBgm() {
@@ -272,7 +273,7 @@ int AudioPlayer::playSe(const std::string& name, bool loop, int fadeInFrames) {
             Voice& v = slots_[size_t(k)];
             startPcm(v, std::move(c.pcm), c.rate, c.channels, loop, false);
             v.name = name;
-            if (fadeInFrames > 0) v.fade = 0, v.fadeStep = kUpdates / float(fadeInFrames); // (PlaySE_Fade: up from 0)
+            if (fadeInFrames > 0) v.fade = 0, v.fadeStep = kCr3Updates / float(fadeInFrames); // (PlaySE_Fade: up from 0)
             return v.active ? k : -1;
         }
     return -1; // (all busy)
@@ -350,7 +351,7 @@ void AudioPlayer::stopSe(int slot, int fadeFrames) {
     if (slot < 0 || slot >= kEffectSlots || size_t(slot) >= slots_.size()) return;
     Voice& v = slots_[size_t(slot)];
     if (fadeFrames <= 0) endVoice(v);
-    else v.fadeStep = -kUpdates / float(fadeFrames);
+    else v.fadeStep = -(cr3_ ? kCr3Updates : kUpdates) / float(fadeFrames);
 }
 
 void AudioPlayer::stopAllSe(int fadeFrames) {
@@ -371,10 +372,11 @@ int AudioPlayer::playVoice(int clip) {
 }
 
 void AudioPlayer::stopAllVoices(int fadeFrames) {
+    const float rate = cr3_ ? kCr3Updates : kUpdates;
     for (int k = kEffectSlots; k < std::min(kEffectSlots + kVoiceSlots, int(slots_.size())); ++k) {
         Voice& v = slots_[size_t(k)];
         if (fadeFrames <= 0) endVoice(v);
-        else v.fadeStep = -kUpdates / float(fadeFrames);
+        else v.fadeStep = -rate / float(fadeFrames);
     }
 }
 

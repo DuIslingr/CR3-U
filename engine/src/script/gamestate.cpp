@@ -122,10 +122,15 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     // offline), 11 / 12 a counter (read, cleared); the rest a request (3 PutProfile, 7 SyncWait, 10
     // SetTeamName, 15 ShowGeneResult, 16 GetVSMission + GetVSTournaments, 17 BeginVSTournament, 19
     // ExchangeGem, 21 SyncMP) - the offline game's answer OK
-    vm.setNative("Cr3System", "Invoke", [&state, &db](NativeCall& c) {
+    auto syncGeneBook = [&state]() {
+        for (const Cr3Gene& g : state.cr3Genes)
+            if (g.master > 0) state.cr3GeneBook.insert(g.master);
+    };
+    vm.setNative("Cr3System", "Invoke", [&state, &db, syncGeneBook](NativeCall& c) {
         switch (c.integer(0)) {
         case 0: return c.result(state.cr3TeamLevel);
         case 1: {
+            syncGeneBook();
             int n = 0;
             if (db)
                 for (const auto& line : db->book())
@@ -138,6 +143,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         }
         case 4: return c.result(state.cr3ProfileValue);
         case 11: case 13: return c.result(0);
+        case 15:
+            syncGeneBook();
+            if (db) db->finish(kDbOk);
+            return c.result(0);
         case 16:
             if (db) db->getVSMission(state), db->getVSTournaments(state, std::time(nullptr));
             break;
@@ -164,20 +173,23 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3System", "GetQuestState", [&state](NativeCall& c) { c.result(state.cr3Quests.state); });
     // money: utils::SetGold (GoldSet) / GetGold (GoldGet: n more) / CheckGold (GoldCheck); the
-    // Oz coins likewise (CoinGet / CoinCheck)
-    vm.setNative("Cr3System", "GoldSet", [&state](NativeCall& c) { state.cr3Money = c.integer(0); });
-    vm.setNative("Cr3System", "GoldGet", [&state](NativeCall& c) { state.cr3Money += c.integer(0); });
+    // Oz coins likewise (CoinGet / CoinCheck), clamped per CrxGameData::CheckLimit
+    auto clampGold = [&db](int64_t v) { return int(std::clamp<int64_t>(v, 0, db ? db->constant("GOLD_MAX", 9999999) : 9999999)); };
+    auto clampCoin = [&db](int64_t v) { return int(std::clamp<int64_t>(v, 0, db ? db->constant("COIN_MAX", 99999999) : 99999999)); };
+    vm.setNative("Cr3System", "GoldSet", [&state, clampGold](NativeCall& c) { state.cr3Money = clampGold(c.integer(0)); });
+    vm.setNative("Cr3System", "GoldGet", [&state, clampGold](NativeCall& c) { state.cr3Money = clampGold(int64_t(state.cr3Money) + c.integer(0)); });
     vm.setNative("Cr3System", "GoldCheck", [&state](NativeCall& c) { c.result(state.cr3Money); });
-    vm.setNative("Cr3System", "CoinGet", [&state](NativeCall& c) { state.cr3Coins += c.integer(0); });
+    vm.setNative("Cr3System", "CoinGet", [&state, clampCoin](NativeCall& c) { state.cr3Coins = clampCoin(int64_t(state.cr3Coins) + c.integer(0)); });
     vm.setNative("Cr3System", "CoinCheck", [&state](NativeCall& c) { c.result(state.cr3Coins); });
     // utils::GetItemWithCategory(category, id, count): 0 an item, 1 .. 6 x 100000 + id, 10 gold
-    vm.setNative("Cr3System", "GetItemWithCategory", [&state, &db](NativeCall& c) {
+    vm.setNative("Cr3System", "GetItemWithCategory", [&state, &db, clampGold](NativeCall& c) {
         const int cat = c.integer(0), id = c.integer(1), n = c.integer(2, 1);
-        if (cat == 10) state.cr3Money += id;
+        if (cat == 10) state.cr3Money = clampGold(int64_t(state.cr3Money) + id);
         else if (cat >= 0 && cat <= 6 && db) db->earnItemPrize(state, cat * 100000 + id, n);
     });
     // genes: utils::GetGene(id, level) - a gene in the first of the 50 places free (its index; -1
-    // none) -, CheckGene (how many held, the stock's too), CheckNewGene (never had), CheckGeneFull
+    // none) -, CheckGene (how many held, the stock's too), CheckNewGene (never had), CheckGeneFull,
+    // GetGeneExp(id, level)
     vm.setNative("Cr3System", "GeneGet", [&state, &db](NativeCall& c) {
         if (int(state.cr3Genes.size()) >= (db ? db->constant("GENE_CAPACITY", 50) : 50)) return c.result(-1);
         Cr3Gene g{c.integer(0)};
@@ -186,9 +198,12 @@ void bindGameState(ScriptVM& vm, GameState& state) {
             db->initGene(g);
         }
         state.cr3Genes.push_back(g);
-        state.cr3GeneBook.insert(g.master);
         ++state.cr3Records.genesObtained;
         c.result(int(state.cr3Genes.size()) - 1);
+    });
+    vm.setNative("Cr3System", "GetGeneExp", [&db](NativeCall& c) {
+        const int id = c.integer(0), lv = std::max<int>(c.integer(1, 1), 1);
+        c.result(db ? db->geneExp(id, lv) : 0);
     });
     vm.setNative("Cr3System", "GeneCheck", [&state](NativeCall& c) {
         const int id = c.integer(0);
@@ -337,6 +352,11 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         for (int& m : state.mp) m = -1;
         state.cr3Mp.clear();
     });
+    vm.setNative("Cr3System", "MPFullRecovery2", [&state](NativeCall& c) {
+        const int ch = c.integer(0);
+        if (ch >= 0 && ch < 9) state.mp[ch] = -1;
+        state.cr3Mp.erase(ch);
+    });
     vm.setNative("Cr3System", "SetPopPoint", [&next](NativeCall& c) { next.popPoint = c.string(0); }); // (FldUtilSetPopPoint)
     vm.setNative("Cr3System", "SetPopPoint2", [&state](NativeCall& c) { state.popPoint2 = c.string(0); });
     vm.setNative("Cr3System", "ReserveTownMove", [&next](NativeCall&) { next.townMove = true; });
@@ -448,6 +468,23 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     vm.setNative("Cr3System", "SetBGColor", [&state](NativeCall& c) {
         for (int k = 0; k < 3; ++k) state.bgColor[k] = c.number(k);
     });
+    vm.setNative("Cr3System", "BattleInColor", [&state](NativeCall& c) {
+        state.battleInColorSet = true;
+        for (int k = 0; k < 3; ++k) state.battleInColor[k] = c.number(k);
+    });
+    vm.setNative("Cr3System", "SetViewportEnable", [&state](NativeCall& c) { state.viewportEnable = c.boolean(0); });
+    vm.setNative("Cr3System", "SetViewportPosition", [&state](NativeCall& c) {
+        state.viewportPos[0] = c.number(0, 0.52f), state.viewportPos[1] = c.number(1, 0.27f);
+    });
+    vm.setNative("Cr3System", "SetViewportSize", [&state](NativeCall& c) {
+        state.viewportSize[0] = c.number(0, 0.46f), state.viewportSize[1] = c.number(1, 0.46f);
+    });
+    vm.setNative("Cr3System", "SetDungeonLevel", [&state](NativeCall& c) { state.dungeonLevel = c.integer(0); });
+    vm.setNative("Cr3System", "GetDungeonLevel", [&state](NativeCall& c) { c.result(state.dungeonLevel); });
+    vm.setNative("Cr3System", "SetGlassEffectPattern", [&state](NativeCall& c) {
+        state.glassPattern = std::clamp(c.integer(0, 1), 0, 5);
+    });
+    vm.setNative("Cr3GimmickData", "Setup", [&state](NativeCall&) { state.gimmickSetupRequested = true; });
     vm.setNative("Cr3System", "ReserveLibrary", [&next](NativeCall&) { next.library = true; });
     vm.setNative("Cr3System", "ReserveCamp", [&next](NativeCall&) { next.camp = true; });
     vm.setNative("Cr3System", "ReservePUB", [&next](NativeCall&) { next.pub = true; });
@@ -544,7 +581,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     for (int s = 0; s < 32; ++s) o << "sopia " << s << ' ' << int(sopiaLevel[s]) << ' ' << sopiaExp[s] << '\n';
     o << "owned " << sopiaOwned << '\n';
     o << "difficulty " << difficulty << '\n';
-    o << "select " << selectDungeon << ' ' << selectLevel << '\n'; // (the level: a dungeon's encounters' band on resuming - DAT_014bde04)
+    o << "select " << selectDungeon << ' ' << selectLevel << ' ' << dungeonLevel << '\n'; // (the level: a dungeon's encounters' band on resuming - DAT_014bde04)
     o << "boxes " << boxes.table;
     for (int k = 0; k < 3; ++k)
         for (int n = 0; n < 10; ++n) o << ' ' << int(boxes.set[k][n]) * 1 + int(boxes.open[k][n]) * 2;
@@ -609,7 +646,7 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
       << v.missionTotal << ' ' << v.missionGoal << ' ' << v.missionLevel << ' ' << v.missionType << ' ' << v.missionBoost << ' '
       << int(v.missionCleared) << ' ' << v.missionRank[0] << ' ' << v.missionRank[1] << ' ' << v.missionBest[0] << ' ' << v.missionBest[1] << ' '
       << v.missionsCleared << ' ' << v.season << ' ' << v.seasonPoints << ' ' << v.seasonCount << ' ' << int(v.seasonDrop) << ' ' << int(v.playing)
-      << ' ' << int(v.rewarded) << ' ' << v.battles << ' ' << v.last[0] << ' ' << v.last[1] << '\n';
+      << ' ' << int(v.rewarded) << ' ' << v.battles << ' ' << v.last[0] << ' ' << v.last[1] << ' ' << v.seasonLevel << '\n';
     o << "cr3vsboosts";
     for (const auto& [id, n] : v.boosts) o << ' ' << id << ' ' << n;
     o << '\n';
@@ -619,6 +656,11 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "cr3mp";
     for (const auto& [ch, mp] : cr3Mp) o << ' ' << ch << ' ' << mp;
     o << '\n';
+    if (!cr3AceLevels.empty()) {
+        o << "cr3aces";
+        for (const auto& [id, lv] : cr3AceLevels) o << ' ' << id << ' ' << lv;
+        o << '\n';
+    }
     const Cr3Records& r = cr3Records;
     o << "cr3records " << static_cast<long long>(r.playSeconds) << ' ' << r.kills << ' ' << r.maxDamage << ' ' << r.vsMatches << ' ' << r.genesObtained << ' '
       << r.merges << ' ' << r.fusions << '\n';
@@ -714,7 +756,9 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
         } else if (key == "select") {
             l >> selectDungeon;
             if (!(l >> selectLevel)) selectLevel = 0;
+            if (!(l >> dungeonLevel)) dungeonLevel = 0;
             selectDungeon = std::clamp(selectDungeon, 0, 999), selectLevel = std::clamp(selectLevel, -1, 999);
+            dungeonLevel = std::clamp(dungeonLevel, 0, 999);
         } else if (key == "difficulty") {
             l >> difficulty;
             difficulty = std::clamp(difficulty, 0, 999);
@@ -794,6 +838,7 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
             l >> v.score >> v.weekScore >> v.weekRewarded >> v.weekFrom >> v.mission >> v.missionTally >> v.missionTotal >> v.missionGoal >>
                 v.missionLevel >> v.missionType >> v.missionBoost >> mc >> v.missionRank[0] >> v.missionRank[1] >> v.missionBest[0] >>
                 v.missionBest[1] >> v.missionsCleared >> v.season >> v.seasonPoints >> v.seasonCount >> sd >> pl >> rw >> v.battles >> v.last[0] >> v.last[1];
+            if (!(l >> v.seasonLevel)) v.seasonLevel = 0;
             v.missionCleared = mc != 0, v.seasonDrop = sd != 0, v.playing = pl != 0, v.rewarded = rw != 0;
         } else if (key == "cr3vsboosts") {
             for (int id, n; l >> id >> n;) cr3Vs.boosts[id] = n;
@@ -801,6 +846,8 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
             for (int id; l >> id;) cr3Vs.cleared.insert(id);
         } else if (key == "cr3mp") {
             for (int ch, mp; l >> ch >> mp;) cr3Mp[ch] = mp;
+        } else if (key == "cr3aces") {
+            for (int id, lv; l >> id >> lv;) cr3AceLevels[id] = std::clamp(lv, 1, 999);
         } else if (key == "cr3name") {
             std::string k;
             l >> k;

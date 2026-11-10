@@ -120,6 +120,12 @@ int Cr3BattleTables::directionCommand(int commandId, int basicAttack) const {
     return direction.find("CommandDirection", commandId, "ii", commandRow) && commandRow.i(1) == 4 ? basicAttack : commandId;
 }
 
+std::string Cr3BattleTables::victoryCamera(int modelId) const {
+    MbeFile::Row anim;
+    // BtlUnit::PlayVictoryCamera: MbModelInfo::GetAnimInfo(modelId, 2) -> camera name at +0x08.
+    return animationRow(model, "AnimDirection", modelId, 2, "iip", anim) ? anim.s(2) : std::string();
+}
+
 Cr3BattleTables::EffectPoint Cr3BattleTables::effectPoint(int modelId, int point) const {
     if (point < 0 || point >= 8) return {};
     std::string layout = "i_pfffpfff"; // the damage and camera points precede EP0
@@ -305,26 +311,28 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
         units.push_back(u);
         return &units.back();
     };
-    // createParty: the party's first three (BtlBootParam), its characters' models
-    for (size_t k = 0; k < party.size() && k < 3; ++k) {
-        if (party[k] <= 0) continue;
-        MbeFile::Row c;
-        if (!t.character.find("Char", party[k], kChar, c)) continue;
-        const auto set = armours ? armours->find(party[k]) : std::map<int, int>::const_iterator();
-        armour = armours && set != armours->end() ? set->second : t.defaultArmour(party[k]);
-        if (Cr3BattleUnit* u = addUnit(c.i(1), true)) {
-            u->character = party[k];
-            if (!t.weaponModel(t.weaponOf(party[k], weapons), u->weapon, u->weaponVariant)) u->weapon.clear();
-        }
-        armour = 0;
-    }
-    // CreateMonster: each slot with an id (MbCouplingInfo::GetMonsterId: one of its list at random)
     MbeFile::Row cp;
     if (!t.coupling.find("Coupling", couplingId, kCoupling, cp)) {
         if (error) *error = "coupling " + std::to_string(couplingId) + ": not in mon_cop";
         return false;
     }
     couplingFlags = cp.i(10);
+    // createParty: the party's first three (BtlBootParam), or solo Char 7 when IsBootCharacter (+0x44 bit 3)
+    const std::vector<int> bootParty{7};
+    const std::vector<int>& useParty = (couplingFlags & 8) ? bootParty : party;
+    for (size_t k = 0; k < useParty.size() && k < 3; ++k) {
+        if (useParty[k] <= 0) continue;
+        MbeFile::Row c;
+        if (!t.character.find("Char", useParty[k], kChar, c)) continue;
+        const auto set = armours ? armours->find(useParty[k]) : std::map<int, int>::const_iterator();
+        armour = armours && set != armours->end() ? set->second : t.defaultArmour(useParty[k]);
+        if (Cr3BattleUnit* u = addUnit(c.i(1), true)) {
+            u->character = useParty[k];
+            if (!t.weaponModel(t.weaponOf(useParty[k], weapons), u->weapon, u->weaponVariant)) u->weapon.clear();
+        }
+        armour = 0;
+    }
+    // CreateMonster: each slot with an id (MbCouplingInfo::GetMonsterId: one of its list at random)
     uint32_t rng = seed ? seed : 1;
     for (size_t s = 0; s < 3; ++s) {
         const int count = cp.i(1 + s * 2);

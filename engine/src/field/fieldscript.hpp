@@ -29,12 +29,15 @@
 namespace cr3 {
 
 // A map's dungeon number (Fld2TaskMap::GetDungeonNo - Cr3System.GetDungeonNum): its first three
-// letters' place in the Field_ table - t01 .. t05 0 .. 4, d01 .. d17 5 .. 21, e00 22; -1 none
+// letters' place in the Field_ table - t01 .. t05 0 .. 4, d01 .. d18 5 .. 22, e00 23; -1 none
+inline const char* cr3DungeonPrefix(int dungeon) {
+    static const char* const kTable[24] = {"t01", "t02", "t03", "t04", "t05", "d01", "d02", "d03", "d04", "d05", "d06", "d07",
+                                           "d08", "d09", "d10", "d11", "d12", "d13", "d14", "d15", "d16", "d17", "d18", "e00"};
+    return dungeon >= 0 && dungeon < 24 ? kTable[dungeon] : nullptr;
+}
 inline int cr3DungeonNum(const std::string& map) {
-    static const char* const kTable[23] = {"t01", "t02", "t03", "t04", "t05", "d01", "d02", "d03", "d04", "d05", "d06", "d07",
-                                           "d08", "d09", "d10", "d11", "d12", "d13", "d14", "d15", "d16", "d17", "e00"};
-    for (int k = 0; k < 23; ++k)
-        if (map.compare(0, 3, kTable[k]) == 0) return k;
+    for (int k = 0; k < 24; ++k)
+        if (map.compare(0, 3, cr3DungeonPrefix(k)) == 0) return k;
     return -1;
 }
 

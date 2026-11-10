@@ -179,25 +179,25 @@ void EventScene::pinTo(const std::string& name, const std::string& other) {
 
 void EventScene::setMove(const std::string& name, float from, float to) {
     if (EventModel* m = model(name)) {
-        m->moving = true;
+        m->moving = to > from;
         m->sceneTime = from * kFrame;
-        m->moveEnd = to * kFrame;
+        m->moveEnd = std::max(from, to) * kFrame;
         place(*m);
     }
 }
 
 void EventScene::cameraMove(float from, float to) {
     cameraTime_ = from * kFrame;
-    cameraEnd_ = (to + 1) * kFrame; // (EvtUtilVistaCameraMove: to + 1)
+    cameraEnd_ = to * kFrame; // (VistaCamera::Update: Steps while < to + 1, resting on to)
 }
 
 void EventScene::lightMove(float from, float to) {
     lightTime_ = from * kFrame;
-    lightEnd_ = (to + 1) * kFrame;
+    lightEnd_ = to * kFrame; // (VistaLight::Update: Steps while < to + 1, resting on to)
 }
 
 void EventScene::update(float dt) {
-    for (EventSprite& sp : sprites) sp.alphaTime += dt;
+    for (EventSprite& sp : sprites) sp.alphaTime += dt, sp.colourTime += dt;
     for (EventModel& m : models_) {
         if (m.moving) { // (EvtModel::Update: along its locator until the move's end)
             m.sceneTime += dt;
@@ -207,6 +207,7 @@ void EventScene::update(float dt) {
         m.animTime += dt;
         m.faceTime += dt;
         m.alphaTime += dt;
+        for (auto& [slot, att] : m.attachments) att.animTime += dt;
         if (m.slideUpdates > 0 && m.slideTick < m.slideUpdates) { // (an update's step of a Move)
             const float k = float(++m.slideTick) / float(m.slideUpdates);
             for (int c = 0; c < 3; ++c) m.pin[c] = m.slideFrom[c] + (m.slideTo[c] - m.slideFrom[c]) * k;
@@ -287,8 +288,7 @@ bool EventScene::camera(Mat34& world, float& fovY, float& zn, float& zf, float l
                 camera_.anim.poseAbsolute(camera_.skel.basePose, std::clamp(t * camera_.anim.sampleRate(), 0.0f, frames), &user);
                 if (k < user.size() && user[k] > 0.5f && user[k] < 179) fovY = user[k];
             }
-    zn = c.near, zf = c.far;
-    if (name_ != "d11_06_0102_evt" && name_ != "d12_03_0106a_evt") zn = std::max(zn, 0.05f), zf = std::min(zf * 5, 5000.0f);
+    zn = std::max(c.near, 0.05f), zf = std::min(c.far * 5, 5000.0f);
     zn = std::max(zn, 0.001f), zf = std::max(zf, zn * 2);
     return true;
 }

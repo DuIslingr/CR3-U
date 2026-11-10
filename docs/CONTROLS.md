@@ -52,13 +52,13 @@ and the encounters' switch are a dungeon's, once the story has given them (Cr3Ta
 and not while riding. Folded,
 only that button and a town's Short Cut take taps.
 
-With the Vita copy as the game a controller works the buttons as the Vita's own code does
+With any CR3 release (iOS, Android or Vita), a controller works the buttons as the Vita's own code does
 (CampFieldMenu, `FUN_811116b4`): △ opens and shuts them (com_008 / com_009), × shuts them; open, a
 cursor starts on Camp and the d-pad moves it in the game's order - the way back to town, the town
 map, Battle, the encounters, Save, Camp, My Page, the SpShop; ↑ / ← back, ↓ / → on, passing those
 not shown (com_002) -, the button under it lit in DiffuseColor (0.5, 1, 1.5), and ○ presses it.
 While it is up the d-pad moves the cursor and the left stick still walks. `engine/tools/pad_vita_test.sh`
-(ctest `viewer-pad-vita`, with `CR3_VITA_DATA` the Vita copy's folder) drives the virtual controller
+(ctest `viewer-pad-vita`, with `CR3_VITA_DATA` or `CR3_DATA` set to a CR3 release) drives the virtual controller
 through it headless; `--input camp:padleft` (padup, paddown, padright, padok, padback, padtri)
 presses for a capture. In a
 dungeon the minimap (MiniMapMenu) shows at the top left: the area's map, its warps and objects, the
@@ -82,8 +82,8 @@ it. Back cancels. There is no global New Game Plus button or shortcut.
 
 ## CR3's Vita buttons in the port
 
-With the Vita copy as the game, where the Vita's own code moves a cursor the iPad's and Android's
-releases (touch alone) have none of, the controller does as the Vita does:
+Across all CR3 releases (iOS, Android and Vita), where the Vita's own code moves a cursor the iPad's and Android's
+executables (touch alone) have none of, the controller does as the Vita does:
 
 - **An event's choice** (SelectTwoChoicesMenu / SelectThreeChoicesMenu, `FUN_8123f2f4` /
   `FUN_8123e184`, the cursor `FUN_8128d1ea`): the first option to begin with, ↑ / ↓ the one before /
@@ -115,8 +115,8 @@ space, their times counted from then), `shot=<file.bmp>` (the frame then, as `--
 
 ### Controller follow-up
 
-The remaining input gaps from the November 8 audit are implemented for the Vita copy.
-The iOS/Android touch layouts keep their existing controls. Confirm/cancel follow
+The remaining input gaps from the November 8 audit are implemented and enabled across all CR3
+releases (iOS, Android and Vita), while touch/mouse controls remain available alongside them. Confirm/cancel follow
 Options → Graphics → Swap ○ and ×. Directions below also accept the left stick at full push.
 
 | Screen | Vita controls now handled by the port | Reference |
@@ -165,12 +165,12 @@ controls are usable from the pad; those layouts are not pixel-identical to the V
 
 ### Verification
 
-`engine/tools/pad_vita_test.sh` drives an SDL virtual gamepad against the user's Vita
-copy, headless, with isolated profiles. Its sourced camp/shop/battle files cover
+`engine/tools/pad_vita_test.sh` drives an SDL virtual gamepad against any CR3
+release (Vita, Android or iOS), headless, with isolated profiles. Its sourced camp/shop/battle files cover
 party reorder, reels, gene locks/sorts/tabs, index focus, options, equipment, shop
 and VS navigation, battle commands/categories/result, plus the existing field,
 choice, Continue, camera and title checks. Additional cases cover save footer,
-movie pause/stop, goods and lunch. Set `CR3_VITA_DATA` to a decrypted Vita release
+movie pause/stop, goods and lunch. Set `CR3_VITA_DATA` (or `CR3_DATA`) to a CR3 release
 and run CTest's `viewer-pad-vita`, or pass case groups to the script. Failed runs
 retain their logs and any nonzero viewer exit is a failure.
 

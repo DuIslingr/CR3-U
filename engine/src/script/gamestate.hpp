@@ -148,12 +148,25 @@ struct GameState {
     // the dungeon the world select chose last (FldWorldSelect::m_nSelectDungeonNum: GetSelectDungeonNum)
     int selectDungeon = 0;
     int selectLevel = 0; // (CR3's world select: InterfaceMain +0xa4 - the level's index; GetSelectDungeonLevel)
+    int dungeonLevel = 0; // (utils::SetDungeonLevel / GetDungeonLevel: DAT_014bde04, shared across vistas and areas)
     int selectChapter = -1; // (the chapter select's pick: InterfaceWindow.GetChapterID - not saved)
     // the library's shelf (InterfaceWindow.SetArchiveID: InterfaceMain +0xd8, its category) and the
     // entry being read (GetLibraryID: ArchiveWindowMenu +0x2c) - not saved
     int libraryArchive = 0, libraryId = 0;
     // the frame's clear colour (Cr3System.SetBGColor - Cr3UtilSetBGColor, GameMain::Draw's) - not saved
     float bgColor[3] = {0, 0, 0};
+    // solid battle-entry shatter fill (Cr3System.BattleInColor / ColosseumIn / VsBattleIn: GameSystem +0xa0 / +0xb0)
+    bool battleInColorSet = false;
+    float battleInColor[3] = {0, 0, 0};
+    // 3D sub-viewport (Cr3System.SetViewportEnable / Position / Size: GameSystem +0x114 .. +0x124)
+    bool viewportEnable = false;
+    float viewportPos[2] = {0.52f, 0.27f}, viewportSize[2] = {0.46f, 0.46f};
+    // Ace Coupling persistent levels (Fld2TaskEncount::SaveAceCoupling / LoadAceCoupling)
+    std::map<int, int> cr3AceLevels;
+    // the battle transition's glass shatter pattern (Cr3System.SetGlassEffectPattern - GameMain::SetGlassEffect, 0..5) - not saved
+    int glassPattern = 1;
+    // Cr3GimmickData.Setup (Fld2TaskGimmick::SetGimmick): reload the active area's gimmicks when quest state changes - not saved
+    bool gimmickSetupRequested = false;
     // the area last entered (FldUtil's: GetDungeonNum - 0 the town - and GetAreaNum, from 0)
     int dungeon = 0, area = 0;
     // where the field is next entered (Cr3System.SetPopPoint2 - Fld2SetPopPoint2: the pop point

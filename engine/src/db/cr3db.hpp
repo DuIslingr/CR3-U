@@ -75,8 +75,8 @@ struct Cr3Vs {
     bool missionCleared = false;
     int missionRank[2] = {1, 1}, missionBest[2] = {1, 1}; // (b70 / b74 the rank - type 0's, the others' -, b78 / b7c the best)
     int missionsCleared = 0;                               // (b80)
-    // the season (be0 ..: vsseasons' row whose dates hold): its _id (-1 none), its points
-    int season = -1, seasonPoints = 0, seasonCount = 0;
+    // the season (be0 ..: vsseasons' row whose dates hold): its _id (-1 none), its points and level
+    int season = -1, seasonPoints = 0, seasonCount = 0, seasonLevel = 0;
     bool seasonDrop = false; // (be4: this tournament may drop the season's item - season_prob, or the bonus boost)
     std::map<int, int> boosts; // (c00 ..: vsboostitems _id -> how many held, VS_BOOST_ITEM_COUNT_MAX at most)
     // the tournament (c68 ..): playing, its battles won, its prize given, the last of each mode
@@ -130,6 +130,7 @@ public:
     bool load(const Database& release, std::string* error = nullptr);
     bool loaded() const { return !tables_.empty(); }
     const BsonValue* table(const std::string& name) const;
+    void setTable(const std::string& name, BsonValue value) { tables_[name] = std::move(value); }
     const std::map<std::string, BsonValue>& tables() const { return tables_; }
     // CrxGameTable's constants (data\constant: the one row's - GOLDKEY_MASTER_ID, GOLD_MAX, ...)
     int constant(const std::string& name, int fallback = 0) const;
@@ -377,6 +378,8 @@ public:
     int earnItemPrize(GameState& s, int item, int count, bool toPresents = true);
     int earnGenePrize(GameState& s, const Cr3Gene& gene);
     int earnGenePrize(GameState& s, int master) { return earnGenePrize(s, Cr3Gene{master}); }
+    void addGold(GameState& s, int amount) const;
+    void addCoins(GameState& s, int amount) const;
 
     void seed(uint32_t v) { rng_.seed(v); }
 
@@ -386,6 +389,7 @@ private:
     void markItemSheets(GameState& s) const;   // (CrxGameTable::MarkItemSheet(false))
     void updateItemSheets(GameState& s) const; // (CrxGameTable::UpdateItemSheet(false))
     bool removeItem(GameState& s, int item, int n);
+    void sendVipLoginBonus(GameState& s);
     int earnQuestPrize(GameState& s, const BsonValue& prize);
     uint32_t random() { return uint32_t(rng_()); } // (CrxRandom::GenerateUInt32)
 

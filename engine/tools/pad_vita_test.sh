@@ -1,10 +1,11 @@
 #!/bin/sh
-# The Vita's buttons, as the port takes them with the Vita copy as the game: cr3view headless, its
+# The Vita's buttons, as the port takes them across any CR3 release: cr3view headless, its
 # virtual controller (CR3_PAD_SCRIPT) pressing, each case's log lines looked for in order.
-#   pad_vita_test.sh <cr3view> [case ...]   (CR3_VITA_DATA: the Vita copy's folder - without it, skipped)
+#   pad_vita_test.sh <cr3view> [case ...]   (CR3_VITA_DATA or CR3_DATA: any CR3 release - without one, skipped)
 viewer=$1
 shift
-[ -n "$CR3_VITA_DATA" ] && [ -d "$CR3_VITA_DATA" ] || { echo "CR3_VITA_DATA not set: skipped"; exit 77; }
+data=${CR3_VITA_DATA:-$CR3_DATA}
+[ -n "$data" ] && [ -e "$data" ] || { echo "CR3_VITA_DATA / CR3_DATA not set: skipped"; exit 77; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/cr3pad.XXXXXX") || exit 1
 trap 'if [ "$problems" -eq 0 ]; then rm -rf "$work"; else echo "failed test logs: $work"; fi' EXIT
 mkdir -p "$work/home"
@@ -16,7 +17,7 @@ run() {
     shift 3
     [ "$1" = "--" ] && shift
     HOME="$work/home" XDG_DATA_HOME="$work/home" SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy CR3_PAD_SCRIPT="$pad" \
-        timeout 120 "$viewer" --data "$CR3_VITA_DATA" --mute "$@" > "$work/$name.log" 2>&1
+        timeout 120 "$viewer" --data "$data" --mute "$@" > "$work/$name.log" 2>&1
     status=$?
     if [ "$status" -eq 0 ] && awk -v want="$want" 'BEGIN { n = split(want, w, "|"); k = 1 }
         k <= n && index($0, w[k]) { ++k }
@@ -38,8 +39,8 @@ want field-bar && run field-bar "3:north 3.5:left 4:up 4.5:up 5:down 5.5:down 6:
     "field: the buttons opened|field: the cursor on 101|field: the cursor on 108|field: the cursor on 105|field: the cursor on 108|field: the cursor on 101|field: the buttons closed|field: the buttons opened|field: the cursor presses 106|camp: open" \
     -- --area t0101 --flag 26 --flag 27
 
-# SelectTwoChoicesMenu (FUN_8123f2f4, the cursor FUN_8128d1ea): ↓ / ↑ round the options from the first, ○ the one under it
-want choice && run choice "2:east 3:east 4.5:down 5:down 5.5:down 6.5:east 8:quit" \
+# SelectTwoChoicesMenu (FUN_8123f2f4, the cursor FUN_8128d1ea): □ fast-forwards to the choice in any language, ↓ / ↑ round the options from the first, ○ the one under it
+want choice && run choice "1.5:hold=west 3.2:release=west 3.5:down 4:down 4.5:down 5.5:east 7:quit" \
     "choice: the cursor on 2|choice: the cursor on 1|choice: the cursor on 2|choice: 2 of 2" \
     -- --area t0101 --input "call:c111_s110_t01_00101"
 

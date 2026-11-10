@@ -57,7 +57,7 @@ struct ParsedMessage {
 };
 
 // a message's pages (\f ends one, \n a line, \* the message), their stops, its speaker
-ParsedMessage parseMessage(const std::string& text);
+ParsedMessage parseMessage(const std::string& text, bool defaultCentred = false);
 
 // a colour number's RGB
 void textColour(int colour, float rgb[3]);

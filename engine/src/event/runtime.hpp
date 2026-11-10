@@ -31,11 +31,13 @@ namespace cr3 {
 // linearly to its target over the frames the script gave
 struct EventFade {
     int colour = 0;      // 0 black (fadeB), 1 white (fadeW), 2 fadeF, 3 the encounter's wipe
+    int hold = 0;        // FadeWindowMenu +0x24: 4 60-Hz updates (2 ticks) held before a fade-in clears
     float alpha = 0, target = 0, step = 0;
     void start(int colour, int frames, float from, float to);
     void update();
     // the opacity `fraction` (0..1) of an update on from the last
     float at(float fraction) const {
+        if (hold > 0) return alpha;
         const float d = step * std::clamp(fraction, 0.0f, 1.0f);
         return alpha < target ? std::min(alpha + d, target) : std::max(alpha - d, target);
     }
@@ -75,15 +77,29 @@ public:
 
     EventScene& scene() { return scene_; }
     const EventScene& scene() const { return scene_; }
-    bool sceneShown() const { return scene_.loaded() && !terminated_ && !drawSkip_; }
+    bool sceneShown() const { return scene_.loaded() && !terminated_ && !drawSkip_ && vistaVisible_; }
     const EventFade& fade() const { return fade_; }
     const EventFade& backFade() const { return backFade_; } // (Cr3Fade::BackFade*: InterfaceMain's back fade window, under the windows)
     // the face textures EvtScene.SetFaceTexture set (slot -> image)
     const std::map<int, std::string>& faces() const { return faces_; }
 
     // the message windows (Cr3Event's: 0 cut-in, 1 vista, 2 / 3 announcements, 4 tutorial, 5 system,
-    // 6 narration): which are open (EvtWindow.Open), which the message is on (SetMessage's first)
-    enum Window { CutIn = 0, Vista = 1, AnnounceA = 2, AnnounceB = 3, Tutorial = 4, System = 5, Narration = 6, TutorialMenu = 8 };
+    // 6 narration, 8..10 CR3 top/middle/bottom announcements, 20 TutorialMenu): which are open
+    // (EvtWindow.Open), which the message is on (SetMessage's first)
+    enum Window {
+        CutIn = 0,
+        Vista = 1,
+        AnnounceA = 2,
+        AnnounceB = 3,
+        Tutorial = 4,
+        System = 5,
+        Narration = 6,
+        AnnounceTop = 8,
+        AnnounceMid = 9,
+        AnnounceBot = 10,
+        TutorialMenu = 20
+    };
+    bool narrationAboveFade() const { return narrationAboveFade_; }
     // CR3's tutorial menu (InterfaceWindow.CreateTutorialMenuNum(n): TutorialMenu - ttlMnlMenu - with
     // message/AnnounceTutorialTxt's announcement n, its pages turned as a window's; its picture
     // SetPictureTutorialMenu(id) - tuto_ss<(id - 1) / 8 + 1>, frame (id - 1) % 8 -;
@@ -96,7 +112,7 @@ public:
     int mapName() const { return mapName_; }
     int mapNameLevel() const { return mapNameLevel_; }
     float mapNameAge() const { return mapNameAge_; }
-    int dungeonLevel = 0; // (Cr3System.SetDungeonLevel / GetDungeonLevel)
+    int& dungeonLevel; // (Cr3System.SetDungeonLevel / GetDungeonLevel: shared across vistas and field areas on GameState)
     int tutorialMenuPicture() const { return tutorialMenuPicture_; }
     bool windowOpen() const { return !openWindows_.empty(); }
     bool windowOpen(int w) const { return openWindows_.count(w) != 0; }
@@ -121,13 +137,13 @@ public:
     // the scene waits for the player's slash (VistaEvent.ExecutionStart)
     bool awaitingSlash() const { return execution_; }
     bool finishingSlash() const { return executionEnd_; } // (ExecutionEndStart's: the finale)
-    // a tap (a swipe): the slash awaited, else the page typed at once, else the message's next
-    // page, or its end (CheckMessage then says it's done)
-    void advance();
+    // a tap (a swipe): the slash awaited, else the page typed up to its next stop, else the
+    // message's next page, or its end (CheckMessage then says it's done)
+    void advance(bool tap = false);
     // TutorialMenu's L / R browse its message pages without closing the last page.
     bool tutorialPage(int direction);
     // a tap: also the touch Cr3Touch.GetTouchState says once (1: a finger down - WaitTouch's)
-    void touch() { touched_ = true, advance(); }
+    void touch() { touched_ = true, advance(true); }
     // pages turn (and slashes happen) by themselves after this many seconds (0: only advance())
     float autoPage = 3.0f;
     // The yes / no buttons (EvtWindow.ShowYesNoButton: BattleYNChoice - choice_io, circleBtn_fr 11
@@ -156,13 +172,15 @@ public:
     // is always on): from ButtonCreate till ButtonDelete, unless ButtonSetVisible(false). Held
     // (CheckButtonTouch: TestApp::onUpdate's), the game runs five updates a frame, the scripts'
     // PlaySE stays quiet and the pages race as the windows' button makes them
-    bool skipButtonShown() const { return skipButton_ || fastWindow_ == 2; }
+    bool skipButtonShown() const { return skipButton_ || fastWindow_ == 2 || vistaSkipOnly_; }
     bool skipHeld() const { return fastForward && skipButtonShown(); }
     bool fastForwardShown() const {
-        return message_ > 0 && !ended_ && messageWindow_ >= 0 && messageWindow_ <= 6 && !skipOff_.count(messageWindow_) && !parsed_.noSkip;
+        return message_ > 0 && !ended_ && ((messageWindow_ >= 0 && messageWindow_ <= 6) || (messageWindow_ >= 8 && messageWindow_ <= 10)) &&
+               !skipOff_.count(messageWindow_) && !parsed_.noSkip;
     }
     bool yesNoShown() const { return yesNoShown_; }
     float yesNoAge() const { return yesNoAge_; }
+    float yesNoClosing() const { return yesNoClosing_; } // (-1 not; else 0..0.1 s reverse combtn_io)
     void answerYesNo(bool yes) {
         if (yesNoShown_) yesNo_ = yes ? 1 : 2;
     }
@@ -346,6 +364,40 @@ public:
     void collectListOpen(int dungeon, int category, int id) { collectList_ = CollectList{true, dungeon, category, id}; }
     // a fade the menus start (Cr3FadeOut(0, n) / Cr3FadeIn: black over n frames)
     void menuFade(bool out, int frames) { fade_.start(0, frames, out ? 0 : 1, out ? 1 : 0); }
+    // Cr3System.CrossFade(frames) (utils::CrossFade -> GameMain::StartCrossFade / CrossFade):
+    // captures the rendered 3D scene on its first draw and blends it out over `frames` 30-Hz ticks
+    struct CrossFade {
+        bool capture = false, active = false;
+        int captureTicks = 0;
+        float duration = 0, elapsed = 0;
+        float alpha(float lead = 0) const {
+            if (!active || duration <= 0) return 0;
+            if (capture) return 1;
+            return std::clamp(1.0f - (elapsed + lead) / duration, 0.0f, 1.0f);
+        }
+    };
+    const CrossFade& crossFade() const { return crossFade_; }
+    void markCrossFadeCaptured() { crossFade_.capture = false; }
+    // CR3's staff roll overlay (StaffrollMenu, interface 200: InterfaceWindow.CreateStaffrollMenu ..
+    // SetDisplaySectionStaffrollMenu): scrolls pairs of message/Staff.dat rows upward at 60 Hz
+    struct StaffrollLine {
+        std::string left, right;
+        float y = -4.5f;
+        int logoFrame = -1; // 0 graphiclogotypea, 1 graphiclogotypeb
+    };
+    struct Staffroll {
+        bool open = false, finished = false, touchFast = false;
+        int baseRow = 0, rowCount = 722, endSteps = 748, emitted = 0;
+        float speed = 0.02f, fastSpeed = 0.06f, scrolled = 0.0f, stepHeight = 0.32f;
+        int fontSize = 24, shadowMode = 2;
+        float leftX = 1.0f, rightX = -0.68f, backAlpha = -1.0f;
+        float textRgb[3] = {1.0f, 1.0f, 1.0f}, shadowRgb[3] = {0.01f, 0.01f, 0.01f};
+        int graphicIndex = 0, graphicCount = 31, graphicPhase = 0;
+        float graphicTimer = 8.0f, graphicIn = 0.5f, graphicHold = 6.0f, graphicOut = 0.5f, graphicAlpha = 0.0f;
+        std::vector<StaffrollLine> lines;
+    };
+    const Staffroll& staffroll() const { return staffroll_; }
+    void setStaffrollTouchFast(bool fast) { staffroll_.touchFast = fast; }
     std::string cutInImage(int id) const; // a loaded face's image ("" none)
 
     // The tutorials' pictures (Cr3FieldTutorial in the field and the battles; InterfaceWindow's
@@ -374,6 +426,11 @@ private:
     std::unique_ptr<ScriptVM> vm_;
     EventScene scene_;
     EventFade fade_, backFade_;
+    CrossFade crossFade_;
+    Staffroll staffroll_;
+    TextData staffText_;
+    void emitStaffrollRow(float yOffset);
+    void stepStaffroll();
     SpacePort spacePort_;
     WorldSelect worldSelect_;
     Lunch lunch_;
@@ -386,7 +443,7 @@ private:
     TextData itemNames_;                 // (message\ItemName: SetItemMessage's)
     bool yesNoShown_ = false;
     int yesNo_ = 0;
-    float yesNoAge_ = 0;
+    float yesNoAge_ = 0, yesNoClosing_ = -1;
     int itemShown_ = 0;                  // (the item SetItemMessage named: its icon)
     TutorialPicture tutorialPicture_;
     std::set<int> openWindows_;
@@ -394,6 +451,9 @@ private:
     std::set<int> pageSendOff_; // (SetWaitButtonEnable false)
     std::set<int> autoVoiceOff_; // (SetAutoVoiceEnable false)
     bool skipButton_ = false;
+    bool vistaSkipOnly_ = false;
+    bool narrationAboveFade_ = false;
+    bool vistaVisible_ = true;
     int fastWindow_ = 0; // (the fast-forward window: 0 none, 1 made, 2 shown)
     bool touched_ = false;
     float touchWait_ = 0;
@@ -434,6 +494,8 @@ private:
     size_t stop_ = 0;     // the page's next stop (TextStop)
     bool ended_ = false;  // a \* message ended by itself: still shown, done for CheckMessage
     float stopTime_ = 0;  // (at a \w stop: its time so far)
+    float tapWait_ = 0;   // (EvtWindow::UpdatePage m_timer: > 0.1 s after typing before a tap advances)
+    bool windowOpening() const;   // CutIn / System still in their 5-tick open animation
     const TextStop* held() const; // the stop the typing waits at, else null
     void showWhole();             // the page typed whole, its stops passed
     bool ending() const;          // a \* message's last page typed: it ends

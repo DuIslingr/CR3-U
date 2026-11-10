@@ -69,18 +69,37 @@ struct Cr3Command {
     float hitRate = 1;    // (+0x1c: x the hit chance)
     std::vector<int> effects; // (+0x40 / +0x48: the status effects it gives - Guard's 2)
     std::vector<int> removes; // (+0x50 / +0x58: the status effects it takes away - MbCommandInfo::HaveRemovesStatusEffect; battle 7's release 1844)
+    std::vector<int> requiredEffects;  // (+0x80 / +0x88: required target status effects - Revive's 1 KO)
+    std::vector<int> forbiddenEffects; // (+0x90 / +0x98: prohibited target status effects)
     int effectsAnnounce = -1; // (+0xe8: AnnounceBattle's line when it gives one target several)
     int type = 0;         // (+0x04: 0 an attack, 1 a physical skill, 2 magic, 3 support, 4 special, 7 a guard)
-    int damage = -1;      // (its CommandFomula row's damage: 1 physical, 2 magic, 5 an HP heal, ...)
+    int action = 0;       // (CommandFomula +0x04: 14 calculateActionNumBySpeed)
+    int damage = -1;      // (its CommandFomula row's damage: 1 physical, 2 magic, 5..7/15..18 heals, 8..24 special)
     int target = 3;       // (+0x10: BtlStatusList's target kind - 0 itself, 1 an ally, 2 all allies, 3 an enemy,
                           //  4 all enemies, 5 everyone, 6 a random enemy, ...)
-    bool all = false;     // (target kind 2, 4, 5, 9 or 11: every one on that side)
-    int mpCost = 0, hpCost = 0; // (+0xb8, +0xb0: the costs as listed - kinds 0 and 3; Cr3BattleRules::mpCost the real one)
-    int mpKind = 0;             // (+0xb4: 0 the value, 1 / 2 a percentage of the max MP, 3 x the weapon's consumption)
-    bool ally() const { return damage == 5 || damage == 6 || damage == 7; } // (a heal: its own side; -1 no damage, its effects alone)
-    bool usable() const { return damage == 1 || damage == 2 || ally(); }    // (what CR3-U can play)
+    bool all = false;     // (target kind 2, 4, 5, 9, 11 or 13: every one on that side)
+    int mpCost = 0, hpCost = 0; // (+0xb8, +0xb0: raw cost values; Cr3BattleRules::mpCost / hpCost compute the real cost)
+    int hpKind = 0;             // (+0xac: 0 flat, 1 % current HP, 2 % max HP, 3 x weapon consumption)
+    int mpKind = 0;             // (+0xb4: 0 flat, 1 % current MP, 2 % max MP, 3 x weapon consumption)
+    bool revives() const {
+        for (int e : removes)
+            if (e == 1) return true;
+        return false;
+    }
+    bool mpHeal() const { return damage == 16 || damage == 17; }
+    bool ally() const { return damage == 5 || damage == 6 || damage == 7 || damage == 15 || damage == 16 || damage == 17 || damage == 18; }
+    bool usable() const {
+        return (damage < 0 && (!effects.empty() || !removes.empty())) || damage == 1 || damage == 2 || ally() || damage == 8 ||
+               damage == 10 || damage == 11 || damage == 12 || damage == 13 || damage == 20 || damage == 21 || damage == 22 ||
+               damage == 23 || damage == 24;
+    }
     float multiplier = 1;
+    int priority = 0;   // (+0xa0: BtlCommandManager bucket / BtlCommandList::Sort primary order; -8 / -9 delayed buckets)
+    int speedCost = 0;  // (+0xa4: MbCommandInfo::GetCost, added to speed - weight in BtlCommandList::Update)
+    int chain = 0;      // (CommandFomula +0x0c: 3 physical chain bonus - calculatePhisicalChainBonus)
     int element = 0;    // (+0x24: its attack element - the Element table's row)
+    int extraType = 0;  // (+0xd4: MbCommandInfo::GetExtraType - 1/2 random subcommand, 13 force break, 18 status power)
+    std::vector<int> extraConstants; // (+0xd8 / +0xe0: MbCommandInfo::GetExtraConstantByIndex)
     int motion = -1;    // (an AnimCommon type: 10 bi01, 15 bs01, ...; -1 none)
     int direction = -1; // (CommandDirection +4: its kind)
 };
@@ -107,21 +126,25 @@ struct Cr3Fighter {
     int geneLevel = 0;                          // (VGetGeneLevel: the "Level" step's - a character's gene's, a monster's level)
     std::vector<std::pair<int, int>> commands; // (a monster's: command, ratio)
     // its status effects (BtlStatusEffectList: skill_para StatusEffect ids, the turns left - -1
-    // until removed)
+    // until removed) and per-effect accumulation count (col 7 maxAccumulation)
     std::vector<std::pair<int, int>> effects;
+    std::map<int, int> effectStacks;
     std::array<int, 6> effectResist{}; // (a monster's resistances to battle.mbe's listed effects)
     bool comboChance = false; // (BtlBasicStatus +0x6d: downed - every later hit on it downs too, until the acting side changes)
     int combo = 0;            // (its combo count: +1 a downing hit; the magic chain bonus's)
+    int chain = 0;            // (BtlBasicStatus +0x80: +1 each landed hit; reset on side change; calculatePhisicalChainBonus)
     bool dead() const { return hp <= 0; }
 };
 
 struct Cr3Hit {
     int target = -1;
-    std::vector<int> hits; // each hit's damage (a heal's: below 0)
+    std::vector<int> hits; // each hit's HP delta (a heal's: below 0)
+    std::vector<int> mpHits; // each hit's MP delta (an MP heal's: below 0; MP drain/damage: above 0)
     std::vector<uint8_t> flags; // each hit's: bit 0 critical, bit 1 down, bit 2 a miss
+    std::vector<uint8_t> colors; // BtlDamageUI::getDamageColor: 0 normal, 1 weak, 2 resist, 3 HP heal, 4 MP heal
     std::vector<int> gauge; // the break gauge after each hit
     std::vector<int> effectsGiven; // the status effects it gave (StatusEffect ids)
-    int hpAfter = 0;
+    int hpAfter = 0, mpAfter = 0;
     bool killed = false;
 };
 struct Cr3Action {
@@ -186,15 +209,22 @@ public:
     // (the party's first strike - BtlStatusList::ClearRatioToEnemy: the monsters' actions this turn
     // none - the next turn() the party's alone)
     bool monstersWait = false;
+    bool bootCharacter = false; // (MbCouplingInfo +0x44 bit 3: IsBootCharacter, 10x calculateBasicDamage)
+    bool reverseSpeed = false;  // (BtlFieldEffectList effect 0: reverse turn speed sort for 5 turns)
+    int reverseSpeedTurns = 0;
     bool partyUnhurt = false; // (a test aid - --input guard:party: hits on the party do no damage)
     // (Battle_Monster_NNNN's BattleCommand.Add - BtlStatusList::AddCommand: a command for a monster
     // this turn, in place of its own pick), by fighter; the next turn() takes them
     std::map<int, std::vector<int>> scripted;
     // (BtlStatus::IsNonTarget: a kind 32 status effect; BtlStatusEffectList::HasProhibitedTarget: a
-    // kind 72 one - held, hidden - but for a command that takes it away)
+    // kind 72 one - held, hidden - but for a command that takes it away, plus required/forbidden effects)
     bool targetable(int fighter, const Cr3Command* by = nullptr) const;
     int heal(const Cr3Fighter& source, const Cr3Command& c); // (calculateHpHeal)
+    int chocolatBonus(const Cr3Fighter& target, int baseHeal) const; // (calculateChocolatBonus: skill kind 77)
+    int mpCostPercent(const Cr3Fighter& f) const;            // (BtlStatusEffectUtility::GetMpCostPercent: kind 129)
     int mpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetMpCost)
+    int hpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetHpCost)
+    float mpCostScale = 1.0f; // (BtlBufferPotion::GetMpCostMultiplier: 1.0 default)
     // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the skills
     // without a condition, their effects without the gauge's advantage)
     int skillConstant(const Cr3Fighter& f, int kind) const;
@@ -215,7 +245,9 @@ public:
     void removeEffect(int fighter, int id);
     bool hasEffect(int fighter, int id) const;
     bool hasKind(const Cr3Fighter& f, int kind) const;
+    bool hasSkillKind(const Cr3Fighter& f, int kind) const;
     float effectMultiplier(const Cr3Fighter& f, int kind) const;
+    float effectStackMultiplier(const Cr3Fighter& f, int kind) const;
     int effectSum(const Cr3Fighter& f, int kind) const;
     int effectMax(const Cr3Fighter& f, int kind) const;
     int attackOf(const Cr3Fighter& f) const, defenceOf(const Cr3Fighter& f) const, speedOf(const Cr3Fighter& f) const,
@@ -233,12 +265,15 @@ private:
     const Cr3BattleTables* tables_ = nullptr;
     uint32_t rng_ = 1;
     float random(); // [0, 1)
+    void rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool& crit, bool& down, float& rate);
+    int hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool crit, bool down, float rate);
     bool effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, int id);
     std::array<int, 4> breakWith_{0, 25, 25, 50}, breakWithout_{100, 50, 50, 100}; // (battle.mbe Battle +0x50 / +0x60: base, critical, down, kill)
     std::vector<int> resistIds_;
     std::set<std::pair<int, int>> usedSkills_; // (fighter, skill: the added commands fired)
     std::array<float, 4> coopScale_{0, 1, 3, 5}; // (battle.mbe Battle +0x80 / +0x88: MbBattleInfo::GetCooperationScale, by the units in it)
     float coopNow_ = 1;                          // (the action's: calculateBasicDamage's x scale)
+    int statusTurnBoost_ = 0;                    // (skill kind 84: GetStatusEffectContinueTurn added on giveEffect)
     int livingTarget(bool player, int preferred, const Cr3Command* by = nullptr);
 };
 

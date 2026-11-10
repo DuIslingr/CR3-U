@@ -308,16 +308,30 @@ int Cr3OfflineDb::dateChanged(GameState& s, std::time_t now) {
     // gold key and item 106 as presents
     if (s.cr3VipDays > 0) {
         --s.cr3VipDays;
-        if (s.cr3VipDays > 0 && !(s.cr3Daily & 0x10)) {
-            for (const int item : {400005, 106}) {
-                Cr3Present p;
-                p.item = item, p.count = 1, p.from = constant("PRESENT_FROM_SERVICE");
-                sendPresent(s, p);
-            }
-            s.cr3Daily |= 0x10;
-        }
+        sendVipLoginBonus(s);
     }
     return getThisMonthMaster(s, now);
+}
+
+void Cr3OfflineDb::sendVipLoginBonus(GameState& s) {
+    if (s.cr3VipDays > 0 && !(s.cr3Daily & 0x10)) {
+        for (const int item : {400005, 106}) {
+            Cr3Present p;
+            p.item = item, p.count = 1, p.from = constant("PRESENT_FROM_SERVICE");
+            sendPresent(s, p);
+        }
+        s.cr3Daily |= 0x10;
+    }
+}
+
+void Cr3OfflineDb::addGold(GameState& s, int amount) const {
+    const int64_t most = constant("GOLD_MAX", 9999999);
+    s.cr3Money = int(std::clamp<int64_t>(int64_t(s.cr3Money) + amount, 0, most));
+}
+
+void Cr3OfflineDb::addCoins(GameState& s, int amount) const {
+    const int64_t most = constant("COIN_MAX", 99999999);
+    s.cr3Coins = int(std::clamp<int64_t>(int64_t(s.cr3Coins) + amount, 0, most));
 }
 
 int Cr3OfflineDb::getThisMonthMaster(GameState& s, std::time_t now) {
@@ -396,12 +410,13 @@ bool Cr3OfflineDb::removeItem(GameState& s, int item, int n) {
 int Cr3OfflineDb::receivePresent(GameState& s, int k) {
     if (k < 0 || size_t(k) >= s.cr3Presents.size()) return finish(kDbBad);
     const Cr3Present p = s.cr3Presents[size_t(k)];
-    int r;
+    int r = kDbOk;
     if (p.gene) r = earnGenePrize(s, p.geneData);
-    else {
-        if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) s.cr3Coins += constant("LOGIN_BONUS_COIN");
-        r = earnItemPrize(s, p.item, p.count, false);
-    }
+    else if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) {
+        const int64_t bonus = constant("LOGIN_BONUS_COIN"), most = constant("COIN_MAX", 99999999);
+        if (int64_t(s.cr3Coins) + bonus > most) r = kDbFull;
+        else addCoins(s, int(bonus));
+    } else r = earnItemPrize(s, p.item, p.count, false);
     if (r != kDbOk) return finish(r);
     s.cr3Presents.erase(s.cr3Presents.begin() + k);
     return finish(kDbOk);
@@ -413,8 +428,11 @@ int Cr3OfflineDb::receivePresents(GameState& s) {
         const Cr3Present& p = s.cr3Presents[k];
         bool taken = true;
         if (p.gene) taken = earnGenePrize(s, p.geneData) == kDbOk;
-        else if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) s.cr3Coins += constant("LOGIN_BONUS_COIN");
-        else taken = earnItemPrize(s, p.item, p.count, false) == kDbOk;
+        else if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) {
+            const int64_t bonus = constant("LOGIN_BONUS_COIN"), most = constant("COIN_MAX", 99999999);
+            if (int64_t(s.cr3Coins) + bonus > most) taken = false;
+            else addCoins(s, int(bonus));
+        } else taken = earnItemPrize(s, p.item, p.count, false) == kDbOk;
         if (taken) s.cr3Presents.erase(s.cr3Presents.begin() + long(k));
         else all = false, ++k;
     }
@@ -694,7 +712,7 @@ bool Cr3OfflineDb::addGoods(const std::string& id, int goodsId, int item, int pr
 int Cr3OfflineDb::sellItem(GameState& s, int item, int n) {
     const int price = itemPrice(item);
     if (!removeItem(s, item, n)) return finish(kDbBad);
-    s.cr3Money += price * n;
+    addGold(s, price * n);
     return finish(kDbOk);
 }
 
@@ -729,9 +747,13 @@ int Cr3OfflineDb::getDailyItem(GameState& s, int id) {
             if (r.integer("_id") != id) continue;
             const int flag = r.integer("flag");
             if (s.flag(flag)) return finish(kDbDone);
-            const int res = earnItemPrize(s, r.integer("masterId"), r.integer("count"), false);
+            const int masterId = r.integer("masterId"), count = r.integer("count");
+            if (masterId <= 0 || count <= 0) return finish(kDbBad);
+            int& held = s.cr3Items[masterId];
+            if (held >= 99) return finish(kDbFull);
+            held = std::min(held + count, 99);
             s.setFlag(flag, true);
-            return finish(res);
+            return finish(kDbOk);
         }
     return finish(kDbBad);
 }
@@ -759,6 +781,7 @@ int Cr3OfflineDb::buyVIP(GameState& s) {
     if (s.cr3VipDays >= most) return finish(kDbFull);
     s.cr3Coins -= price, s.cr3CoinsSpent += price;
     s.cr3VipDays = std::min(s.cr3VipDays + constant("VIP_DAYS"), most);
+    sendVipLoginBonus(s); // (DBSystem::SM_BuyVip: SendVIPLoginBonus immediately on 200 OK)
     return finish(kDbOk);
 }
 
@@ -768,6 +791,7 @@ int Cr3OfflineDb::buyVIPTrial(GameState& s) {
     if (s.cr3VipDays >= most) return finish(kDbFull);
     s.cr3VipDays = std::min(s.cr3VipDays + constant("VIP_TRIAL_DAYS"), most);
     s.cr3VipTrial = true;
+    sendVipLoginBonus(s); // (DBSystem::SM_BuyVipTrial: SendVIPLoginBonus immediately on 200 OK)
     return finish(kDbOk);
 }
 
@@ -865,15 +889,19 @@ int Cr3OfflineDb::geneRarity(int id) const {
 namespace {
 
 // CrxGene's learning: the gene's (level, type, id) rows of the levels past `from` up to `to`, in
-// order - each into its first free own slot, else over 0 .. 5 in turn
-void learn(Cr3Gene& g, const Cr3OfflineDb::GeneInfo& i, int from, int to) {
+// order - each into its first free own slot; initial construction (`overwrite = true`) cycles 0..5,
+// whereas in-battle / item level-ups (`overwrite = false`) never silently clobber full 6-slot genes
+void learn(Cr3Gene& g, const Cr3OfflineDb::GeneInfo& i, int from, int to, bool overwrite = true) {
     int turn = 0;
     for (const auto& l : i.learns) {
-        if (l[0] <= from || l[0] > to) continue;
+        if (l[0] <= from || l[0] > to || hasSlot(g, l[1], l[2])) continue;
         int slot = -1;
         for (int k = 0; k < 6 && slot < 0; ++k)
             if (g.slots[k][1] == -1) slot = k;
-        if (slot < 0) slot = turn++ % 6;
+        if (slot < 0) {
+            if (!overwrite) continue;
+            slot = turn++ % 6;
+        }
         g.slots[slot][0] = l[1], g.slots[slot][1] = l[2];
     }
 }
@@ -905,7 +933,7 @@ void Cr3OfflineDb::addGeneExp(Cr3Gene& g, int n) const {
     g.exp += n;
     int after = geneLevel(g);
     if (after >= i->maxLevel) after = i->maxLevel, g.exp = geneExp(g.master, after);
-    if (after > before) learn(g, *i, before, after);
+    if (after > before) learn(g, *i, before, after, false);
 }
 
 void Cr3OfflineDb::addGeneLevels(Cr3Gene& g, int levels) const {
@@ -993,6 +1021,7 @@ int Cr3OfflineDb::mergeGene(GameState& s, int preview, bool coins) {
     s.cr3Genes.push_back(p.result);
     s.cr3Genes.back().fresh = true;
     s.cr3GeneBook.insert(p.result.master);
+    s.setFlag(34, true); // (DBSystem::SM_MergeGene / CompleteMergeGene: flag 0x22)
     ++s.cr3Records.merges, ++s.cr3Records.genesObtained;
     if (coins) s.cr3Coins -= p.coins, s.cr3CoinsSpent += p.coins;
     else s.cr3Money -= p.gold;
@@ -1094,7 +1123,7 @@ int Cr3OfflineDb::sellGenes(GameState& s, std::vector<int> genes) {
         if (!i) return finish(kDbNone);
         gold += genePrice(s.cr3Genes[size_t(k)]);
     }
-    s.cr3Money += gold;
+    addGold(s, gold);
     std::sort(genes.rbegin(), genes.rend());
     genes.erase(std::unique(genes.begin(), genes.end()), genes.end());
     for (const int k : genes) s.cr3Genes.erase(s.cr3Genes.begin() + k);
@@ -1219,9 +1248,13 @@ int Cr3OfflineDb::beginVSTournament(GameState& s, int k, const std::vector<int>&
             }
     vs.seasonDrop = false;
     if (!season) {
-        vs.season = -1, vs.seasonPoints = vs.seasonCount = 0;
+        vs.season = -1, vs.seasonPoints = vs.seasonCount = vs.seasonLevel = 0;
     } else {
-        if (vs.season != season->integer("_id")) vs.seasonCount = season->integer("count"), vs.seasonPoints = 0, vs.season = season->integer("_id");
+        if (vs.season != season->integer("_id")) {
+            const std::vector<int> sc = ints(*season, "scores");
+            vs.seasonCount = !sc.empty() ? sc[0] : season->integer("count");
+            vs.seasonPoints = 0, vs.seasonLevel = 0, vs.season = season->integer("_id");
+        }
         vs.seasonDrop = int(random() % 100) < t.seasonProb || bonus;
     }
     t.seasonDrop = vs.seasonDrop;
@@ -1285,6 +1318,7 @@ int Cr3OfflineDb::endVSTournament(GameState& s, std::time_t now) {
             vs.rewarded = true;
             vsRewards_.won = true;
             s.cr3GP += constant("OBTAIN_GP_VS_END_TOURNAMENT", 1), vsRewards_.gp = constant("OBTAIN_GP_VS_END_TOURNAMENT", 1);
+            addGold(s, t.prizeGold);
             vsRewards_.gold = t.prizeGold;
             if (t.prizeCategory == 6) { // (one of vsprizes' items, at random)
                 if (const BsonValue* pz = table("vsprizes"))
@@ -1301,17 +1335,28 @@ int Cr3OfflineDb::endVSTournament(GameState& s, std::time_t now) {
             } else if (t.prizeCategory == 3) { // (its gene box)
                 if (openGeneBox(s, t.prizeId, 1, 0) == kDbOk) vsRewards_.genes = lastGenes_;
             }
-            // the season's points: a season's count of them one more level, a draw from its sheet
+            // the season's points (CheckVSSeasonScore): scores[0] per level up to `count` levels, then scores[1]
             if (t.seasonItem > 0 && vs.seasonDrop && vs.seasonCount > 0) {
+                const BsonValue* activeSeason = nullptr;
+                if (const BsonValue* ss = table("vsseasons"))
+                    for (const BsonValue& r : ss->items)
+                        if (r.integer("_id") == vs.season) {
+                            activeSeason = &r;
+                            break;
+                        }
+                const std::vector<int> sc = activeSeason ? ints(*activeSeason, "scores") : std::vector<int>();
                 vs.seasonPoints += 1;
-                while (vs.seasonPoints >= vs.seasonCount) {
+                while (vs.seasonCount > 0 && vs.seasonPoints >= vs.seasonCount) {
                     vs.seasonPoints -= vs.seasonCount;
+                    ++vs.seasonLevel;
                     if (const BsonValue* ssr = table("vsseasonscorerewards"))
                         for (const BsonValue& r : ssr->items)
                             if (checkDate(r.integer("sdate"), r.integer("edate"), now)) {
                                 openLuckyBox(s, r.string("bingo"), 1, 0);
                                 break;
                             }
+                    if (activeSeason && sc.size() >= 2 && vs.seasonLevel >= activeSeason->integer("count"))
+                        vs.seasonCount = sc[1];
                 }
             }
             vs.cleared.insert(t.id);
@@ -1440,7 +1485,7 @@ int Cr3OfflineDb::setQuest(GameState& s, int id) {
 int Cr3OfflineDb::earnQuestPrize(GameState& s, const BsonValue& p) {
     const std::string c = p.string("category");
     if (c == "item") return earnItemPrize(s, p.integer("item_id"), p.integer("count"));
-    if (c == "gold") return s.cr3Money += p.integer("count"), kDbOk;
+    if (c == "gold") return addGold(s, p.integer("count")), kDbOk;
     if (c == "genebox") return openGeneBox(s, p.integer("item_id"), 1, 0);
     if (c == "luckybox") return openLuckyBox(s, p.string("item_id"), 1, 0);
     return earnGenePrize(s, p.integer("item_id"));

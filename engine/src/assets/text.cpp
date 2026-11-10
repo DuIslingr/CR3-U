@@ -63,10 +63,11 @@ std::string TextData::message(int n, int language) const {
 int TextData::voice(int n) const { return n >= 1 && size_t(n) <= voices_.size() ? voices_[size_t(n - 1)] : -1; }
 std::string TextData::voiceName(int n) const { return n >= 1 && size_t(n) <= voiceNames_.size() ? voiceNames_[size_t(n - 1)] : std::string(); }
 
-ParsedMessage parseMessage(const std::string& t) {
+ParsedMessage parseMessage(const std::string& t, bool defaultCentred) {
     ParsedMessage out;
     TextPage page;
     TextLine line;
+    line.centred = defaultCentred;
     const auto typed = [&] { // (the page's code points so far)
         int n = 0;
         for (unsigned char c : line.text) n += (c & 0xc0) != 0x80;
@@ -75,7 +76,7 @@ ParsedMessage parseMessage(const std::string& t) {
         return n;
     };
     const auto endPage = [&] {
-        page.lines.push_back(line), line = TextLine();
+        page.lines.push_back(line), line = TextLine(), line.centred = defaultCentred;
         const int n = typed();
         while (!page.stops.empty() && page.stops.back().wait == 0 && page.stops.back().at >= n) page.stops.pop_back();
         out.pages.push_back(page), page = TextPage();
@@ -86,11 +87,13 @@ ParsedMessage parseMessage(const std::string& t) {
             const char c = t[i + 1];
             i += 2;
             if (c == 'n') {
-                page.lines.push_back(line), line = TextLine();
+                page.lines.push_back(line), line = TextLine(), line.centred = defaultCentred;
             } else if (c == 'f') {
                 endPage();
             } else if (c == 'c') {
                 line.centred = true;
+            } else if (c == 'l') {
+                line.centred = false;
             } else if (c == '#' && i < t.size() && std::isdigit(static_cast<unsigned char>(t[i]))) {
                 line.colour = t[i++] - '0';
             } else if (c == 'd') {

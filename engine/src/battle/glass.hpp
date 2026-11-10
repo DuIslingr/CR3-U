@@ -64,7 +64,7 @@ class Cr3Glass {
 public:
     static constexpr int kPoints = 230;
     static constexpr float kLength = 0.8f, kFrame = 1.0f / 60.0f;
-    void build(int w, int h, Rand48& rng); // (w, h: half the screen's size)
+    void build(int w, int h, Rand48& rng, int pattern = 0); // (w, h: half the screen's size; pattern: GlassFragmentParam 0..2)
     void step(float dt);
     void advanceTo(float t);
     float alpha() const { return std::max(1.0f - clock / kLength, 0.0f); }

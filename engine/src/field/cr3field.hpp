@@ -31,15 +31,16 @@ struct Cr3Area {
 // Fld2CameraGom, a step a 1/60 s: it looks at the player 1.2 up; a spring keeps it 3 away (an
 // acceleration of 0.005 a step, braking to stop there), 0.5 above that point and never nearer
 // than 2 across; the view pitched down 0.3 rad (and at least 3 sin 0.3 up) and turned by yaw.
-// While the player moves across the view (30 .. 150 degrees from facing away), it swings round
-// behind them (GomRotate: (1 - angle / 180) x 1.5 x 60 degrees a second)
+// Moving bakes yaw into the spring's point (+0x30 -> +0x20, +0x14). While a touch drag moves the
+// player across the view (GetIsPress(9), 30 .. 150 degrees between camera and move direction), it
+// swings round toward behind them (GomRotate: (1 - angle / 180) x 1.5 x 60 degrees a second)
 class Cr3GomCamera {
 public:
     void reset(const std::array<float, 3>& player, float playerYaw);
     // (with walls: CheckCollision - the camera stopped at the first it meets from the target; the
     // camera's own bodies (camhit) alone where there are some below the target, else the walls too)
-    void step(const std::array<float, 3>& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls = nullptr,
-              const CollisionWorld* walls = nullptr);
+    void step(const std::array<float, 3>& player, float moveAngle, bool moving, float dt, const CollisionWorld* cameraWalls = nullptr,
+              const CollisionWorld* walls = nullptr, bool touchMove = false);
     float playerAlpha = 1; // (the camera within 1 of the target across: the player drawn at 0.3)
     void turn(float yawRadians, float pitchRadians); // (the player's own turning of it)
     // Fld2CameraGom::UpdateControl: the camera pad's turn - the pitch kept within 20 degrees either
@@ -62,7 +63,7 @@ public:
 private:
     std::array<float, 3> spring_{}; // (the point the spring holds: +0x20)
     float speed_ = 0;
-    bool swinging_ = false;
+    bool baked_ = false, swinging_ = false; // (+0x14, +0x15)
     float behindAge_ = -1, behindYaw_ = 0, behindPitch_ = 0, behindDelta_ = 0;
     bool lookDown_ = false, external_ = false;
     std::array<float, 3> ldOffset_{};

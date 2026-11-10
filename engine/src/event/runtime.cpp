@@ -23,20 +23,33 @@ int fadeColour(int type) { return type >= 1 && type <= 3 ? type : 0; }
 // shop's place); away while her talk runs (SpacePortMain 0: EndCutInMenu(2))
 const char* const kSpacePortClerk = "cutIn121_L01";
 
+// EvtAnnounce*Window / EvtNarrationWindow::GetDefaultTextAlign (0x0084b690 / 0x0084bd48):
+// announcements (2, 3, 4, 8, 9, 10) and narration (6) default to centred unless \l overrides.
+bool defaultCentredWindow(int w) {
+    return w == EventRuntime::AnnounceA || w == EventRuntime::AnnounceB || w == EventRuntime::Tutorial || w == EventRuntime::Narration ||
+           (w >= EventRuntime::AnnounceTop && w <= EventRuntime::AnnounceBot);
+}
+
 } // namespace
 
 void EventFade::start(int c, int frames, float from, float to) {
     colour = c;
-    alpha = from, target = to;
+    hold = to < from && frames > 0 ? 2 : 0; // (FadeWindowMenu::InterfaceCloseAnimeSet: +0x24 = 4 60-Hz updates)
+    alpha = frames > 0 ? from : to, target = to;
     step = frames > 0 ? std::abs(to - from) / float(frames) : 1.0f;
 }
 
 void EventFade::update() {
+    if (hold > 0) {
+        --hold;
+        return;
+    }
     if (alpha < target) alpha = std::min(alpha + step, target);
     else if (alpha > target) alpha = std::max(alpha - step, target);
 }
 
-EventRuntime::EventRuntime(const MvglArchive& archive, GameState& state) : enteredNames(state.cr3Names), archive_(archive), state_(state) {}
+EventRuntime::EventRuntime(const MvglArchive& archive, GameState& state)
+    : dungeonLevel(state.dungeonLevel), enteredNames(state.cr3Names), archive_(archive), state_(state) {}
 
 EventRuntime::~EventRuntime() { stopDialogueVoice(); }
 
@@ -77,10 +90,12 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtScene", "Init", [this, owner](NativeCall& c) {
         std::string err;
         if (!scene_.load(archive_, c.string(0), &err)) owner->appendError("EvtScene.Init: " + err + "\n");
-        terminated_ = drawSkip_ = false;
+        terminated_ = drawSkip_ = false, vistaVisible_ = true;
     });
     vm.setNative("EvtScene", "Terminate", [this](NativeCall&) { terminated_ = true; });
     vm.setNative("EvtScene", "SetDrawSkip", [this](NativeCall& c) { drawSkip_ = c.boolean(0); });
+    vm.setNative("VistaEvent", "SetVisible", [this](NativeCall& c) { vistaVisible_ = c.boolean(0); });
+    vm.setNative("VistaEvent", "SetMapScrollSpeed", [](NativeCall&) {}); // (e0007 VistaMapScroll: material UV scroll speed)
     vm.setNative("EvtScene", "SetAnimator", [](NativeCall&) {}); // (loads an animation ahead)
     vm.setNative("EvtScene", "Visible", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->visible = c.boolean(1);
@@ -152,21 +167,44 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtScene", "SetModelLayer", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->layer = c.integer(1);
     });
-    // CR3's full-screen sprites (EventSprite)
-    vm.setNative("EvtScene", "CreateSprite", [this](NativeCall& c) {
+    // CR3's screen sprites (EventSprite: EvtScene::CreateSprite @ 0x0084245c / 0x00842510)
+    auto replaceSprite = [this](int id, EventSprite sp) {
+        if (EventSprite* old = scene_.sprite(id)) *old = std::move(sp);
+        else scene_.sprites.push_back(std::move(sp));
+    };
+    vm.setNative("EvtScene", "CreateSprite", [replaceSprite](NativeCall& c) {
         const int id = c.integer(0);
-        if (!scene_.sprite(id)) scene_.sprites.push_back(EventSprite{id});
+        EventSprite sp;
+        sp.id = id;
+        replaceSprite(id, std::move(sp));
     });
-    vm.setNative("EvtScene", "DeleteSprite", [this](NativeCall& c) {
+    vm.setNative("EvtScene", "CreateSpriteWithTexture", [replaceSprite](NativeCall& c) {
+        const int id = c.integer(0);
+        EventSprite sp;
+        sp.id = id, sp.textured = true, sp.texture = lower(c.string(1));
+        sp.size[0] = sp.size[1] = 1920.0f;
+        replaceSprite(id, std::move(sp));
+    });
+    auto destroySprite = [this](NativeCall& c) {
         const int id = c.integer(0);
         scene_.sprites.erase(std::remove_if(scene_.sprites.begin(), scene_.sprites.end(), [id](const EventSprite& sp) { return sp.id == id; }), scene_.sprites.end());
-    });
+    };
+    vm.setNative("EvtScene", "DestroySprite", destroySprite);
+    vm.setNative("EvtScene", "DeleteSprite", destroySprite);
     vm.setNative("EvtScene", "SetSpriteLayer", [this](NativeCall& c) {
         if (EventSprite* sp = scene_.sprite(c.integer(0))) sp->layer = c.integer(1);
     });
     vm.setNative("EvtScene", "SetSpriteColor", [this](NativeCall& c) {
-        if (EventSprite* sp = scene_.sprite(c.integer(0)))
-            for (int k = 0; k < 3; ++k) sp->colour[k] = c.number(1 + k);
+        if (EventSprite* sp = scene_.sprite(c.integer(0))) {
+            for (int k = 0; k < 3; ++k) sp->colourFrom[k] = sp->colourTo[k] = c.number(1 + k);
+            sp->colourSeconds = sp->colourTime = 0;
+        }
+    });
+    vm.setNative("EvtScene", "SetSpriteColorAnimation", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0))) {
+            for (int k = 0; k < 3; ++k) sp->colourFrom[k] = c.number(1 + k), sp->colourTo[k] = c.number(4 + k);
+            sp->colourSeconds = float(std::max(c.integer(7), 0)) * kTick, sp->colourTime = 0;
+        }
     });
     vm.setNative("EvtScene", "SetSpriteAlpha", [this](NativeCall& c) {
         if (EventSprite* sp = scene_.sprite(c.integer(0))) sp->alphaFrom = sp->alphaTo = c.number(1), sp->alphaSeconds = 0;
@@ -174,6 +212,74 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtScene", "SetSpriteAlphaAnimation", [this](NativeCall& c) {
         if (EventSprite* sp = scene_.sprite(c.integer(0)))
             sp->alphaFrom = c.number(1), sp->alphaTo = c.number(2), sp->alphaSeconds = float(std::max(c.integer(3), 0)) * kTick, sp->alphaTime = 0;
+    });
+    vm.setNative("EvtScene", "SetSpritePosition", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0))) sp->pos[0] = c.number(1), sp->pos[1] = c.number(2);
+    });
+    vm.setNative("EvtScene", "SetSpriteSize", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0)))
+            sp->explicitSize = true, sp->size[0] = c.number(1), sp->size[1] = c.number(2);
+    });
+    vm.setNative("EvtScene", "SetSpriteScale", [this](NativeCall& c) {
+        if (EventSprite* sp = scene_.sprite(c.integer(0)))
+            sp->explicitScale = true, sp->scale[0] = c.number(1, 1.0f), sp->scale[1] = c.number(2, 1.0f);
+    });
+    // CR3's model variations, armour, weapons and joint-constrained attachments (0x00844914..0x008464f4)
+    vm.setNative("EvtScene", "ChangeVariation", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->variation = lower(c.string(1));
+    });
+    vm.setNative("EvtScene", "ChangeArmor", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->temporaryArmor = c.integer(1, -1);
+    });
+    vm.setNative("EvtScene", "SetWeaponVisible", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) {
+            m->weaponVisible = c.boolean(1);
+            if (!m->weaponVisible) m->attachments.erase(0);
+        }
+    });
+    vm.setNative("EvtScene", "LoadWeapon", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) {
+            m->weaponVisible = false;
+            EventModel::Attachment att;
+            att.figure = lower(c.string(1)), att.joint = c.string(2);
+            m->attachments[0] = std::move(att);
+        }
+    });
+    vm.setNative("EvtScene", "CreateAttachment", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) {
+            EventModel::Attachment att;
+            att.figure = lower(c.string(2)), att.joint = c.string(3);
+            m->attachments[c.integer(1)] = std::move(att);
+        }
+    });
+    vm.setNative("EvtScene", "DeleteAttachment", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->attachments.erase(c.integer(1));
+    });
+    vm.setNative("EvtScene", "AttachmentPosition", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) {
+            auto it = m->attachments.find(c.integer(1));
+            if (it != m->attachments.end())
+                for (int k = 0; k < 3; ++k) it->second.offset[k] = c.number(2 + k);
+        }
+    });
+    vm.setNative("EvtScene", "AttachmentRotation", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) {
+            auto it = m->attachments.find(c.integer(1));
+            if (it != m->attachments.end())
+                for (int k = 0; k < 3; ++k) it->second.rotDeg[k] = c.number(2 + k);
+        }
+    });
+    vm.setNative("EvtScene", "LoadAttachmentMotion", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) m->stagedAttachmentMotion = lower(c.string(1));
+    });
+    vm.setNative("EvtScene", "SetAttachmentMotion", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0))) {
+            auto it = m->attachments.find(c.integer(1));
+            if (it != m->attachments.end() && !m->stagedAttachmentMotion.empty()) {
+                it->second.motion = it->second.figure + "_" + m->stagedAttachmentMotion;
+                it->second.loop = c.boolean(2, true), it->second.animTime = 0;
+            }
+        }
     });
     // PlayEffect / PlayEffectLoop (Cr3EvtScenePlayEffect): shown, its own animation from the start,
     // once or looping
@@ -199,6 +305,10 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtScene", "Move", [this](NativeCall& c) { scene_.slide(c.string(0), c.integer(1), c.integer(2)); });
     vm.setNative("EvtScene", "ChangeModelColor", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->color = std::clamp(c.integer(1), -1, 3);
+    });
+    vm.setNative("EvtScene", "ChangeColor", [this](NativeCall& c) {
+        if (EventModel* m = scene_.model(c.string(0)))
+            for (int k = 0; k < 3; ++k) m->tint[k] = std::clamp(c.number(1 + k, 1.0f), 0.0f, 1.0f);
     });
     vm.setNative("EvtScene", "ShadowVisible", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->shadow = c.boolean(1);
@@ -324,10 +434,18 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
         parsed_ = parseMessage(filterMessage(tutorialTexts_.message(c.integer(0), language)));
         messageWindow_ = TutorialMenu, message_ = parsed_.pages.empty() ? 0 : c.integer(0);
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
         tutorialMenuOpen_ = message_ > 0, tutorialMenuPicture_ = 0;
         if (message_ > 0) ++messagesSet_;
     });
+    vm.setNative("InterfaceWindow", "SetContentTutorialMenuNum", [this](NativeCall& c) {
+        if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
+        parsed_ = parseMessage(filterMessage(tutorialTexts_.message(c.integer(0), language)));
+        messageWindow_ = TutorialMenu, message_ = parsed_.pages.empty() ? 0 : c.integer(0);
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
+        if (message_ > 0) tutorialMenuOpen_ = true, ++messagesSet_;
+    });
+    vm.setNative("InterfaceWindow", "OnFadeNarretionMenu", [this](NativeCall&) { narrationAboveFade_ = true; });
     vm.setNative("EvtIntroduction", "SetDungeonNum", [this](NativeCall& c) { mapName_ = c.integer(0), mapNameAge_ = 0; });
     vm.setNative("EvtIntroduction", "SetDungeonLevel", [this](NativeCall& c) { mapNameLevel_ = c.integer(0); });
     vm.setNative("EvtIntroduction", "GetVisible", [this](NativeCall& c) { c.result(mapName_ >= 0); });
@@ -360,6 +478,8 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     });
     auto close = [this](int w) {
         if (openWindows_.erase(w)) opened_.erase(w), closing_[w] = 0;
+        if (w == Narration) narrationAboveFade_ = false;
+        if (w == Vista) vistaSkipOnly_ = false;
         if (w == dialogueVoiceWindow_) stopDialogueVoice();
         if (w == messageWindow_) message_ = 0;
     };
@@ -367,6 +487,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtWindow", "UnloadAll", [this](NativeCall&) {
         stopDialogueVoice();
         openWindows_.clear(), opened_.clear(), closing_.clear(), message_ = 0;
+        narrationAboveFade_ = vistaSkipOnly_ = false;
     });
     // the cut-ins' portraits
     vm.setNative("EvtFace", "SetTexture", [this](NativeCall& c) { cutInImages_.push_back({c.integer(1), c.string(0)}); });
@@ -501,9 +622,60 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     });
     vm.setNative("InterfaceWindow", "CheckEndGiftSynthesizeEffect", [this](NativeCall& c) { c.result(giftEffectEnd_ < 0 || frame_ >= giftEffectEnd_); });
     vm.setNative("InterfaceWindow", "EndGiftSynthesizeEffect", [this](NativeCall&) { giftEffectEnd_ = -1; });
-    // The staff roll (StaffrollMenu): its scrolling is the UI's to come; InterfaceMain answers
-    // CheckToBeContinueStaffrollMenu true where no staff roll menu is up - as here
-    vm.setNative("InterfaceWindow", "CheckToBeContinueStaffrollMenu", [](NativeCall& c) { c.result(true); });
+    // CR3's staff roll overlay (StaffrollMenu, interface 200: message/Staff.dat)
+    vm.setNative("InterfaceWindow", "CreateStaffrollMenu", [this](NativeCall&) {
+        if (staffText_.count() == 0) loadText("Staff", staffText_);
+        staffroll_ = Staffroll();
+        staffroll_.open = true;
+        emitStaffrollRow(0.0f); // (StaffrollMenu::Initialize: SetStaffText(0.0) advances emitted to 1 before SetDisplaySection)
+    });
+    vm.setNative("InterfaceWindow", "DeleteStaffrollMenu", [this](NativeCall&) { staffroll_ = Staffroll(); });
+    vm.setNative("InterfaceWindow", "CheckToBeContinueStaffrollMenu", [this](NativeCall& c) {
+        c.result(!staffroll_.open || staffroll_.finished);
+    });
+    vm.setNative("InterfaceWindow", "SetScrollSpeedStaffrollMenu", [this](NativeCall& c) {
+        if (!staffroll_.open) return;
+        staffroll_.speed = std::max(c.number(0, 0.02f), 0.0001f);
+        staffroll_.fastSpeed = std::max(c.number(1, staffroll_.speed), 0.0001f);
+    });
+    vm.setNative("InterfaceWindow", "SetScrollFontDataStaffrollMenu", [this](NativeCall& c) {
+        if (!staffroll_.open) return;
+        staffroll_.fontSize = std::max(c.integer(0, 24), 8);
+        staffroll_.stepHeight = std::max(float(c.integer(1, 32)) * 0.01f, 0.01f);
+        staffroll_.shadowMode = c.integer(2, 2);
+        staffroll_.backAlpha = c.number(3, -1.0f);
+        staffroll_.leftX = c.number(4, 1.0f);
+        staffroll_.rightX = c.number(5, -0.68f);
+    });
+    vm.setNative("InterfaceWindow", "SetScrollFontColorStaffrollMenu", [this](NativeCall& c) {
+        if (!staffroll_.open) return;
+        for (int k = 0; k < 3; ++k) staffroll_.textRgb[k] = c.number(k, 1.0f), staffroll_.shadowRgb[k] = c.number(3 + k, 0.01f);
+    });
+    vm.setNative("InterfaceWindow", "SetGraphicTimerStaffrollMenu", [this](NativeCall& c) {
+        if (!staffroll_.open) return;
+        staffroll_.graphicIn = c.number(0, 0.5f), staffroll_.graphicHold = c.number(1, 6.0f), staffroll_.graphicOut = c.number(2, 0.5f);
+    });
+    vm.setNative("InterfaceWindow", "SetGraphicFirstDataStaffrollMenu", [this](NativeCall& c) {
+        if (!staffroll_.open) return;
+        staffroll_.graphicCount = c.integer(0, 0);
+        staffroll_.graphicTimer = c.number(1, 0.0f);
+        if (staffroll_.graphicCount <= 0) staffroll_.graphicPhase = 3, staffroll_.graphicAlpha = 0.0f;
+    });
+    vm.setNative("InterfaceWindow", "SetDisplaySectionStaffrollMenu", [this](NativeCall& c) {
+        if (!staffroll_.open) return;
+        const int start = c.integer(0, 0), end = c.integer(1, 0);
+        if (start > 1 && end >= start) {
+            staffroll_.baseRow = start - 2;
+            staffroll_.rowCount = end - start + 1;
+            staffroll_.endSteps = end - start + 0x1b;
+        }
+    });
+    // Cr3System.CrossFade(frames) (utils::CrossFade -> GameMain::StartCrossFade(frames * 1/30))
+    vm.setNative("Cr3System", "CrossFade", [this](NativeCall& c) {
+        const float dur = float(std::max(c.integer(0, 0), 0)) * kTick;
+        crossFade_ = CrossFade();
+        if (dur > 0) crossFade_.capture = crossFade_.active = true, crossFade_.duration = dur;
+    });
     // CR3's choice menus and text entry (runtime.hpp)
     for (int kind : {2, 3}) {
         const std::string n = kind == 2 ? "Two" : "Three";
@@ -591,8 +763,9 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         message_ = c.integer(1);
         const auto own = windowText_.find(messageWindow_);
         const TextData& td = own != windowText_.end() ? own->second : text_;
-        parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(td.message(message_, language)))));
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
+        parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(td.message(message_, language)))),
+                               defaultCentredWindow(messageWindow_));
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
         if (parsed_.pages.empty()) {
             message_ = 0;
             return;
@@ -618,8 +791,9 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtWindow", "SetMessageText", [this](NativeCall& c) {
         stopDialogueVoice();
         messageWindow_ = c.integer(0, Vista), message_ = 0x7fff;
-        parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(c.string(1)))));
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
+        parsed_ = parseMessage(warnKeys(takeParameters(messageWindow_, filterMessage(c.string(1)))),
+                               defaultCentredWindow(messageWindow_));
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
@@ -640,8 +814,8 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
         std::string t = (own != windowText_.end() ? own->second : announce).message(0x75, language);
         if (const size_t p = t.find("%s"); p != std::string::npos) t.replace(p, 2, itemNames_.message(id, language));
         messageWindow_ = w, message_ = 0x75, itemShown_ = id;
-        parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))));
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
+        parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))), defaultCentredWindow(w));
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
@@ -677,8 +851,8 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
             t = from.message(message, language), put(t, "{item.name}", name), put(t, "{item.count}", std::to_string(n));
         } else return;
         messageWindow_ = w, message_ = message, itemShown_ = category == 10 ? -10 : category * 100000 + id;
-        parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))));
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, ended_ = false;
+        parsed_ = parseMessage(warnKeys(takeParameters(w, filterMessage(t))), defaultCentredWindow(w));
+        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
         if (parsed_.pages.empty()) message_ = 0;
         else ++messagesSet_;
     });
@@ -688,8 +862,10 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtWindow", "ClearMessage", [this](NativeCall& c) {
         if (c.integer(0, Vista) == messageWindow_) message_ = 0, page_ = 0, ended_ = false;
     });
-    vm.setNative("EvtWindow", "ShowYesNoButton", [this](NativeCall&) { yesNoShown_ = true, yesNo_ = 0, yesNoAge_ = 0; });
-    vm.setNative("EvtWindow", "HideYesNoButton", [this](NativeCall&) { yesNoShown_ = false; });
+    vm.setNative("EvtWindow", "ShowYesNoButton", [this](NativeCall&) { yesNoShown_ = true, yesNo_ = 0, yesNoAge_ = 0, yesNoClosing_ = -1; });
+    vm.setNative("EvtWindow", "HideYesNoButton", [this](NativeCall&) {
+        if (yesNoShown_) yesNoShown_ = false, yesNoClosing_ = 0;
+    });
     vm.setNative("EvtWindow", "CheckYesNoButton", [this](NativeCall& c) {
         if (askYesNo) c.result(yesNo_);
     });
@@ -738,6 +914,9 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtWindow", "SetVistaSkipButtonEnable", [this](NativeCall& c) {
         if (c.boolean(0)) skipOff_.erase(Vista);
         else skipOff_.insert(Vista);
+    });
+    vm.setNative("EvtWindow", "SetVistaSkipButtonOnlyEnable", [this](NativeCall& c) {
+        vistaSkipOnly_ = c.boolean(0);
     });
     vm.setNative("EvtWindow", "SetVistaPauseButtonEnable", [this](NativeCall& c) {
         vistaPauseEnabled = c.boolean(0);
@@ -788,6 +967,8 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("Cr3Sound", "StopVoiceAll", [](NativeCall& c) {
         if (soundHooks().stopAllVoices) soundHooks().stopAllVoices(c.integer(0));
     });
+    vm.setNative("Cr3Sound", "SetPanSE", [](NativeCall&) {});    // (utils::SoundSetPanSE @ 0x00928914)
+    vm.setNative("Cr3Sound", "SetPanVoice", [](NativeCall&) {}); // (utils::SoundSetPanVoice)
     vm.setNative("Cr3Sound", "IsPlaying", [](NativeCall& c) { c.result(soundHooks().playingNamed && soundHooks().playingNamed(c.string(0))); });
 }
 
@@ -795,7 +976,8 @@ void EventRuntime::reset() {
     // Reusing a runtime for another room must act like fresh vista/window objects.
     // Keep the host's playback policy, language and manual selection, but no old input/UI.
     mapAnimPaused = effectLine = fastForward = false;
-    skipButton_ = touched_ = false;
+    skipButton_ = vistaSkipOnly_ = narrationAboveFade_ = touched_ = false;
+    vistaVisible_ = true;
     vistaPauseEnabled = vistaPaused = false;
     touchWait_ = yesNoAge_ = 0;
     stopDialogueVoice();
@@ -822,16 +1004,17 @@ void EventRuntime::reset() {
     mapName_ = -1, mapNameLevel_ = 0, mapNameAge_ = 0;
     scene_ = EventScene();
     fade_ = EventFade(), backFade_ = EventFade();
+    crossFade_ = CrossFade(), staffroll_ = Staffroll();
     faces_.clear();
     text_ = TextData(), names_ = TextData();
     for (auto& [n, t] : windowText_) textSources_.erase(&t);
     windowText_.clear(), tutorialPicture_ = TutorialPicture();
     openWindows_.clear(), opened_.clear(), closing_.clear();
-    yesNoShown_ = false, yesNo_ = 0;
+    yesNoShown_ = false, yesNo_ = 0, yesNoClosing_ = -1;
     cutIns_ = {}, cutInImages_.clear();
     geneLab_ = GeneLab();
     lunch_ = Lunch();
-    messageWindow_ = Vista, message_ = page_ = revealed_ = 0, pageTime_ = stopTime_ = 0, stop_ = 0, ended_ = false;
+    messageWindow_ = Vista, message_ = page_ = revealed_ = 0, pageTime_ = stopTime_ = tapWait_ = 0, stop_ = 0, ended_ = false;
     execution_ = false;
     terminated_ = drawSkip_ = false;
     wait_ = frame_ = 0;
@@ -879,21 +1062,35 @@ static bool voiceSpeaking() { return soundHooks().voicePlaying && soundHooks().v
 bool EventRuntime::update(ScriptVM* vm) {
     ++frame_;
     scene_.update(kTick);
+    fade_.update(), backFade_.update(); // (GameMain::OnUpdate: InterfaceMain::Update runs before EvtSystem::Update)
+    if (crossFade_.active) {
+        if (crossFade_.capture) {
+            if (++crossFade_.captureTicks > 1) crossFade_.capture = false; // (headless fallback when no renderer grabs frame 1)
+        }
+        if (!crossFade_.capture && (crossFade_.elapsed += kTick) >= crossFade_.duration - 1e-4f) crossFade_ = CrossFade();
+    }
+    if (staffroll_.open && !staffroll_.finished) stepStaffroll();
+    for (auto& [w, t] : opened_) t += kTick;
     if (vm && vm->waiting() && --wait_ <= 0) {
         wait_ = 0;
         if (!vm->resume()) return error_ = vm->error(), false;
     }
+    const bool wasAwaitingTap = message_ > 0 && awaitingTap();
     if (!parsed_.noSkip && ((fastForward && fastForwardShown()) || (skipHeld() && message_ > 0))) { // (a button held: the page whole, then the next at once - EvtWindow::IsSkip)
         if (!typed()) showWhole();
         else advance();
-    } else if (message_ > 0 && !typed()) { // (ProvisionalMenuText::Step: speed 1 a drawn frame - the game's 60 a second, two of our updates' worth; the page's time counts once it's typed)
-        if (const TextStop* s = held(); !s) revealed_ += 2;
+    } else if (message_ > 0 && !typed() && !windowOpening()) { // (ProvisionalMenuText::Step: speed 1 a drawn frame - the game's 60 a second, two of our updates' worth; the page's time counts once it's typed)
+        if (const TextStop* s = held(); !s) {
+            for (int step = 0; step < 2 && !held() && !typed(); ++step) ++revealed_;
+        }
         else if (s->wait > 0 && (stopTime_ += kTick) * 30 >= float(s->wait)) ++stop_, stopTime_ = 0; // (\w: its n in 30ths of a second)
         else if (s->wait == 0 && autoPage > 0 && !voiceSpeaking() && (pageTime_ += kTick) >= autoPage) advance(); // (a tap mark: as a page)
     } else if (message_ > 0 && ending()) ended_ = true; // (\*: its end by itself - the script's CheckMessage, the page still shown till ClearMessage, the next or Close)
-    else if ((message_ > 0 || execution_) && autoPage > 0 && !voiceSpeaking() && (pageTime_ += kTick) >= autoPage) advance(); // (its voice heard out first)
-    fade_.update(), backFade_.update();
+    else if ((message_ > 0 || execution_) && !windowOpening() && autoPage > 0 && !voiceSpeaking() && (pageTime_ += kTick) >= autoPage) advance(); // (its voice heard out first)
+    if (wasAwaitingTap && message_ > 0 && awaitingTap()) tapWait_ += kTick;
+    else if (!(message_ > 0 && awaitingTap())) tapWait_ = 0;
     if (yesNoShown_ && (yesNoAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo && !yesNo_) yesNo_ = 1; // (pages by themselves: yes)
+    if (yesNoClosing_ >= 0 && (yesNoClosing_ += kTick) >= 3 * kTick - 1e-4f) yesNoClosing_ = -1;
     if (choiceKind_ && choiceAnswer_ < 0 && (choiceAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) choiceAnswer_ = (choicesAsked_ - 1) % choiceKind_; // (the first, then the next ...)
     else if (choiceKind_ && choiceAnswer_ >= 0 && choiceClosing_ < 0) choiceAge_ += kTick;
     if (choiceKind_ && choiceClosing_ >= 0 && (choiceClosing_ += kTick) >= choiceCloseSeconds_) choiceKind_ = 0, choiceClosing_ = -1;
@@ -902,8 +1099,7 @@ bool EventRuntime::update(ScriptVM* vm) {
     if (clearQuest_ > 0 && (clearQuestAge_ += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) clearQuest_ = 0; // (pages by themselves: its OK)
     if (inputOpen_ && (inputAge_ += kTick) >= autoPage && autoPage > 0 && askYesNo) inputOpen_ = false; // (its text as given, accepted)
     if (geneGet_.open && (geneGet_.age += kTick) >= autoPage + 1 && autoPage > 0 && askYesNo) geneGet_.open = false; // (pages by themselves: a tap)
-    for (auto& [w, t] : opened_) t += kTick;
-    if (mapName_ >= 0 && (mapNameAge_ += kTick) >= kMapNameSeconds) mapName_ = -1;
+    if (mapName_ >= 0 && (mapNameAge_ += kTick) >= kMapNameSeconds) mapName_ = -1, mapNameLevel_ = 0;
     for (auto it = closing_.begin(); it != closing_.end();) // (out animations: a second at most)
         it = (it->second += kTick) > 1.0f ? closing_.erase(it) : std::next(it);
     for (Portrait& c : cutIns_) {
@@ -1009,37 +1205,50 @@ bool EventRuntime::tutorialPage(int direction) {
     const int next = std::clamp(page_ + direction, 0, int(parsed_.pages.size()) - 1);
     if (next != page_) {
         stopDialogueVoice();
-        page_ = next, pageTime_ = stopTime_ = 0, revealed_ = 0, stop_ = 0, ended_ = false;
+        page_ = next, pageTime_ = stopTime_ = tapWait_ = 0, revealed_ = 0, stop_ = 0, ended_ = false;
         if (tutorialPicture_.visible && size_t(next) < tutorialPicture_.images.size()) tutorialPicture_.shown = next;
     }
     return true;
 }
 
-void EventRuntime::advance() {
-    pageTime_ = 0;
+bool EventRuntime::windowOpening() const {
+    if (messageWindow_ != CutIn && messageWindow_ != System) return false;
+    const auto it = opened_.find(messageWindow_);
+    return it != opened_.end() && it->second < 5 * kTick - 1e-4f;
+}
+
+void EventRuntime::advance(bool tap) {
     if (execution_) {
+        pageTime_ = 0;
         execution_ = false;
         return;
     }
     if (message_ <= 0 || ended_) return;
+    if (tap && windowOpening()) return;
     if (!typed()) {
         const std::vector<TextStop>& stops = parsed_.pages[size_t(page_)].stops;
         if (const TextStop* s = held()) { // (at a tap mark: the page's next part; a timed one reads no tap)
-            if (s->wait == 0) ++stop_;
+            if (s->wait == 0) {
+                if (tap && tapWait_ < 3 * kTick - 1e-4f) return;
+                pageTime_ = 0, tapWait_ = 0, ++stop_;
+            }
             return;
         }
-        // (else EvtWindowPage::Skip: on to the next tap mark, past the timed ones)
-        while (stop_ < stops.size() && stops[stop_].wait > 0) ++stop_;
+        // (ProvisionalMenuText::SetSkipFlag: up to the next stop - \w or \@ - without skipping timed waits)
+        pageTime_ = 0, tapWait_ = 0;
         if (stop_ < stops.size()) revealed_ = std::max(revealed_, stops[stop_].at), stopTime_ = 0;
         else showWhole();
         return;
     }
     if (ending()) { // (\*: explicitly skipped by the reader)
+        pageTime_ = 0, tapWait_ = 0;
         stopDialogueVoice();
         ended_ = true;
         return;
     }
     if (pageSendOff_.count(messageWindow_)) return; // (SetWaitButtonEnable false: the script's to end)
+    if (tap && tapWait_ < 3 * kTick - 1e-4f) return; // (EvtWindow::UpdatePage: m_timer > 0.1 s before a tap turns the page)
+    pageTime_ = 0, tapWait_ = 0;
     revealed_ = 0, stop_ = 0, stopTime_ = 0;
     if (++page_ >= int(parsed_.pages.size())) {
         message_ = 0, page_ = 0;
@@ -1156,6 +1365,77 @@ void EventRuntime::shopClerk(bool shown) {
 void EventRuntime::openGeneGet(int gene, int level, bool isNew, bool se) {
     if (!geneGet_.open) geneGet_ = GeneGet(), geneGet_.open = true;
     if (gene > 0) geneGet_.gene = gene, geneGet_.level = std::max(level, 1), geneGet_.isNew = isNew, geneGet_.se = se, geneGet_.age = 0;
+}
+
+void EventRuntime::emitStaffrollRow(float yOffset) {
+    const int idx = staffroll_.baseRow + staffroll_.emitted;
+    const auto clean = [this](int id) {
+        const ParsedMessage m = parseMessage(filterMessage(staffText_.message(id, language)));
+        return m.pages.empty() || m.pages[0].lines.empty() ? std::string() : m.pages[0].lines[0].text;
+    };
+    StaffrollLine ln;
+    ln.y = yOffset - 4.5f;
+    if (idx >= 1) {
+        ln.left = clean(idx);
+        const std::string rawRight = staffText_.message(idx + 800, language);
+        if (rawRight == "graphiclogotypea") ln.logoFrame = 0;
+        else if (rawRight == "graphiclogotypeb") ln.logoFrame = 1;
+        else ln.right = clean(idx + 800);
+    }
+    if (!ln.left.empty() || !ln.right.empty() || ln.logoFrame >= 0) staffroll_.lines.push_back(std::move(ln));
+    ++staffroll_.emitted;
+}
+
+void EventRuntime::stepStaffroll() {
+    // StaffrollMenu::Update runs at 60 Hz (two steps per 30-Hz tick).
+    const bool fast = staffroll_.touchFast || fastForward || skipHeld();
+    for (int sub = 0; sub < 2 && !staffroll_.finished; ++sub) {
+        const float dy = fast ? staffroll_.fastSpeed : staffroll_.speed;
+        staffroll_.scrolled += dy;
+        for (StaffrollLine& ln : staffroll_.lines) ln.y += dy;
+        staffroll_.lines.erase(std::remove_if(staffroll_.lines.begin(), staffroll_.lines.end(),
+                                              [](const StaffrollLine& ln) { return ln.y >= 8.0f; }),
+                               staffroll_.lines.end());
+        float rem = staffroll_.scrolled;
+        int steps = 0;
+        while (rem >= staffroll_.stepHeight) {
+            const int prev = steps++;
+            rem -= staffroll_.stepHeight;
+            if (staffroll_.emitted <= steps && prev < staffroll_.rowCount) emitStaffrollRow(rem);
+        }
+        if (steps >= staffroll_.endSteps) {
+            staffroll_.finished = true;
+            break;
+        }
+        const float dt = (dy * (0.5f * kTick)) / std::max(staffroll_.speed, 0.0001f);
+        if (staffroll_.graphicCount > 0 && staffroll_.graphicPhase < 3) {
+            staffroll_.graphicTimer -= dt;
+            if (staffroll_.graphicPhase == 0) {
+                if (staffroll_.graphicTimer <= 0) {
+                    staffroll_.graphicIndex = 1, staffroll_.graphicPhase = 1;
+                    staffroll_.graphicTimer += staffroll_.graphicIn + staffroll_.graphicHold;
+                }
+            } else if (staffroll_.graphicPhase == 1) {
+                const float total = std::max(staffroll_.graphicIn + staffroll_.graphicHold, 0.001f);
+                const float age = total - staffroll_.graphicTimer;
+                staffroll_.graphicAlpha = staffroll_.graphicIn > 0 ? std::clamp(age / staffroll_.graphicIn, 0.0f, 1.0f) : 1.0f;
+                if (staffroll_.graphicTimer <= 0) {
+                    staffroll_.graphicPhase = 2;
+                    staffroll_.graphicTimer += staffroll_.graphicOut;
+                }
+            } else if (staffroll_.graphicPhase == 2) {
+                staffroll_.graphicAlpha = staffroll_.graphicOut > 0 ? std::clamp(staffroll_.graphicTimer / staffroll_.graphicOut, 0.0f, 1.0f) : 0.0f;
+                if (staffroll_.graphicTimer <= 0) {
+                    if (staffroll_.graphicIndex < staffroll_.graphicCount) {
+                        ++staffroll_.graphicIndex, staffroll_.graphicPhase = 1;
+                        staffroll_.graphicTimer += staffroll_.graphicIn + staffroll_.graphicHold;
+                    } else {
+                        staffroll_.graphicPhase = 3, staffroll_.graphicAlpha = 0.0f;
+                    }
+                }
+            }
+        }
+    }
 }
 
 } // namespace cr3

@@ -33,6 +33,7 @@ struct Cr3BattleTables {
     };
     bool motionTravel(int modelId, int motion, MotionTravel& out) const;
     int directionCommand(int commandId, int basicAttack) const;
+    std::string victoryCamera(int modelId) const;
     struct EffectPoint {
         std::string joint;
         std::array<float, 3> offset{};

@@ -139,31 +139,48 @@ void GlassFragments::advanceTo(float t) {
 }
 
 
-void Cr3Glass::build(int halfW, int halfH, Rand48& rng) {
+void Cr3Glass::build(int halfW, int halfH, Rand48& rng, int pattern) {
     w = halfW, h = halfH;
     const float fw = float(w), fh = float(h);
+    // (GlassFragmentParam presets 0..2 - FUN_813e4cf4 / 4e16 / 4d80: 0 RadialCenter 230 pts,
+    // 1 Drop/peel 200 pts, 2 RadialSwirl 400 pts)
+    const int points = pattern == 1 ? 200 : pattern == 2 ? 400 : kPoints;
+    const float ox = (pattern == 1 ? 1.5f : 0.5f) * fw, oy = 0.5f * fh;
+    const float baseSpeed = pattern == 1 ? 0.5f : 8.7f, speedByD = 0.06f;
+    const float baseGain = pattern == 1 ? 0.0f : 1.1f, gainByD = pattern == 1 ? 0.0f : 0.4f;
+    const float baseTurn = pattern == 1 ? 0.10f : 0.18f, turnByD = pattern == 1 ? 0.0f : 0.0003f;
+    const float growRand = pattern == 1 ? 0.05f : 0.004f, growGain = pattern == 1 ? 0.0f : 0.08f;
     // (GlassFragmentEffect: the corners, then the points - on [0, w] x [0, h], y down)
     std::vector<float> xs{0, fw, 0, fw}, ys{0, 0, fh, fh};
-    for (int k = 0; k < kPoints; ++k) {
+    for (int k = 0; k < points; ++k) {
         xs.push_back(fw * rng.unit());
         ys.push_back(fh * rng.unit());
     }
     const std::vector<int> tri = delaunay(xs, ys);
     shards.clear();
+    const float swirlSin = std::sin(0.52359878f), swirlCos = std::cos(0.52359878f);
     for (size_t t = 0; t + 2 < tri.size(); t += 3) {
         GlassShard s{};
-        float cx = 0, cy = 0;
-        for (int c = 0; c < 3; ++c) cx += xs[size_t(tri[t + c])], cy += ys[size_t(tri[t + c])];
-        cx = cx / 3 - fw * 0.5f, cy = cy / 3 - fh * 0.5f; // (from the middle: param +0x3c, +0x40 = 0.5)
-        const float d = std::sqrt(cx * cx + cy * cy), inv = d > 0 ? 1.0f / d : 0.0f;
-        const float speed = 8.7f + d * 0.06f, gain = 1.1f + d * 0.4f;
+        float mx = 0, my = 0;
+        for (int c = 0; c < 3; ++c) mx += xs[size_t(tri[t + c])], my += ys[size_t(tri[t + c])];
+        mx /= 3, my /= 3;
+        float cx = mx - ox, cy = my - oy;
+        const float d = std::sqrt(cx * cx + cy * cy);
+        if (pattern == 2 && d > 0) { // (param[0x15] == 1: target swirled 30 deg at 1.2 d)
+            const float ux = cx / d, uy = cy / d;
+            const float tx = ox + 1.2f * d * (ux * swirlCos - uy * swirlSin);
+            const float ty = oy + 1.2f * d * (uy * swirlCos + ux * swirlSin);
+            cx = tx - mx, cy = ty - my;
+        }
+        const float dirLen = std::sqrt(cx * cx + cy * cy), inv = dirLen > 0 ? 1.0f / dirLen : 0.0f;
+        const float speed = baseSpeed + d * speedByD, gain = baseGain + d * gainByD;
         s.move[0] = cx * inv * speed, s.move[1] = -(cy * inv * speed), s.move[2] = 0;
         s.moveGain[0] = cx * inv * gain, s.moveGain[1] = -(cy * inv * gain), s.moveGain[2] = 0;
-        const float turn = 0.18f + d * 0.0003f;
+        const float turn = baseTurn + d * turnByD;
         for (int c = 0; c < 3; ++c) s.turn[c] = turn * rng.unit();
-        const float grow = 1.0f + rng.unit() * 0.004f;
+        const float grow = 1.0f + rng.unit() * growRand;
         s.scale[0] = s.scale[1] = grow, s.scale[2] = 1;
-        s.scaleGain[0] = s.scaleGain[1] = 0.08f, s.scaleGain[2] = 0;
+        s.scaleGain[0] = s.scaleGain[1] = growGain, s.scaleGain[2] = 0;
         // (Setup: the screen's place, centred, y up; the texture's by it)
         for (int c = 0; c < 3; ++c) {
             const size_t i = size_t(tri[t + c]);

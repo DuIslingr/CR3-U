@@ -140,21 +140,21 @@ void Cr3GomCamera::reset(const V3& player, float playerYaw) {
     // (SetupCamera: the spring's point a unit behind the player, at the target's height)
     const V3 t = targetOf(player);
     spring_ = t - V3{std::sin(playerYaw), 0, std::cos(playerYaw)};
-    speed_ = 0, yaw = 0, swinging_ = false;
+    speed_ = 0, yaw = 0, baked_ = false, swinging_ = false;
     at = t;
     step(player, playerYaw, false, 0);
 }
 
 void Cr3GomCamera::turn(float dyaw, float dpitch) {
     if (lookDown_ || external_) return;
-    if (dyaw != 0 || dpitch != 0) behindAge_ = -1;
+    if (dyaw != 0 || dpitch != 0) behindAge_ = -1, baked_ = false;
     yaw += dyaw;
     pitch = std::clamp(pitch + dpitch, 0.05f, 1.3f);
 }
 
 void Cr3GomCamera::drag(float dyaw, float dpitch) {
     if (lookDown_ || external_) return;
-    if (dyaw != 0 || dpitch != 0) behindAge_ = -1;
+    if (dyaw != 0 || dpitch != 0) behindAge_ = -1, baked_ = false;
     const float most = 20.0f * 0.01745328f;
     yaw += dyaw;
     pitch = std::clamp(pitch + dpitch, std::min(pitch, -most), std::max(pitch, most));
@@ -165,10 +165,10 @@ void Cr3GomCamera::behind(float playerYaw) {
     const float base = std::atan2(spring_[0] - at[0], spring_[2] - at[2]);
     behindAge_ = 0, behindYaw_ = yaw, behindPitch_ = pitch;
     behindDelta_ = std::remainder(playerYaw + 3.14159265f - base - yaw, 2 * 3.14159265f);
-    swinging_ = false;
+    swinging_ = false, baked_ = false;
 }
 
-void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt, const CollisionWorld* cameraWalls, const CollisionWorld* walls) {
+void Cr3GomCamera::step(const V3& player, float moveAngle, bool moving, float dt, const CollisionWorld* cameraWalls, const CollisionWorld* walls, bool touchMove) {
     if (external_) return playerAlpha = 1, void();
     if (lookDown_) { // (Fld2CameraLookDown::Update)
         auto follow = [dt](V3& at, const V3& want) {
@@ -181,6 +181,16 @@ void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt
         playerAlpha = 1;
         return;
     }
+    // UpdateCamera (+0x14): moving bakes yaw into the spring's point (+0x30 -> +0x20) so GomAction
+    // pulls from where the camera was turned to, not where it started before turning
+    if (moving && behindAge_ < 0 && !baked_) {
+        const float dist0 = len(spring_ - at);
+        if (dist0 > 1e-4f) {
+            const float base0 = std::atan2(spring_[0] - at[0], spring_[2] - at[2]) + yaw;
+            spring_ = {at[0] + std::sin(base0) * dist0, at[1], at[2] + std::cos(base0) * dist0};
+        }
+        yaw = 0, baked_ = true;
+    }
     const V3 t = targetOf(player);
     const float frames = dt * 60; // (its rates are a 1/60 s step's)
     // GomAction: the spring to 3 away along where it is, accelerating 0.005 a step and braking to stop there
@@ -189,13 +199,16 @@ void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt
     if (l < 1e-4f) d = {0, 0, -1}, l = 1;
     const V3 e = (t + d * (3.0f / l)) - spring_;
     const float dist = len(e);
-    if (dist < 0.1f) speed_ = 0;
-    const float accel = 0.005f;
-    speed_ += speed_ * speed_ / (accel * 2) <= dist ? accel : -accel;
-    if (speed_ <= 0) speed_ = 0;
-    else {
-        spring_ = spring_ + e * (speed_ * frames);
-        spring_[1] = t[1] + 0.5f;
+    if (dist < 0.1f) {
+        speed_ = 0;
+    } else {
+        const float accel = 0.005f;
+        speed_ += speed_ * speed_ / (accel * 2) <= dist ? accel : -accel;
+        if (speed_ <= 0) speed_ = 0;
+        else {
+            spring_ = spring_ + e * (speed_ * frames);
+            spring_[1] = t[1] + 0.5f;
+        }
     }
     // (never nearer than 2 across)
     const float across = std::hypot(spring_[0] - t[0], spring_[2] - t[2]);
@@ -203,22 +216,32 @@ void Cr3GomCamera::step(const V3& player, float playerYaw, bool moving, float dt
         const V3 out = spring_ - t;
         spring_ = spring_ + out * ((2 - across) / len(out));
     }
-    // GomRotate: moving across the view, swing round behind the player
-    const float cameraAngle = std::atan2(eye[0] - t[0], eye[2] - t[2]);
-    const float behind = playerYaw + 3.14159265f; // (the direction behind the player)
-    float a = std::remainder(cameraAngle - behind, 2 * 3.14159265f) / kDeg;
-    const float mag = std::fabs(a);
+    // GomRotate (0x9f3284 / Vita 0x810c48c0): only while the touch walk pad is held (GetIsPress(9)),
+    // and only when 30 .. 150 degrees separate camera and move direction, swing toward behind
+    const float springDist = len(spring_ - t);
+    const float cameraAngle = std::atan2(spring_[0] - t[0], spring_[2] - t[2]) + yaw;
+    const V3 rotatedSpring = {t[0] + std::sin(cameraAngle) * springDist, t[1], t[2] + std::cos(cameraAngle) * springDist};
     if (behindAge_ >= 0) {
+        swinging_ = false;
         behindAge_ = std::min(0.3f, behindAge_ + std::max(0.0f, dt));
-        const float t = behindAge_ / 0.3f;
-        yaw = behindYaw_ + behindDelta_ * t;
-        pitch = behindPitch_ + (0.3f - behindPitch_) * t;
+        const float k = behindAge_ / 0.3f;
+        yaw = behindYaw_ + behindDelta_ * k;
+        pitch = behindPitch_ + (0.3f - behindPitch_) * k;
         if (behindAge_ >= 0.3f) behindAge_ = -1;
-    } else if (!moving || mag > 150) swinging_ = false;
-    else if (mag >= 30 || swinging_) {
-        swinging_ = true;
-        const float rate = std::fabs((mag - 180) / 180) * 1.5f * 60; // (degrees a second)
-        yaw -= std::copysign(std::min(rate * dt, mag), a) * kDeg;
+    } else if (touchMove && moving) {
+        const float a = std::remainder(cameraAngle - moveAngle, 2 * 3.14159265f) / kDeg;
+        const float mag = std::fabs(a);
+        if (mag < 30 || mag > 150) {
+            if (swinging_) spring_ = rotatedSpring, yaw = 0;
+            swinging_ = false;
+        } else {
+            swinging_ = true;
+            const float rate = std::fabs((mag - 180) / 180) * 1.5f * 60; // (degrees a second)
+            yaw += std::copysign(std::min(rate * dt, 180.0f - mag), a) * kDeg;
+        }
+    } else if (swinging_) {
+        spring_ = rotatedSpring, yaw = 0;
+        swinging_ = false;
     }
     // GomUpdate: the spring's direction across, turned by yaw, pitched down by pitch, at its distance
     const float dist3 = len(spring_ - t);

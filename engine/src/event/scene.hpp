@@ -19,13 +19,22 @@
 
 namespace cr3 {
 
-// CR3's full-screen sprites (EvtScene.CreateSprite(id), SetSpriteLayer, SetSpriteColor (0..1),
-// SetSpriteAlpha, SetSpriteAlphaAnimation(id, from, to, frames)): a colour over the screen on a
-// draw layer
+// CR3's screen sprites (EvtScene.CreateSprite(id), CreateSpriteWithTexture(id, tex), SetSpriteLayer,
+// SetSpriteColor (0..1), SetSpriteColorAnimation, SetSpriteAlpha, SetSpriteAlphaAnimation,
+// SetSpriteSize, SetSpriteScale, SetSpritePosition): a colour or textured quad on a draw layer
 struct EventSprite {
     int id = 0, layer = 0;
-    float colour[3] = {0, 0, 0};
+    bool textured = false, explicitSize = false, explicitScale = false;
+    std::string texture;
+    float pos[2] = {0, 0};
+    float size[2] = {1920, 1280};
+    float scale[2] = {1, 1};
+    float colourFrom[3] = {1, 1, 1}, colourTo[3] = {1, 1, 1}, colourSeconds = 0, colourTime = 0;
     float alphaFrom = 1, alphaTo = 1, alphaSeconds = 0, alphaTime = 0;
+    float colourAt(int k, float lead = 0) const {
+        const float t = colourTime + lead;
+        return colourSeconds <= 0 || t >= colourSeconds ? colourTo[k] : colourFrom[k] + (colourTo[k] - colourFrom[k]) * t / colourSeconds;
+    }
     float alpha(float lead = 0) const {
         const float t = alphaTime + lead;
         return alphaSeconds <= 0 || t >= alphaSeconds ? alphaTo : alphaFrom + (alphaTo - alphaFrom) * t / alphaSeconds;
@@ -78,8 +87,9 @@ struct EventModel {
     // its shadow (EvtModel::Init: a FldShadow for a c / v model, shown; EvtScene.ShadowVisible)
     bool shadow = true;
     // ChangeModelColor(model, n) (Cr3UtilMakeChangeTextureName: m<its number><a .. d>01 and its
-    // normal map "n", on every material); -1 its own
+    // normal map "n", on every material); -1 its own. ChangeColor(model, r, g, b): RGB tint.
     int color = -1;
+    float tint[3] = {1, 1, 1};
     // CR3: LoadMotion(model, name) stages <figure>_<name> (CrxModel::LoadAnimation, slot 0; a
     // body / head model's <figure>b01_ / h01_), SetMotion / SetBlendMotion start it; the face's
     // (LoadFaceMotion: slot 1) kept for its renderer
@@ -88,6 +98,20 @@ struct EventModel {
     float faceTime = 0;
     // CR3: EvtScene.SetModelLayer - its draw layer (layers draw in turn, the sprites between them)
     int layer = 0;
+    // CR3: ChangeVariation(model, var), ChangeArmor(model, id), SetWeaponVisible / LoadWeapon / CreateAttachment
+    std::string variation;
+    int temporaryArmor = -1;
+    bool weaponVisible = false;
+    struct Attachment {
+        std::string figure, joint;
+        float offset[3] = {0, 0, 0};
+        float rotDeg[3] = {0, 0, 0};
+        std::string motion;
+        bool loop = true;
+        float animTime = 0;
+    };
+    std::string stagedAttachmentMotion;
+    std::map<int, Attachment> attachments;
     bool hasShadow() const { return !figure.empty() && (figure[0] == 'c' || figure[0] == 'v'); }
 };
 
@@ -146,6 +170,10 @@ public:
     LightColour& directional() { return directional_; }
     LightColour& hemisphere() { return hemisphere_; }
     void lightMove(float from, float to);
+    float cameraTime() const { return cameraTime_; }
+    float cameraEnd() const { return cameraEnd_; }
+    float lightTime() const { return lightTime_; }
+    float lightEnd() const { return lightEnd_; }
 
     // a frame's time passing: the moves, the camera and the lights advance
     void update(float dt);
@@ -157,7 +185,7 @@ public:
     Mat34 locatorAtStart(const std::string& model) const { return locator(model, 0); }
 
     // the camera now: its world matrix (looking down -Z), vertical field of view (degrees), near, far
-    // (VistaCamera::Init: near at least 0.05, far five times - at most 5000 - but for two events')
+    // (VistaCamera::Init: near at least 0.05, far five times - at most 5000)
     bool camera(Mat34& world, float& fovY, float& zn, float& zf, float lead = 0) const;
     // the camera at the scene's start (a lunch's balloons: projected through it - LunchMain::
     // UpdateBalloonPosition's GetLocatorPos(model, 0) poses the scene figure, its camera too)
