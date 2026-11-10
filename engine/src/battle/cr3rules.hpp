@@ -133,6 +133,7 @@ struct Cr3Fighter {
     bool comboChance = false; // (BtlBasicStatus +0x6d: downed - every later hit on it downs too, until the acting side changes)
     int combo = 0;            // (its combo count: +1 a downing hit; the magic chain bonus's)
     int chain = 0;            // (BtlBasicStatus +0x80: +1 each landed hit; reset on side change; calculatePhisicalChainBonus)
+    int mode = 0;             // (BtlMonsterStatus +0x1fc: its mode - VChangeMode's; a character's VGetMode 0)
     bool dead() const { return hp <= 0; }
 };
 
@@ -156,6 +157,10 @@ struct Cr3Action {
     int mpCost = 0;
     int gaugeAfter = 0;                         // the break gauge after it
     std::vector<int> partners;                  // (a cooperation's others - BtlDamageChunk::AddCooperation -, their hits among the targets')
+    // (BtlDamageChunk::VUpdate's target-list events: 2 - +0x9e, IsCombo - a landed hit on a target
+    // already downed - BtlDamageTarget::notifyCombo, HaveComboChanceById -; 3 - +0xa8, WasBreak -
+    // its break points broke the gauge - BtlBreakPoint::Add's +0x31, the jump across 0)
+    bool combo = false, broke = false;
     bool cooperated() const { return !partners.empty(); } // (BtlDamageChunk::IsCooperation)
 };
 
@@ -205,7 +210,7 @@ public:
     int gauge = 0;
     bool gaugeStarted = false;
     bool advantage(bool player) const { return player ? gauge > 0 : gauge < 0; }
-    void addBreak(int points);
+    bool addBreak(int points); // (true: a break - BtlBreakPoint::Add's +0x31)
     // (the party's first strike - BtlStatusList::ClearRatioToEnemy: the monsters' actions this turn
     // none - the next turn() the party's alone)
     bool monstersWait = false;

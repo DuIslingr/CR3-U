@@ -1495,6 +1495,35 @@ struct Viewer {
         float lookWeight = 0;
     } cr3Cam;
     bool cr3ScriptCamera = false; // (a battle script's BattleCamera.Play since its event started: the victory's own camera not put over it)
+    // (BtlUnit +0x238 / +0x240: the unit a unit holds and on which of its effect points -
+    // BtlDamageTarget::Hold, BattleUnit.Attach -, by the holder's fighter; BtlUnit::Detach the
+    // release - BtlStatus::PlayRelease)
+    std::map<int, std::pair<int, int>> cr3Held;
+    // (BtlDirectionManager::Insert: a direction of no command after the current one - its kinds,
+    // DirectionType 0x27 BtlReleaseDirection, 0x28 BtlWaitDieDirection - as actions' commands)
+    static constexpr int kCr3ReleaseDirection = -0x27, kCr3WaitDieDirection = -0x28;
+    void releaseCr3Hold(int holder);
+    // (BattleCommand.SetStart: a command the battle opens with - phaseGetSetStart; -1 none)
+    std::array<int, 2> cr3StartCommand{-1, -1};
+    // (Battle.CloseUI / OpenUI: BtlBreakGaugeUI and BtlStatusUI closed)
+    bool cr3BattleUiClosed = false;
+    // (BtlField's animator: Battle.ResetFieldAnimatorLooping - its loop off -, SetFieldAnimatorEndTime
+    // - held at that time; the field objects - Battle.AddFieldObject: a figure of its own, its own
+    // animation looped, on one of the field's joints)
+    bool cr3FieldLoop = true;
+    float cr3FieldEnd = -1, cr3FieldTime = 0, cr3FieldDrawnAt = 0;
+    struct Cr3FieldObject {
+        ViewFigure figure;
+        std::string joint;
+    };
+    std::vector<Cr3FieldObject> cr3FieldObjects;
+    // (BtlScript::BattleModel: a script's own models by slot - Create, PlayAnimation looped,
+    // SetPosition, SetRotation in degrees)
+    struct Cr3ScriptModel {
+        ViewFigure figure;
+        std::array<float, 3> at{}, rotation{};
+    };
+    std::map<int, Cr3ScriptModel> cr3ScriptModels;
     void playCr3Camera(const std::string& name, float end, bool loop, const std::array<float, 3>& actor, float yaw, float shift);
 
     // The screen breaking into the battle (GameMain::SetGlassEffect at the reservation: the next

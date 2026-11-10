@@ -144,6 +144,114 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
         // (Battle::StopAuto 0x009a82f4 -> BtlInterfaceSystem::StopAuto 0x009a4028: the player's
         // auto battle off before a scripted event - CR3-U has no auto battle to stop)
         vm.setNative("Battle", "StopAuto", [](cr3::NativeCall&) {});
+        // (BattleUnit::GetAttachId 0x009a8080 -> BtlUnitList::GetAttachId 0x009da9a8: the id of the
+        // unit it holds - BtlUnit +0x238's +0xe0 -, -1 none: battle 7's every direction end)
+        vm.setNative("BattleUnit", "GetAttachId", [this](cr3::NativeCall& c) {
+            const auto it = cr3Held.find(c.integer(0, -1));
+            c.result(it != cr3Held.end() ? it->second.first : -1);
+        });
+        // (BattleUnit::Attach 0x009a7ca0 -> BtlUnitList::Attach 0x009d9e70 -> BtlUnit::Attach
+        // 0x009dfdd8: the holder's +0x238 the held, +0x240 the effect point it hangs on)
+        vm.setNative("BattleUnit", "Attach", [this, unitOf](cr3::NativeCall& c) {
+            const int holder = c.integer(0, -1), held = c.integer(1, -1);
+            if (unitOf(holder) >= 0 && unitOf(held) >= 0) cr3Held[holder] = {held, c.integer(2, 0)};
+        });
+        // (BattleDirection::InsertRelease 0x009a4d98 / InsertWaitDie 0x009a4dc0 ->
+        // BtlDirectionManager::Insert 0x009915a4: a chunk of the unit's with no command, its
+        // direction - 0x27 BtlReleaseDirection, 0x28 BtlWaitDieDirection - after the current one,
+        // in the order inserted)
+        auto insertDirection = [this](int id, int kind) {
+            if (id < 0 || size_t(id) >= cr3Rules.fighters.size()) return;
+            size_t at = std::min(cr3ActionAt, cr3Actions.size());
+            while (at < cr3Actions.size() && (cr3Actions[at].command == kCr3ReleaseDirection || cr3Actions[at].command == kCr3WaitDieDirection)) ++at;
+            cr3::Cr3Action a;
+            a.source = id, a.command = kind, a.gaugeAfter = cr3GaugeShown;
+            cr3Actions.insert(cr3Actions.begin() + long(at), a);
+        };
+        vm.setNative("BattleDirection", "InsertRelease", [insertDirection](cr3::NativeCall& c) { insertDirection(c.integer(0, -1), kCr3ReleaseDirection); });
+        vm.setNative("BattleDirection", "InsertWaitDie", [insertDirection](cr3::NativeCall& c) { insertDirection(c.integer(0, -1), kCr3WaitDieDirection); });
+        // (BattleDirection::GetNextCommandId 0x009a4de8 -> BtlDirectionManager::GetNextCommandId
+        // 0x009922ac: the direction after the current one's command, -1 none - a guard has no
+        // direction; an inserted one, or one unable to act, no command)
+        vm.setNative("BattleDirection", "GetNextCommandId", [this](cr3::NativeCall& c) {
+            size_t at = cr3ActionAt;
+            while (at < cr3Actions.size() && cr3Actions[at].command == -1) ++at;
+            c.result(at < cr3Actions.size() && cr3Actions[at].command >= 0 ? cr3Actions[at].command : -1);
+        });
+        // (BattleUnit::SetHomePosition 0x009a7fec: BtlUnit::SetHomePosition 0x009e021c, then
+        // ReturnHome 0x009dc5c8 - placed there at once)
+        vm.setNative("BattleUnit", "SetHomePosition", [this, unitOf](cr3::NativeCall& c) {
+            const int k = unitOf(c.integer(0, -1));
+            if (k < 0) return;
+            cr3Battle.units[size_t(k)].home = {float(c.number(1)), float(c.number(2)), float(c.number(3))};
+            cr3BattleUnits[size_t(k)].meleeOffset = {}, cr3BattleUnits[size_t(k)].meleeStep = Ramp{0, 0};
+        });
+        // (BattleUnit::HideMesh 0x009a7c68 -> BtlUnit::HideMesh 0x009e013c: Figure::SetVisible of
+        // the Model row's +0x10 name, false - m222's "m222_sub" alone, which no figure or joint in
+        // the release has: nothing to hide)
+        vm.setNative("BattleUnit", "HideMesh", [](cr3::NativeCall&) {});
+        // (the addition units - BtlUnit::PlayEffectToAdditionUnit / PlayHitEffectToAdditionUnit /
+        // PauseAdditionUnit / ResumeAdditionUnit, 0x009a7dbc .. 0x009a7fb4; DeleteEffect 0x009a7af8
+        // kills what PlayEffectToAdditionUnit left in its slot: battle 54's cards - CR3-U has no
+        // addition units, so none of these has anything to act on)
+        for (const char* fn : {"PlayEffectToAdditionUnit", "PlayHitEffectToAdditionUnit", "PauseAdditionUnit", "ResumeAdditionUnit", "DeleteEffect"})
+            vm.setNative("BattleUnit", fn, [](cr3::NativeCall&) {});
+        // (BtlScript::BattleModel 0x009a6960 .. 0x009a6c6c: a model of the script's own in a slot -
+        // Create, a CrxModel by name; PlayAnimation its <name>_<anim>, looped; SetPosition;
+        // SetRotation in degrees - battles 15 and 29's guest, c104 / c106; PlayEffect: an Effect
+        // at a point, scale 1)
+        vm.setNative("BattleModel", "Create", [this](cr3::NativeCall& c) {
+            Cr3ScriptModel& m = cr3ScriptModels[c.integer(0)];
+            unload(m.figure), m.figure = ViewFigure();
+            std::string err;
+            if (!loadFigure(c.string(1) + ".geom", m.figure, &err)) SDL_Log("battle model %s: %s", c.string(1).c_str(), err.c_str());
+        });
+        vm.setNative("BattleModel", "PlayAnimation", [this](cr3::NativeCall& c) {
+            const auto it = cr3ScriptModels.find(c.integer(0));
+            if (it == cr3ScriptModels.end() || it->second.figure.name.size() < 6) return;
+            ViewFigure& f = it->second.figure;
+            const std::string want = f.name.substr(0, f.name.size() - 5) + "_" + c.string(1) + ".anim";
+            const auto a = std::find(f.anims.begin(), f.anims.end(), want);
+            if (a != f.anims.end()) loadAnim(f, size_t(a - f.anims.begin()));
+            else SDL_Log("battle model: no %s", want.c_str());
+        });
+        vm.setNative("BattleModel", "SetPosition", [this](cr3::NativeCall& c) {
+            cr3ScriptModels[c.integer(0)].at = {float(c.number(1)), float(c.number(2)), float(c.number(3))};
+        });
+        vm.setNative("BattleModel", "SetRotation", [this](cr3::NativeCall& c) {
+            cr3ScriptModels[c.integer(0)].rotation = {float(c.number(1)), float(c.number(2)), float(c.number(3))};
+        });
+        vm.setNative("BattleModel", "PlayEffect", [this](cr3::NativeCall& c) { // (its rotation not followed: CR3-U's effects drawn upright)
+            spawnCr3Effect(c.integer(0), {float(c.number(1)), float(c.number(2)), float(c.number(3))}, 1.0f);
+        });
+        // (Battle::AddFieldObject 0x009a82c8 -> BtlField::AddObject 0x0099c80c -> BtlFieldObject::
+        // Initialize 0x0099bb4c: the figure and its animator, looped, on the field figure's joint -
+        // the final battle's planets)
+        vm.setNative("Battle", "AddFieldObject", [this](cr3::NativeCall& c) {
+            Cr3FieldObject o;
+            std::string err;
+            const std::string name = c.string(0);
+            if (!loadFigure(name + ".geom", o.figure, &err)) return (void)SDL_Log("battle field object %s: %s", name.c_str(), err.c_str());
+            const auto a = std::find(o.figure.anims.begin(), o.figure.anims.end(), name + ".anim");
+            if (a != o.figure.anims.end()) loadAnim(o.figure, size_t(a - o.figure.anims.begin()));
+            o.joint = c.string(1);
+            cr3FieldObjects.push_back(std::move(o));
+        });
+        // (Battle::SetFieldAnimatorEndTime 0x009a8198 -> BtlField::SetEndTime 0x0099c928: the field
+        // animator's +0x7c; ResetFieldAnimatorLooping 0x009a81bc -> BtlField::ResetLooping
+        // 0x0099c968: its +100 bit 0 off whatever the argument - played on to the end time, held)
+        vm.setNative("Battle", "SetFieldAnimatorEndTime", [this](cr3::NativeCall& c) { cr3FieldEnd = float(c.number(0)); });
+        vm.setNative("Battle", "ResetFieldAnimatorLooping", [this](cr3::NativeCall&) { cr3FieldLoop = false; });
+        // (Battle::OpenUI 0x009a8290 / CloseUI 0x009a82ac: BtlBreakGaugeUI and BtlStatusUI opened /
+        // closed)
+        vm.setNative("Battle", "OpenUI", [this](cr3::NativeCall&) { cr3BattleUiClosed = false; });
+        vm.setNative("Battle", "CloseUI", [this](cr3::NativeCall&) { cr3BattleUiClosed = true; });
+        // (Battle::IsWildCard 0x009a8414: in a VS battle - GameMain +0x24b -, the VS tournament's
+        // current row's +0x6c; CR3-U: its tournament deals wildcards)
+        vm.setNative("Battle", "IsWildCard", [this](cr3::NativeCall& c) { c.result(vs.screen == 5 && game.cr3Db && !game.cr3Db->wildcards().empty()); });
+        // (BattleCommand::SetStart 0x009a6044: +0x18 / +0x1c - BtlSysStateSelect::phaseGetSetStart
+        // 0x009d3b2c opens with that unit's command: no menu, no opening - battle 68's)
+        vm.setNative("BattleCommand", "SetStart", [this](cr3::NativeCall& c) { cr3StartCommand = {c.integer(0, -1), c.integer(1, -1)}; });
         vm.setNative("Battle", "GetNumberOfKilledNonPlayer", [this](cr3::NativeCall& c) {
             int n = 0;
             for (const cr3::Cr3Fighter& f : cr3Rules.fighters) n += !f.player && f.dead();
@@ -180,13 +288,32 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
         vm.setNative("BattleArgument", "GetSource", [this](cr3::NativeCall& c) { c.result(cr3ArgSource); });
         vm.setNative("BattleArgument", "GetCommand", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a ? a->command : -1); });
         // (BattleArgument::GetActionType 0x009a4d38 -> BtlDamageChunk::GetActionType 0x0097e450:
-        // the chunk's - else the last direction's - command's CommandFomula +0x04, -1 without one;
+        // the chunk's - else the last direction's - command's MbCommandInfo +0x18 row's +0x04: its
+        // CommandDirection row's kind (MbCommandInfo::CreateDirection 0x00912438 files it there;
+        // the kind BtlDirectionManager::CreateDirection 0x00990d98 switches on), -1 without one;
         // 5..8 and 22 read 0x20..0x24 when the chunk's +0x20 is set - not modelled: the scripts ask
         // only after 9, 10, 20, 30 and 39 - ChangeCameraAfterLastAttack's Cam_event_start)
         vm.setNative("BattleArgument", "GetActionType", [this, argAction](cr3::NativeCall& c) {
             const auto* a = argAction();
             cr3::Cr3Command cmd;
-            c.result(a && a->command >= 0 && cr3Rules.command(a->command, cmd) ? cmd.action : -1);
+            c.result(a && a->command >= 0 && cr3Rules.command(a->command, cmd) ? cmd.direction : -1);
+        });
+        // (BattleArgument::IsCombo 0x009a4ccc: the chunk's +0x9e; WasBreak 0x009a4d0c: +0xa8 -
+        // BtlDamageChunk::VUpdate's target-list events 2 and 3; WasHitStatusEffect 0x009a4cf8 ->
+        // BtlDamageChunk::WasHitStatusEffect 0x0097e774: a status effect landed on any target;
+        // GetElement 0x009a4ce4 -> BtlDamageChunk::GetElement 0x0097e7e8: +0x24, its command's +0x24)
+        vm.setNative("BattleArgument", "IsCombo", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a && a->combo); });
+        vm.setNative("BattleArgument", "WasBreak", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a && a->broke); });
+        vm.setNative("BattleArgument", "WasHitStatusEffect", [argAction](cr3::NativeCall& c) {
+            bool hit = false;
+            if (const auto* a = argAction())
+                for (const cr3::Cr3Hit& th : a->targets) hit |= !th.effectsGiven.empty();
+            c.result(hit);
+        });
+        vm.setNative("BattleArgument", "GetElement", [this, argAction](cr3::NativeCall& c) {
+            const auto* a = argAction();
+            cr3::Cr3Command cmd;
+            c.result(a && a->command >= 0 && cr3Rules.command(a->command, cmd) ? cmd.element : 0);
         });
         vm.setNative("BattleArgument", "WasCooperated", [argAction](cr3::NativeCall& c) { const auto* a = argAction(); c.result(a && a->cooperated()); });
         vm.setNative("BattleArgument", "WasDown", [argAction](cr3::NativeCall& c) {
@@ -246,6 +373,28 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
         vm.setNative("BattleStatus", "GetHp", [this](cr3::NativeCall& c) {
             const int id = c.integer(0, -1);
             c.result(id >= 0 && size_t(id) < cr3HpShown.size() ? cr3HpShown[size_t(id)] : 0);
+        });
+        // (BattleStatus::GetMode 0x009a6434: BtlStatus's VGetMode - BtlMonsterStatus 0x009c7464 its
+        // +0x1fc, VChangeMode's; BtlCharacterStatus 0x009b2c9c 0)
+        vm.setNative("BattleStatus", "GetMode", [fighter](cr3::NativeCall& c) {
+            const auto* f = fighter(c.integer(0, -1));
+            c.result(f ? (f->player ? 0 : f->mode) : -1);
+        });
+        // (BattleStatus::HasEffect 0x009a64b0: an effect of the kind - BtlStatus::HasEffect 0x009b6af0,
+        // its status effects' -, else its skills' - BtlSkillList::HasEnableEffect with its side's
+        // gauge advantage)
+        vm.setNative("BattleStatus", "HasEffect", [this, fighter](cr3::NativeCall& c) {
+            const auto* f = fighter(c.integer(0, -1));
+            c.result(f && (cr3Rules.hasKind(*f, c.integer(1)) || cr3Rules.hasSkillKind(*f, c.integer(1))));
+        });
+        // (BattleStatus::AddMp 0x009a6260: its MP + n - BtlStatus::SetMpToCalculation and
+        // SetMpToDirection: the rules' and the shown at once)
+        vm.setNative("BattleStatus", "AddMp", [this](cr3::NativeCall& c) {
+            const int id = c.integer(0, -1);
+            if (id < 0 || size_t(id) >= cr3Rules.fighters.size()) return;
+            cr3::Cr3Fighter& f = cr3Rules.fighters[size_t(id)];
+            f.mp = std::clamp(f.mp + c.integer(1), 0, f.maxMp);
+            if (size_t(id) < cr3MpShown.size()) cr3MpShown[size_t(id)] = f.mp;
         });
         vm.setNative("BattleStatus", "GetLevel", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f ? f->level : 0); });
         vm.setNative("BattleStatus", "GetMonsterId", [fighter](cr3::NativeCall& c) { const auto* f = fighter(c.integer(0, -1)); c.result(f && !f->player ? f->id : -1); });
@@ -748,6 +897,11 @@ void Viewer::reinforceCr3Battle(int coupling) {
 bool Viewer::startCr3Battle(int coupling, int fieldId) {
     cr3BattleLost = false, cr3Escaped = false, cr3ScriptCommands.clear(), cr3NextCoupling = -1, cr3WaveExp = cr3WaveMoney = 0, cr3WaveDrops.clear(), cr3VictoryIn = false, cr3VictorUnit = -1, cr3VictoryDuration = 2.5f, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1; // (BtlSystem::Init: s_ResultParam -1)
     clearCr3Effects();
+    cr3Held.clear(), cr3StartCommand = {-1, -1}, cr3BattleUiClosed = false; // (the scripts' holds, opening command, UI)
+    cr3FieldLoop = true, cr3FieldEnd = -1, cr3FieldTime = cr3FieldDrawnAt = 0;
+    for (Cr3FieldObject& o : cr3FieldObjects) unload(o.figure);
+    for (auto& [slot, m] : cr3ScriptModels) unload(m.figure);
+    cr3FieldObjects.clear(), cr3ScriptModels.clear();
     cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
     cr3BattleVista = false;
     cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
@@ -847,9 +1001,14 @@ void Viewer::updateCr3Battle(float dt) {
         cr3BattleStarted = true; // (phaseBattleIn: PlayGetSet, then CallStart)
         runCr3BattleScript("Battle_Start_Base");
     } else if (cr3BattleStage == Cr3BattleStage::GetSet && !scripted && camT >= cr3Cam.end && !vs.wildOpen) { // (VS: a wildcard first)
-        if (cr3StartMode == 2) { // (phaseFirstStrike: a surprise attack - phaseCalculate at once, the party's commands none)
+        // (phaseFirstStrike: a surprise attack - phaseCalculate at once, the party's commands none;
+        // phaseGetSetStart 0x009d3b2c with BattleCommand.SetStart's: that command alone added, the
+        // start cleared, phaseCalculate - the monsters' own too -, the opening none - isOpening)
+        if (cr3StartMode == 2 || cr3StartCommand[0] >= 0) {
             cr3StartMode = 0, ++cr3Turn;
             cr3Choices.clear();
+            if (cr3StartCommand[0] >= 0)
+                cr3Choices.push_back({cr3StartCommand[0], cr3StartCommand[1], -1}), cr3StartCommand = {-1, -1}, cr3Rules.monstersWait = false;
             cr3Actions = cr3Rules.turn(cr3Choices);
             cr3CountRecords();
             cr3ActionAt = 0;
@@ -1191,6 +1350,27 @@ void Viewer::restoreCr3Unit(size_t k) {
     view.opacity = Ramp();
     setCr3Motion(k, "bb01", true);
     if (revive) setCr3Motion(k, cr3MotionOf(8), false);
+}
+
+// BtlStatusList::PlayRelease (0x009bf930): the holder lets go - BtlUnit::Detach 0x009dfdf8, the
+// held back at its home -, then BtlStatus::PlayRelease 0x009b5280 on the held: hit effect 0x34 at
+// its effect point 5; fallen - a kind 76 effect, KO's - knocked out at the motion's end, else
+// AnimCommon 8, up again
+void Viewer::releaseCr3Hold(int holder) {
+    const auto it = cr3Held.find(holder);
+    if (it == cr3Held.end()) return;
+    const int held = it->second.first;
+    cr3Held.erase(it);
+    if (held < 0 || size_t(held) >= cr3Rules.fighters.size() || cr3Rules.fighters[size_t(held)].unit < 0) return;
+    const size_t hu = size_t(cr3Rules.fighters[size_t(held)].unit);
+    spawnCr3Effect(0x34, cr3EffectPoint(hu, 5), 1.0f);
+    if (cr3Rules.fighters[size_t(held)].dead() || cr3Rules.hasKind(cr3Rules.fighters[size_t(held)], 76)) {
+        knockOutCr3Unit(hu);
+        cr3BattleUnits[hu].motionStart = -1e6f; // (SeekAnimEnd)
+    } else {
+        setCr3Motion(hu, cr3MotionOf(8), false);
+    }
+    SDL_Log("battle %.2f s: %d lets %d go", cr3BattleClock, holder, held);
 }
 
 void Viewer::cr3HitEffects(int command, int element, size_t targetUnit, bool critical) {
@@ -1726,6 +1906,18 @@ void Viewer::startCr3Action() {
                 cr3Actions[cr3ActionAt].target, cr3Actions[cr3ActionAt].command, cr3Actions[cr3ActionAt].hits.size(), sum);
     }
     const cr3::Cr3Fighter& s = cr3Rules.fighters[size_t(a.source)];
+    if (a.command == kCr3ReleaseDirection || a.command == kCr3WaitDieDirection) {
+        // (a script's inserted direction: BtlReleaseDirection::vPlay 0x009984d8 - the holder's
+        // AnimCommon 0x13 -, BtlWaitDieDirection::vPlay 0x0098f4e8 - the timing of its motion playing, its
+        // death's -; the release - BtlStatus::PlayRelease - at their event 3, here their end -
+        // stepCr3Action -, and over at the motion's end)
+        const size_t su = size_t(s.unit);
+        if (a.command == kCr3ReleaseDirection) setCr3Motion(su, cr3MotionOf(0x13), false);
+        const Cr3BattleUnitView& u = cr3BattleUnits[su];
+        const float left = u.body.animLoaded ? u.body.anim.duration() - (cr3BattleClock - u.motionStart) : 1.0f;
+        cr3ActionPlay.end = std::max(left, 0.3f);
+        return;
+    }
     if (!s.player) { // (BtlTotalDamageUI: reset player combo chain when an enemy acts)
         cr3ComboStartHp.clear(), cr3ComboDamage.clear(), cr3ComboHits.clear(), cr3ComboSince = -1;
     } else if (cr3ComboStartHp.size() != cr3Rules.fighters.size()) {
@@ -1883,6 +2075,11 @@ void Viewer::stepCr3Action() {
             // BtlDirection::playKnockout follows the hit sequence, including misses.
             for (const cr3::Cr3Hit& th : a.targets) {
                 if (!th.killed) continue;
+                // (BtlNotKnockOutSituDirection - action type 0x12, 1755's squeeze -: one held falls
+                // at its release instead, BtlStatus::PlayRelease's PlayKnockout)
+                bool held = false;
+                for (const auto& [holder, h] : cr3Held) held |= h.first == th.target;
+                if (cr3::Cr3Command kc; held && cr3Rules.command(a.command, kc) && kc.direction == 0x12) continue;
                 rollCr3Drop(th.target);
                 knockOutCr3Unit(size_t(cr3Rules.fighters[size_t(th.target)].unit));
             }
@@ -1899,6 +2096,24 @@ void Viewer::stepCr3Action() {
             if (size_t(th.target) < cr3MpShown.size()) cr3MpShown[size_t(th.target)] = th.mpAfter;
         }
         cr3GaugeShown = a.gaugeAfter;
+        // (the holds: CreateDirection 0x00990d98 by the action type - the CommandDirection kind:
+        // 0x11 BtlHoldDirection, 0x1e BtlHoldLastAttackDirection: BtlDamageChunk::HoldTarget 0x0097d284 -> BtlDamageTarget::
+        // Hold 0x00988474, each target still with status effect 32 - UpdateHold 0x00988fa8 -
+        // attached on effect point 2; 0x13 BtlReleaseDirection, and the scripts' inserted ones:
+        // BtlStatusList::PlayRelease 0x009bf930)
+        if (a.command == kCr3ReleaseDirection || a.command == kCr3WaitDieDirection) {
+            releaseCr3Hold(a.source);
+        } else if (cr3::Cr3Command dc; a.command >= 0 && cr3Rules.command(a.command, dc)) {
+            if (dc.direction == 0x11 || dc.direction == 0x1e) {
+                for (const cr3::Cr3Hit& th : a.targets)
+                    if (std::find(th.effectsGiven.begin(), th.effectsGiven.end(), 32) != th.effectsGiven.end() || cr3Rules.hasEffect(th.target, 32)) {
+                        cr3Held[a.source] = {th.target, 2};
+                        SDL_Log("battle %.2f s: %d holds %d", cr3BattleClock, a.source, th.target);
+                    }
+            } else if (dc.direction == 0x13) {
+                releaseCr3Hold(a.source);
+            }
+        }
         ++cr3ActionAt;
         // (BtlSysStateAction: the battle's script after each direction - battle_0002's cut-in
         // once the spider endures at 1 HP - and the next action after it; BattleArgument its
@@ -2315,8 +2530,39 @@ void Viewer::drawCr3Battle(int w, int h) {
     dev->setLighting(l);
     ViewFigure& f = cr3BattleField;
     f.place = cr3::Mat34();
-    pose(f, f.animLoaded && f.anim.duration() > 0 ? std::fmod(cr3BattleClock, f.anim.duration()) : 0.0f, false);
+    { // (BtlField's animator stepped: looped, or - ResetLooping - on to its end time and held)
+        const float dt = std::max(cr3BattleClock - cr3FieldDrawnAt, 0.0f), length = f.animLoaded ? f.anim.duration() : 0.0f;
+        cr3FieldDrawnAt = cr3BattleClock;
+        cr3FieldTime += dt;
+        if (length <= 0) cr3FieldTime = 0;
+        else if (cr3FieldLoop) cr3FieldTime = std::fmod(cr3FieldTime, length);
+        else cr3FieldTime = std::min(cr3FieldTime, cr3FieldEnd >= 0 ? std::min(cr3FieldEnd, length) : length);
+    }
+    pose(f, cr3FieldTime, false);
     drawFigure(f, vp.data());
+    for (Cr3FieldObject& o : cr3FieldObjects) drawAttached(o.figure, f, o.joint, cr3BattleClock, vp.data()); // (BtlFieldObject: on its joint, looped)
+    for (auto& [slot, m] : cr3ScriptModels) { // (BattleModel's: at their place, turned - x, y, z degrees -, looped)
+        if (m.figure.meshes.empty()) continue;
+        const float d = 3.14159265f / 180;
+        const float cx = std::cos(m.rotation[0] * d), sx = std::sin(m.rotation[0] * d), cy = std::cos(m.rotation[1] * d), sy = std::sin(m.rotation[1] * d),
+                    cz = std::cos(m.rotation[2] * d), sz = std::sin(m.rotation[2] * d);
+        cr3::Mat34& p = m.figure.place;
+        p = cr3::Mat34(); // (Rx Ry Rz)
+        p.m[0] = cy * cz, p.m[1] = -cy * sz, p.m[2] = sy;
+        p.m[4] = sx * sy * cz + cx * sz, p.m[5] = -sx * sy * sz + cx * cz, p.m[6] = -sx * cy;
+        p.m[8] = -cx * sy * cz + sx * sz, p.m[9] = cx * sy * sz + sx * cz, p.m[10] = cx * cy;
+        p.m[3] = m.at[0], p.m[7] = m.at[1], p.m[11] = m.at[2];
+        pose(m.figure, cr3BattleClock, true);
+        drawFigure(m.figure, vp.data());
+    }
+    // (BtlUnit::poseChild 0x009db6ac: a held unit at its holder's effect point - its turn not followed)
+    std::map<size_t, cr3::Vec3> heldAt;
+    for (const auto& [holder, h] : cr3Held) {
+        const int hu = holder >= 0 && size_t(holder) < cr3Rules.fighters.size() ? cr3Rules.fighters[size_t(holder)].unit : -1;
+        const int tu = h.first >= 0 && size_t(h.first) < cr3Rules.fighters.size() ? cr3Rules.fighters[size_t(h.first)].unit : -1;
+        if (hu >= 0 && tu >= 0 && size_t(hu) < cr3BattleUnits.size() && size_t(tu) < cr3BattleUnits.size())
+            heldAt[size_t(tu)] = cr3EffectPoint(size_t(hu), h.second);
+    }
     for (size_t k = 0; k < cr3BattleUnits.size() && k < cr3Battle.units.size(); ++k) {
         if (cr3BattleStage == Cr3BattleStage::Won && cr3VictoryIn && cr3VictorUnit >= 0 && int(k) != cr3VictorUnit) continue;
         const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
@@ -2333,6 +2579,8 @@ void Viewer::drawCr3Battle(int w, int h) {
             part->place.m[3] = bu.home[0] + u.meleeOffset[0] * step;
             part->place.m[7] = bu.home[1];
             part->place.m[11] = bu.home[2] + u.meleeOffset[2] * step;
+            if (const auto held = heldAt.find(k); held != heldAt.end())
+                part->place.m[3] = held->second[0], part->place.m[7] = held->second[1], part->place.m[11] = held->second[2];
             part->tint[3] = opacity;
             const float mt = u.motionLoop ? cr3BattleClock + u.phase : cr3BattleClock - u.motionStart;
             pose(*part, mt, u.motionLoop);
@@ -2505,7 +2753,7 @@ void Viewer::drawCr3BattleHud(int w, int h) {
         // MP bars posed at their percent / 30 s, the numbers - SpriteNumId 5 and 4 places; HP under
         // 20% reddened)
         UiFig& pos = cr3UiPut("btstposition", "", 0, 0, 0, view);
-        if (cr3UiCall(pos, "call_btStMenu", x, y, w, h)) {
+        if (!cr3BattleUiClosed && cr3UiCall(pos, "call_btStMenu", x, y, w, h)) { // (Battle.CloseUI: BtlStatusUI closed)
             UiFig& menu = cr3UiPut("btstmenu", "", 0, x, y, view);
             int slot = 0;
             for (size_t f = 0; f < cr3Rules.fighters.size(); ++f) {
@@ -2537,7 +2785,7 @@ void Viewer::drawCr3BattleHud(int w, int h) {
         // even 1.6333 -, btBrkName_fr00's frame: 0 Player, 1 Enemy, 2 Even, 3 a full break; the rules'
         // gauge, battle/cr3rules.hpp, as each hit lands)
         UiFig& bpos = cr3UiPut("btbrkposition", "", 0, 0, 0, view);
-        if (cr3UiCall(bpos, "call_btBrkMenu", x, y, w, h)) {
+        if (!cr3BattleUiClosed && cr3UiCall(bpos, "call_btBrkMenu", x, y, w, h)) { // (and BtlBreakGaugeUI)
             UiFig& menu = cr3UiPut("btbrkmenu", "", 0, x, y, view);
             float cx, cy;
             if (cr3UiCall(menu, "call_btBrkWinPanel", cx, cy)) {

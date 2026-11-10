@@ -489,15 +489,17 @@ std::vector<std::pair<int, int>> Cr3BattleRules::endTurn() {
     return out;
 }
 
-void Cr3BattleRules::addBreak(int points) {
+bool Cr3BattleRules::addBreak(int points) {
     // (BtlBreakPoint::Add: the battle's first points +-500 whatever they are; from above 0 to 0 or
-    // below another -500 first - a break -, from below to 0 or above +500; held within +-1000)
-    if (points == 0) return;
+    // below another -500 first - a break, +0x31 -, from below to 0 or above +500; held within +-1000)
+    if (points == 0) return false;
     if (!gaugeStarted) points = points > 0 ? 500 : -500;
     gaugeStarted = true;
-    if (gauge > 0 && gauge + points < 1) gauge = std::clamp(gauge - 500, -1000, 1000);
-    else if (gauge < 0 && gauge + points >= 0) gauge = std::clamp(gauge + 500, -1000, 1000);
+    bool broke = false;
+    if (gauge > 0 && gauge + points < 1) gauge = std::clamp(gauge - 500, -1000, 1000), broke = true;
+    else if (gauge < 0 && gauge + points >= 0) gauge = std::clamp(gauge + 500, -1000, 1000), broke = true;
     gauge = std::clamp(gauge + points, -1000, 1000);
+    return broke;
 }
 
 void Cr3BattleRules::rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool& crit, bool& down, float& rate) {
@@ -622,10 +624,11 @@ bool Cr3BattleRules::targetable(int i, const Cr3Command* by) const {
         return false;
     }
     if (by) {
-        for (int req : by->requiredEffects) {
-            const bool present = (req == 1 && f.dead()) || hasEffect(i, req);
-            if (!present) return false;
-        }
+        // (BtlStatusEffectList::HasProhibitedTarget 0x009b88cc: one of the required is enough -
+        // battle 7's release 1844 asks for 32 or 43)
+        bool required = by->requiredEffects.empty();
+        for (int req : by->requiredEffects) required |= (req == 1 && f.dead()) || hasEffect(i, req);
+        if (!required) return false;
         for (int forb : by->forbiddenEffects) {
             const bool present = (forb == 1 && f.dead()) || hasEffect(i, forb);
             if (present) return false;
@@ -636,7 +639,11 @@ bool Cr3BattleRules::targetable(int i, const Cr3Command* by) const {
         for (const auto& [id, turns] : f.effects)
             if (tables_->skill.find("StatusEffect", id, kStatusEffect, r))
                 for (size_t k = 0; k < 4; ++k)
-                    if (r.i(14 + k * 2) == 72 && !(by && std::find(by->removes.begin(), by->removes.end(), id) != by->removes.end())) return false;
+                    if (r.i(14 + k * 2) == 72 && !(by && (std::find(by->removes.begin(), by->removes.end(), id) != by->removes.end() ||
+                                                          // (MbCommandInfo::DisableNonTarget 0x009124d0: one it requires -
+                                                          // battle 7's 1755, the squeeze, on the one held - effect 32)
+                                                          std::find(by->requiredEffects.begin(), by->requiredEffects.end(), id) != by->requiredEffects.end())))
+                        return false;
     return true;
 }
 
@@ -682,7 +689,7 @@ void Cr3BattleRules::changeMode(int fi, int mode) {
     for (size_t row = 0; mc && row < mc->rows.size(); ++row) {
         MbeFile::Row m;
         if (!tables_->monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != f.id || m.i(1) != mode) continue;
-        f.attackCommand = m.i(5), f.element = m.i(2);
+        f.attackCommand = m.i(5), f.element = m.i(2), f.mode = mode;
         f.commands.clear(), f.skills.clear();
         for (size_t c = 0; c < 8; ++c)
             if (m.i(8 + c * 3) >= 0) f.commands.emplace_back(m.i(8 + c * 3), std::max(m.i(9 + c * 3), 0));
@@ -945,6 +952,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     }
                     landed = true;
                     lastContinued |= t.comboChance;
+                    a.combo |= t.comboChance; // (BtlDamageTarget::notifyCombo: HaveComboChanceById - event 2)
                     if (c.damage == 20) { // (calculateMpDamage: reduces target MP, colour 4)
                         int m = c.power;
                         if (c.spread > 0) m = int(((random() - 0.5f) * float(c.spread) * 2.0f + 100.0f) / 100.0f * float(m));
@@ -1044,7 +1052,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                         share -= part, --hitsLeft;
                         int points = base + part;
                         if (th.killed && int(h) == lastLanded) points += table[3];
-                        addBreak(points * (s.player ? 1 : -1));
+                        a.broke |= addBreak(points * (s.player ? 1 : -1)); // (BtlDamageTarget::AddBreakPointToCalculation: event 3)
                     }
                     th.gauge.push_back(gauge);
                 }
