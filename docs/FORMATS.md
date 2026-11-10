@@ -1407,8 +1407,10 @@ the music. `SetBattleNext(14)` with `SetVistaFuncName2` / `SetVistaMapName` (the
 `SetBattleToVista`) sends the battle on to a vista; else back to the field, where
 Fld2Main::SM_FirstEvent runs `evt000` as on any entry - `evt002` instead when the field was left for
 the battle (Cr3FieldData's come-from 1: SetComeFromBattleToField, or an encounter's Fld2SaveData(1))
-and the battle was lost (BtlSystem::s_ResultParam 1; won 0). CR3 never calls `evt100` itself. The ship's: `s000_d01_00401_evt` -> coupling 1 on field 44 at level 3
--> `s000_d01_00601_evt`.
+and the battle was lost (BtlSystem::s_ResultParam 1; won 0). CR3 never calls `evt100` itself. The ship's
+`s000_d01_00401_evt` reserves coupling 1 on field 44 at level 3 and resumes in `s000_d01_00601_evt`.
+That scene opens its vista dialogue panel at frame 0. The first alert subtitle starts at frame 162,
+so the panel is initially empty in the original game.
 
 BtlSystem::Init makes the units: the party (createParty: the characters' models - a party
 member's CrxModel, GameMain::BuildUnitModel), then the coupling's monsters (CreateMonster:

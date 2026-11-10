@@ -50,12 +50,23 @@ std::string folderOf(const std::string& path) {
     return slash == std::string::npos ? "." : path.substr(0, slash);
 }
 
-std::vector<std::string> filesIn(const std::string& dir) {
+std::vector<std::string> androidPackagesIn(const std::string& dir, int depth) {
     std::vector<std::string> out;
     std::error_code ec;
-    for (const fs::directory_entry& e : fs::directory_iterator(dir, ec))
-        if (e.is_regular_file(ec)) out.push_back(e.path().filename().string());
-    std::sort(out.begin(), out.end());
+    fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+    for (size_t seen = 0; it != end && !ec && seen < 100000; it.increment(ec), ++seen) {
+        if (it.depth() >= depth) it.disable_recursion_pending();
+        const std::string path = it->path().generic_string();
+        std::error_code fileError;
+        if ((endsWith(path, ".apk") || endsWith(path, ".apks") || endsWith(path, ".xapk")) && it->is_regular_file(fileError))
+            out.push_back(path);
+    }
+    std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
+        const auto depthA = std::count(a.begin(), a.end(), '/'), depthB = std::count(b.begin(), b.end(), '/');
+        if (depthA != depthB) return depthA < depthB;
+        if (endsWith(a, ".apk") != endsWith(b, ".apk")) return !endsWith(a, ".apk");
+        return a < b;
+    });
     return out;
 }
 
@@ -206,6 +217,20 @@ bool readZipEntry(const std::string& zip, const std::string& name, std::vector<u
 }
 
 namespace {
+bool readFromAndroidApk(const std::string& apk, const std::string& name, std::vector<uint8_t>& out) {
+    std::FILE* f = std::fopen(apk.c_str(), "rb");
+    if (!f) return false;
+    std::vector<ZipItem> entries;
+    bool ok = false;
+    if (zipItems(f, 0, sizeOf(f), entries) && std::any_of(entries.begin(), entries.end(),
+            [](const ZipItem& e) { return e.name == kAndroidLibrary; })) {
+        const auto item = std::find_if(entries.begin(), entries.end(), [&](const ZipItem& e) { return e.name == name; });
+        if (item != entries.end()) ok = readItem(f, *item, out, nullptr);
+    }
+    std::fclose(f);
+    return ok;
+}
+
 // `name` from the game's own APK inside an .apks / .xapk (stored there, as they are): the APK with
 // the game's library, its entry read in place
 bool readFromBundle(const std::string& bundle, const std::string& name, std::vector<uint8_t>& out) {
@@ -236,7 +261,8 @@ bool androidFile(const std::string& archivePath, const std::string& name, std::v
     // (the folder given - android/, as a start finds it -, else the given file's)
     std::error_code ec;
     std::string dir = resolveArchive(archivePath);
-    if (fs::is_directory(dir, ec)) {
+    const bool isDirectory = fs::is_directory(dir, ec);
+    if (isDirectory) {
         while (dir.size() > 1 && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
     } else dir = folderOf(dir);
     for (const std::string& p : {dir + "/" + name, dir + "/extracted/" + name})
@@ -244,28 +270,16 @@ bool androidFile(const std::string& archivePath, const std::string& name, std::v
             if (from) *from = p;
             return true;
         }
-    // (an .apks / .xapk - given, or in the folder -: the game's APK inside it)
-    const std::string given = resolveArchive(archivePath);
-    std::vector<std::string> bundles;
-    if (endsWith(given, ".apks") || endsWith(given, ".xapk")) bundles.push_back(given);
-    for (const std::string& n : filesIn(dir))
-        if ((endsWith(n, ".apks") || endsWith(n, ".xapk")) && dir + "/" + n != given) bundles.push_back(dir + "/" + n);
-    for (const std::string& b : bundles)
-        if (readFromBundle(b, name, out)) {
-            if (from) *from = b + ":" + name;
-            return true;
-        }
-    // (the APKs beside it, and those a bundle holding them compressed was unpacked to: unpacked/)
-    for (const std::string& d : {dir, dir + "/unpacked"})
-        for (const std::string& n : filesIn(d)) {
-            if (!endsWith(n, ".apk")) continue;
-            std::vector<uint8_t> lib; // (the game's own APK: the one with its library)
-            if (name != kAndroidLibrary && !readZipEntry(d + "/" + n, kAndroidLibrary, lib)) continue;
-            if (readZipEntry(d + "/" + n, name, out)) {
-                if (from) *from = d + "/" + n + ":" + name;
-                return true;
-            }
-        }
+    auto readPackage = [&](const std::string& path) {
+        const bool ok = endsWith(path, ".apk") ? readFromAndroidApk(path, name, out) : readFromBundle(path, name, out);
+        if (ok && from) *from = path + ":" + name;
+        return ok;
+    };
+    if (!isDirectory && (endsWith(archivePath, ".apk") || endsWith(archivePath, ".apks") || endsWith(archivePath, ".xapk")) &&
+        readPackage(archivePath)) return true;
+    // Database::open also finds packages below the release folder, including unpacked split APKs.
+    for (const std::string& path : androidPackagesIn(dir, isDirectory ? 8 : 1))
+        if (path != archivePath && readPackage(path)) return true;
     return false;
 }
 

@@ -11153,7 +11153,17 @@ struct Viewer {
         const char* fb = std::getenv("CR3_FONT_FALLBACK");
         const char* windir = std::getenv("WINDIR");
         const std::string winFonts = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
+        if (!font.loaded()) {
+            for (const std::string& path : std::vector<std::string>{
+                     "/system/fonts/Roboto-Regular.ttf", "/system/fonts/Roboto.ttf", "/system/fonts/NotoSans-Regular.ttf",
+                     "/usr/share/fonts/noto/NotoSans-Regular.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                     "/usr/share/fonts/liberation/LiberationSans-Regular.ttf", winFonts + "segoeui.ttf",
+                     winFonts + "arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc"}) {
+                if (font.load(path)) break;
+            }
+        }
         std::vector<std::string> fallbacks{cr3::TextRasterizer::firstFont({fb ? fb : "", "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+                                                                           "/system/fonts/NotoSansCJK-Regular.ttc",
                                                                            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
                                                                            "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
                                                                            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
@@ -28514,14 +28524,6 @@ int main(int argc, char** argv) {
                 }
         if (fp.empty() && apkFont.empty() && cr3::androidFile(data, "assets/F0001.bin", apkFont, &apkFontFrom))
             fontFace = 1; // (the APK's own, an .apks' too: TB Gothic B, its proportional face)
-        if (fp.empty() && apkFont.empty()) {
-            const char* windir = SDL_getenv("WINDIR");
-            const std::string winFonts = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
-            fp = cr3::TextRasterizer::firstFont({"/usr/share/fonts/noto/NotoSans-Regular.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
-                                                 "/usr/share/fonts/liberation/LiberationSans-Regular.ttf", winFonts + "segoeui.ttf",
-                                                 winFonts + "arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf",
-                                                 "/System/Library/Fonts/Helvetica.ttc"});
-        }
         v.loadMessageWindow(fp, std::move(apkFont), apkFontFrom, fontFace);
         v.initEventDrawing();
         v.pageSeconds = page;

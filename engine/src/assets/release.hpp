@@ -31,8 +31,8 @@ std::string defaultArchive(const std::string& baseDir);
 bool readZipEntry(const std::string& zip, const std::string& name, std::vector<uint8_t>& out, std::string* error = nullptr);
 
 // `name` (a path inside the APK) of the Android release beside `archivePath`: from an unpacked
-// APK in its folder (the file itself, or under extracted/), else from an .apk there that holds
-// it. `from`: where it was found
+// APK in its folder (the file itself, or under extracted/), else from the game's APK or split
+// bundle in the release directory. `from`: where it was found
 bool androidFile(const std::string& archivePath, const std::string& name, std::vector<uint8_t>& out, std::string* from = nullptr);
 
 // The maps' table for the archive's release: `binary` if given, else the iPad's executable or
