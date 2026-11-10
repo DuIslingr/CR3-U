@@ -481,6 +481,8 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     });
     vm.setNative("Cr3System", "SetDungeonLevel", [&state](NativeCall& c) { state.dungeonLevel = c.integer(0); });
     vm.setNative("Cr3System", "GetDungeonLevel", [&state](NativeCall& c) { c.result(state.dungeonLevel); });
+    vm.setNative("Cr3System", "SetMotionBlur", [&state](NativeCall& c) { state.motionBlur = c.boolean(0), state.zoomBlur = c.boolean(1); });
+    vm.setNative("Cr3System", "SetSpecialBlur", [&state](NativeCall& c) { state.specialBlur = c.boolean(0); });
     vm.setNative("Cr3System", "SetGlassEffectPattern", [&state](NativeCall& c) {
         state.glassPattern = std::clamp(c.integer(0, 1), 0, 5);
     });

@@ -20,6 +20,7 @@ struct Texture {
     unsigned id = 0; // opaque device handle (0 = none)
     int width = 0, height = 0;
     bool alphaOnly = false;
+    bool bottomUp = false; // (RenderDevice::copyFrame's on GL: row 0 the frame's bottom; uploads' row 0 is the top)
 };
 
 // A mesh uploaded to the GPU: interleaved vertices (kVertexStride bytes: position 3 f32 at 0,
@@ -210,6 +211,10 @@ public:
     }
     // The scene ends: what follows (the UI) draws over the resolved frame at full size
     virtual void endScene() {}
+    // The frame drawn so far - all of the drawable, after endScene - copied on the GPU into `tex`,
+    // made (or remade) at the drawable's size and read with alpha 1; drawing goes on after it.
+    // For frame feedback: the original's PostEffectBlur ping-pong buffers. false: not supported
+    virtual bool copyFrame(Texture& /*tex*/) { return false; }
     // The scene's projection (temporal upscalers turn depth into distance with it) and a cut:
     // last frame's pixels say nothing about this one
     virtual void setCamera(float /*near*/, float /*far*/, float /*fovY*/) {}

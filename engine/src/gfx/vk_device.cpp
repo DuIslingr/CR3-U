@@ -689,6 +689,63 @@ public:
         beginFramePass(false);
     }
 
+    // The frame so far into `tex` (frame feedback: the original's PostEffectBlur buffers): the
+    // frame's rendering ended - an MSAA frame resolved into colorImage_ -, colorImage_ copied
+    // into the texture (row 0 the top, as uploads; its view reads alpha as 1), rendering resumed
+    // on the frame - an MSAA one's samples were not kept (transient), so the copy is drawn back
+    // as its base first
+    bool copyFrame(Texture& tex) override {
+        if (!inFrame_ || inScene_ || !cmd_) return false;
+        if (!tex.id || tex.id > textures_.size() || !textures_[tex.id - 1].live || tex.width != targetW_ || tex.height != targetH_) {
+            destroy(tex);
+            Image img;
+            img.width = targetW_, img.height = targetH_;
+            img.rgba.assign(size_t(targetW_) * size_t(targetH_) * 4, 0);
+            tex = upload(img); // (its own one-time submission: cmd_ is not submitted yet)
+            if (!tex.id) return false;
+            TextureRec& made = textures_[tex.id - 1];
+            VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vi.image = made.image;
+            vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format = kColorFormat;
+            vi.components.a = VK_COMPONENT_SWIZZLE_ONE;
+            vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkImageView opaque = VK_NULL_HANDLE;
+            if (ok(vkCreateImageView(device_, &vi, nullptr, &opaque))) { // (no descriptor set holds the old view yet)
+                vkDestroyImageView(device_, made.view, nullptr);
+                made.view = opaque;
+            }
+        }
+        const TextureRec& rec = textures_[tex.id - 1];
+        vkCmdEndRendering(cmd_);
+        barrier(cmd_, colorImage_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT);
+        barrier(cmd_, rec.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkImageCopy region{};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.extent = {uint32_t(targetW_), uint32_t(targetH_), 1};
+        vkCmdCopyImage(cmd_, colorImage_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rec.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        barrier(cmd_, rec.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        barrier(cmd_, colorImage_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        beginFramePass(false);
+        if (msColorImage_) {
+            static const float kBack[24] = {-1, -1, 0, 1, 1, -1, 1, 1, 1, 1, 1, 0, -1, -1, 0, 1, 1, 1, 1, 0, -1, 1, 0, 0};
+            static const float kId[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            static const float kWhite[4] = {1, 1, 1, 1};
+            const bool additive = quadAdditive_;
+            quadAdditive_ = false;
+            drawQuad(tex, kBack, kId, kWhite);
+            quadAdditive_ = additive;
+        }
+        return true;
+    }
+
     std::string upscalerProblem(Upscaler m) const override {
         if (m == Upscaler::Off) return "";
         if (!upscaleCaps_) return "this GPU lacks what temporal upscaling needs";

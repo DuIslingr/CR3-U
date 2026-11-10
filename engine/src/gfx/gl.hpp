@@ -32,6 +32,8 @@
     X(void, TexImage2D, (GLenum target, GLint level, GLint ifmt, GLsizei w, GLsizei h, GLint border, \
                          GLenum fmt, GLenum type, const void* data)) \
     X(void, TexParameteri, (GLenum target, GLenum pname, GLint param)) \
+    X(void, CopyTexSubImage2D, (GLenum target, GLint level, GLint xoff, GLint yoff, GLint x, GLint y, GLsizei w, \
+                                GLsizei h)) \
     X(void, GenerateMipmap, (GLenum target)) \
     X(GLuint, CreateShader, (GLenum type)) \
     X(void, ShaderSource, (GLuint s, GLsizei n, const GLchar* const* src, const GLint* len)) \

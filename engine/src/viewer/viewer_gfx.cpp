@@ -1111,6 +1111,7 @@ void Viewer::draw(int fw, int fh) {
     }
     drawScene(frameW, frameH); // (the scene: all of the frame)
     dev->endScene();
+    applySceneBlur(fw, fh); // (PostEffectBlur: before the cross-fade, under the UI)
     if (const cr3::EventRuntime* ev = activeEvents(); ev && ev->crossFade().active && crossFadeTexture.id) {
         const float alpha = ev->crossFade().alpha(eventLead());
         if (alpha > 0) {
@@ -1131,6 +1132,70 @@ void Viewer::fullFrameQuad(const cr3::Texture& t, const float* v, const float* r
     dev->setViewport(float(frameX), float(frameY), float(frameW), float(frameH));
     dev->drawQuad(t, v, id.data(), rgba);
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+}
+
+// (PostEffectRenderer's full-screen figure - SetScale / SetRotation / SetAlpha -: a frame copy over
+// the frame, scaled and turned about its centre; pass 5 alpha-blended, pass 1 added)
+void Viewer::blurQuad(const cr3::Texture& t, int fw, int fh, float scale, float roll, float alpha, bool additive) {
+    if (!t.id || fw <= 0 || fh <= 0) return;
+    const float u0 = float(frameX) / float(fw), u1 = float(frameX + frameW) / float(fw);
+    float vTop = float(frameY) / float(fh), vBottom = float(frameY + frameH) / float(fh); // (row 0 the top)
+    if (t.bottomUp) vTop = 1 - vTop, vBottom = 1 - vBottom;
+    const float hw = float(frameW) * 0.5f, hh = float(frameH) * 0.5f, c = std::cos(roll), s = std::sin(roll);
+    auto corner = [&](float x, float y, float u, float v, float* out) { // (x, y: -1 .. 1 of the frame)
+        const float px = x * hw * scale, py = y * hh * scale;
+        out[0] = (px * c - py * s) / hw, out[1] = (px * s + py * c) / hh, out[2] = u, out[3] = v;
+    };
+    float q[24];
+    corner(-1, -1, u0, vBottom, q), corner(1, -1, u1, vBottom, q + 4), corner(1, 1, u1, vTop, q + 8);
+    corner(-1, -1, u0, vBottom, q + 12), corner(1, 1, u1, vTop, q + 16), corner(-1, 1, u0, vTop, q + 20);
+    const float rgba[4] = {1, 1, 1, alpha};
+    if (additive) dev->setQuadAdditive(true);
+    fullFrameQuad(t, q, rgba);
+    if (additive) dev->setQuadAdditive(false);
+}
+
+// GameMain::PostEffectBlur (0x0096ca54), after the scene (its bloom) and before the cross-fade and
+// the UI - GameMain::Render: once a frame. Motion (GameSystem +0x68): the scene copied to the next
+// buffer, the last one put over it at 0.5 (pass 5). Zoom (+0x69): the last one put over at 0.5
+// scaled 1.2, then the result copied on - a trail. Special (+0x6a): the last one added over
+// (pass 1: SRC_ALPHA, ONE) scaled 1.1, turned 0.01, at min(n / 50 + 0.5, 0.8), the result copied
+// on (pass 3), and the scene put on the screen zoomed min(1 + n / 1000, 1.02) (layer 0xc). All off:
+// the count and the zoom back to 0 and 1
+void Viewer::applySceneBlur(int fw, int fh) {
+    SceneBlur& b = sceneBlur;
+    const bool motion = game.motionBlur, zoom = game.zoomBlur, special = game.specialBlur;
+    if (!motion && !zoom && !special) {
+        if (b.n) SDL_Log("scene blur: off at %.2f s, %u frames", double(uiClock), b.n);
+        b.n = 0, b.zoom = 1;
+        return;
+    }
+    if (!b.n) SDL_Log("scene blur: %s%s%s at %.2f s", motion ? "motion " : "", zoom ? "zoom " : "", special ? "special " : "", double(uiClock));
+    const int read = int(b.n & 1u), write = read ^ 1;
+    bool copied = true;
+    if (motion) {
+        copied = dev->copyFrame(b.buf[write]) && copied;
+        if (b.n && copied) blurQuad(b.buf[read], fw, fh, 1.0f, 0, 0.5f, false);
+    }
+    if (zoom) {
+        if (b.n && copied) blurQuad(b.buf[read], fw, fh, 1.2f, 0, 0.5f, false);
+        copied = dev->copyFrame(b.buf[write]) && copied;
+    }
+    if (special) {
+        const float alpha = std::min(float(b.n) / 50.0f + 0.5f, 0.8f);
+        b.zoom = std::min(1.0f + float(b.n) / 1000.0f, 1.02f);
+        if (b.n && copied) blurQuad(b.buf[read], fw, fh, 1.1f, 0.01f, alpha, true);
+        copied = dev->copyFrame(b.buf[write]) && copied; // (pass 3 - a shader of type 8 - drawn here as a plain copy)
+    }
+    if (!copied) { // (a device without frame copies: no blur at all)
+        b.n = 0, b.zoom = 1;
+        return;
+    }
+    ++b.n;
+    if (b.zoom != 1) { // (layer 0xc: the scene - its buffer just copied, else a copy of its own - zoomed onto the screen)
+        const cr3::Texture* scene = special ? &b.buf[write] : dev->copyFrame(b.zoomed) ? &b.zoomed : nullptr;
+        if (scene) blurQuad(*scene, fw, fh, b.zoom, 0, 1, false);
+    }
 }
 
 // The display's safe area in a frame of fw x fh: SDL lays the window out under a camera hole

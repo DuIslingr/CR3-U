@@ -164,6 +164,30 @@ the finisher's solo victory pose.
 | `BattleArgument.GetActionType` (`0x009a4d38` -> `BtlDamageChunk::GetActionType` `0x0097e450`) | The damage chunk's (else the last direction's) command's `CommandFomula +0x04`, `-1` without; `5..8` / `22` read `0x20..0x24` when the chunk's `+0x20` is set | Stub, so `ChangeCameraAfterLastAttack` never cut to `Cam_event_start` after action types `9, 10, 20, 30, 39` | `Cr3Command::action` of the argument's action (the remap not modelled: no script tests those values) |
 | `Battle.StopAuto` (`0x009a82f4` -> `BtlInterfaceSystem::StopAuto` `0x009a4028`) | Clears the player's auto battle (`+0xd4`) and closes the command buttons | Stub | Bound as a no-op: CR3-U has no in-game auto battle |
 
+### 9. Round 6 parity audit (the scene's feedback blurs)
+
+`Cr3System.SetMotionBlur(motion, zoom)` (`310` calls turning it on in the events) and
+`SetSpecialBlur` (`63`) were unbound. They set `GameSystem +0x68` / `+0x69` / `+0x6a`, which
+`GameMain::PostEffectBlur` reads once a frame. In `GameMain::Render`, the 3D layers (`2..8`) go
+into the offscreen scene target, then `RenderEffect`, bloom, bloom mask, **`PostEffectBlur`** and
+`CrossFade` work on that target; layer `0xc` puts it on the screen and the UI layers `0xd..0x19` draw
+over it. So the blurs touch the 3D scene only. `PostEffectRenderer::Build` gives its full-screen
+passes: `0` opaque copy, `1` additive (`SRC_ALPHA, ONE`), `3` shader type `8` with blending off,
+`5` alpha-blended (`SRC_ALPHA, ONE_MINUS_SRC_ALPHA`) at `0.5`.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Motion blur (`+0x68`; `utils::SetMotionBlur` `0x0092b3c4`, `GameMain::PostEffectBlur` `0x0096ca54`) | Ping-pong buffers `4` / `5` (read `[n & 1]`, written `[(n & 1) ^ 1]`): the scene copied to the next (pass `0`), then the last one blended over it at `0.5` (pass `5`, scale `1.0`) - this frame and the one before, averaged | Stub; no blur | `Viewer::applySceneBlur` after `dev->endScene()` and before the cross-fade and the UI, with the same buffers, order and pass |
+| Zoom blur (`+0x69`) | The last buffer blended over at `0.5` scaled `1.2` about the centre (pass `5`), *then* the result copied on: a trail that accumulates outward | Stub | Same order: `blurQuad(..., 1.2, 0, 0.5)`, then `copyFrame` |
+| Special blur (`+0x6a`; `SetSpecialBlur` `0x0092b3f4`) | The last buffer added over (pass `1`) scaled `1.1`, turned `0.01`, at alpha `min(n / 50 + 0.5, 0.8)`; the result copied on (pass `3`); the scene put on the screen zoomed `min(1 + n / 1000, 1.02)` (layer `0xc`'s `RenderLayerScreen` scale); all flags off: `n = 0`, zoom `1` | Stub | Same; pass `3`'s type-`8` shader drawn as a plain copy (not decompiled); the zoom drawn from the frame copy |
+| Frame copies (`PostEffectBuffer` targets, `Cr3OffScreen +0x10`) | GPU render targets the scene renders into | No way to keep a frame on the GPU (the cross-fade reads one back through the CPU) | `RenderDevice::copyFrame`: GL `glCopyTexSubImage2D` (bottom row first: `Texture::bottomUp`); Vulkan ends dynamic rendering, `vkCmdCopyImage`s the frame into a texture whose view reads alpha `1`, resumes, and with MSAA (transient samples, not stored) draws the copy back as the base |
+
+Checked headless on both renderers and with Vulkan MSAA `4x`: `vs:q058_t01_00212_evt` (motion
+and zoom, Daisuke's "Aaaaangh...", 41.0..46.0 s, 298 frames) shows the outward trail on the 3D
+scene with the cut-in portrait and the window crisp; `vs:s221_t01_00702_evt` (special, 72 frames)
+shows the additive, slightly turning feedback. A display faster than 60 Hz runs the feedback per
+drawn frame, as `GameMain::Render` does, so its trails are shorter in time there.
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -228,6 +252,7 @@ Deterministic REA evidence bundles are stored outside the repository at
 | `MVGL::Draw::Camera::GetScreenMatrix` / `SetGraphicLevel` / `SM_SetupGraphics` | `0x00b8f184` / `0x0096ac18` / `0x00969360` | Screen translation = camera `+0x248 / DisplayInfo width`, `+0x24c / DisplayInfo height` (device pixels; the scene buffer `GameSystem +0x70 x +0x74` is the display or `80%` of it). | static `re/android/arm64/decomp.c` read (`848708..848794`, `381426..381520`, `380299..380440`) |
 | `Cr3BindBattle` / `BattleUnit::PlayAnimation` / `PlayEffect` / `Hide` / `BattleCamera::Play` / `SetPosition` / `Battle::StopAuto` | `0x00854b98` / `0x009a7b5c` / `0x009a7d24` / `0x009a7c30` / `0x009a65f0` / `0x009a665c` / `0x009a82f4` | Sqrat `Func2<int,int>`, `Func5<int,int,int,float,..>`, `Func1<int>`, `Func1<const char*>`, `Func3<float,float,float>`, `Func0`; the behaviour in round 5's table (`BtlUnitList::SetDie` `0x009da470`, `BtlUnit::changeRequest` `0x009dc958`, `loadRequestAnimation` `0x009dcb88`, `changeAnimation` `0x009dcc14`, `updateAnimationEnd` `0x009e10c4`, `PlayHitEffect` `0x009de81c`, `BtlVisualEffect::Initialize` `0x009e23fc`, `DisableDraw` `0x009e02b8`, `BtlCameraSystem::Play` `0x009772dc`, `SetPosition` `0x009792d0`, `BtlInterfaceSystem::StopAuto` `0x009a4028`). | `/tmp/cr3-opening-audit/libcrx-audit-round5-battle-natives.json` (`11` records: `ev_dfc6da68...`, `ev_32c6cb2c...`, `ev_6620ad0d...`, `ev_098762407...`, `ev_2b71f4cb...`, `ev_17f38a89...`, `ev_3256c819...`) |
 | `BattleArgument::GetActionType` / `BtlDamageChunk::GetActionType` | `0x009a4d38` / `0x0097e450` | `MbGetCommandInfo(+0x1c) +0x18 -> +0x04`; the chunk's `+0x20` remap of `5..8`, `22`. | static `re/android/arm64/decomp.c` read |
+| `PostEffectRenderer::Build` / `Render` / `SetScale` / `SetAlpha` / `SetBlur` / `GameMain::Render` | `0x00ef856c` / `0x00ef8d80` / `0x00ef8c38` / `0x00ef8d38` / `0x00ef8b50` / `0x0096b46c` | Passes `0..5` (`{blend on, src, dst, FUNC_ADD 0x8006}`, shader types `0, 0, 6, 8, 5, 0`; pass `5` alpha `0.5`); `SetScale` scales the figure's size about its centre, `SetAlpha` `+0x1fc`; the render order (scene target, then effect / bloom / mask / blur / cross-fade, then layer `0xc` and the UI). | `/tmp/cr3-opening-audit/libcrx-audit-round6-blur-evidence.json` (`17` records: `ev_047314557070de1248aaa37067f7bc2624ccd3584fb933a20619f35f8eb02c7d`, `ev_1d5f91241ccd0e44d392dbced259241f1e1d9fca85ceb8be8bfeafa5f7b6f6a8`, `ev_2b261c051cb71f2fd58b14ebe569fc272507fbaba2e4bb35ec72e7a2f2e570fd`) |
 
 ## Not settled
 
@@ -239,8 +264,8 @@ Deterministic REA evidence bundles are stored outside the repository at
   still stubs in the battle VM (1-5 scripts each). (The in-battle choice menus behind `Msg_Choice2` /
   `Msg_Choice3` are bound - `EventRuntime` registers `"CreateSelect" + n + "ChoiceMenu"` -, so a
   literal-name census misses them.)
-- **Unbound natives (Round 4 replay)**: `Cr3System.SetMotionBlur` (`150` calls), `SetSpecialBlur`
-  (`40`), `SetBloom` (`8`) - the post effects above -; `InterfaceWindow.Lock/UnLockCampTopCharacterPanel`,
+- **Unbound natives (Round 4 replay)**: `Cr3System.SetBloom` (`8`; `GameMain::PostEffectBloom` /
+  `PostEffectBloomMask`, not decompiled yet - the blurs are round 6's); `InterfaceWindow.Lock/UnLockCampTopCharacterPanel`,
   `SetCampWindowParty`, `CheckAliveCampWindowParty`, `CreateOverLay` / `DeleteOverLay`,
   `CreateGeneStatusSCModalMenu`, `AliveGeneStatusMenu`, `CreateGeneCardSelector` (+ result / alive),
   `CreateDisposalEquipMenu_Gene` (+ result), `GetSelectTournamentID`; `Cr3System.CheckDisposeMenu`,

@@ -165,6 +165,10 @@ struct GameState {
     std::map<int, int> cr3AceLevels;
     // the battle transition's glass shatter pattern (Cr3System.SetGlassEffectPattern - GameMain::SetGlassEffect, 0..5) - not saved
     int glassPattern = 1;
+    // the scene's feedback blurs (Cr3System.SetMotionBlur(motion, zoom) / SetSpecialBlur: utils::
+    // SetMotionBlur 0x0092b3c4 / SetSpecialBlur 0x0092b3f4 - GameSystem +0x68 / +0x69 / +0x6a,
+    // drawn by GameMain::PostEffectBlur 0x0096ca54) - not saved
+    bool motionBlur = false, zoomBlur = false, specialBlur = false;
     // Cr3GimmickData.Setup (Fld2TaskGimmick::SetGimmick): reload the active area's gimmicks when quest state changes - not saved
     bool gimmickSetupRequested = false;
     // the area last entered (FldUtil's: GetDungeonNum - 0 the town - and GetAreaNum, from 0)

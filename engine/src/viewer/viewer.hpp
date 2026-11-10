@@ -564,6 +564,16 @@ struct Viewer {
     int frameX = 0, frameY = 0, frameW = 1, frameH = 1;     // the frame the scene fills: under a camera hole, into the corners
 
     cr3::Texture crossFadeTexture;
+    // GameMain::PostEffectBlur (0x0096ca54): the scene's ping-pong buffers (PostEffectBuffer 4 / 5,
+    // read [n & 1], written [(n & 1) ^ 1]), the frames it has run (DAT_014d0d20), layer 0xc's zoom
+    // (the scene put on the screen: the special blur's) and the frame copy that zoom draws from
+    struct SceneBlur {
+        cr3::Texture buf[2], zoomed;
+        uint32_t n = 0;
+        float zoom = 1;
+    } sceneBlur;
+    void applySceneBlur(int fw, int fh);
+    void blurQuad(const cr3::Texture& t, int fw, int fh, float scale, float roll, float alpha, bool additive);
     void grabCrossFade(int fw, int fh, cr3::EventRuntime& ev);
     void draw(int fw, int fh);
     void fullFrameQuad(const cr3::Texture& t, const float* v, const float* rgba);

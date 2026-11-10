@@ -365,6 +365,29 @@ public:
         const GLboolean v = on ? GL_TRUE : GL_FALSE;
         gl::ColorMask(v, v, v, v);
     }
+    // (the default framebuffer, bottom row first, into the texture - its alpha read as 1)
+    bool copyFrame(Texture& tex) override {
+        if (drawableW_ <= 0 || drawableH_ <= 0) return false;
+        if (!tex.id || tex.width != drawableW_ || tex.height != drawableH_ || !textures_.count(tex.id)) {
+            destroy(tex);
+            Image img;
+            img.width = drawableW_, img.height = drawableH_;
+            img.rgba.assign(size_t(drawableW_) * size_t(drawableH_) * 4, 0);
+            tex = upload(img);
+            if (!tex.id) return false;
+        }
+        const auto it = textures_.find(tex.id);
+        if (it == textures_.end()) return false;
+#ifndef GL_TEXTURE_SWIZZLE_A
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#endif
+        gl::BindTexture(GL_TEXTURE_2D, it->second.name);
+        gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
+        gl::CopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, drawableW_, drawableH_);
+        tex.bottomUp = true;
+        return true;
+    }
+
     void setQuadAdditive(bool on) override { quadAdditive_ = on; }
     bool quadAdditive_ = false;
 
