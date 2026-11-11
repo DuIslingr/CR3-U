@@ -56,6 +56,9 @@ public:
     bool lookDown() const { return lookDown_; }
     // another camera sets eye and at itself (Fld2CameraRail): reset, step and turn leave them
     void setExternal(bool on) { external_ = on; }
+    // Fld2CameraGom::SetRideCamera (Fld2TaskPlayer::SetStateRide / SetRideStatus, flag 4105): the
+    // target's lift (+0x40's +0x64) 1.6 riding, 1.2 on foot; the pad's pitch limit (+0x10) 24 / 20 degrees
+    void setRide(bool on) { lift_ = on ? 1.6f : 1.2f, most_ = on ? 24.0f : 20.0f; }
     std::array<float, 3> eye{}, at{};
     float fovY = 45, zNear = 0.1f, zFar = 5000; // (MVGL::Draw::Camera's 45 degrees; Fld2CameraGom::Initialize's)
     float yaw = 0, pitch = 0.3f;
@@ -67,10 +70,11 @@ private:
     float behindAge_ = -1, behindYaw_ = 0, behindPitch_ = 0, behindDelta_ = 0;
     bool lookDown_ = false, external_ = false;
     std::array<float, 3> ldOffset_{};
+    float lift_ = 1.2f, most_ = 20.0f;
 };
 
 // Fld2AnimeNameTbl: the player's motions
-enum class Cr3Motion { Idle = 0, Run = 2, Walk = 3 };
-const char* cr3MotionName(Cr3Motion m); // fn01, ff01, ff02
+enum class Cr3Motion { Idle = 0, Walk = 2, Run = 3, RideIdle = 0xd, RideWalk = 0xe, RideRun = 0xf };
+const char* cr3MotionName(Cr3Motion m); // fn01, ff01 (SM_Walk), ff02 (SM_Run); riding fr01 .. fr03
 
 } // namespace cr3

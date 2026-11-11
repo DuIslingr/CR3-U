@@ -108,6 +108,8 @@ void Viewer::areaCamEnd() {
 }
 
 void Viewer::areaCamStick(float rx, float ryDown, float dt) {
+    toyCam.stickX = rx, toyCam.stickY = ryDown;
+    if (toyCam.on) return;
     if (areaCamSticking && rx == 0 && ryDown == 0)
         areaCamSticking = false, SDL_Log("camera: the right stick let go - yaw %.2f, pitch %.2f", areaCamera.yaw, areaCamera.pitch);
     if (!vitaButtons() || areaCam.on || !areaMode || !areaCamFree() || (rx == 0 && ryDown == 0)) return;
@@ -163,7 +165,7 @@ void Viewer::tap() {
     if (cr3BattleMode) return cr3BattleTap();
     if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
         if (areaEvents->running()) areaEvents->touch();
-        else if (areaCheckNear >= 0) {
+        else if (areaCheckNear >= 0 && !toyCam.on) {
             const AreaGimmick& g = areaGimmicks[size_t(areaCheckNear)];
             if (g.box >= 0) game.cr3OpenBox = g.box; // (Fld2Box::ExecOpen: Fld2TBoxList::SetOpenBox)
             runAreaFunction(g.function);
@@ -1499,12 +1501,39 @@ void Viewer::stepStepSwitches() {
 }
 
 void Viewer::updateGimmickWalls() {
+    const bool riding = game.flag(4105);
+    auto vehicleSolid = [riding](const std::string& n) { // (Fld2VehicleCollision::SetRide)
+        return n.find("vct") != std::string::npos ? !riding : n.find("vch") != std::string::npos && riding;
+    };
     std::string key;
     for (const AreaNpc& npc : areaNpcs)
         if (npc.solid && !npc.broken && game.gimmickVisible(npc.name)) key += npc.name + ";";
+    for (const auto& [n, m] : areaVehicleBoxes)
+        if (vehicleSolid(n)) key += n + ";";
     if (key == areaWallKey) return;
     areaWallKey = key;
     area.walls = areaBaseWalls;
+    for (const auto& [n, m] : areaVehicleBoxes) {
+        if (!vehicleSolid(n)) continue;
+        cr3::PhysScene one;
+        cr3::PhysShape sh;
+        for (int c = 0; c < 8; ++c) { // (CreateRigidBox: the joint's axes, 0.05 each way)
+            const float u[3] = {c & 1 ? 0.05f : -0.05f, c & 2 ? 0.05f : -0.05f, c & 4 ? 0.05f : -0.05f};
+            cr3::Vec3 v;
+            for (int r = 0; r < 3; ++r) v[size_t(r)] = m.m[r * 4] * u[0] + m.m[r * 4 + 1] * u[1] + m.m[r * 4 + 2] * u[2] + m.m[r * 4 + 3];
+            sh.vertices.push_back(v);
+        }
+        static const uint32_t kFaces[12][3] = {{0, 1, 3}, {0, 3, 2}, {4, 6, 7}, {4, 7, 5}, {0, 4, 5}, {0, 5, 1},
+                                               {2, 3, 7}, {2, 7, 6}, {0, 2, 6}, {0, 6, 4}, {1, 5, 7}, {1, 7, 3}};
+        for (const auto& f : kFaces) sh.triangles.push_back({f[0], f[1], f[2]});
+        sh.surfaces.assign(12, 0);
+        one.shapes.push_back(sh);
+        one.surfaces.push_back(n);
+        cr3::PhysBody b;
+        b.name = n;
+        one.bodies.push_back(b);
+        area.walls.addScene(one);
+    }
     for (const AreaNpc& npc : areaNpcs) {
         if (!npc.solid || npc.broken || !game.gimmickVisible(npc.name)) continue;
         for (const cr3::PhysBody& b : areaPhysP.bodies)
@@ -1668,7 +1697,7 @@ void Viewer::drawFieldBombs(const float* vp) {
 void Viewer::setupAreaGimmicks(const std::string& name) {
     for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head), unload(npc.alt);
     areaNpcs.clear();
-    areaGimmicks.clear(), areaCheckNear = -1;
+    areaGimmicks.clear(), areaCheckNear = -1, areaVehicleBoxes.clear();
     std::vector<uint8_t> d;
     cr3::Skeleton sk;
     if (!archive.read(name + "p.skel", d) || !cr3::parseSkeleton(d, sk)) return;
@@ -1685,6 +1714,8 @@ void Viewer::setupAreaGimmicks(const std::string& name) {
             // party's j<id>_00, the monsters' m<id>_<nn>, each's function named so, tapped like
             // a check object)
             areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false, {}});
+        else if (names[j].compare(0, 10, "ragdoll_vc") == 0) // (Fld2TaskGimmick::SetGimmick: table 20, Fld2VehicleCollision)
+            areaVehicleBoxes.push_back({names[j].substr(8), w[j]});
         else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
             areaGimmicks.push_back({names[j].substr(8), false, w[j], false, names[j].substr(11)});
         else if (const int b = drawnBox(names[j]); b >= 0) { // (a treasure / gold box the draw filled: Fld2Box, its event OpenTBox / OpenGBox)
@@ -1692,7 +1723,11 @@ void Viewer::setupAreaGimmicks(const std::string& name) {
             g.box = b, g.boxName = names[j].substr(8);
             areaGimmicks.push_back(g);
         }
+    for (const auto& [n, m] : areaVehicleBoxes)
+        SDL_Log("area %s: vehicle collision %s at (%.2f %.2f %.2f), %.2f x %.2f x %.2f", name.c_str(), n.c_str(), m.m[3], m.m[7], m.m[11],
+                std::hypot(m.m[0], m.m[4], m.m[8]) * 0.1f, std::hypot(m.m[1], m.m[5], m.m[9]) * 0.1f, std::hypot(m.m[2], m.m[6], m.m[10]) * 0.1f);
     loadAreaNpcs(name, names, w);
+    loadToyTargets(name, names, w);
     loadMinimap(name, names, w);
     unload(areaP), areaP = ViewFigure();
     std::string err;
@@ -1962,7 +1997,21 @@ void Viewer::bindAreaNatives(cr3::ScriptVM& vm) {
             }
         bonusMpBefore.clear();
     });
-    vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { areaMotions[c.string(0)] = c.string(1); });
+    vm.setNative("Cr3GimmickData", "SetMotion", [this](cr3::NativeCall& c) { // (a new motion: its own end times)
+        areaMotions[c.string(0)] = c.string(1);
+        for (AreaNpc& npc : areaNpcs)
+            if (npc.name == c.string(0)) npc.loopStart = npc.loopEnd = 0;
+    });
+    // (Fld2SetGimmickMotionLoopPoint: the blocks', then the check objects' of that name - frames / 30;
+    // ResetMotionLoopPoint: the motion's own ends again)
+    vm.setNative("Cr3GimmickData", "SetMotionLoopPoint", [this](cr3::NativeCall& c) {
+        for (AreaNpc& npc : areaNpcs)
+            if (npc.name == c.string(0)) npc.loopStart = c.number(1) / 30.0f, npc.loopEnd = c.number(2) / 30.0f;
+    });
+    vm.setNative("Cr3GimmickData", "ResetMotionLoopPoint", [this](cr3::NativeCall& c) {
+        for (AreaNpc& npc : areaNpcs)
+            if (npc.name == c.string(0)) npc.loopStart = npc.loopEnd = 0;
+    });
     vm.setNative("Cr3GimmickData", "NPCIdle2Enable", [this](cr3::NativeCall& c) { // (Fld2SetIdle2Enable)
         for (AreaNpc& npc : areaNpcs)
             if (npc.name == c.string(0)) npc.idle2On = c.boolean(1);
@@ -2057,10 +2106,15 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
         c.result(area && areaMode && !eventMode && found && !areaEventOff.count(name));
     });
     // (SetFaceMotion - Fld2SetGimmickFaceMotion 0x0086e680 -> Fld2NPC::SetEventFaceAnim 0x00a030c0: a
-    // person's face animation, looped, blended in over a sixth of a second; CR3-U draws no face
-    // animations - an event's neither -: noted, not shown)
+    // person's face animation, looped, blended in over a sixth of a second from the one before)
     vm.setNative("Cr3GimmickData", "SetFaceMotion", [this](cr3::NativeCall& c) {
-        SDL_Log("area %s: %s's face %s (not drawn)", this->area.name.c_str(), c.string(0).c_str(), c.string(1).c_str());
+        const std::string who = c.string(0), face = c.string(1);
+        for (AreaNpc& npc : areaNpcs)
+            if (npc.name == who) {
+                npc.faceFrom = npc.face, npc.faceFromAt = npc.faceAt;
+                npc.face = face, npc.faceAt = areaClock;
+                SDL_Log("area %s: %s's face %s", this->area.name.c_str(), who.c_str(), face.c_str());
+            }
     });
     vm.setNative("Cr3FieldMapCharacter", "MoveTo", [this, area](cr3::NativeCall& c) {
         if (!area || !areaMode || eventMode || !areaWalker) return;
@@ -2092,6 +2146,14 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
         audio.stopSe("fe_011", 0);
     });
     vm.setNative("Cr3GimmickData", "SetBoxDrawing", [this](cr3::NativeCall&) { boxRedraw = true; });
+    // (Fld2VehicleRide / Fld2VehicleRideOut: Fld2TaskPlayer::SetStateRide(name, true) / (null, false)
+    // - the field mode's alone; the scripts' VehicleRide / VehicleOut set flag 4105 first)
+    vm.setNative("Cr3GimmickData", "VehicleRide", [this, area](cr3::NativeCall& c) {
+        if (area && areaMode && !eventMode) areaRideSet(c.string(0), true);
+    });
+    vm.setNative("Cr3GimmickData", "VehicleOut", [this, area](cr3::NativeCall&) {
+        if (area && areaMode && !eventMode) areaRideSet(std::string(), false);
+    });
     // (Fld2UpdatePlayerModel 0x0086ee48 -> Fld2Main::UpdatePlayerModel 0x0087d854: a town's - map id
     // under 0x29, t0101 .. t0502 - the hero, j001; elsewhere the party's first)
     vm.setNative("Cr3System", "UpdatePlayerModel", [this, area](cr3::NativeCall&) {
@@ -2099,11 +2161,15 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
         const bool town = this->area.name.size() == 5 && this->area.name[0] == 't';
         cr3RebuildLeader(town ? cr3PartsBody("j001") : std::string());
     });
-    // (the toy camera - goods button 2, Fld2CameraToy, map camera type 5 - isn't in CR3-U: its
-    // enable (Fld2SetFieldToyCameraEnable 0x0086f788) and end (Fld2EndToyCamera 0x0086dae4) have
-    // nothing to act on; QuakeStop is the original's own no-op, FldUtilFieldMapCameraQuakeStop 0x00872078)
-    vm.setNative("Cr3FieldMapCamera", "SetToyCameraEnable", [](cr3::NativeCall&) {});
-    vm.setNative("Cr3GimmickData", "EndToyCamera", [](cr3::NativeCall&) {});
+    // (QuakeStop is the original's own no-op, FldUtilFieldMapCameraQuakeStop 0x00872078)
+    // (Fld2SetFieldToyCameraEnable 0x0086f788 -> Fld2CameraToy::SetEnable: +0x59, the menu's taps
+    // with it; Fld2EndToyCamera 0x0086dae4 -> ChangeToyCamera(false, false): no ToyCameraOut)
+    vm.setNative("Cr3FieldMapCamera", "SetToyCameraEnable", [this, area](cr3::NativeCall& c) {
+        if (area) toyCam.permit = c.boolean(0, true);
+    });
+    vm.setNative("Cr3GimmickData", "EndToyCamera", [this, area](cr3::NativeCall&) {
+        if (area && areaMode) toyCamSet(false, false);
+    });
     vm.setNative("Cr3FieldMapCamera", "QuakeStop", [](cr3::NativeCall&) {});
     vm.setNative("Cr3FieldMapCamera", "QuakeStart", [](cr3::NativeCall&) {});
     // (the season event's and the colosseum's talk ends - SeasonEventMain 0xb7 / ColosseumMain 0x81
@@ -2115,9 +2181,23 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
     vm.setNative("Cr3FieldMapCharacter", "SetRot_p000", [](cr3::NativeCall&) {});
     // (Cr3BindFieldMapCamera 0x00851d20: SetMode / Scroll / ScrollTo - Fld2SetFieldMapCameraMode
     // 0x0086f068, Fld2CameraScroll 0x00870c64, Fld2CameraScrollTo 0x00870cec - act on the camera
-    // only when it's Fld2CameraOrtho, the map table's type 2: e0013 and e0015, CreateArea2D's.
-    // CR3-U draws those two as the others, so here they're the no-ops they are everywhere else)
-    for (const char* name : {"SetMode", "Scroll", "ScrollTo"}) vm.setNative("Cr3FieldMapCamera", name, [](cr3::NativeCall&) {});
+    // only when it's Fld2CameraOrtho, the 2D areas'; elsewhere nothing. Scroll(a, b): (xmax a,
+    // -ymax b) at once; ScrollTo(a, b, frames): from where it is there over frames / 30 s, mode 1's)
+    vm.setNative("Cr3FieldMapCamera", "SetMode", [this, area](cr3::NativeCall& c) {
+        if (area && area2D.on) area2D.mode = c.integer(0);
+    });
+    vm.setNative("Cr3FieldMapCamera", "Scroll", [this, area](cr3::NativeCall& c) {
+        if (!area || !area2D.on) return;
+        area2D.x = area2DMaxX() * c.number(0), area2D.y = -area2DMaxY() * c.number(1);
+        SDL_Log("area %s: scrolled to (%.3f %.3f)", this->area.name.c_str(), double(area2D.x), double(area2D.y));
+    });
+    vm.setNative("Cr3FieldMapCamera", "ScrollTo", [this, area](cr3::NativeCall& c) {
+        if (!area || !area2D.on) return;
+        area2D.fromX = area2D.x, area2D.fromY = area2D.y;
+        area2D.toX = area2DMaxX() * c.number(0), area2D.toY = -area2DMaxY() * c.number(1);
+        area2D.t = 0, area2D.dur = float(c.integer(2)) * 0.033333335f;
+        SDL_Log("area %s: scrolling to (%.3f %.3f) over %.2f s", this->area.name.c_str(), double(area2D.toX), double(area2D.toY), double(area2D.dur));
+    });
     // the camp's top over an event (InterfaceMain::SetCampWindowParty: PauseFieldInterface, the
     // camp's windows - CampTopMenu in its event mode -, Cr3FadeIn(0, 5))
     vm.setNative("InterfaceWindow", "SetCampWindowParty", [this](cr3::NativeCall&) {
@@ -2429,6 +2509,7 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
     savedArea.clear();
     // (Fld2Main::SM_FirstEvent: evt000 - evt002 back from a battle lost, Cr3FieldData's come-from 1
     // - SetComeFromBattleToField, Fld2SaveData(1) - with BtlSystem::s_ResultParam 1)
+    loadArea2D(name); // (Fld2TaskCamera::SetupCamera before the area's script: its SetMode / Scroll the 2D camera's)
     const std::string entry = game.next.fieldMode == 1 && cr3BattleLost ? "evt002" : "evt000";
     game.next.fieldMode = -1;
     if (!areaEvents->start(name.substr(0, 3), entry) && (entry == "evt000" || !areaEvents->start(name.substr(0, 3), "evt000")))
@@ -2439,6 +2520,12 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
     }
     setupAreaEncounters(name);
     cr3SavePending = cr3SavePending || cr3Playing; // (Fld2Main::SM_Init / SM_ChangeArea: DBSystem::Sync)
+    // (Fld2Main::ChangeArea: SetStateRide(player, "c602_00", flag 4105) - back from a battle, a
+    // load; a jump point keeps the animal on the player, SetRideStatus - so the ride follows the flag)
+    toyCam = ToyCam(); // (a new area: the Gom camera)
+    if (game.flag(4105)) areaRideSet("c602_00", true);
+    else if (areaRide.on) areaRideSet(std::string(), false);
+    else areaCamera.setRide(false);
     const cr3::Vec3 at = areaWalker->position();
     SDL_Log("area %s: %zu figures, player %s at %s (%.2f %.2f %.2f)", name.c_str(), areaFigures.size(), areaPlayerName.c_str(),
             restored ? "where it left" : "defaultPos", at[0], at[1], at[2]);
@@ -2461,6 +2548,161 @@ void Viewer::setAreaMotion(cr3::Cr3Motion m) {
         time = keep;
     }
     areaMotion = m, areaMotionSet = true, areaMotionAge = 0;
+}
+
+// (CreateArea2D: by its map id alone - e0013 / e0015 -; <area>'s figure's camera - Setup:
+// GetContaindCamera -, its own fov, near and far; then SetCameraPos: on the player, clamped)
+void Viewer::loadArea2D(const std::string& name) {
+    const int mode = area2D.mode;
+    const float t = area2D.t, dur = area2D.dur, fx = area2D.fromX, fy = area2D.fromY, tx0 = area2D.toX, ty0 = area2D.toY;
+    area2D = Area2D();
+    area2D.mode = mode, area2D.t = t, area2D.dur = dur, area2D.fromX = fx, area2D.fromY = fy, area2D.toX = tx0, area2D.toY = ty0;
+    if (name != "e0013" && name != "e0015") return;
+    area2D.on = true;
+    std::vector<uint8_t> d;
+    cr3::Geom g;
+    cr3::Skeleton sk;
+    if (archive.read(name + ".geom", d) && cr3::parseGeom(d, g) && !g.cameras.empty() && archive.read(name + ".skel", d) && cr3::parseSkeleton(d, sk)) {
+        const cr3::GeomCamera& cam = g.cameras[0];
+        const int j = sk.joint(cam.hash);
+        const std::vector<cr3::Mat34> wm = sk.world(sk.basePose);
+        if (j >= 0 && size_t(j) < wm.size()) {
+            area2D.cam = wm[size_t(j)], area2D.camOk = true;
+            area2D.fovY = cam.fovY, area2D.zNear = cam.near, area2D.zFar = cam.far;
+            for (int c = 0; c < 3; ++c) { // (its axes unit length: a rigid camera)
+                const float l = std::hypot(area2D.cam.m[c], area2D.cam.m[4 + c], area2D.cam.m[8 + c]);
+                if (l > 1e-6f)
+                    for (int r = 0; r < 3; ++r) area2D.cam.m[r * 4 + c] /= l;
+            }
+        }
+    }
+    float tx, ty;
+    if (area2DTarget(tx, ty)) area2D.x = std::clamp(tx, -area2DMaxX(), area2DMaxX()), area2D.y = std::clamp(ty, -area2DMaxY(), area2DMaxY());
+    SDL_Log("area %s: the 2D camera%s, mode %d, at (%.3f %.3f)", name.c_str(), area2D.camOk ? "" : " (no camera)", area2D.mode, double(area2D.x), double(area2D.y));
+}
+
+// (SetScrollStop 0x9ed670: the picture's 1232 x 1848 of the sprite's 2048 against the screen - NDC)
+float Viewer::area2DMaxX() const { return 1232.0f / 1024.0f - 1.0f; }
+float Viewer::area2DMaxY() const {
+    int w = 960, h = 640;
+    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    return 1848.0f / 1024.0f * float(w) / float(std::max(h, 1)) - 1.0f;
+}
+
+// <area>'s camera: the view, and its perspective magnified 2W / H and moved by the scroll (Fld2CameraOrtho::Setup /
+// Draw: the figure camera's +0x240 / +0x244 and +0x248 / +0x24c)
+Mat4 Viewer::area2DView(int w, int h, Mat4* proj) const {
+    const float aspect = float(w) / float(std::max(h, 1));
+    Mat4 p = perspective(area2D.fovY * 3.14159265f / 180, aspect, area2D.zNear, area2D.zFar);
+    Mat4 s = cr3::mat4Identity();
+    s[0] = s[5] = 2.0f * aspect;
+    s[12] = area2D.x, s[13] = area2D.y;
+    if (proj) *proj = cr3::mat4Multiply(s, p);
+    return cr3::mat4RigidInverse(cr3::mat4FromMat34(area2D.cam));
+}
+
+// (CalcNewScreenPos 0x9ed7b4: the player 1 up, through <area>'s camera - where the scroll puts it in the middle)
+bool Viewer::area2DTarget(float& tx, float& ty) const {
+    if (!area2D.camOk || !areaWalker) return false;
+    int w = 960, h = 640;
+    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    const float aspect = float(w) / float(std::max(h, 1));
+    const Mat4 vp = cr3::mat4Multiply(perspective(area2D.fovY * 3.14159265f / 180, aspect, area2D.zNear, area2D.zFar), area2DView(w, h, nullptr));
+    const cr3::Vec3 q = areaWalker->position();
+    const float p[4] = {q[0], q[1] - areaWalker->radius + 1.0f, q[2], 1};
+    float c[4] = {0, 0, 0, 0};
+    for (int r = 0; r < 4; ++r)
+        for (int k = 0; k < 4; ++k) c[r] += vp[size_t(k * 4 + r)] * p[k];
+    if (std::fabs(c[3]) < 1e-6f) return false;
+    tx = -2.0f * aspect * c[0] / c[3], ty = -2.0f * aspect * c[1] / c[3];
+    return true;
+}
+
+// (Fld2CameraOrtho::Update 0x9ed220: mode 0 CalcScroll - more than a pixel off, a fifth of the way a
+// frame, clamped; mode 1 the tween - linear, unclamped -; the rest still)
+void Viewer::stepArea2D(float dt) {
+    if (!area2D.on) return;
+    int w = 960, h = 640;
+    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    if (area2D.mode == 0) {
+        float tx, ty;
+        if (!area2DTarget(tx, ty)) return;
+        const float dx = tx - area2D.x, dy = ty - area2D.y;
+        if (std::hypot(dx * float(w), dy * float(h)) > 1.0f) {
+            const float k = 1.0f - std::pow(0.8f, dt * 60.0f);
+            area2D.x += dx * k, area2D.y += dy * k;
+        }
+        area2D.x = std::clamp(area2D.x, -area2DMaxX(), area2DMaxX()), area2D.y = std::clamp(area2D.y, -area2DMaxY(), area2DMaxY());
+    } else if (area2D.mode == 1 && area2D.dur > 0 && area2D.t < area2D.dur) {
+        area2D.t += dt;
+        const float u = std::min(area2D.t / area2D.dur, 1.0f);
+        area2D.x = area2D.fromX + (area2D.toX - area2D.fromX) * u, area2D.y = area2D.fromY + (area2D.toY - area2D.fromY) * u;
+    }
+}
+
+void Viewer::fieldFace(ViewFigure& f, const std::string& face, float t, const std::string& from, float fromT, float weight) {
+    const std::string base = f.name.size() > 5 ? motionBase(f.name.substr(0, f.name.size() - 5)) : f.name;
+    if (!setFigureFace(f, face.empty() ? std::string() : base + "_" + face + ".anim", false)) return;
+    f.faceTime = t, f.faceLoop = true, f.faceWeight = 1;
+    if (weight < 1 && !from.empty() && setFigureFace(f, base + "_" + from + ".anim", true))
+        f.faceFromTime = fromT, f.faceFromLoop = true, f.faceWeight = std::max(weight, 0.0f);
+}
+
+// Fld2Animal::SetMotion: Fld2AnimalAnimeNameTbl's - 0 fn01, 1 ff01, 2 ff02 -, looped
+void Viewer::setAreaRideMotion(int motion) {
+    if (motion == areaRide.motion || areaRide.fig.meshes.empty()) return;
+    static const char* const kNames[3] = {"fn01", "ff01", "ff02"};
+    const std::string want = areaRide.model + "_" + kNames[std::clamp(motion, 0, 2)] + ".anim";
+    const auto it = std::find(areaRide.fig.anims.begin(), areaRide.fig.anims.end(), want);
+    if (it == areaRide.fig.anims.end()) return;
+    ViewFigure& f = areaRide.fig;
+    if (f.animLoaded) f.blendAnim = f.anim, f.blendLoaded = true, f.blendAbsolute = f.absolute, f.blendTime = areaRide.age, f.blendLoop = true;
+    const float keep = time;
+    loadAnim(f, size_t(it - f.anims.begin()));
+    time = keep;
+    areaRide.motion = motion, areaRide.age = 0;
+}
+
+// Fld2TaskPlayer::SetStateRide (0x00878858): on - state 5, motion 0xd (fr01); the Fld2Animal made
+// once, of the name's first four letters (Cr3Sprintf(.., 5, "%s")), at the player, motion 0. Off -
+// state 0, motion 0, the animal not drawn (+0x18), the menus shown again. Either: the vehicle
+// collisions (Fld2TaskGimmick::SetRide), the camera (SetRideCamera) and the goods button
+// (SetRideButton) follow flag 4105; the encounter and battle tabs shown when off
+void Viewer::areaRideSet(const std::string& gimmick, bool on) {
+    if (on && gimmick.empty()) return;
+    if (on) {
+        const std::string model = gimmick.substr(0, 4);
+        if (model != areaRide.model || areaRide.fig.meshes.empty()) {
+            std::string err;
+            if (!loadFigure(model + ".geom", areaRide.fig, &err)) SDL_Log("ride %s: %s", model.c_str(), err.c_str());
+            areaRide.model = model, areaRide.motion = -1;
+        }
+        areaRide.on = true;
+        setAreaRideMotion(0);
+        setAreaMotion(cr3::Cr3Motion::RideIdle);
+        goodsFocus = 5; // (AddButtonFieldGoodsButton(5), SetButtonFieldGoodsButton(6))
+    } else {
+        areaRide.on = false;
+        setAreaMotion(cr3::Cr3Motion::Idle);
+        if (goodsFocus == 5) goodsFocus = -1;
+    }
+    areaCamera.setRide(game.flag(4105));
+    areaWallKey = "~"; // (the vehicle collisions again: updateGimmickWalls)
+    SDL_Log("area %s: the ride %s (%s)", area.name.c_str(), on ? "on" : "off", areaRide.model.c_str());
+}
+
+void Viewer::drawAreaRide(const Mat4& vp) {
+    ViewFigure& f = areaRide.fig;
+    if (!areaRide.on || f.meshes.empty() || !areaPlayerShown || !areaWalker) return;
+    const cr3::Vec3 p = areaWalker->position();
+    f.place = cr3::Mat34();
+    const float c = std::cos(areaYaw), s = std::sin(areaYaw);
+    f.place.m[0] = c, f.place.m[2] = s, f.place.m[8] = -s, f.place.m[10] = c;
+    f.place.m[3] = p[0] - s * 0.5f, f.place.m[7] = p[1] - areaWalker->radius, f.place.m[11] = p[2] - c * 0.5f; // (at the player model: SetRide)
+    f.tint[3] = areaCamera.playerAlpha;
+    f.blendWeight = f.blendLoaded ? std::min(areaRide.age * 6.0f, 1.0f) : 1.0f;
+    pose(f, areaRide.age, true);
+    drawFigure(f, vp.data());
 }
 
 // the player within a gimmick's box (its joint's axes; the box 0.05 of each, the player's
@@ -3179,6 +3421,20 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
                 SDL_Log("area %s: put in %s", area.name.c_str(), want.c_str());
             }
     }
+    // (--input wait:<seconds> - the steps after held that long: tests)
+    if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && (inputWaited += dt) >= float(std::atof(inputScript.front().c_str() + 5)))
+        inputScript.pop_front(), inputWaited = 0;
+    // (--input put:<x>/<y>/<z>[/<yaw>] - the player set there; where - its place logged: tests)
+    if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && (inputScript.front().compare(0, 4, "put:") == 0 || inputScript.front() == "where")) {
+        float x = 0, y = 0, z = 0, yaw = areaYaw;
+        if (inputScript.front()[0] == 'p' && std::sscanf(inputScript.front().c_str() + 4, "%f/%f/%f/%f", &x, &y, &z, &yaw) >= 3) {
+            areaWalker->setPosition({x, y, z}), areaYaw = yaw;
+            areaCamera.reset({x, y - areaWalker->radius, z}, areaYaw), rail.started = false;
+        }
+        inputScript.pop_front();
+        const cr3::Vec3 q = areaWalker->position();
+        SDL_Log("area %s: the player at (%.2f %.2f %.2f)", area.name.c_str(), q[0], q[1], q[2]);
+    }
     // (--input wander:<seconds>: tests - the player runs round in a small circle that long, the
     // encounters' steps counted)
     if (!(areaEvents && areaEvents->running()) && !inputScript.empty() && inputScript.front().compare(0, 7, "wander:") == 0) {
@@ -3190,16 +3446,22 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         wanderLeft -= dt, wanderTurn += dt * 2.0f;
         sx = std::cos(wanderTurn), sy = std::sin(wanderTurn), run = true;
     }
+    if (toyCam.on) { // (Fld2System::SetActionFlag: the player still; the camera the toy's)
+        stepToyCam(dt);
+        sx = sy = 0, run = false, wanderLeft = 0;
+        areaCamera.eye = toyCam.eye, areaCamera.at = toyCam.look;
+    }
     const bool* keys = SDL_GetKeyboardState(nullptr);
-    if (keys) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
-    areaCamStep(dt); // (the camera's half held: Fld2CameraGom::UpdateControl)
+    if (keys && !toyCam.on) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
+    if (!toyCam.on) areaCamStep(dt); // (the camera's half held: Fld2CameraGom::UpdateControl)
     const float fx = areaCamera.at[0] - areaCamera.eye[0], fz = areaCamera.at[2] - areaCamera.eye[2];
     const float fl = std::max(std::hypot(fx, fz), 1e-4f);
     const float forward[2] = {fx / fl, fz / fl}, right[2] = {-forward[1], forward[0]};
     float dx = forward[0] * sy + right[0] * sx, dz = forward[1] * sy + right[1] * sx;
     const float push = std::min(std::hypot(sx, sy), 1.0f);
     const bool moving = push > 0.01f && std::hypot(dx, dz) > 1e-6f; // (no way across: the camera straight above)
-    const float speed = moving ? (run ? 4.8f : 1.2f) : 0.0f; // (SM_Walk / SM_Run: fixed 1.2 / 4.8, never scaled by stick push)
+    // (SM_Walk / SM_Run: fixed 1.2 / 4.8, never scaled by stick push; SM_RideWalk / SM_RideRun x 1.5)
+    const float speed = (moving ? (run ? 4.8f : 1.2f) : 0.0f) * (areaRide.on ? 1.5f : 1.0f);
     float moveAngle = areaYaw;
     if (moving) {
         const float dl = std::hypot(dx, dz);
@@ -3214,7 +3476,11 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         areaWalker->setVelocity({dx * speed, 0, dz * speed});
         areaWalker->step(dt / float(steps));
     }
-    setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
+    if (areaRide.on) { // (SM_RideIdle / Walk / Run: fr01 .. fr03, the animal's fn01 / ff01 / ff02)
+        setAreaMotion(!moving ? cr3::Cr3Motion::RideIdle : run ? cr3::Cr3Motion::RideRun : cr3::Cr3Motion::RideWalk);
+        setAreaRideMotion(!moving ? 0 : run ? 2 : 1);
+        areaRide.age += dt;
+    } else setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
     if (areaMoveTo.on) { // (SM_MoveTo: set on the line - no walls, no fall -, facing its way, walking)
         AreaMoveTo& mv = areaMoveTo;
         mv.t += dt;
@@ -3222,13 +3488,15 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         areaWalker->setPosition({mv.from[0] + (mv.to[0] - mv.from[0]) * k, mv.from[1] + (mv.to[1] - mv.from[1]) * k, mv.from[2] + (mv.to[2] - mv.from[2]) * k});
         areaWalker->setVelocity({0, 0, 0});
         if (std::hypot(mv.to[0] - mv.from[0], mv.to[2] - mv.from[2]) > 1e-4f) areaYaw = std::atan2(mv.to[0] - mv.from[0], mv.to[2] - mv.from[2]);
-        setAreaMotion(k < 1 ? cr3::Cr3Motion::Walk : cr3::Cr3Motion::Idle);
+        if (areaRide.on) setAreaMotion(k < 1 ? cr3::Cr3Motion::RideWalk : cr3::Cr3Motion::RideIdle), setAreaRideMotion(k < 1 ? 1 : 0);
+        else setAreaMotion(k < 1 ? cr3::Cr3Motion::Walk : cr3::Cr3Motion::Idle);
         if (k >= 1) mv.on = false, SDL_Log("area %s: the player's move over", area.name.c_str());
     }
     const cr3::Vec3 p = areaWalker->position();
     const bool touchMove = moving && areaDrag.on && areaDragFree() && !areaCam.on && !areaCamSticking;
     areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, moveAngle, moving, dt, &area.cameraWalls, &area.walls, touchMove);
     if (rail.on) railStep({p[0], p[1] - areaWalker->radius, p[2]}, p, dt);
+    stepArea2D(dt);
     // the gimmicks: an event box walked into sets off its function; the nearest check object
     areaCheckNear = -1;
     float bestCheckDist = 1e30f;
@@ -3319,10 +3587,25 @@ void Viewer::drawArea(int w, int h) {
     for (int r = 0; r < 3; ++r) cw.m[r * 4 + 0] = x[r], cw.m[r * 4 + 1] = y[r], cw.m[r * 4 + 2] = z[r], cw.m[r * 4 + 3] = e[r];
     const float fov = areaCamera.fovY * 3.14159265f / 180;
     dev->setCamera(areaCamera.zNear, areaCamera.zFar, fov);
-    const Mat4 world = cr3::mat4FromMat34(cw);
+    Mat4 world = cr3::mat4FromMat34(cw);
     Mat4 proj = perspective(fov, float(w) / float(std::max(h, 1)), areaCamera.zNear, areaCamera.zFar);
     applyQuake(proj);
-    const Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
+    Mat4 vp = cr3::mat4Multiply(proj, cr3::mat4RigidInverse(world));
+    if (area2D.on && area2D.camOk) { // (Fld2CameraOrtho: TaskMap::DrawBackground's picture, then the area under <area>'s camera)
+        if (cr3::Texture* pic = texture(area.name + "_01")) {
+            const float hx = 2.0f, hy = 2.0f * float(w) / float(std::max(h, 1)); // (the sprite's 3840 over 1920 x (1920 h / w) virtual)
+            const float x0 = -hx + area2D.x, x1 = hx + area2D.x, y0 = -hy + area2D.y, y1 = hy + area2D.y;
+            const float quad[24] = {x0, y0, 0, 0, x1, y0, 1, 0, x1, y1, 1, 1, x0, y0, 0, 0, x1, y1, 1, 1, x0, y1, 0, 1};
+            const Mat4 id = cr3::mat4Identity();
+            const float rgba[4] = {1, 1, 1, 1};
+            dev->drawQuad(*pic, quad, id.data(), rgba);
+        }
+        const Mat4 view = area2DView(w, h, &proj);
+        dev->setCamera(area2D.zNear, area2D.zFar, area2D.fovY * 3.14159265f / 180);
+        vp = cr3::mat4Multiply(proj, view);
+        world = cr3::mat4FromMat34(area2D.cam);
+        cw = area2D.cam;
+    }
     cr3::SceneLighting l = lighting;
     l.camera[0] = e[0], l.camera[1] = e[1], l.camera[2] = e[2];
     l.time = time;
@@ -3369,7 +3652,10 @@ void Viewer::drawArea(int w, int h) {
         for (ViewFigure* fp : {&npc.body, &npc.head}) {
             if (fp->meshes.empty()) continue;
             fp->place = npc.place;
-            pose(*fp, npc.eventMotion ? areaClock - npc.motionAt : areaClock + npc.phase, true);
+            fieldFace(*fp, npc.face, areaClock - npc.faceAt, npc.faceFrom, areaClock - npc.faceFromAt, (areaClock - npc.faceAt) * 6);
+            float at = npc.eventMotion ? areaClock - npc.motionAt : areaClock + npc.phase;
+            if (npc.eventMotion && npc.loopEnd > npc.loopStart && at > npc.loopEnd) at = npc.loopStart + std::fmod(at - npc.loopEnd, npc.loopEnd - npc.loopStart);
+            pose(*fp, at, true);
             drawFigure(*fp, vp.data());
         }
     }
@@ -3381,12 +3667,16 @@ void Viewer::drawArea(int w, int h) {
         f.place = cr3::Mat34();
         const float c = std::cos(areaYaw), s = std::sin(areaYaw);
         f.place.m[0] = c, f.place.m[2] = s, f.place.m[8] = -s, f.place.m[10] = c;
-        f.place.m[3] = p[0], f.place.m[7] = p[1] - areaWalker->radius, f.place.m[11] = p[2];
+        const float back = areaRide.on ? 0.5f : 0.0f; // (StepSimulation: riding, the model rot x (0, 0, 0.5) behind)
+        f.place.m[3] = p[0] - s * back, f.place.m[7] = p[1] - areaWalker->radius, f.place.m[11] = p[2] - c * back;
         f.tint[3] = areaCamera.playerAlpha; // (Fld2TaskPlayer::SetAlpha: the camera too near)
         f.blendWeight = f.blendLoaded ? std::min(areaMotionAge * 6.0f, 1.0f) : 1.0f; // (SetAnimationBlend 1/6 s)
+        // (CreatePlayer / ChangePlayer: a j model's face f001, looped - the head's)
+        fieldFace(f, areaPlayerName.compare(0, 1, "j") == 0 ? "f001" : std::string(), areaClock);
         pose(f, areaMotionAge, true);
         drawFigure(f, vp.data());
     }
+    drawAreaRide(vp);
 }
 
 // the dungeon and area the map is in (cr3_field_data +0 / +4: FldMap's table maps them to the
@@ -3855,6 +4145,16 @@ bool Viewer::cr3FieldIdle() {
 
 void Viewer::drawCr3Field(int w, int h) {
     cr3CampTaps.clear();
+    if (toyCam.on && areaMode && !eventMode && cr3Camp.stage == 0) { // (Fld2SetUIVisible(false): the toy camera's menu alone, over its events too)
+        Mat4 camera = cr3::mat4Identity();
+        camera[14] = -0.881f * 10;
+        const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+        cr3::SceneLighting none;
+        dev->setLighting(none);
+        drawToyCam(w, h, view);
+        if (!cr3FieldIdle()) cr3CampTaps.clear();
+        return;
+    }
     if (cr3Camp.stage == 0 && !cr3FieldIdle()) return;
     Mat4 camera = cr3::mat4Identity();
     camera[14] = -0.881f * 10;
@@ -4056,9 +4356,17 @@ void Viewer::drawCr3Minimap(int w, int h, const Mat4& view) {
     if (cr3UiCall(panel, "call_feMapPlayer", px, py)) cr3UiPutTurned("femapplayer", px, py, std::atan2(-std::sin(areaYaw), -std::cos(areaYaw)), view);
 }
 
+// (the scripts' goods, and riding the ride's own - Fld2GoodsButton::SetRideButton: button 5 added)
+std::set<int> Viewer::shownGoods() const {
+    std::set<int> shown = game.goodsButtons;
+    if (areaRide.on) shown.insert(5);
+    return shown;
+}
+
 int Viewer::focusedGoods() {
-    if (game.goodsButtons.empty()) return goodsFocus = -1;
-    if (!game.goodsButtons.count(goodsFocus)) goodsFocus = *game.goodsButtons.begin();
+    const std::set<int> shown = shownGoods();
+    if (shown.empty()) return goodsFocus = -1;
+    if (!shown.count(goodsFocus)) goodsFocus = *shown.begin();
     return goodsFocus;
 }
 
@@ -4067,8 +4375,9 @@ bool Viewer::goodsPad(bool cycle) {
     const int goods = focusedGoods();
     if (goods < 0) return false;
     if (cycle) {
-        auto it = game.goodsButtons.find(goods);
-        if (++it == game.goodsButtons.end()) it = game.goodsButtons.begin();
+        const std::set<int> shown = shownGoods();
+        auto it = shown.find(goods);
+        if (++it == shown.end()) it = shown.begin();
         goodsFocus = *it;
         SDL_Log("field: goods cursor %d", goodsFocus);
     } else {
@@ -4079,7 +4388,7 @@ bool Viewer::goodsPad(bool cycle) {
 }
 
 void Viewer::drawCr3Goods(int w, int h, const Mat4& view) {
-    if (game.goodsButtons.empty()) return;
+    if (shownGoods().empty()) return;
     float x, y, px, py, ix, iy;
     UiFig& pos = cr3UiPut("fegoodsposition", "", 0, 0, 0, view);
     if (!cr3UiCall(pos, "call_feGoodsMenu", x, y, w, h)) return;
@@ -4094,9 +4403,234 @@ void Viewer::drawCr3Goods(int w, int h, const Mat4& view) {
 }
 
 void Viewer::useGoods(int goods) {
-    if (!game.goodsButtons.count(goods)) return;
+    if (!shownGoods().count(goods)) return;
     if (goods == 0) putBomb(); // (Fld2BombManager::PutBomb)
-    else SDL_Log("field: goods %d (not in yet)", goods);
+    else if (goods == 1) { // (2: the toy camera, not in a town - GetDungeonNo over 4 -, else SE 0x16f)
+        if (cr3InDungeon()) audio.playSe(0x25e, false), toyCamSet(true, true);
+        else audio.playSe(0x16f, false);
+    }
+    else if (goods == 5) { // (Fld2GoodsButton::OnUpdate 6: SetNextEvent("VehicleOut") - not on ground of a "se06" surface, SE 0x16f)
+        const cr3::Vec3 p = areaWalker ? areaWalker->position() : cr3::Vec3{};
+        const std::string under = areaWalker ? area.walls.surfaceBelow(p, areaWalker->radius + 1.0f) : std::string();
+        if (game.flag(4105) && under.find("se06") != std::string::npos) audio.playSe(0x16f, false), SDL_Log("field: no getting off here (%s)", under.c_str());
+        else runAreaFunction("VehicleOut");
+    } else SDL_Log("field: goods %d (not in yet)", goods);
+}
+
+// (Fld2TaskGimmick::SetGimmick: a joint with "ragdoll_cam" - table 0x12, Fld2ToyCameraGimmick -, made
+// only with a Field row - GetFieldParamByName, an active quest's first -; SetGimmickTable: +0x50 the
+// row's +0x42, the box CreateRigidBox's - the joint's axes x 0.05 each way, collision group 0x200)
+void Viewer::loadToyTargets(const std::string& name, const std::vector<std::string>& joints, const std::vector<cr3::Mat34>& world) {
+    toyTargets.clear();
+    std::vector<uint8_t> d;
+    cr3::MbeFile f;
+    if (!archive.read("data\\field_" + name.substr(0, 3) + ".mbe", d) || !f.parse(d)) return;
+    const cr3::MbeFile::Table* t = f.table("Field");
+    if (!t) return;
+    const int areaNo = std::atoi(name.substr(3, 2).c_str()) - 1;
+    auto questActive = [&](int q) { return q >= 0 && game.cr3Quests.begun.count(q) && !game.cr3Quests.ended.count(q); };
+    std::set<std::string> seen;
+    for (int pass = 0; pass < 2; ++pass)
+        for (size_t r = 0; r < t->rows.size(); ++r) {
+            cr3::MbeFile::Row row;
+            if (!f.row(*t, r, "iiiiiippiiifiii", row) || row.i(0) != areaNo) continue;
+            const int q = row.i(4);
+            if (pass == 0 ? !questActive(q) : q != -1) continue;
+            const std::string g = row.s(6);
+            if (g.find("ragdoll_cam") == std::string::npos || !seen.insert(g).second) continue;
+            const auto it = std::find(joints.begin(), joints.end(), g);
+            if (it == joints.end() || size_t(it - joints.begin()) >= world.size()) continue;
+            ToyTarget tt;
+            tt.name = g.substr(8), tt.mode = (uint32_t(row.i(14)) >> 16) & 0xff, tt.box = world[size_t(it - joints.begin())];
+            toyTargets.push_back(tt);
+            SDL_Log("area %s: toy camera target %s (mode %d) at (%.2f %.2f %.2f)", name.c_str(), tt.name.c_str(), tt.mode, tt.box.m[3], tt.box.m[7], tt.box.m[11]);
+        }
+}
+
+// Fld2TaskCamera::ChangeToyCamera(on, notify): on - camera type 5, the action flag, the touch's one
+// area (Fld2TaskTouch +0xbc 2), the player and the field's UI hidden, the eye 1.5 above the player,
+// the look 15 along its facing (SetupCamera: the turn so far 0), CreateToyCameraMenu. Off - the
+// camera before, the menu ended, the player and UI shown; notify: PauseCharaMove, SetNextEvent("ToyCameraOut")
+void Viewer::toyCamSet(bool on, bool notify) {
+    if (on == toyCam.on || !areaWalker) return;
+    if (on) {
+        const cr3::Vec3 p = areaWalker->position();
+        toyCam = ToyCam();
+        toyCam.on = true, toyCam.openAt = uiClock;
+        toyCam.eye = {p[0], p[1] - areaWalker->radius + 1.5f, p[2]};
+        toyCam.look = {toyCam.eye[0] + std::sin(areaYaw) * 15, toyCam.eye[1], toyCam.eye[2] + std::cos(areaYaw) * 15};
+        areaPlayerShown = false;
+        areaCamera.setExternal(true);
+        areaCam = Cr3AreaCam(), areaDrag = Cr3AreaDrag();
+    } else {
+        toyCam.on = false;
+        areaPlayerShown = true;
+        areaCamera.setExternal(rail.on);
+        areaCam = Cr3AreaCam(), areaDrag = Cr3AreaDrag();
+        if (notify) runAreaFunction("ToyCameraOut");
+    }
+    SDL_Log("area %s: the toy camera %s", area.name.c_str(), on ? "on" : notify ? "off (ToyCameraOut)" : "off");
+}
+
+// Fld2CameraToy::CheckFocus 0x9ec90c: the first target (the table's order) on and shown (+0x53, the
+// gimmick's visible flag), within 15 of the eye, the first toy box on the line eye -> look
+// (Fld2World::HitTest, mask 0x200) and, mode 2, CheckDirection 0x9eceb0's 70 degrees
+std::string Viewer::toyCamFocus() const {
+    auto hit = [&](const cr3::Mat34& m, float& at) { // (the segment eye -> look against the box, its axes x 0.05)
+        float lo = 0, hi = 1;
+        for (int a = 0; a < 3; ++a) {
+            const float ax[3] = {m.m[a], m.m[4 + a], m.m[8 + a]};
+            const float l2 = ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2];
+            if (l2 < 1e-12f) return false;
+            const float o = ((toyCam.eye[0] - m.m[3]) * ax[0] + (toyCam.eye[1] - m.m[7]) * ax[1] + (toyCam.eye[2] - m.m[11]) * ax[2]) / l2;
+            const float dv = ((toyCam.look[0] - toyCam.eye[0]) * ax[0] + (toyCam.look[1] - toyCam.eye[1]) * ax[1] + (toyCam.look[2] - toyCam.eye[2]) * ax[2]) / l2;
+            if (std::fabs(dv) < 1e-9f) {
+                if (std::fabs(o) > 0.05f) return false;
+                continue;
+            }
+            float t0 = (-0.05f - o) / dv, t1 = (0.05f - o) / dv;
+            if (t0 > t1) std::swap(t0, t1);
+            lo = std::max(lo, t0), hi = std::min(hi, t1);
+            if (lo > hi) return false;
+        }
+        at = lo;
+        return true;
+    };
+    float nearest = 2;
+    const ToyTarget* first = nullptr;
+    for (const ToyTarget& t : toyTargets) {
+        float at;
+        if (game.gimmickVisible(t.name) && hit(t.box, at) && at < nearest) nearest = at, first = &t;
+    }
+    for (const ToyTarget& t : toyTargets) {
+        if (t.mode == 0 || !game.gimmickVisible(t.name)) continue;
+        const float dx = t.box.m[3] - toyCam.eye[0], dy = t.box.m[7] - toyCam.eye[1], dz = t.box.m[11] - toyCam.eye[2];
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) >= 15 || first != &t) continue;
+        if (t.mode == 2) { // (the target's front - its +z - against the way to the eye, across: the shipped double square root kept)
+            const float fl = std::hypot(t.box.m[2], t.box.m[6], t.box.m[10]);
+            const float fx = t.box.m[2] / fl, fz = t.box.m[10] / fl;
+            const float dl = std::sqrt(dx * dx + dy * dy + dz * dz);
+            const float ex = -dx / dl, ez = -dz / dl;
+            const float c = (fx * ex + fz * ez) / (std::sqrt(std::sqrt(fx * fx + fz * fz)) * std::sqrt(std::sqrt(ex * ex + ez * ez)));
+            if (!(std::acos(c) * 57.295826f < 70.0f)) continue;
+        } else if (t.mode != 1) continue;
+        return t.name;
+    }
+    return std::string();
+}
+
+// Fld2CameraToy::Update 0x9eca... / UpdateControl / UpdateCamera 0x9ec4f8, while enabled (+0x59): a
+// drag anywhere - 20 .. 80 from where it pressed 6 degrees a second, further 45 - (the Vita's right
+// stick x -160 the same way) turns the look about the eye, kept within 45 across and 22.5 up or
+// down; the focus each update; the shot's 30 frames
+void Viewer::stepToyCam(float dt) {
+    if (!toyCam.on) return;
+    toyCam.spin += dt * 30 * 0.1f; // (ToyCameraMenu: +0x98 by 0.1 a frame)
+    if (toyCam.cooldown > 0) toyCam.cooldown = std::max(toyCam.cooldown - dt * 30, 0.0f);
+    if (!toyCam.permit) return;
+    auto rate = [](float diff) { const float a = std::fabs(diff); return a < 20 ? 0.0f : (diff >= 0 ? -1.0f : 1.0f) * (a < 80 ? 6.0f : 45.0f); };
+    float dxu = 0, dyu = 0;
+    if (toyCam.stickX != 0 || toyCam.stickY != 0) dxu = -toyCam.stickX * 160, dyu = -toyCam.stickY * 160;
+    else if (areaCam.on || areaDrag.on) {
+        const float x0 = areaCam.on ? areaCam.x0 : areaDrag.x0, y0 = areaCam.on ? areaCam.y0 : areaDrag.y0;
+        const float x1 = areaCam.on ? areaCam.x : areaDrag.x, y1 = areaCam.on ? areaCam.y : areaDrag.y;
+        float ax, ay, bx, by;
+        uiUnits(x0, y0, ax, ay), uiUnits(x1, y1, bx, by);
+        dxu = (ax - bx) * 100, dyu = (by - ay) * 100; // (GetTouchDiff: pressed less now, the screen's y down)
+    }
+    float dyaw = rate(dxu) * dt, dpitch = rate(dyu) * dt;
+    toyCam.yaw += dyaw, toyCam.pitch += dpitch;
+    if (std::fabs(toyCam.yaw) > 45) toyCam.yaw = std::copysign(45.0f, toyCam.yaw), dyaw = 0;
+    if (std::fabs(toyCam.pitch) > 22.5f) toyCam.pitch = std::copysign(22.5f, toyCam.pitch), dpitch = 0;
+    if (dyaw != 0 || dpitch != 0) { // (about y - plus toward -x from +z -, then about the level axis across it - plus up)
+        float v[3] = {toyCam.look[0] - toyCam.eye[0], toyCam.look[1] - toyCam.eye[1], toyCam.look[2] - toyCam.eye[2]};
+        const float a = dyaw * 0.01745328f, c = std::cos(a), s = std::sin(a);
+        const float x = v[0] * c - v[2] * s, z = v[0] * s + v[2] * c;
+        v[0] = x, v[2] = z;
+        const float h = std::hypot(v[0], v[2]), len = std::sqrt(h * h + v[1] * v[1]);
+        const float e = std::atan2(v[1], h) + dpitch * 0.01745328f;
+        if (h > 1e-6f) v[0] *= len * std::cos(e) / h, v[2] *= len * std::cos(e) / h;
+        v[1] = len * std::sin(e);
+        toyCam.look = {toyCam.eye[0] + v[0], toyCam.eye[1] + v[1], toyCam.eye[2] + v[2]};
+    }
+    const std::string was = toyCam.focus;
+    toyCam.focus = toyCamFocus();
+    if (toyCam.focus != was)
+        SDL_Log("toy camera: focus %s (turned %.1f, %.1f)", toyCam.focus.empty() ? "(none)" : toyCam.focus.c_str(), double(toyCam.yaw), double(toyCam.pitch));
+    // (FocusPlayToyCameraMenu: the brackets' reach - 0.06 a frame in to -0.04, out to 0.15)
+    toyCam.step = toyCam.focus.empty() ? 0.06f : -0.06f;
+    toyCam.r = std::clamp(toyCam.r + toyCam.step * dt * 30, -0.04f, 0.15f);
+}
+
+// ToyCameraMenu's taps (TouchGestureTap 0xb5005c - permitted, the flash over): feGoodsToyBtn the
+// shutter - in focus ShutterToyCameraMenu, SE 0x25f, 30 frames, SetNextEvent(the target); out of
+// it CancelShutter, SE 0x16f -; feGoodsBack (and the back key): ChangeToyCamera(false, true)
+void Viewer::toyCamPress(bool shutter) {
+    if (!toyCam.on || !toyCam.permit || (areaEvents && areaEvents->running())) return;
+    if (!shutter) return toyCamSet(false, true);
+    if (toyCam.cooldown >= 1) return;
+    if (toyCam.focus.empty()) {
+        audio.playSe(0x16f, false);
+        SDL_Log("toy camera: nothing in focus");
+        return;
+    }
+    audio.playSe(0x25f, false);
+    toyCam.cooldown = 30, toyCam.flashAt = uiClock;
+    SDL_Log("toy camera: shot %s", toyCam.focus.c_str());
+    runAreaFunction(toyCam.focus);
+}
+
+// ToyCameraMenu (Initialize 0xb4f030, Pose 0xb4f748): feGoodsToyFramePositon (its _io), the frame
+// at its ragdoll_call_feGoodsToyFrameMenu, the shutter feGoodsToyBtn at the frame's
+// call_feGoodsToyBtn; feGoodsToyCursorMenu (_io, then _loop) at the middle, its panel, eight
+// brackets at call_feGoodsToyCursor_fr00_00n - each turned by spin + 0.785 (n) and r out the
+// other way -; feGoodsBackPosition's feGoodsBackMenu (fit), its feBtnBgPanel and feGoodsBack
+void Viewer::drawToyCam(int w, int h, const Mat4& view) {
+    const float t = uiClock - toyCam.openAt;
+    float x, y, bx, by, ax, ay, ex, ey;
+    UiFig& pos = cr3UiPut("fegoodstoyframepositon", "fegoodstoyframepositon_io", std::min(t, 1.0f), 0, 0, view);
+    if (cr3UiCall(pos, "ragdoll_call_feGoodsToyFrameMenu", x, y)) {
+        UiFig& frame = cr3UiPut("fegoodstoyframemenu", "", 0, x, y, view);
+        if (cr3UiCall(frame, "call_feGoodsToyBtn", bx, by)) {
+            UiFig& btn = cr3UiPut("fegoodstoybtn", "", 0, bx, by, view);
+            if (cr3UiCall(btn, "tapAreaCP01", ax, ay) && cr3UiCall(btn, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 130));
+        }
+    }
+    UiFig& cursor = cr3UiPut("fegoodstoycursormenu", t < 0.5f ? "fegoodstoycursormenu_io" : "fegoodstoycursormenu_loop", t < 0.5f ? t : t - 0.5f, 0, 0, view, 1, t >= 0.5f);
+    if (cr3UiCall(cursor, "ragdoll_call_feGoodsToyCursorPanel", x, y)) {
+        float scale = cr3UiScale; // (the panel under the joint's scale - the menu's _io / _loop -, the brackets with it)
+        const auto j = std::find(cursor.joints.begin(), cursor.joints.end(), "ragdoll_call_feGoodsToyCursorPanel");
+        if (j != cursor.joints.end() && cursor.fig.skinned) {
+            const std::vector<cr3::Mat34> wm = cursor.fig.skeleton.world(cursor.fig.posed.empty() ? cursor.fig.skeleton.basePose : cursor.fig.posed, cursor.fig.place);
+            if (size_t(j - cursor.joints.begin()) < wm.size()) scale = std::hypot(wm[size_t(j - cursor.joints.begin())].m[0], wm[size_t(j - cursor.joints.begin())].m[4]);
+        }
+        const float keep = cr3UiScale;
+        cr3UiScale = scale;
+        UiFig& panel = cr3UiPut("fegoodstoycursorpanel", "", 0, x, y, view);
+        for (int i = 0; i < 8; ++i) {
+            float cx, cy;
+            if (!cr3UiCallNth(panel, "call_feGoodsToyCursor_fr", i, cx, cy)) continue;
+            const float a = toyCam.spin + 0.785f * float(i + 1);
+            UiFig& b = uiFig("fegoodstoycursor_fr00"); // (turned before it's posed: a skinned figure takes its place then)
+            const float c = std::cos(a), sn = std::sin(a);
+            b.fig.place = cr3::Mat34();
+            b.fig.place.m[0] = c * scale, b.fig.place.m[1] = -sn * scale, b.fig.place.m[4] = sn * scale, b.fig.place.m[5] = c * scale, b.fig.place.m[10] = scale;
+            b.fig.place.m[3] = cx - c * toyCam.r * scale, b.fig.place.m[7] = cy - sn * toyCam.r * scale, b.fig.place.m[11] = cr3UiZ;
+            poseUi(b, "fegoodstoycursor_fr00", 0, false);
+            b.fig.tint[0] = b.fig.tint[1] = b.fig.tint[2] = b.fig.tint[3] = 1;
+            drawFigure(b.fig, view.data());
+        }
+        cr3UiScale = keep;
+    }
+    UiFig& backPos = cr3UiPut("fegoodsbackposition", "", 0, 0, 0, view);
+    if (cr3UiCall(backPos, "feGoodsBackMenu", x, y, w, h)) {
+        UiFig& menu = cr3UiPut("fegoodsbackmenu", "", 0, x, y, view);
+        if (cr3UiCall(menu, "call_feBtnBgPanel", bx, by)) cr3UiPut("febtnbgpanel", "", 0, bx, by, view);
+        if (cr3UiCall(menu, "call_feGoodsBack", bx, by)) {
+            UiFig& back = cr3UiPut("fegoodsback", "", 0, bx, by, view);
+            if (cr3UiCall(back, "tapAreaCP00", ax, ay) && cr3UiCall(back, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 131));
+        }
+    }
 }
 
 bool Viewer::vitaButtons() const { return archive.isOpen(); }

@@ -17,7 +17,6 @@ float len(const V3& a) { return std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2
 constexpr float kDeg = 0.01745329f;
 
 // the camera's target: the player 1.2 up (Fld2CameraGom::Initialize: +0x60 (0, 1.2, 0))
-V3 targetOf(const V3& player) { return {player[0], player[1] + 1.2f, player[2]}; }
 
 } // namespace
 
@@ -138,7 +137,7 @@ void Cr3GomCamera::reset(const V3& player, float playerYaw) {
         return;
     }
     // (SetupCamera: the spring's point a unit behind the player, at the target's height)
-    const V3 t = targetOf(player);
+    const V3 t = {player[0], player[1] + lift_, player[2]};
     spring_ = t - V3{std::sin(playerYaw), 0, std::cos(playerYaw)};
     speed_ = 0, yaw = 0, baked_ = false, swinging_ = false;
     at = t;
@@ -155,7 +154,7 @@ void Cr3GomCamera::turn(float dyaw, float dpitch) {
 void Cr3GomCamera::drag(float dyaw, float dpitch) {
     if (lookDown_ || external_) return;
     if (dyaw != 0 || dpitch != 0) behindAge_ = -1, baked_ = false;
-    const float most = 20.0f * 0.01745328f;
+    const float most = most_ * 0.01745328f;
     yaw += dyaw;
     pitch = std::clamp(pitch + dpitch, std::min(pitch, -most), std::max(pitch, most));
 }
@@ -191,7 +190,7 @@ void Cr3GomCamera::step(const V3& player, float moveAngle, bool moving, float dt
         }
         yaw = 0, baked_ = true;
     }
-    const V3 t = targetOf(player);
+    const V3 t = {player[0], player[1] + lift_, player[2]};
     const float frames = dt * 60; // (its rates are a 1/60 s step's)
     // GomAction: the spring to 3 away along where it is, accelerating 0.005 a step and braking to stop there
     V3 d = spring_ - t;
@@ -276,8 +275,11 @@ void Cr3GomCamera::step(const V3& player, float moveAngle, bool moving, float dt
 
 const char* cr3MotionName(Cr3Motion m) {
     switch (m) {
-    case Cr3Motion::Run: return "ff01";
-    case Cr3Motion::Walk: return "ff02";
+    case Cr3Motion::Walk: return "ff01";
+    case Cr3Motion::Run: return "ff02";
+    case Cr3Motion::RideIdle: return "fr01";
+    case Cr3Motion::RideWalk: return "fr02";
+    case Cr3Motion::RideRun: return "fr03";
     default: return "fn01";
     }
 }

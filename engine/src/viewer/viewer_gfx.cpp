@@ -713,6 +713,42 @@ std::string Viewer::animStatus() const {
 // A figure's pose at time t, the skinning matrices (place * world * inverse bind), the meshes'
 // vertices through their palettes (as the game's vertex shaders: MatrixPalette[index / 3 slot],
 // the weights as stored)
+// a cross-fade's: `to` from `from` by w (rotations on the short arc, normalised; the rest linear)
+static void mixPose(std::vector<cr3::JointTransform>& p, const std::vector<cr3::JointTransform>& from, float weight) {
+    const float w = std::clamp(weight, 0.0f, 1.0f);
+    for (size_t j = 0; j < p.size() && j < from.size(); ++j) {
+        cr3::JointTransform& to = p[j];
+        const cr3::JointTransform& a = from[j];
+        float dot = 0;
+        for (int c = 0; c < 4; ++c) dot += a.rotation[c] * to.rotation[c];
+        const float sgn = dot < 0 ? -1.0f : 1.0f;
+        float len = 0;
+        for (int c = 0; c < 4; ++c) to.rotation[c] = a.rotation[c] * (1 - w) + to.rotation[c] * sgn * w, len += to.rotation[c] * to.rotation[c];
+        len = len > 0 ? 1.0f / std::sqrt(len) : 1.0f;
+        for (int c = 0; c < 4; ++c) to.rotation[c] *= len;
+        for (int c = 0; c < 3; ++c) {
+            to.translation[c] = a.translation[c] + (to.translation[c] - a.translation[c]) * w;
+            to.scale[c] = a.scale[c] + (to.scale[c] - a.scale[c]) * w;
+        }
+    }
+}
+
+bool Viewer::setFigureFace(ViewFigure& f, const std::string& name, bool from) {
+    std::string& have = from ? f.faceFromName : f.faceName;
+    bool& loaded = from ? f.faceFromLoaded : f.faceLoaded;
+    cr3::Animation& a = from ? f.faceFromAnim : f.faceAnim;
+    if (name == have) return loaded;
+    have = name, loaded = false;
+    if (name.empty() || std::find(f.anims.begin(), f.anims.end(), name) == f.anims.end()) {
+        if (!name.empty() && SDL_getenv("CR3_EVTANIM")) SDL_Log("face %s on %s: none", name.c_str(), f.name.c_str()); // (debugging)
+        return false;
+    }
+    std::vector<uint8_t> d;
+    loaded = archive.read(name, d) && a.parse(d) && a.joints() == int(f.skeleton.basePose.size());
+    if (SDL_getenv("CR3_EVTANIM")) SDL_Log("face %s on %s: %s", name.c_str(), f.name.c_str(), loaded ? "ok" : "not this skeleton's"); // (debugging)
+    return loaded;
+}
+
 void Viewer::pose(ViewFigure& f, float t, bool loop) {
     if (!f.skinned) return;
     std::vector<cr3::JointTransform> p = f.skeleton.basePose;
@@ -730,22 +766,7 @@ void Viewer::pose(ViewFigure& f, float t, bool loop) {
             if (bfr > bframes) bfr = f.blendLoop ? std::fmod(bfr, bframes) : bframes;
             const std::vector<cr3::JointTransform> from = f.blendAbsolute ? f.blendAnim.poseAbsolute(f.skeleton.basePose, bfr)
                                                                           : f.blendAnim.poseOver(f.skeleton.basePose, bfr);
-            const float w = std::clamp(f.blendWeight, 0.0f, 1.0f);
-            for (size_t j = 0; j < p.size() && j < from.size(); ++j) {
-                cr3::JointTransform& to = p[j];
-                const cr3::JointTransform& a = from[j];
-                float dot = 0;
-                for (int c = 0; c < 4; ++c) dot += a.rotation[c] * to.rotation[c];
-                const float sgn = dot < 0 ? -1.0f : 1.0f;
-                float len = 0;
-                for (int c = 0; c < 4; ++c) to.rotation[c] = a.rotation[c] * (1 - w) + to.rotation[c] * sgn * w, len += to.rotation[c] * to.rotation[c];
-                len = len > 0 ? 1.0f / std::sqrt(len) : 1.0f;
-                for (int c = 0; c < 4; ++c) to.rotation[c] *= len;
-                for (int c = 0; c < 3; ++c) {
-                    to.translation[c] = a.translation[c] + (to.translation[c] - a.translation[c]) * w;
-                    to.scale[c] = a.scale[c] + (to.scale[c] - a.scale[c]) * w;
-                }
-            }
+            mixPose(p, from, f.blendWeight);
         }
         for (ViewMesh& vm : f.meshes) {
             vm.material = vm.baseMaterial;
@@ -761,6 +782,35 @@ void Viewer::pose(ViewFigure& f, float t, bool loop) {
                 v[c.component] = f.absolute ? user[k] : v[c.component] + user[k];
             }
         }
+    }
+    if (f.faceLoaded) { // (the face over the motion: Edge's relative blend - its joints alone -, its user channels added)
+        auto frameOf = [](const cr3::Animation& a, float t, bool loop) {
+            const float frames = float(std::max(a.frames() - 1, 1));
+            float fr = std::max(t, 0.0f) * a.sampleRate();
+            return fr > frames ? (loop ? std::fmod(fr, frames) : frames) : fr;
+        };
+        std::vector<float> user(f.skeleton.userChannels.size(), std::nanf(""));
+        std::vector<cr3::JointTransform> q = f.faceAnim.poseOver(p, frameOf(f.faceAnim, f.faceTime, f.faceLoop), f.faceAnim.hasUserChannels() ? &user : nullptr);
+        if (f.faceWeight < 1 && f.faceFromLoaded) {
+            std::vector<float> fromUser(f.skeleton.userChannels.size(), std::nanf(""));
+            const std::vector<cr3::JointTransform> from = f.faceFromAnim.poseOver(p, frameOf(f.faceFromAnim, f.faceFromTime, f.faceFromLoop), &fromUser);
+            mixPose(q, from, f.faceWeight);
+            for (size_t k = 0; k < user.size(); ++k) {
+                const float a = std::isnan(fromUser[k]) ? 0.0f : fromUser[k], b = std::isnan(user[k]) ? 0.0f : user[k];
+                if (!std::isnan(fromUser[k]) || !std::isnan(user[k])) user[k] = a + (b - a) * std::clamp(f.faceWeight, 0.0f, 1.0f);
+            }
+        }
+        p = std::move(q);
+        if (!f.animLoaded)
+            for (ViewMesh& vm : f.meshes) vm.material = vm.baseMaterial;
+        for (ViewMesh& vm : f.meshes)
+            for (size_t k = 0; k < user.size() && k < f.skeleton.userChannels.size(); ++k) {
+                const cr3::Skeleton::UserChannel& c = f.skeleton.userChannels[k];
+                if (std::isnan(user[k]) || c.material != vm.material.hash) continue;
+                std::vector<float>& v = vm.material.params[c.param];
+                if (v.size() <= c.component) v.resize(size_t(c.component) + 1, c.param == 0x33 ? 1.0f : 0.0f);
+                v[c.component] += user[k];
+            }
     }
     std::vector<cr3::Mat34> world = f.skeleton.world(p, f.place);
     for (const auto& [j, m] : f.jointWorld)
@@ -3965,6 +4015,14 @@ void Viewer::poseEventFigure(cr3::EventRuntime& ev, const cr3::EventModel& m, Vi
         f.blendAbsolute = m.blendFrom == m.figure;
         f.blendTime = m.blendFromTime + m.animTime + eventLead();
         f.blendWeight = (m.animTime + eventLead()) / m.blendSeconds;
+    }
+    // the face (EvtScene.SetFaceMotion / SetBlendFaceMotion): the head's - a body has none of its name
+    // (CrxModel::LoadFaceAnimation: <model>h01_<name>) - or a one-part model's
+    if (setFigureFace(f, m.faceMotion.empty() ? std::string() : mine(m.faceMotion) + ".anim", false)) {
+        f.faceTime = m.faceTime + eventLead(), f.faceLoop = m.faceLoop, f.faceWeight = 1;
+        if (!m.faceFrom.empty() && setFigureFace(f, mine(m.faceFrom) + ".anim", true) && m.faceBlend > 0)
+            f.faceFromTime = m.faceFromTime + eventLead(), f.faceFromLoop = m.faceFromLoop,
+            f.faceWeight = std::min((m.faceBlendTime + eventLead()) / m.faceBlend, 1.0f);
     }
     // EvtModel::ChangeTexture_Face: the j<NNN>face material's colour texture
     const auto face = ev.faces().find(m.face);

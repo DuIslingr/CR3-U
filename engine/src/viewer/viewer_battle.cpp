@@ -1787,7 +1787,7 @@ void Viewer::playCr3AttackCamera(const cr3::Cr3Action& action, size_t source) {
     cr3Cam.lookWeight = actor.player ? 0.2f : 0.4f;
 }
 
-void Viewer::playCr3CasterCamera(const std::string& name, size_t source) {
+void Viewer::playCr3CasterCamera(const std::string& name, size_t source, const cr3::Vec3* at) {
     if (name.empty()) return;
     cr3::Cr3BattleCamera camera;
     if (!camera.load(archive, name) || !camera.has(name)) return;
@@ -1796,11 +1796,69 @@ void Viewer::playCr3CasterCamera(const std::string& name, size_t source) {
     cr3Cam.name = name;
     cr3Cam.start = cr3BattleClock;
     cr3Cam.end = camera.duration();
-    cr3Cam.actor = caster.home;
+    cr3Cam.actor = at ? *at : caster.home;
     cr3Cam.actorYaw = caster.yaw;
     cr3Cam.scale = caster.scale;
     cr3BattleOwnCam = std::move(camera);
     SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: caster camera %s", cr3BattleClock, name.c_str());
+}
+
+bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
+    cr3::MbeFile::Row dir;
+    if (!cr3BattleTables.direction.find("CommandDirection", cr3ActionPlay.directionCommand, "iiiifii_piii", dir)) return false;
+    const int kind = dir.i(1), ext = dir.i(2), effectPoint = dir.i(10);
+    if (kind != 9 && kind != 10 && kind != 20 && kind != 30 && kind != 39) return false;
+    if (a.target < 0 || a.targets.empty()) return false;
+    const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
+    float white = -1; // (AnimDirection: model, motion, camera +0x08, sound, .., white-fade frame +0x24)
+    const std::string camera = cr3BattleTables.unitCamera(bu.model, ext, &white);
+    const size_t tu = size_t(cr3Rules.fighters[size_t(a.targets.front().target)].unit);
+    const cr3::Cr3BattleUnit& foe = cr3Battle.units[tu];
+    Cr3BattleUnitView& view = cr3BattleUnits[su];
+    // (the position: ChangePositionToTargetEffectPoint - the target's effect point - where the row
+    // gives one, a ShotLastAttack's and the rest at its front - ChangeTargetPositionToFront -, at once;
+    // ChangeRotationToHome: no turn)
+    cr3::Vec3 at;
+    if (effectPoint >= 0 && kind != 20 && kind != 10) at = cr3EffectPoint(tu, effectPoint), at[1] = bu.home[1];
+    else {
+        const float dx = foe.home[0] - bu.home[0], dz = foe.home[2] - bu.home[2], d = std::hypot(dx, dz);
+        const float contact = (bu.depth * bu.scale + foe.depth * foe.scale) * 0.5f;
+        const float k = d > contact && d > 0 ? 1.0f - contact / d : 0.0f;
+        at = {bu.home[0] + dx * k, bu.home[1], bu.home[2] + dz * k};
+    }
+    if (kind != 10) view.meleeOffset = {at[0] - bu.home[0], 0, at[2] - bu.home[2]}, view.meleeStep = Ramp{1, 1}, view.meleeTurn = Ramp{0, 0};
+    else at = bu.home; // (MultiLastAttack: ChangePositionToFront - its own front, here its home)
+    // (hideOtherThanTarget: all but the attacker and its targets)
+    for (size_t k = 0; k < cr3BattleUnits.size(); ++k) {
+        bool keep = k == su;
+        for (const cr3::Cr3Hit& t : a.targets) keep |= cr3Rules.fighters[size_t(t.target)].unit == int(k);
+        cr3BattleUnits[k].directionHidden = !keep;
+    }
+    cr3LastAttack = Cr3LastAttack();
+    cr3LastAttack.on = true, cr3LastAttack.unit = su;
+    if (!camera.empty()) {
+        playCr3CasterCamera(camera, su, &at);
+        if (cr3Cam.name == camera && cr3Cam.end > 0) cr3ActionPlay.end = std::max(cr3ActionPlay.end, cr3Cam.end); // (the direction's next: the clip's end)
+    } else playCr3AttackCamera(a, su);
+    if (white >= 0) { // (updateWhiteFade: at the frame, white by the motion's end - Cr3FadeOut2(1, frames, 0, 100))
+        const float from = white / 30.0f, motionEnd = view.body.animLoaded ? view.body.anim.duration() : from + 0.1f;
+        cr3White.begin(cr3BattleClock + from, 0, 1, std::max(motionEnd - from, 1.0f / 30.0f));
+        cr3LastAttack.white = true;
+    }
+    SDL_Log("battle %.2f s: a last attack (kind %d, motion %d) - camera %s, white %s", cr3BattleClock, kind, ext,
+            camera.empty() ? "(none)" : camera.c_str(), white >= 0 ? std::to_string(int(white)).c_str() : "none");
+    return true;
+}
+
+// (the camera motion's event 2 - the next camera -: ChangePositionToHome, showOtherThanTarget,
+// PlayStayAnimation, FadeIn(0.15) - BtlFade::WhiteIn, 4 frames - where it went white)
+void Viewer::endCr3LastAttack() {
+    if (!cr3LastAttack.on) return;
+    Cr3BattleUnitView& view = cr3BattleUnits[cr3LastAttack.unit];
+    view.meleeOffset = {}, view.meleeStep = Ramp{0, 0};
+    for (Cr3BattleUnitView& u : cr3BattleUnits) u.directionHidden = false;
+    if (cr3LastAttack.white) cr3White.begin(cr3BattleClock, std::max(cr3White.at(cr3BattleClock), 1.0f), 0, 4.0f / 30.0f);
+    cr3LastAttack = Cr3LastAttack();
 }
 
 void Viewer::playCr3SpellReceiverCamera(const cr3::Cr3Action& action, size_t source) {
@@ -1895,6 +1953,7 @@ bool Viewer::finishCr3SpellHandoff(const cr3::Cr3Action& action, size_t source, 
 
 // BtlDirection plays the source motion and shows the hits under the attack camera.
 void Viewer::startCr3Action() {
+    endCr3LastAttack(); // (the next direction's camera: the last one's undone)
     if (cr3ActionAt >= cr3Actions.size() || cr3ForcedEnd >= 0) return endCr3Actions(); // (a script's forced end: after the direction)
     const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
     cr3ActionStart = cr3BattleClock;
@@ -1988,6 +2047,7 @@ void Viewer::startCr3Action() {
     cr3ActionPlay.timing = std::move(timing);
     if (motion == "bo01" && a.targets.size() == 1 && a.partners.empty())
         startCr3Melee(su, size_t(cr3Rules.fighters[size_t(a.targets.front().target)].unit));
+    if (startCr3LastAttack(a, su)) return;
     auto& play = cr3ActionPlay;
     if (play.timing.spellHandoff < 0 || cr3TurnItems.count(a.source)) {
         playCr3AttackCamera(a, su);
@@ -2570,7 +2630,7 @@ void Viewer::drawCr3Battle(int w, int h) {
         const cr3::Cr3BattleUnit& bu = cr3Battle.units[k];
         Cr3BattleUnitView& u = cr3BattleUnits[k];
         const float opacity = u.opacity.at(cr3BattleClock);
-        if (opacity <= 0 || u.scriptHidden) continue;
+        if (opacity <= 0 || u.scriptHidden || u.directionHidden) continue;
         const float yaw = bu.yaw + u.meleeTurn.at(cr3BattleClock);
         const float step = u.meleeStep.at(cr3BattleClock);
         const float yc = std::cos(yaw) * bu.scale, ys = std::sin(yaw) * bu.scale;

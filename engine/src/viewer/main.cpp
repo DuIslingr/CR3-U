@@ -1853,6 +1853,10 @@ int main(int argc, char** argv) {
                     const SDL_GamepadButton circle = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
                     const SDL_GamepadButton cross = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH;
                     if (v.moviePad(b) || v.vistaPad(b)) continue;
+                    if (v.toyCam.on && v.areaMode && v.cr3FieldIdle()) { // (the toy camera: ○ the shutter, × back - the Vita's pad indices 7 / 5, which buttons UNKNOWN)
+                        if (b == circle || b == cross) v.toyCamPress(b == circle);
+                        continue;
+                    }
                     if (b == SDL_GAMEPAD_BUTTON_WEST && v.goodsPad(false)) continue;
                     const bool shopList = v.shop.stage >= 3 && v.shop.kind > 0; // (ShopCutInPiupiuMenu: L / R the character)
                     using PP = Viewer::PadPress;
@@ -2094,7 +2098,7 @@ int main(int argc, char** argv) {
             if (!v.paused && (v.eventMode || v.fieldMode || v.areaMode || v.cr3BattleMode || v.credits.stage || v.titleMenu.stage || v.cr3Title.stage)) { // the arrows / WASD run, with Shift walk (the title: its clock)
                 const bool* keys = SDL_GetKeyboardState(nullptr);
                 if (keys[SDL_SCANCODE_F] || (livePad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST) &&
-                    v.cr3Camp.stage == 0 && !v.vs.screen && !v.movie.mv && (!v.cr3FieldIdle() || v.game.goodsButtons.empty()))) v.fastHeld = true;
+                    v.cr3Camp.stage == 0 && !v.vs.screen && !v.movie.mv && (!v.cr3FieldIdle() || v.shownGoods().empty()))) v.fastHeld = true;
                 else if (!(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK)) v.fastHeld = false;
                 float sx = float((keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) - (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]));
                 float sy = float((keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) - (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]));

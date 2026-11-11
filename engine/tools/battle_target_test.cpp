@@ -153,6 +153,20 @@ int main() {
         check(t.battle.parse(tables({elements})), "parse synthetic element rates");
         Table monsters{"Monster", "iipiiiiiiiiiiiiiiiiiii", {{{0,1},{4,1},{6,5000},{7,100},{8,0x00010014},{9,0x00010001}}}};
         check(t.monster.parse(tables({monsters})), "parse synthetic fighters");
+        { // Round 16: BtlUnit::PlayCamera / updateWhiteFade - model.mbe AnimDirection's camera (+0x08) and white-fade frame (+0x24)
+            auto text = [](const char* str) {
+                std::vector<uint32_t> w((std::strlen(str) + 4) / 4, 0);
+                std::memcpy(w.data(), str, std::strlen(str));
+                return w;
+            };
+            Table animDir{"AnimDirection", "iippiiff", {{{0, 1}, {1, 19}, {7, bits(80)}}, {{0, 1}, {1, 18}, {7, bits(-1)}}},
+                          {{{2, text("Cam_t02_j001_00")}}, {{2, text("Cam_t01_j001_00")}}}};
+            check(t.model.parse(tables({animDir})), "parse synthetic AnimDirection");
+            float white = 0;
+            check(t.unitCamera(1, 19, &white) == "Cam_t02_j001_00" && white == 80, "a motion's own camera and its white-fade frame");
+            check(t.unitCamera(1, 18, &white) == "Cam_t01_j001_00" && white < 0, "no white-fade frame: -1");
+            check(t.unitCamera(1, 20, &white).empty() && white < 0, "no row: no camera");
+        }
         cr3::Cr3Battle battle;
         for (int k = 0; k < 4; ++k) { cr3::Cr3BattleUnit u; u.monster = 1; battle.units.push_back(u); }
         auto run = [&](int command, int target) {

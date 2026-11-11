@@ -330,6 +330,88 @@ The census so far covered the events. Two new ones cover the field.
 | `Cr3FieldMapCamera.QuakeStop` / `QuakeStart`, `SetToyCameraEnable`, `Cr3GimmickData.EndToyCamera`, `InterfaceWindow.EndTalkNextSeasonEventMenu` / `EndColosseumTalk` / `CheckAliveDownLoadMenuMain` | The quake's own no-ops; the toy camera's enable and end; the season event's and colosseum's talks ended; the download menu's alive check | Stubs | No-ops (`false` for the download menu): the toy camera, the season event and colosseum menus and the download menu aren't in CR3-U |
 | `Cr3GimmickData.SetFaceMotion` (`Fld2SetGimmickFaceMotion` `0x0086e680` -> `Fld2NPC::SetEventFaceAnim` `0x00a030c0`) | A person's face animation, looped, blended over a sixth of a second | Stub | Logged only: CR3-U draws no face animations |
 
+### 15. Round 12 parity audit (the ride)
+
+Two dungeons have an animal to ride: d03 (the Ruined Battleship's d0302 / d0304) and d11 (d1104,
+d1106, d1110, d1113), the `c602_00` gimmick. The area script's `VehicleRide` asks (`Choice_Msg 67`),
+sets flag 4105 and calls `Cr3GimmickData.VehicleRide`; its `VehicleOut` (asked `68`), `VehicleStop`
+(`72`) and `AutoVehicleOut` (`evt151_00`) clear the flag and call `Cr3GimmickData.VehicleOut`. Both
+natives were stubs, so the animal vanished (`ModelDisp_Field(c602_00, false)`) and the player walked on.
+Round 11's trace and a delegated REA pass (`/tmp/cr3-opening-audit/libcrx-audit-round12-vehicle.json`)
+give the rest. No walkthrough footage was found: Parts 9, 12, 13, 15 and 16 have no ride (it comes with
+quest 224's revisit).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `VehicleRide` / `VehicleOut` (`Fld2VehicleRide` `0x86fcac` / `Fld2VehicleRideOut` `0x86fd24` -> `Fld2TaskPlayer::SetStateRide` `0x00878858`) | On: state 5, motion `0xd` (`fr01`). A `Fld2Animal` is made once, from the name's first four letters (`Cr3Sprintf(.., 5, "%s")`: `c602`), at the player. Each update it is put at the player model (`OnUpdate`). Off: state 0, motion 0, the animal not updated or drawn (`+0x18`) but kept | Stubs | `areaRideSet`: the `c602` figure under the rider, the player's motions, logged `the ride on / off` |
+| Speeds and motions (`SM_RideIdle` / `RideWalk` / `RideRun` `0x8740c0` ..) | 1.2 / 4.8 x 1.5; the walk and run thresholds x 1.5 (`0.0003` / `0.00075`). Player `fr01` / `fr02` / `fr03`; the animal's `Fld2AnimalAnimeNameTbl` `fn01` / `ff01` / `ff02`, each blended over 1/6 s (`Fld2Animal::SetMotion` `0x86820c`). The model sits `rot x (0, 0, 0.5)` behind the controller (`StepSimulation`) | - | x 1.5, the motions and blends, 0.5 behind. CR3-U's walk / run bool is kept (no thresholds) |
+| Walk / run motions | `SM_Walk` plays motion 2 (`ff01`), `SM_Run` motion 3 (`ff02`) | `cr3MotionName` swapped: running played `ff01` | `Walk = 2` `ff01`, `Run = 3` `ff02` (`FORMATS.md` corrected) |
+| The camera (`Fld2CameraGom::SetRideCamera` `0x9f3750`) | Flag 4105: the target's lift (`+0x40`'s `+0x64`) 1.6 (1.2 on foot), the pad's pitch limit (`+0x10`) 24 degrees (20) | 1.2 / 20 | `Cr3GomCamera::setRide` |
+| The goods button (`Fld2GoodsButton::SetRideButton` / `OnUpdate`) | On: button 5 added and focused (6). Its tap (case 6) runs the script's `VehicleOut` (`SetNextEvent`), except on a `se06` surface under foot (`GetMapMaterialID_underfoot`, a 1.0 ray), SE `0x16f`. Off: focus and the held goods back. The encounter and battle tabs hidden while riding | - | `shownGoods` adds 5; `useGoods(5)` with the `se06` refusal (`surfaceBelow`) |
+| Vehicle collisions (`Fld2VehicleCollision` `::Create` / `::SetRide`; `<area>p`'s `ragdoll_vc*` joints, `Fld2TaskGimmick` table 20) | A box of the joint's axes x 0.05. `vct` solid on foot and passed through riding, `vch` the reverse (`SetContactResponse`, applied by `Activate`'s `SetCollisionEnable`). The `p.phys` bodies of the same name aren't in the world | Not in (`p.phys` isn't the walls): `vct` passable on foot | `areaVehicleBoxes` in `updateGimmickWalls` by flag 4105. d0302: `vct_00` stops a walker at x 3.12 and lets the rider through |
+| Area changes (`Fld2Main::ChangeArea` `0x87e374` / `0x87e07c`) | Back from a battle, a load: `SetStateRide(player, "c602_00", flag 4105)`. A jump point keeps the animal on the player (`SetRideStatus`). Nothing in native code clears 4105 | - | The ride follows flag 4105 at each area load |
+
+`ride` (pad group `goods`) plays it in d0302: the tutorial, yes, `the ride on (c602)`, □ on the goods
+button, `VehicleOut`, yes, `the ride off`. `--input put:x/y/z[/yaw]`, `where` and `wait:<s>` are new
+test inputs.
+
+### 16. Round 13 parity audit (the toy camera)
+
+Goods button 2 (CR3-U's goods 1) is a camera for photographing `ragdoll_cam_NN` targets in d08 .. d16.
+A shot runs the area script's `cam_NN`: usually `ToyCamera(id)` (a white flash, the photo item - 609 in
+d1102 - or "already have it"), in d11 also the story (`s333` / `s334`). It was a stub. The trace is
+round 11's and a delegated REA pass's (`/tmp/cr3-opening-audit/libcrx-audit-round13-toycamera.json`).
+No footage was checked.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Opening it (`Fld2GoodsButton::OnUpdate` case 2; `Fld2TaskCamera::ChangeToyCamera` `0x9ebd2c`) | Not in a town (`GetDungeonNo` over 4: d01 .. d18, e00), else SE `0x16f`. SE `0x25e`, camera type 5 (`Fld2CameraToy`), the action flag, the touch's one area (`Fld2TaskTouch +0xbc` 2), the player and the field's UI hidden. The eye 1.5 above the player, the look 15 along its facing; `CreateToyCameraMenu` | `field: goods 1 (not in yet)` | `toyCamSet`: the Gom camera external, the eye and look its |
+| Turning (`UpdateControl`, `UpdateCamera` `0x9ec4f8`) | A drag anywhere, from where it pressed: under 20 none, under 80 6 degrees a second, further 45. The Vita's right stick `x -160` the same way. About y (plus: from +z toward -x), then about the level axis across the look (plus: up); the turn so far kept within 45 across and 22.5 up or down (the step dropped at the limit); the look stays 15 from the eye | - | `stepToyCam` |
+| Focus (`CheckFocus` `0x9ec90c`, `CheckDirection` `0x9eceb0`) | Targets: `ragdoll_cam` joints with a Field row (`GetFieldParamByName`; `SetGimmickTable +0x50` the row's `+0x42`). The first that is shown (`+0x53`, `ModelDisp_Field`), within 15 of the eye, the first toy box on the segment eye -> look (`HitTest` mask `0x200`, a box of the joint's axes x 0.05), and for mode 2 within 70 degrees of its front across (a double square root in its divisor, shipped). Only d0801's `cam_00` / `cam_01` are mode 2 | - | `loadToyTargets`, `toyCamFocus` (the quirk kept) |
+| The shutter and back (`Update`; `ToyCameraMenu` interface `0x57`) | Shutter in focus: SE `0x25f`, 30 frames' wait, `SetNextEvent(cam_NN)`; out of focus SE `0x16f`. Back: `ChangeToyCamera(false, true)` - the player and UI back, `ToyCameraOut`. `SetToyCameraEnable` (`+0x59`) stops the turning, focus and taps while the photo's script runs; `EndToyCamera` closes it without `ToyCameraOut` | `SetToyCameraEnable` / `EndToyCamera` no-ops | Taps 130 / 131; on the pad ○ / × (the Vita's pad indices 7 / 5) |
+| The menu (`ToyCameraMenu::Initialize` `0xb4f030` / `Pose` `0xb4f748`) | `feGoodsToyFramePositon` (`_io`), its `feGoodsToyFrameMenu`, the shutter `feGoodsToyBtn`; `feGoodsToyCursorMenu` (`_io`, `_loop`), its panel and eight `feGoodsToyCursor_fr00` turned by `spin + 0.785 (n)` and `r` out (0.1 a frame; `r` 0.15 out of focus, in to -0.04 in focus at 0.06 a frame); `feGoodsBackPosition`'s back button and `feBtnBgPanel` | - | `drawToyCam`, the brackets under the panel joint's scale (1.676), a ring that closes on focus |
+
+`toy-camera` (pad group `goods`) plays it in d1102: open, the right stick tilts 6.8 degrees down onto
+`cam_00`, the shot and the photo, × back to `ToyCameraOut`.
+
+Round 12's ride button: `chooseCr3Camp` took goods taps 120 .. 123 only, so the ride's 125 wasn't
+tappable; now 120 .. 125.
+
+### 17. Round 14 parity audit (faces)
+
+The events set faces constantly (`EvtSetFaceMotion(chr, "f001", loop)` / `EvtSetBlendFaceMotion(chr,
+anim, loop, frames)`: 1389 calls in `t01`'s events alone), and some areas set people's
+(`Cr3GimmickData.SetFaceMotion`). `EventRuntime` kept the face's name, but nothing drew it. The trace
+is a delegated REA pass's (`/tmp/cr3-opening-audit/libcrx-audit-round14-face.json`).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The face layer (`CrxModel::LoadFaceAnimation` `0x94952c`, `BindFaceAnimation` `0x949b58`, `Figure::CreateBlendTree` `0xb84a9c`) | `<model>h01_<name>` on a two-part model's head figure (`j001h01_f007`), `<model>_<name>` on a one-part model (`c121_f007`); face slots `+0xC0` / `+0xC8`. The blend tree's op 3 (`edgeAnimBlendJointsRelative`, mode `0x10`, weight 1): base ⊗ (motion ⊗ face) - only the joints the face has channels for (eyes, brows, jaw, mouth), its user channels too | Not drawn: every face still | `ViewFigure`'s face, composed in `pose()` over the motion (`poseOver`), its user channels added |
+| `EvtScene.SetFaceMotion` / `SetBlendFaceMotion` (`0x844724` / `0x844808`) | At once; or `SetFaceAnimationBlend(frames x 1/30)`: linear from the face before (`Figure +0xE4`), the old one dropped at the end. With none before, the new one at once. Time in seconds, looped or held at the end | One native for both, no fade | The fade (`faceFrom`, `faceBlend`); `event-reset-tests` checks it |
+| `Cr3GimmickData.SetFaceMotion` (`Fld2NPC::SetEventFaceAnim` `0xa030c0`) | The person's face, looped, blended in over 1/6 s | Logged only | `AreaNpc::face`, the 1/6 s fade (d1620's `c105_00` takes `f023`) |
+| The field player (`Fld2TaskPlayer::CreatePlayer` `0x877b14` / `ChangePlayer` `0x87612c`) | A `j` model's face `f001`, looped (none for others; event actors none by default) | None | The head's `f001` |
+
+In `s100_t01_00202_evt` the taller of the two green-haired characters now squints with his mouth open where he
+stared blankly (a frame 14 s in, with and without the layer: 10401 bytes differ).
+
+### 18. Round 15 parity audit (gimmick loop points; the 2D area)
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The 2D areas (`Fld2Main::ChangeArea` `0x87e07c` / `0x87e374`: map ids `0x1c2` / `0x1c4` - e0013, e0015 - `CreateArea2D` `0x86b9b4`; `Fld2TaskCamera::SetupCamera` type 2, `Fld2CameraOrtho`) | The picture `<area>_01` (a 3840-square sprite, z -5000, under an orthographic camera half 960 across - `GameApp`'s 1920 virtual width -: 1232 x 1848 of its 2048 drawn). The area's models, people and player through `<area>`'s own camera (`GetContaindCamera`), its perspective magnified 2W / H (`+0x240` / `+0x244`). Both moved by one scroll (`+0x248` / `+0x24c`, NDC): mode 0 after the player 1 up (`CalcScroll`: over a pixel off, a fifth of the way a frame), clamped to the picture (`SetScrollStop`: 0.203 across, 1.805 W / H - 1 up); mode 1 `ScrollTo`'s linear tween, unclamped. `SetMode` / `Scroll` / `ScrollTo` act only here. e0015 hosts `s111_d02_00202` (flag 2131: the pan up the sunken city to the castle, then the scene) and `s310_d09_00103`; e0013 isn't in the release | Drawn as a 3D area: the Gom camera inside the player in a black void; the three natives no-ops | `area2D`: the picture as a quad, the area's camera magnified and moved, the scroll's modes; set up before the area's script. `area-2d` (pad group `camera`) checks it. Walkthrough Parts 3 / 4 cut this scene |
+| `Cr3GimmickData.SetMotionLoopPoint(name, from, to)` / `ResetMotionLoopPoint` (`Fld2SetGimmickMotionLoopPoint`; `Fld2Block` / `Fld2CheckObject::SetMotionLoopPoint`) | The blocks', then the check objects' of that name: slot 1's `SetStartTime(from / 30)` / `SetEndTime(to / 30)`. d16's `bswc_03` (d1614) plays `blk_01`'s `n01` and loops frames 118 .. 120 | Stub: the whole motion looped | `AreaNpc::loopStart` / `loopEnd`: past the end back to the start; a new `SetMotion` clears them |
+
+### 19. Round 16 parity audit (a motion's own camera; the Last Attacks)
+
+Round 5 left `BtlUnit::PlayCamera` and `updateWhiteFade`'s `notify(4)` open. Two delegated REA passes
+(`/tmp/cr3-opening-audit/libcrx-audit-round16-btlcamera.json`, `...-round16-lastattack.json`) traced them.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| A motion's camera (`BtlUnitList::PlayAnimation` `0x9d802c` -> `BtlUnit::PlayCamera` `0x9dd234`) | `model.mbe` `AnimDirection` (model, motion) `+0x08`: played posed on the unit (its position, rotation, scale), not looped, held, a hard cut. The prefix is the motion's name: `t01..t05` the skills' `bt01..bt05` (18 .. 22), `m01` the cast (9), `s01` the shot (15), `d02` a death (6), `b03` the victory (2, `PlaySoloVictoryCamera`: already in). Situ / Show / Hide's own direction camera overrides it at once (`PlayCameraByType`, never checking) | The cast's (`castCamera`) and the victory's only | The Last Attack directions' (below) |
+| The Last Attack directions (`BtlDirectionManager::CreateDirection` `0x990d98`: kinds 9 LastAttack, 10 MultiLastAttack, 20 ShotLastAttack, 30 HoldLastAttack, 39 ChildLastAttack; `BtlLastAttackDirection::vPlay` `0x98d2b4`) | The attacker set at once at the first target's front (or, `CommandDirection +0x30`, its effect point; MultiLast at its own front), turned home; its extension motion (`+0x08`) with that motion's own camera on it; everyone but it and its targets hidden (`hideOtherThanTarget`); the command's name and voice. The hits from its event timer. The direction moves on at the clip's end; the next camera undoes it (`ChangePositionToHome`, `showOtherThanTarget`, stay) | The generic attack camera, everyone in place | `startCr3LastAttack` / `endCr3LastAttack`: the place (the melee step's offset), `directionHidden`, `playCr3CasterCamera` at the new place, the action at least the clip long. Battle 22's finisher (command 13) plays Daisuke's `Cam_t01_j003_00` (`last-attack`) |
+| The white (`BtlUnit::updateWhiteFade` `0x9e1028` -> `notify(4)`, the five Last Attacks' observers -> `BtlUnit::WhiteOut` `0x9dfba4`) | Not a death's: at `AnimDirection +0x24` / 30 into the motion (the skills' rows: j001's 80 / 110 / 129 / 330 ..; -1 none) the whole screen fades white by the motion's end (`Cr3FadeOut2(1, ..)`), held; the next camera lifts it over 4 frames (`BtlFade::WhiteIn`, only where it went white) | None | `cr3White` over the battle; `Cr3BattleTables::unitCamera` reads the frame (`battle-target-tests`) |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -405,9 +487,11 @@ Deterministic REA evidence bundles are stored outside the repository at
 
 ## Not settled
 
-- **Battle staging still open (Round 5)**: `BattleUnit.PlayAnimation` type `6`'s `notify(4)` at the
-  white-fade frame (`BtlUnit::updateWhiteFade` `0x009e1028`) and a model's own camera on a motion
-  (`BtlUnit::PlayCamera` `0x009dd234`) are not modelled. Round 7's approximations: the held unit's
+- **Battle staging (Round 5, 16)**: a motion's own camera plays only for the Last Attacks; the
+  cast's goes its own way (`castCamera`), and a scripted death's (`d02`), a Ranged / Shot's (`s01`) and
+  ChildLastAttack's target's `bt03` camera aren't in. The white-out wasn't seen live (no finisher tier
+  above 0 reachable headless). HoldLast's hold and ChildLast's target motion aren't staged;
+  `hideOtherThanTarget`'s "all foes" case (CommandInfo `+0x10` 6) isn't in. Round 7's approximations: the held unit's
   rotation, the release's timing, `SetStart`'s place in the turn, `IsWildCard`, and the addition
   units (above).
 - **Unbound natives (Round 10)**: none in the census; the VS tutorial's are bound by the viewer (its
@@ -440,20 +524,32 @@ Deterministic REA evidence bundles are stored outside the repository at
   `PostEffectBloomMask` (`GS +0x55`, off by default, its writer unknown) and `PostEffectBloom2` / `3`
   are separate effects, not traced.
 - **The field (Round 11)**: these are traced but not in CR3-U.
-  - **Vehicles** (`VehicleRide` / `VehicleOut` -> `Fld2TaskPlayer::SetStateRide` `0x00878858`): the
-    ride's `Fld2Animal` (`c602`), ride states 5 .. 7 at 1.5x the speeds, the `vch` / `vct` collision,
-    the camera's 1.6 / 24, the goods buttons.
-  - **The toy camera** (goods button 2: `ChangeToyCamera` `0x9ebd2c`, `Fld2CameraToy` - drag limits,
-    focus within 15, the shutter's `SetNextEvent(cam_NN)`).
-  - **Face animations** (events' and people's).
-  - **The block gimmicks' `SetMotionLoopPoint`** (d16's bomb switches: frames 115 .. 120 looped).
   - **The season event and colosseum menus.**
 
   `SetEncount` holds only the player's input, not the gimmicks. `SetBoxDrawing` doesn't redraw the
   ace couplings.
-- **The 2D areas' camera (Round 8)**: `e0013` / `e0015` use `Fld2CameraOrtho` in the original
-  (`Scroll` / `ScrollTo` / `SetMode`). CR3-U draws them with the 3D camera, and the three natives are
-  no-ops.
+- **Faces (Round 14)**: a looped face holds its last frame for one update before wrapping
+  (`Animator::Step`), and leaf times are quantised to 1/512 s; CR3-U wraps at once. Two crossfading
+  faces are mixed after composing each over the motion, not as deltas. Which side of op 3 is the
+  base was read by Edge's convention, not from its stack order. The face's user-channel blend mode
+  is taken as additive.
+- **The toy camera (Round 13)**: these parts aren't in or aren't settled.
+  - Not in: the shutter's flash `fe008came03` (a 3D effect, scale 50; the photo's script flashes white
+    itself); `feGoodsToyFrameLMenu` (screen type 1, scale 0.94); the touch's centred box
+    (`Fld2TaskTouch +0xe8`) and the back key; the menu's close.
+  - Not settled: the Vita's pad indices 7 / 5 as buttons (CR3-U: ○ / ×); its `GetRotateSpeed` taken as
+    the touch's 20 / 80 steps; the drag's units as the Gom camera's (`uiUnits` x 100).
+- **The ride (Round 12)**: these parts aren't in or aren't settled.
+  - Not in: ride falls (state 8, `CheckFall`'s 1.0 probe) and the footstep SEs (`GetMoveSE`: riding,
+    `se_vehicle` except on `se06`); CR3-U has no footsteps or ladders yet (ladders refuse a rider:
+    `Fld2Ladder::CollisionEventF` / `B`).
+  - Not settled: the boxes' `GetFieldParamByName` registration is assumed for every `ragdoll_vc` joint.
+    In entry modes that don't call `SetRide`, the original leaves both `vct` and `vch` solid; CR3-U
+    follows flag 4105 always. What `se06` is (water?) is UNKNOWN. No footage checked against.
+- **The 2D areas (Round 15)**: the walk under the 2D camera (which way the stick moves the player)
+  isn't traced; the follow's fifth a frame is taken at 60 Hz; `Fld2SetFieldMapCameraPos` (`SetPos`,
+  a 960 x 640 reference) isn't bound; the picture's blend and the clear colour behind it are
+  taken as plain alpha and black.
 - **Camp event mode (Round 8)**: in `CampTopMenu`'s event mode button 2 becomes 7, and a Yes/No
   (`0x1f0`) or an alert (`0x307`) can appear. What each button does there is UNKNOWN; CR3-U keeps
   the camp's normal buttons. The Vita focus tint `(0.5, 1, 1.5)` is CR3-U's own; the original's
@@ -500,9 +596,12 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`35/35` cases, `0 problems`)**:
+- **Controller & UI integration suite (`39/39` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 35 headless controller cases. Round 10 added `vs-tutorial` (a fresh game's VS:
+  passes all 39 headless controller cases. Round 16 added `last-attack` (battle 22's finisher).
+  Round 15 added `area-2d` (e0015's pan). Round 13 added `toy-camera` (d1102's photo target shot,
+  then back). Round 12 added `ride` (d0302's animal ridden and left by the
+  goods button). Round 10 added `vs-tutorial` (a fresh game's VS:
   `evt000`'s gene-card vista, the middle card focused and taken, gene 4's status, `00201`'s party
   window, `VsBattleIn`'s tournament 1 started) and `vs-tutorial-camp` (after 3501 / 3502:
   `00701`'s vista, `VS_Top`'s `00601`, Battle shut). `vs-cursor` / `vs-detail` now play a player

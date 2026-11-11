@@ -177,6 +177,13 @@ struct ViewFigure {
     cr3::Animation blendAnim;
     bool blendLoaded = false, blendAbsolute = false, blendLoop = true;
     float blendTime = 0, blendWeight = 1;
+    // the face (CrxModel's face slots - Figure +0xC0 / +0xC8 - on the head or a one-part figure): a
+    // relative layer over the motion (the blend tree's op 3: only its joints), cross-faded from the
+    // face before by faceWeight (Figure +0xE4, linear)
+    std::string faceName, faceFromName;
+    cr3::Animation faceAnim, faceFromAnim;
+    bool faceLoaded = false, faceFromLoaded = false, faceLoop = true, faceFromLoop = true;
+    float faceTime = 0, faceFromTime = 0, faceWeight = 1;
     size_t vertices = 0, triangles = 0;
     std::vector<cr3::JointTransform> posed; // (the pose last drawn)
     // its colour and opacity over its materials' (BtlModel::StartDiffuseAnimation /
@@ -534,6 +541,10 @@ struct Viewer {
     bool loadFigure(const std::string& name, ViewFigure& f, std::string* err);
     bool load(size_t index);
     void loadAnim(ViewFigure& f, size_t index);
+    // a face animation on a figure by its file name ("" none): loaded once, kept while the same
+    bool setFigureFace(ViewFigure& f, const std::string& name, bool from);
+    // a field figure's face by its short name (f001): the figure's own <base>_<name> - a body has none
+    void fieldFace(ViewFigure& f, const std::string& face, float t, const std::string& from = std::string(), float fromT = 0, float weight = 1);
 
     // A field motion of the character (FldPlayer::CreatePlayer: c<id> + "fn01" idle, "ff01" walk,
     // "ff02" run, "fj01".. jumps, "fp01".. its own), if it has it and isn't playing it already
@@ -1247,6 +1258,56 @@ struct Viewer {
     cr3::CollisionWorld areaBaseWalls;
     cr3::PhysScene areaPhysP;
     std::string areaWallKey, areaPrefix;
+    // (Fld2VehicleCollision - <area>p's ragdoll_vc* joints, Fld2TaskGimmick's table 20: a box of the
+    // joint's axes x 0.05 each way; vct solid on foot, vch riding - SetRide by flag 4105)
+    std::vector<std::pair<std::string, cr3::Mat34>> areaVehicleBoxes;
+    float inputWaited = 0; // (--input wait:)
+    // The 2D areas (Fld2Main::ChangeArea: map ids 0x1c2 / 0x1c4 - e0013, e0015 - CreateArea2D
+    // 0x86b9b4; the map table's type 2: Fld2CameraOrtho). The picture <area>_01 (a 3840-square
+    // sprite at z -5000 under an orthographic camera half 960 across, 1232 x 1848 of its 2048
+    // drawn), the area's models and people through <area>'s own camera magnified 2W / H; both
+    // moved by the same scroll (NDC): mode 0 after the player (a fifth of the way a frame, clamped
+    // to the picture), mode 1 the script's Scroll / ScrollTo (linear, frames / 30 s)
+    struct Area2D {
+        bool on = false, camOk = false;
+        cr3::Mat34 cam;
+        float fovY = 45, zNear = 1, zFar = 5000;
+        float x = 0, y = 0;
+        int mode = 0; // (+0xb0: kept from area to area, as the tween)
+        float fromX = 0, fromY = 0, toX = 0, toY = 0, t = 0, dur = 0;
+    } area2D;
+    void loadArea2D(const std::string& name);
+    void stepArea2D(float dt);
+    float area2DMaxX() const;
+    float area2DMaxY() const;
+    bool area2DTarget(float& tx, float& ty) const;
+    Mat4 area2DView(int w, int h, Mat4* proj) const;
+    // The toy camera (goods 1: Fld2GoodsButton::OnUpdate 2, not in a town - Fld2TaskMap::GetDungeonNo
+    // over 4 -, SE 0x25e -> Fld2TaskCamera::ChangeToyCamera 0x9ebd2c, camera type 5 Fld2CameraToy,
+    // ToyCameraMenu - interface 0x57). Its targets: <area>p's ragdoll_cam joints with a Field row
+    // (Fld2TaskGimmick table 0x12), +0x42 the mode - 1 any way, 2 from within 70 degrees of its front
+    struct ToyTarget {
+        std::string name;
+        int mode = 1;
+        cr3::Mat34 box;
+    };
+    std::vector<ToyTarget> toyTargets;
+    struct ToyCam {
+        bool on = false, permit = true; // (Fld2CameraToy +0x59: SetToyCameraEnable)
+        cr3::Vec3 eye{}, look{};        // (+0x20, +0x30: the look 15 from the eye)
+        float yaw = 0, pitch = 0;       // (+0x48 / +0x4c: the turn so far, degrees, within 45 / 22.5)
+        float stickX = 0, stickY = 0;   // (the Vita's right stick)
+        std::string focus;              // (CheckFocus)
+        float cooldown = 0;             // (+0x54: 30 frames after a shot)
+        float spin = 0, r = 0.15f, step = 0.06f; // (the focus brackets: ToyCameraMenu +0x98 / +0x9c / +0xa0)
+        float openAt = 0, flashAt = -1;
+    } toyCam;
+    void loadToyTargets(const std::string& area, const std::vector<std::string>& joints, const std::vector<cr3::Mat34>& world);
+    void toyCamSet(bool on, bool notify);
+    void stepToyCam(float dt);
+    std::string toyCamFocus() const;
+    void toyCamPress(bool shutter);
+    void drawToyCam(int w, int h, const Mat4& view);
     // the moving objects (Fld2MovingObject::SetMove / UpdatePosRot): SetMove's end frame / 30 reached
     // at end / frames a second from 0, <area>p posed at that time, the object on its ragdoll joint
     // (its model kept its first offset from it)
@@ -1295,6 +1356,10 @@ struct Viewer {
     struct AreaNpc {
         std::string name, model;
         ViewFigure body, head;
+        // (Fld2NPC::SetEventFaceAnim 0xa030c0: the face - <model>(h01)_<name> - looped, blended in over
+        // 1/6 s from the one before; areaClock at each)
+        std::string face, faceFrom;
+        float faceAt = 0, faceFromAt = 0;
         cr3::Mat34 place;
         float phase = 0;
         bool box = false;               // (a Fld2Box: f0000box00 ..)
@@ -1304,6 +1369,9 @@ struct Viewer {
         bool bombSwitch = false;        // (Fld2PhysicalSwitch: ragdoll_bswc_.. - a blast near turns it, its other model <model less 2>03)
         bool stepSwitch = false;        // (Fld2StepSwitch: ragdoll_fswc_.. - stood on, it goes down - its _n01 -, then its function)
         bool eventMotion = false;       // (Cr3GimmickData.SetMotion: its own animation, from motionAt)
+        // (Cr3GimmickData.SetMotionLoopPoint - Fld2SetGimmickMotionLoopPoint: a block's or check
+        // object's slot 1, SetStartTime / SetEndTime frames / 30: past the end, back to the start)
+        float loopStart = 0, loopEnd = 0;
         float turnFrom = 0, turnTo = 0;  // (Cr3GimmickData.ChangeDirection - Fld2DirectionManager: its yaw from, to)
         int wander = 0;                 // (the Field row's +0x30: 4 / 5 walks / runs about its rectangle)
         cr3::Mat34 rect;                // (ragdoll_npc_<name>: its place and turn, the sides apart)
@@ -1387,6 +1455,22 @@ struct Viewer {
     // Cr3System.SetEncount (Fld2SetEncount 0x0086eeb4: Fld2System +0x342): the field held - the player,
     // the gimmicks, the tabs - till Fld2System::Init (the field again after the battle the script starts)
     bool areaHeld = false;
+    // The ride (Cr3GimmickData.VehicleRide / VehicleOut -> Fld2VehicleRide / Fld2VehicleRideOut ->
+    // Fld2TaskPlayer::SetStateRide 0x00878858): a Fld2Animal of the gimmick's first four letters
+    // (c602) under the player, put where the player is each update, its motions fn01 / ff01 / ff02
+    // (Fld2AnimalAnimeNameTbl) with the player's fr01 / fr02 / fr03 (states 5 .. 7); speeds x 1.5,
+    // the walk / run thresholds x 1.5; the camera's ride lift; goods button 5 (ride off) added and
+    // focused; the encounter and battle tabs hidden (flag 4105, the scripts')
+    struct AreaRide {
+        bool on = false;
+        std::string model;
+        ViewFigure fig;
+        int motion = -1;
+        float age = 0;
+    } areaRide;
+    void areaRideSet(const std::string& gimmick, bool on);
+    void setAreaRideMotion(int motion);
+    void drawAreaRide(const Mat4& vp);
     bool boxRedraw = false; // (Cr3GimmickData.SetBoxDrawing - Fld2EnableTrasureBoxDrawing 0x0086ed60: Fld2Main +0xfa, the boxes drawn again at the next area change)
     // InterfaceWindow.SetCampWindowParty (InterfaceMain::SetCampWindowParty 0x008f00dc): the camp's
     // top over an event - CampTopMenu +0xf5 -, the scripts waiting while it's open
@@ -1529,6 +1613,7 @@ struct Viewer {
         bool motionLoop = true, motionHold = false;
         bool knockedOut = false;
         bool scriptHidden = false; // (BattleUnit.Hide - BtlUnit::DisableDraw: undrawn at once, for the battle's rest)
+        bool directionHidden = false; // (a Last Attack's hideOtherThanTarget, till the next camera)
         Ramp opacity;
         cr3::Vec3 meleeOffset{};
         Ramp meleeStep{0, 0}, meleeTurn{0, 0};
@@ -1842,7 +1927,21 @@ struct Viewer {
     std::vector<int> cr3Targets();
     void chooseCr3Target(int n);
     void playCr3AttackCamera(const cr3::Cr3Action& action, size_t source);
-    void playCr3CasterCamera(const std::string& name, size_t source);
+    void playCr3CasterCamera(const std::string& name, size_t source, const cr3::Vec3* at = nullptr);
+    // The Last Attack directions (BtlDirectionManager::CreateDirection 0x990d98: CommandDirection
+    // kinds 9 LastAttack, 10 MultiLastAttack, 20 ShotLastAttack, 30 HoldLastAttack, 39
+    // ChildLastAttack): the attacker at the first target's front (or its effect point - +0x30),
+    // the others hidden, its motion's own camera (BtlUnitList::PlayAnimation -> BtlUnit::PlayCamera
+    // 0x9dd234: model.mbe AnimDirection's, posed on the unit); at the row's white-fade frame (+0x24 /
+    // 30, updateWhiteFade -> notify 4) the screen faded white by the motion's end (BtlFade::WhiteOut,
+    // Cr3FadeOut2 colour 1). The next camera undoes it: home, shown, the white lifted over 4 frames
+    struct Cr3LastAttack {
+        bool on = false, white = false;
+        size_t unit = 0;
+    } cr3LastAttack;
+    Ramp cr3White{0, 0};
+    bool startCr3LastAttack(const cr3::Cr3Action& a, size_t source);
+    void endCr3LastAttack();
     void playCr3SpellReceiverCamera(const cr3::Cr3Action& action, size_t source);
     float stepCr3SpellCardClock(float dt);
     bool finishCr3SpellHandoff(const cr3::Cr3Action& action, size_t source, float time);
@@ -3037,6 +3136,7 @@ struct Viewer {
     // tapped, used (Fld2GoodsButton::OnUpdate: 1 PutBomb). The others round the arc, the
     // feGoodsNext arrows, the names: not yet
     int goodsFocus = -1;
+    std::set<int> shownGoods() const;
     int focusedGoods();
     bool goodsPad(bool cycle);
     void drawCr3Goods(int w, int h, const Mat4& view);

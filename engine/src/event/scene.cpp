@@ -205,7 +205,8 @@ void EventScene::update(float dt) {
             place(m);
         }
         m.animTime += dt;
-        m.faceTime += dt;
+        m.faceTime += dt, m.faceFromTime += dt, m.faceBlendTime += dt;
+        if (!m.faceFrom.empty() && m.faceBlendTime > m.faceBlend) m.faceFrom.clear(); // (EndFaceAnimationBlend)
         m.alphaTime += dt;
         for (auto& [slot, att] : m.attachments) att.animTime += dt;
         if (m.slideUpdates > 0 && m.slideTick < m.slideUpdates) { // (an update's step of a Move)

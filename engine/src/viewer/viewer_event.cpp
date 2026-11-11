@@ -3668,6 +3668,14 @@ void Viewer::drawEventUi() {
             fullFrameQuad(white, kScreen, rgba);
         }
     }
+    if (cr3BattleMode && white.id) { // (a Last Attack's white: Cr3FadeOut2 / Cr3FadeIn2 colour 1 over the battle)
+        const float alpha = cr3White.at(cr3BattleClock);
+        if (alpha > 0) {
+            static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+            const float rgba[4] = {1, 1, 1, alpha};
+            fullFrameQuad(white, kScreen, rgba);
+        }
+    }
     drawCr3BattleHud(screenW, screenH);
     if (cr3BattleMode && cr3BattleStage == Cr3BattleStage::Action && cr3ActionPlay.spellCardAge >= 0)
         drawCr3SpellCards(screenW, screenH, cr3ActionPlay.spellCardAge, cr3ActionPlay.spellCards);

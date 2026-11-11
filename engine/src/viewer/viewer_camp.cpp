@@ -1720,8 +1720,10 @@ void Viewer::chooseCr3Camp(int id) {
             // script's DungeonExit, which asks and takes the party home)
             if (id == 108 || !cr3InDungeon()) audio.playSe(0x16d, false), openTownMove(true);
             else audio.playSe(0x16d, false), runAreaFunction("DungeonExit");
-        } else if (id >= 120 && id < 124) { // (the goods button)
+        } else if (id >= 120 && id < 126) { // (the goods button - 125 the ride's)
             useGoods(id - 120);
+        } else if (id == 130 || id == 131) { // (ToyCameraMenu: feGoodsToyBtn - the shutter -, feGoodsBack)
+            toyCamPress(id == 130);
         } else if (id == 101) { // (feBtnSave: Fld2TabMenu::Save)
             audio.playSe(0x16d, false);
             writeCr3Save();

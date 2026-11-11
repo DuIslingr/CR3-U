@@ -66,6 +66,10 @@ want camera && run right-stick "6:rx=1 7:rx=0 8:ry=-0.4 9:ry=0 10:quit" \
 # TitleMenu (0x81256cde): ○ or START its tap
 want title && run title-start "3:start 5:quit" "title: START|title: tapped" -- --title
 
+# Fld2CameraOrtho (CreateArea2D: e0015): s111_d02_00202's SetMode(1), Scroll(0, -1), ScrollTo(0, 0.8, 400) - the picture
+# panned up to the castle
+want camera && run area-2d "16:quit" \
+    "the 2D camera, mode 0|scrolled to (0.000|scrolling to (0.000 -" -- --area e0015 --player j001 --flag 2131
 want camera && run camera-behind "5:rx=1 6:rx=0 6.5:l 7.5:quit" \
     "camera: the right stick let go|camera: behind the player" -- --area d0301
 want saves && run save-footer "3:start 4:down 4.5:up 5:right 5.5:down 6:quit" \
@@ -75,6 +79,16 @@ want movies && run movie-pad "3:north 4:east 5:north 6:west 7:quit" \
 want goods && run field-goods "3:r 3.5:r 4:west 5:quit" \
     "field: goods cursor 1|field: goods cursor 0|field: goods uses 0" \
     -- --area t0101 --input "goods:show0 goods:show1"
+# Fld2TaskPlayer::SetStateRide (0x00878858): d03's animal - the tutorial, ○ yes -, ridden; goods button 5 (□ uses
+# the focused goods: Fld2GoodsButton::OnUpdate 6 - the script's VehicleOut), ○ yes, off
+want goods && run ride "3:east 4:east 5:east 6:east 7:east 8:east 10:ly=1 11:ly=0 12:west 13:east 14:east 15:quit" \
+    "yes / no: yes|the ride on (c602)|field: goods uses 5|VehicleOut|yes / no: yes|the ride off (c602)" \
+    -- --area d0302 --player j001 --input "call:c602_00"
+# Fld2TaskCamera::ChangeToyCamera (0x9ebd2c): goods 1 in d1102 over the sea - the right stick tilts the look (UpdateControl:
+# 45 degrees a second at full), cam_00 in focus, ○ the shutter (its cam_00: the photo, ○ through it), × back (ToyCameraOut)
+want goods && run toy-camera "7:ry=1 7.6:ry=0 8.5:east 9.5:east 11.5:south 13:quit" \
+    "the toy camera on|toy camera: focus cam_00|toy camera: shot cam_00|area script: ended|ToyCameraOut|the toy camera off" \
+    -- --area d1102 --player j001 --input "wait:2 put:22/6/2/-0.153 wait:3 goods:show1 goods:1"
 want lunch && run lunch-balloons "0.1:until=the_balloons,_at_frame 0.5:up 1:down 1.5:east 4:quit" \
     "lunch: the balloons, at frame|lunch: the cursor on|lunch: the cursor on|lunch: s001_t02_00301_" \
     -- --area t0101 --page 0.01 --input "lunch:start:s001_t02_00301_evt:s001_t02_00301"

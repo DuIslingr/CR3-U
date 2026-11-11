@@ -26,3 +26,10 @@ want battle && run battle-result-confirm \
     "0.1:until=result_- 0.1:east 0.5:east 1.5:quit" \
     "result -|battle: result tally completed" \
     -- --battle 2612 --team-level 30 --input "win"
+
+# BtlLastAttackDirection (kind 9): battle 22's finisher (command 13, Daisuke) plays his motion's own camera,
+# AnimDirection's Cam_t01_j003_00, posed on him at the boss's front, the others hidden
+want battle && run last-attack \
+    "0.1:until=a_last_attack 1:quit" \
+    "a finisher - command 13|a last attack (kind 9, motion 18) - camera Cam_t01_j003_00" \
+    -- --battle 22 --team-level 20 --cr3-party 1,2,3 --input "auto"

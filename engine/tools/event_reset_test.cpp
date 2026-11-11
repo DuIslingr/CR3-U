@@ -201,6 +201,31 @@ function spriteAndColor() {
           std::fabs(events.scene().models()[0].tint[2] - 0.75f) < 1e-4f,
           "EvtScene.ChangeColor updates model RGB tint");
 
+    // Round 14: the face - LoadFaceMotion / SetFaceMotion at once, SetBlendFaceMotion(chr, loop, frames)
+    // cross-faded over frames / 30 s from the face before (Cr3EvtSceneSetBlendFaceMotion 0x844808)
+    events.reset();
+    {
+        game::EventModel em;
+        em.name = "j001", em.figure = "j001";
+        events.scene().models().push_back(em);
+    }
+    if (!script(R"(
+function faces() {
+    EvtScene.LoadFaceMotion("j001", "f001");
+    EvtScene.SetFaceMotion("j001", true);
+    EvtScene.LoadFaceMotion("j001", "f007");
+    EvtScene.SetBlendFaceMotion("j001", false, 6);
+}
+)", "faces")) return 1;
+    {
+        const game::EventModel& fm = events.scene().models()[0];
+        check(fm.faceMotion == "j001_f007" && !fm.faceLoop && fm.faceFrom == "j001_f001" && fm.faceFromLoop &&
+                  std::fabs(fm.faceBlend - 0.2f) < 1e-4f && fm.faceBlendTime == 0,
+              "SetBlendFaceMotion fades from the face before over frames / 30 s");
+    }
+    events.scene().update(0.25f);
+    check(events.scene().models()[0].faceFrom.empty(), "the face fade over: the face before let go");
+
     events.reset();
     if (!script("function startCF(){Cr3System.CrossFade(6);WaitFrame(1);VistaEvent.ChangeMap();}", "startCF")) return 1;
     check(events.crossFade().capture && events.crossFade().active && std::fabs(events.crossFade().alpha() - 1.0f) < 1e-4f,

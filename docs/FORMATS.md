@@ -251,7 +251,7 @@ has none in the village, and an area that kept the scene before's would be fogge
 
 The player (Fld2TaskPlayer::CreatePlayer): a Fld2CharaNameTbl model - `j001`..`j005` (the heroes:
 body `j<NNN>b01` + head, motions `j<NNN>b01_<motion>`) or `c101` (`c101_<motion>`) - in the towns
-always j001 (areas below 41). Motions (Fld2AnimeNameTbl): `fn01` idle, `ff01` run, `ff02` walk,
+always j001 (areas below 41). Motions (Fld2AnimeNameTbl): `fn01` idle, `ff01` walk (SM_Walk's motion 2), `ff02` run (SM_Run's 3),
 `fn02`, `ff03`, `fg31`, `fh01`..`fh07`, `fr01`..`fr03`; switched with a 1/6 s blend. Moving
 (SM_Walk / SM_Run): the stick's direction in the camera's frame at 1.2 (walk) or 4.8 (run) a
 second as far as it's pushed, a sphere of 0.2 (CreateGhost; Fld2CharaCtrl::Setup 0.1 the step,

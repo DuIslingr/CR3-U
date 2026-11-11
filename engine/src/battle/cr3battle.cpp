@@ -126,6 +126,14 @@ std::string Cr3BattleTables::victoryCamera(int modelId) const {
     return animationRow(model, "AnimDirection", modelId, 2, "iip", anim) ? anim.s(2) : std::string();
 }
 
+std::string Cr3BattleTables::unitCamera(int modelId, int motion, float* whiteFrame) const {
+    MbeFile::Row anim;
+    if (whiteFrame) *whiteFrame = -1;
+    if (!animationRow(model, "AnimDirection", modelId, motion, "iippiiff", anim)) return std::string();
+    if (whiteFrame && std::isfinite(anim.f(7))) *whiteFrame = anim.f(7);
+    return anim.s(2);
+}
+
 Cr3BattleTables::EffectPoint Cr3BattleTables::effectPoint(int modelId, int point) const {
     if (point < 0 || point >= 8) return {};
     std::string layout = "i_pfffpfff"; // the damage and camera points precede EP0

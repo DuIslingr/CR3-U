@@ -34,6 +34,9 @@ struct Cr3BattleTables {
     bool motionTravel(int modelId, int motion, MotionTravel& out) const;
     int directionCommand(int commandId, int basicAttack) const;
     std::string victoryCamera(int modelId) const;
+    // BtlUnit::PlayCamera / updateWhiteFade: model.mbe AnimDirection's camera (+0x08) for a model's motion, and
+    // its white-fade frame (+0x24, -1 none)
+    std::string unitCamera(int modelId, int motion, float* whiteFrame = nullptr) const;
     struct EffectPoint {
         std::string joint;
         std::array<float, 3> offset{};

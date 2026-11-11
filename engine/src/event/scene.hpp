@@ -92,10 +92,12 @@ struct EventModel {
     float tint[3] = {1, 1, 1};
     // CR3: LoadMotion(model, name) stages <figure>_<name> (CrxModel::LoadAnimation, slot 0; a
     // body / head model's <figure>b01_ / h01_), SetMotion / SetBlendMotion start it; the face's
-    // (LoadFaceMotion: slot 1) kept for its renderer
-    std::string stagedMotion, stagedFace, faceMotion;
-    bool faceLoop = true;
-    float faceTime = 0;
+    // (LoadFaceMotion: <figure>_<name>, the head's - CrxModel::LoadFaceAnimation 0x94952c: h01_ for a
+    // two-part model -, a relative layer over the motion: SetFaceMotion at once, SetBlendFaceMotion
+    // (frames / 30 s, linear: SetFaceAnimationBlend) from the face before - none before, at once)
+    std::string stagedMotion, stagedFace, faceMotion, faceFrom;
+    bool faceLoop = true, faceFromLoop = true;
+    float faceTime = 0, faceFromTime = 0, faceBlend = 0, faceBlendTime = 0;
     // CR3: EvtScene.SetModelLayer - its draw layer (layers draw in turn, the sprites between them)
     int layer = 0;
     // CR3: ChangeVariation(model, var), ChangeArmor(model, id), SetWeaponVisible / LoadWeapon / CreateAttachment

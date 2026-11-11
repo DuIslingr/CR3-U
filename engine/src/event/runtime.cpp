@@ -158,12 +158,22 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("EvtScene", "LoadFaceMotion", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->stagedFace = m->figure + "_" + c.string(1);
     });
-    auto faceMotion = [this](NativeCall& c) {
+    // (Cr3EvtSceneSetFaceMotion 0x844724: BindFaceAnimation(0, 0) - at once; SetBlendFaceMotion
+    // 0x844808: BindFaceAnimation(1, 0), SetFaceAnimationBlend(frames x 1/30) - the face before
+    // fading out, linear; with none before the new one is in at once)
+    vm.setNative("EvtScene", "SetFaceMotion", [this](NativeCall& c) {
         EventModel* m = scene_.model(c.string(0));
-        if (m && !m->stagedFace.empty()) m->faceMotion = m->stagedFace, m->faceLoop = c.boolean(1, true), m->faceTime = 0;
-    };
-    vm.setNative("EvtScene", "SetFaceMotion", faceMotion);
-    vm.setNative("EvtScene", "SetBlendFaceMotion", faceMotion);
+        if (m && !m->stagedFace.empty()) m->faceMotion = m->stagedFace, m->faceLoop = c.boolean(1, true), m->faceTime = 0, m->faceFrom.clear();
+    });
+    vm.setNative("EvtScene", "SetBlendFaceMotion", [this](NativeCall& c) {
+        EventModel* m = scene_.model(c.string(0));
+        if (!m || m->stagedFace.empty()) return;
+        const float seconds = float(c.number(2, 0)) * 0.033333335f;
+        if (!m->faceMotion.empty() && seconds > 0)
+            m->faceFrom = m->faceMotion, m->faceFromLoop = m->faceLoop, m->faceFromTime = m->faceTime, m->faceBlend = seconds, m->faceBlendTime = 0;
+        else m->faceFrom.clear();
+        m->faceMotion = m->stagedFace, m->faceLoop = c.boolean(1, true), m->faceTime = 0;
+    });
     vm.setNative("EvtScene", "SetModelLayer", [this](NativeCall& c) {
         if (EventModel* m = scene_.model(c.string(0))) m->layer = c.integer(1);
     });
