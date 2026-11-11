@@ -106,6 +106,17 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
             const bool back = type == 4 || (type >= 0 && type < 32 && ((0x3c7aau >> type) & 1u) != 0);
             if (type == 6) cr3BattleUnits[size_t(k)].opacity = Ramp();
             setCr3Motion(size_t(k), suffix, type == 0, !back);
+            // (then BtlUnit::PlayCamera 0x9dd234: the motion's own camera - AnimDirection's - posed on the
+            // unit; a script's BattleCamera.Play straight after - a death direction's - takes over)
+            const std::string camera = cr3BattleTables.unitCamera(cr3Battle.units[size_t(k)].model, type);
+            if (!camera.empty()) {
+                const Cr3BattleUnitView& u = cr3BattleUnits[size_t(k)];
+                const float step = u.meleeStep.at(cr3BattleClock);
+                const cr3::Vec3 home = cr3Battle.units[size_t(k)].home;
+                const cr3::Vec3 at{home[0] + u.meleeOffset[0] * step, home[1], home[2] + u.meleeOffset[2] * step};
+                playCr3CasterCamera(camera, size_t(k), &at);
+                SDL_Log("battle %.2f s: unit %d's motion %d camera %s", cr3BattleClock, k, type, camera.c_str());
+            }
         });
         // (BattleUnit::PlayEffect 0x009a7d24 -> BtlUnit::PlayHitEffect 0x009de81c: Effect's figure
         // at the model's effect point - placed once, not following -, scaled, its own end)
@@ -871,6 +882,7 @@ void Viewer::reinforceCr3Battle(int coupling) {
     const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
     const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) + uint32_t(coupling) : uint32_t(SDL_GetTicks()) | 1u;
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
+    if (gaugeArg != 0) cr3Rules.gauge = std::clamp(gaugeArg * 250, -1000, 1000), cr3Rules.gaugeStarted = true, SDL_Log("battle: the break gauge at %d (test)", cr3Rules.gauge); // (--gauge -4 .. 4: tests)
     for (size_t k = 0, p = 0; k < cr3Rules.fighters.size() && p < party.size(); ++k)
         if (cr3Rules.fighters[k].player) {
             const int unit = cr3Rules.fighters[k].unit;
@@ -918,6 +930,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     }
     unload(cr3BattleField);
     cr3BattleField = ViewFigure();
+    cr3LastAttack = Cr3LastAttack(), cr3White = Ramp{0, 0}, cr3StageHidden = false;
     if (!loadFigure(cr3Battle.field + ".geom", cr3BattleField, &err)) SDL_Log("battle field %s: %s", cr3Battle.field.c_str(), err.c_str());
     cr3BattleField.absolute = true; // (BtlField::Load: its animation looped)
     if (loadLights(cr3Battle.field)) SDL_Log("lights: %s", cr3Battle.field.c_str());
@@ -934,6 +947,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     cr3Rules.partyMpLeft = game.cr3Mp; // (the MP the last battle left)
     cr3Rules.lastAttackLevel = game.cr3LastAttackLevel, cr3Rules.finestArtsLevel = game.cr3FinestArtsLevel; // (the finishers' tiers: CrxCharacterData +0x14 / +0x18)
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
+    if (gaugeArg != 0) cr3Rules.gauge = std::clamp(gaugeArg * 250, -1000, 1000), cr3Rules.gaugeStarted = true, SDL_Log("battle: the break gauge at %d (test)", cr3Rules.gauge); // (--gauge -4 .. 4: tests)
     for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
         const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
         SDL_Log("battle %d: fighter %zu - %s %d, level %d, HP %d", coupling, k, f.player ? "character" : "monster", f.id, f.level, f.maxHp);
@@ -1807,7 +1821,8 @@ bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
     cr3::MbeFile::Row dir;
     if (!cr3BattleTables.direction.find("CommandDirection", cr3ActionPlay.directionCommand, "iiiifii_piii", dir)) return false;
     const int kind = dir.i(1), ext = dir.i(2), effectPoint = dir.i(10);
-    if (kind != 9 && kind != 10 && kind != 20 && kind != 30 && kind != 39) return false;
+    if (kind != 9 && kind != 10 && kind != 20 && kind != 30 && kind != 39 && kind != 11 && kind != 12) return false;
+    const bool finestArts = kind == 11 || kind == 12;
     if (a.target < 0 || a.targets.empty()) return false;
     const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
     float white = -1; // (AnimDirection: model, motion, camera +0x08, sound, .., white-fade frame +0x24)
@@ -1819,7 +1834,8 @@ bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
     // gives one, a ShotLastAttack's and the rest at its front - ChangeTargetPositionToFront -, at once;
     // ChangeRotationToHome: no turn)
     cr3::Vec3 at;
-    if (effectPoint >= 0 && kind != 20 && kind != 10) at = cr3EffectPoint(tu, effectPoint), at[1] = bu.home[1];
+    if (kind == 12 && effectPoint < 0) at = {0, bu.home[1], 0}; // (BtlUnit::ChangePositionToCenter: the world's origin)
+    else if (effectPoint >= 0 && kind != 20 && kind != 10 && kind != 11) at = cr3EffectPoint(tu, effectPoint), at[1] = bu.home[1];
     else {
         const float dx = foe.home[0] - bu.home[0], dz = foe.home[2] - bu.home[2], d = std::hypot(dx, dz);
         const float contact = (bu.depth * bu.scale + foe.depth * foe.scale) * 0.5f;
@@ -1835,25 +1851,55 @@ bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
         cr3BattleUnits[k].directionHidden = !keep;
     }
     cr3LastAttack = Cr3LastAttack();
-    cr3LastAttack.on = true, cr3LastAttack.unit = su;
+    cr3LastAttack.on = true, cr3LastAttack.unit = su, cr3LastAttack.finestArts = finestArts;
+    if (finestArts) cr3StageHidden = true; // (BtlField::Hide: the stage's update, pose and draw stopped)
     if (!camera.empty()) {
         playCr3CasterCamera(camera, su, &at);
         if (cr3Cam.name == camera && cr3Cam.end > 0) cr3ActionPlay.end = std::max(cr3ActionPlay.end, cr3Cam.end); // (the direction's next: the clip's end)
     } else playCr3AttackCamera(a, su);
+    const float motionEnd = view.body.animLoaded ? view.body.anim.duration() : std::max(white / 30.0f + 0.1f, 1.0f);
     if (white >= 0) { // (updateWhiteFade: at the frame, white by the motion's end - Cr3FadeOut2(1, frames, 0, 100))
-        const float from = white / 30.0f, motionEnd = view.body.animLoaded ? view.body.anim.duration() : from + 0.1f;
+        const float from = std::min(white / 30.0f, motionEnd);
         cr3White.begin(cr3BattleClock + from, 0, 1, std::max(motionEnd - from, 1.0f / 30.0f));
         cr3LastAttack.white = true;
     }
-    SDL_Log("battle %.2f s: a last attack (kind %d, motion %d) - camera %s, white %s", cr3BattleClock, kind, ext,
+    if (finestArts) { // (its end: full white at the motion's end, 1 s, then the global camera's 1 s)
+        cr3LastAttack.whiteEnd = cr3BattleClock + motionEnd;
+        cr3ActionPlay.end = std::max(cr3ActionPlay.end, motionEnd + 2.0f);
+        if (white < 0) cr3White.begin(cr3BattleClock + motionEnd, 1, 1, 0), cr3LastAttack.white = true; // (no frame in the row: white at its end)
+    }
+    SDL_Log("battle %.2f s: a %s (kind %d, motion %d) - camera %s, white %s", cr3BattleClock, finestArts ? "finest arts" : "last attack", kind, ext,
             camera.empty() ? "(none)" : camera.c_str(), white >= 0 ? std::to_string(int(white)).c_str() : "none");
     return true;
 }
 
 // (the camera motion's event 2 - the next camera -: ChangePositionToHome, showOtherThanTarget,
 // PlayStayAnimation, FadeIn(0.15) - BtlFade::WhiteIn, 4 frames - where it went white)
+// (the Finest Arts' after the white: BtlFinestArtsDirection's fade observer 0x9964b4 - stay, home,
+// showOtherThanTarget, a 1 s timer -, then 0x996528: BtlField::Show, PlayGlobal(1.0), WhiteIn 1 s)
+void Viewer::stepCr3LastAttack() {
+    if (!cr3LastAttack.on || !cr3LastAttack.finestArts) return;
+    Cr3BattleUnitView& view = cr3BattleUnits[cr3LastAttack.unit];
+    if (!cr3LastAttack.restored && cr3BattleClock >= cr3LastAttack.whiteEnd) {
+        cr3LastAttack.restored = true;
+        setCr3Motion(cr3LastAttack.unit, "bb01", true);
+        view.meleeOffset = {}, view.meleeStep = Ramp{0, 0};
+        for (Cr3BattleUnitView& u : cr3BattleUnits) u.directionHidden = false;
+        cr3White.begin(cr3BattleClock, 1, 1, 0);
+    }
+    if (cr3LastAttack.restored && !cr3LastAttack.shown && cr3BattleClock >= cr3LastAttack.whiteEnd + 1.0f) {
+        cr3LastAttack.shown = true;
+        cr3StageHidden = false;
+        playCr3Camera(cr3Battle.cameras[4], 1.0f, false, {}, 0, 0);
+        cr3White.begin(cr3BattleClock, 1, 0, 1.0f);
+        SDL_Log("battle %.2f s: the finest arts' white lifted", cr3BattleClock);
+    }
+}
+
 void Viewer::endCr3LastAttack() {
     if (!cr3LastAttack.on) return;
+    cr3StageHidden = false;
+    if (cr3LastAttack.finestArts && cr3LastAttack.shown) return void(cr3LastAttack = Cr3LastAttack());
     Cr3BattleUnitView& view = cr3BattleUnits[cr3LastAttack.unit];
     view.meleeOffset = {}, view.meleeStep = Ramp{0, 0};
     for (Cr3BattleUnitView& u : cr3BattleUnits) u.directionHidden = false;
@@ -2070,6 +2116,7 @@ void Viewer::stepCr3Action() {
         return startCr3Action();
     }
     if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
+    stepCr3LastAttack();
     const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
     const size_t source = size_t(cr3Rules.fighters[size_t(a.source)].unit);
     const float t = cr3BattleClock - cr3ActionStart;
@@ -2593,16 +2640,18 @@ void Viewer::drawCr3Battle(int w, int h) {
     ViewFigure& f = cr3BattleField;
     f.place = cr3::Mat34();
     { // (BtlField's animator stepped: looped, or - ResetLooping - on to its end time and held)
-        const float dt = std::max(cr3BattleClock - cr3FieldDrawnAt, 0.0f), length = f.animLoaded ? f.anim.duration() : 0.0f;
+        const float dt = cr3StageHidden ? 0.0f : std::max(cr3BattleClock - cr3FieldDrawnAt, 0.0f), length = f.animLoaded ? f.anim.duration() : 0.0f; // (hidden: not stepped)
         cr3FieldDrawnAt = cr3BattleClock;
         cr3FieldTime += dt;
         if (length <= 0) cr3FieldTime = 0;
         else if (cr3FieldLoop) cr3FieldTime = std::fmod(cr3FieldTime, length);
         else cr3FieldTime = std::min(cr3FieldTime, cr3FieldEnd >= 0 ? std::min(cr3FieldEnd, length) : length);
     }
-    pose(f, cr3FieldTime, false);
-    drawFigure(f, vp.data());
-    for (Cr3FieldObject& o : cr3FieldObjects) drawAttached(o.figure, f, o.joint, cr3BattleClock, vp.data()); // (BtlFieldObject: on its joint, looped)
+    if (!cr3StageHidden) { // (BtlField::Hide: the stage, its objects not drawn)
+        pose(f, cr3FieldTime, false);
+        drawFigure(f, vp.data());
+        for (Cr3FieldObject& o : cr3FieldObjects) drawAttached(o.figure, f, o.joint, cr3BattleClock, vp.data()); // (BtlFieldObject: on its joint, looped)
+    }
     for (auto& [slot, m] : cr3ScriptModels) { // (BattleModel's: at their place, turned - x, y, z degrees -, looped)
         if (m.figure.meshes.empty()) continue;
         const float d = 3.14159265f / 180;

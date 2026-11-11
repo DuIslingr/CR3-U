@@ -33,3 +33,12 @@ want battle && run last-attack \
     "0.1:until=a_last_attack 1:quit" \
     "a finisher - command 13|a last attack (kind 9, motion 18) - camera Cam_t01_j003_00" \
     -- --battle 22 --team-level 20 --cr3-party 1,2,3 --input "auto"
+
+# BtlFinestArtsDirection (kind 12): the gauge at the party's full advantage (+1000), a participant's Finest Arts -
+# the stage hidden, its own camera, white at its frame, under the white home and all shown, the white lifted 1 s on
+export CR3_BATTLE_SEED=6 # (its draw: a Finest Arts within 30 s)
+want battle && run finest-arts \
+    "0.1:until=the_finest_arts'_white_lifted 1:quit" \
+    "a finisher - command 1|a finest arts (kind 12|the finest arts' white lifted" \
+    -- --battle 22 --team-level 20 --cr3-party 1,2,3 --cr3-gene 1:1 --cr3-gene 2:4 --cr3-gene 3:7 --gauge 4 --input "auto"
+unset CR3_BATTLE_SEED

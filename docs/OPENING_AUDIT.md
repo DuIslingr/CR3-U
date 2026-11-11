@@ -409,8 +409,22 @@ Round 5 left `BtlUnit::PlayCamera` and `updateWhiteFade`'s `notify(4)` open. Two
 | | The original | CR3-U before | CR3-U now |
 |---|---|---|---|
 | A motion's camera (`BtlUnitList::PlayAnimation` `0x9d802c` -> `BtlUnit::PlayCamera` `0x9dd234`) | `model.mbe` `AnimDirection` (model, motion) `+0x08`: played posed on the unit (its position, rotation, scale), not looped, held, a hard cut. The prefix is the motion's name: `t01..t05` the skills' `bt01..bt05` (18 .. 22), `m01` the cast (9), `s01` the shot (15), `d02` a death (6), `b03` the victory (2, `PlaySoloVictoryCamera`: already in). Situ / Show / Hide's own direction camera overrides it at once (`PlayCameraByType`, never checking) | The cast's (`castCamera`) and the victory's only | The Last Attack directions' (below) |
+| A script's motion (`BattleUnit.PlayAnimation` `0x9a7b5c` -> `BtlUnitList::PlayAnimation`) | The same `PlayCamera` after the motion: battle 4's boss death plays `m212`'s `Cam_d02_m235_00` on it, then the script's own `BattleCamera.Play` (the same clip, from the origin) takes over | The motion only | The motion's camera on the unit, logged (`motion 6 camera Cam_d02_m235_00`) |
 | The Last Attack directions (`BtlDirectionManager::CreateDirection` `0x990d98`: kinds 9 LastAttack, 10 MultiLastAttack, 20 ShotLastAttack, 30 HoldLastAttack, 39 ChildLastAttack; `BtlLastAttackDirection::vPlay` `0x98d2b4`) | The attacker set at once at the first target's front (or, `CommandDirection +0x30`, its effect point; MultiLast at its own front), turned home; its extension motion (`+0x08`) with that motion's own camera on it; everyone but it and its targets hidden (`hideOtherThanTarget`); the command's name and voice. The hits from its event timer. The direction moves on at the clip's end; the next camera undoes it (`ChangePositionToHome`, `showOtherThanTarget`, stay) | The generic attack camera, everyone in place | `startCr3LastAttack` / `endCr3LastAttack`: the place (the melee step's offset), `directionHidden`, `playCr3CasterCamera` at the new place, the action at least the clip long. Battle 22's finisher (command 13) plays Daisuke's `Cam_t01_j003_00` (`last-attack`) |
 | The white (`BtlUnit::updateWhiteFade` `0x9e1028` -> `notify(4)`, the five Last Attacks' observers -> `BtlUnit::WhiteOut` `0x9dfba4`) | Not a death's: at `AnimDirection +0x24` / 30 into the motion (the skills' rows: j001's 80 / 110 / 129 / 330 ..; -1 none) the whole screen fades white by the motion's end (`Cr3FadeOut2(1, ..)`), held; the next camera lifts it over 4 frames (`BtlFade::WhiteIn`, only where it went white) | None | `cr3White` over the battle; `Cr3BattleTables::unitCamera` reads the frame (`battle-target-tests`) |
+
+### 20. Round 17 parity audit (Finest Arts)
+
+Round 10 chose the Finest Arts right but they played as ordinary attacks. A delegated REA pass
+(`/tmp/cr3-opening-audit/libcrx-audit-round17-finestarts.json`) traced the directions.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `BtlFinestArtsDirection` (kind 12; `vPlay` `0x996194`) and `BtlSingleFinestArtsDirection` (kind 11, command 1735 only; `0x994efc`) | The actor (one participant, at random - `addLastAttack`) at the world's origin (`BtlUnit::ChangePositionToCenter` `0x9dd89c`; command 127 at the target's effect point 7; Single at the target's front), turned home; its extension motion (`+0x08`: 21 / 22 for the party's) with that motion's own camera; the stage hidden (`BtlField::Hide` `0x99c714`: the stage figure's update, pose and draw, its lights, effects and objects); all but it and its targets hidden; the name, the voice. Hits as `playDamage`. At `AnimDirection +0x24` the screen whitens by the motion's end (`BtlFade::WhiteOut`, an observer this time); fully white: stay, home, all shown (`0x9964b4`); 1 s on (`0x996528`): `BtlField::Show`, `PlayGlobal(1.0)`, the white lifted over 1 s, the knockouts, the target list's announce. The direction ends with that camera | An ordinary attack | `startCr3LastAttack` with `finestArts`: the origin, `cr3StageHidden` (the stage and its objects undrawn, its clock still), the camera, the white; `stepCr3LastAttack` undoes it under the white and lifts it 1 s on with the battle's global camera (`cameras[4]`). Battle 22 at full advantage: Leary's command 106 "Carnage Circus" on black, `Cam_t04_j002_00`, white from frame 170, lifted 1 s after (`finest-arts`) |
+| `BtlColosseumVoiceUtility::PlayClimax` (`0x9a946c`) / `PlayClimaxAfter` (`0x9a94cc`) | Only with `BtlBootParam +0x34` 1 (the colosseum, inferred): comment categories `0x75`, then one of `0x76` / `0x76 + character` a second after the first hit | - | Not in (no colosseum commentary in CR3-U) |
+
+`--gauge -4 .. 4` now sets CR3's break gauge too (x 250, started), a test aid; a Finest Arts also needs
+its actor to wear a gene (the tier's gene value 0: `finisherGeneValue` is -1 without one).
 
 ## Original-code evidence
 
@@ -487,8 +501,8 @@ Deterministic REA evidence bundles are stored outside the repository at
 
 ## Not settled
 
-- **Battle staging (Round 5, 16)**: a motion's own camera plays only for the Last Attacks; the
-  cast's goes its own way (`castCamera`), and a scripted death's (`d02`), a Ranged / Shot's (`s01`) and
+- **Battle staging (Round 5, 16, 17)**: a motion's own camera plays for the Last Attacks and a
+  script's motions; the cast's goes its own way (`castCamera`), and a Ranged / Shot's (`s01`) and
   ChildLastAttack's target's `bt03` camera aren't in. The white-out wasn't seen live (no finisher tier
   above 0 reachable headless). HoldLast's hold and ChildLast's target motion aren't staged;
   `hideOtherThanTarget`'s "all foes" case (CommandInfo `+0x10` 6) isn't in. Round 7's approximations: the held unit's
@@ -513,8 +527,9 @@ Deterministic REA evidence bundles are stored outside the repository at
   The disposal list's header title isn't traced (CR3-U shows Gene Swap's). Fullness follows
   `GeneGet`'s count (all held), while `IsGeneFull` counts the 50 box slots. They differ only when the
   stock holds genes, and `GeneGet`'s own rule then refuses earlier than the original's.
-- **Finishers (Round 10)**: three parts aren't modelled. The Finest Arts directions' `BtlField::Hide`
-  (the stage hidden) and their commentator voice (`PlayClimax`) aren't in. `CalculateForceBreakPoint(true)`'s
+- **Finishers (Round 10, 17)**: the Finest Arts' colosseum commentary (`PlayClimax`) isn't in; what
+  shows behind the hidden stage is taken as the clear colour (black); `PlayGlobal(1.0)` is taken as the
+  battle's global camera for 1 s; the white covers the scene, the HUD drawn over it. `CalculateForceBreakPoint(true)`'s
   `BtlCalculator +0xa5` (a Finest Arts' break points) is UNKNOWN. The finisher check runs only before a
   next command in the same turn (the original's also carries `+0x188` to the turn-end list).
   `CR3-U`'s `wouldHit` treats a random target's side as all of it (`CollectDamageTarget`'s random pick
@@ -596,9 +611,10 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`39/39` cases, `0 problems`)**:
+- **Controller & UI integration suite (`40/40` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 39 headless controller cases. Round 16 added `last-attack` (battle 22's finisher).
+  passes all 40 headless controller cases. Round 17 added `finest-arts` (battle 22 at full advantage,
+  `CR3_BATTLE_SEED` 6). Round 16 added `last-attack` (battle 22's finisher).
   Round 15 added `area-2d` (e0015's pan). Round 13 added `toy-camera` (d1102's photo target shot,
   then back). Round 12 added `ride` (d0302's animal ridden and left by the
   goods button). Round 10 added `vs-tutorial` (a fresh game's VS:

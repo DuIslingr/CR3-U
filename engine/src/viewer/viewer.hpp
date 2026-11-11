@@ -1935,12 +1935,20 @@ struct Viewer {
     // 0x9dd234: model.mbe AnimDirection's, posed on the unit); at the row's white-fade frame (+0x24 /
     // 30, updateWhiteFade -> notify 4) the screen faded white by the motion's end (BtlFade::WhiteOut,
     // Cr3FadeOut2 colour 1). The next camera undoes it: home, shown, the white lifted over 4 frames
+    // The Finest Arts (kinds 11 SingleFinestArts, 12 FinestArts: BtlFinestArtsDirection::vPlay
+    // 0x996194) too: the attacker at the world's centre (or the target's effect point; Single at the
+    // target's front), the stage hidden (BtlField::Hide), its motion's camera; at the white-fade frame
+    // white by the motion's end; then, under the white, home, stay, all shown (the fade's observer),
+    // 1 s on the stage back, the global camera, the white lifted over 1 s (BtlTimer)
     struct Cr3LastAttack {
-        bool on = false, white = false;
+        bool on = false, white = false, finestArts = false, restored = false, shown = false;
         size_t unit = 0;
+        float whiteEnd = 0; // (the clock at full white: the motion's end)
     } cr3LastAttack;
     Ramp cr3White{0, 0};
+    bool cr3StageHidden = false;
     bool startCr3LastAttack(const cr3::Cr3Action& a, size_t source);
+    void stepCr3LastAttack();
     void endCr3LastAttack();
     void playCr3SpellReceiverCamera(const cr3::Cr3Action& action, size_t source);
     float stepCr3SpellCardClock(float dt);
