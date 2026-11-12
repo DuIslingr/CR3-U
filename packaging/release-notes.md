@@ -1,82 +1,68 @@
-# CR3-U v0.4.0
+# CR3-U v0.5.0
 
 A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux and Android.
 
+This release is a parity pass: the game's own code was read, system by system, against what the
+port did, and the differences fixed. `docs/OPENING_AUDIT.md` lists each one - the original, the port
+before, the port now.
+
 ## What's new
 
-### Android and phones
+### Dungeons and towns
 
-- **Sound and text from an `.apks`:** a repacked `.apks` gave no sound effects or voices, and on a
-  phone no text. Its compressed asset packs are now unpacked once on the first start, into
-  `assetpacks/` beside it (**about 1.3 GB of free space**; that first start takes a while), and the
-  game's font is read from inside the `.apks`.
-- **`.apks` and `.xapk` with compressed APKs** (as some download sites pack them) work: they are
-  unpacked once into `unpacked/` (**about 3.7 GB with the asset packs**). Before, the game stopped
-  at once with "no Chaos Rings III data".
-- **The first start's setup runs on the phone:** pick your `.apks`, `.ipa` or Vita archive and the
-  files are copied in. A Vita dump copied into `vita/` over USB is decrypted on the next start.
-- **The screen fits:** the game runs fullscreen with the system bars hidden. The picture fills the
-  whole screen, round the camera hole and into the corners, while menus, windows and buttons stay
-  inside the safe area. On 19.5:9 and 20:9 phones the message band now reaches the screen's sides,
-  and the speaker's name no longer hangs off its corner.
-- **No more green frame** round the screen after using a controller or keyboard.
-- **Updates install over the last:** the APK is now signed with the ports' release key (see Good
-  to know).
+- **Footsteps:** each kind of floor has its own sounds (one of three each step), some a puff of
+  dust. Riding has its own.
+- **Falls:** walking off a ledge plays the fall and the landing.
+- **Ladders** work: the "!" at either end, climb up or down a rung at a time, off at the other end.
+  Not while riding.
+- **Riding:** the animal in the dungeons where you ride it, its own speed, camera and motions, and
+  the goods button to get off (not on every floor, as in the original).
+- **The toy camera** (goods): turn it with a drag or the right stick, the shutter's iris, photos of
+  the spots that count, and the taller frame on iPad-shaped screens.
+- **The 2D scenes** (the castle picture's pan) play.
+- **Walking and running** used each other's animation; fixed.
+- **People's faces move:** expressions in the story scenes and on people in towns.
+- **Story scripts:** the event boxes and things you check switch on and off as the story says, the
+  player is walked to places, and the field freezes as a battle starts.
 
-### Battles and story
+### Story scenes
 
-- **The first battle no longer freezes.** Every battle started from the field (an event's or an
-  encounter's) stopped on its opening screen. It now plays through and returns to the field.
+- **Blurs** - the motion, zoom and "special" blurs in hundreds of scenes - and the **glow** some
+  scenes turn on.
+- **The screen shakes** at the right size and speed, in battles too.
+- **A full gene box no longer loses a story reward:** you choose one to let go first, as in the
+  original, then see the new gene's stats.
+- **The party window** some scenes open works, and asks "Are you satisfied with this party?" (or
+  warns when someone has no gene) before the story goes on. Locked party members show greyed.
+- **Dialogue voices** play by themselves where the game cues them, and stop with the window.
+- **The blank dialogue bar** (issue #5) with an Android copy from a split bundle: the game's font is
+  found inside it, and a system font is used if it still can't be.
 
-### Controller, as on the Vita
+### Battles
 
-With the Vita copy as the game, the controller now follows the Vita release's own buttons:
+- **Finishers:** Last Attacks and Finest Arts happen as in the original - after a combo, with the
+  attacker's own camera and the white flash - and a Finest Arts sends the break gauge back to half.
+- **Boss deaths** play their own camera, light pillars and shake; scripted battles' cameras, effects
+  and holds work (battle 7 no longer locks with the party held).
+- **Ranged attacks** get their own cameras; random-target attacks hit one foe per strike.
+- **Timing, voices and spells:** CR3's own attack and effect timings, shots you can see in flight,
+  and the gene-card overlay on spells.
+- **Status effects:** the "can't act" effects and the two transformations (the pig form's Black
+  Impact) are checked the way the game does.
 
-- **Field buttons:** △ opens them with a cursor on Camp; the d-pad moves it, ○ presses, × or △
-  closes. L swings the camera behind you; R cycles the goods in reach and □ uses them.
-- **Camera:** the right stick turns the field's camera.
-- **Event choices and Yes / No questions:** a cursor starts on the first option; Up / Down move it,
-  ○ answers, × is No.
-- **L / R in menus:** the gene lab's, options' and Gene Index's tabs, the shop's Buy / Sell, the
-  gifts' and quests' categories, the Lucky Box's boxes, the tutorials' pages.
-- **Battles:** the d-pad works the commands, item lists and targets, L / R switch Items and Gifts,
-  flexible-target commands can switch sides, and ○ shortens the victory camera and the result.
-- **A lost battle's Continue:** Up / Down choose Give Up or Revive, ○ presses. Before, it took only
-  clicks.
-- **Every other screen** has a d-pad cursor too: the camp and party order, item quantities, gene
-  change (sorts, lock), the gene lab, gifts, options, Gene Index, premium shop, My Page, save files,
-  world select, the VS mode and the lunches.
-- **Movies and Vista scenes:** △ pauses and resumes picture and sound together; □ stops a movie.
-- **START** taps the title.
-- `docs/CONTROLS.md` lists every screen's buttons. With the iPhone or Android copy the controller
-  works as before.
+### Battle Mode (VS)
 
-### Fan translations
+- **The tutorial plays:** the starter gene cards, the party window, the first tournaments.
+- **The commentators** talk: at the start, each turn, on a Finest Arts, at a win or a loss.
 
-- **Spanish:** Joseas's Spanish translation of the Vita release works like the English one, with its
-  own font for á, ñ, ¿ and ¡. Put its rePatch folder, or the `.zip` it comes in, into `translation/`.
-- **Both at once:** the English and Spanish translations can sit side by side (`translation/en/`,
-  `translation/es/`; an archive dropped into `translation/` is unpacked into the right one).
-- **Options > Other > Language** switches between Japanese, English and Spanish **while you play**,
-  pictures included (the title's "Tap to play"), and remembers the choice.
-- **Long choices fit:** a choice too long for its bubble gets a wider one; on 3:2 and 4:3 screens it
-  is centred and narrowed slightly.
+### Camp
+
+- **Gene Swap** shows only with a gene in the box to swap. On the Vita controller the focused panel
+  has the game's own frame instead of a colour tint.
 
 ### Graphics
 
-- **Fewer hitches with Vulkan:** compiled shaders are kept between runs (`vulkan-pipelines.bin` in
-  the profile folder), so the start and each new screen are smoother.
-- **Sharp menus with upscalers:** FSR, DLSS and MetalFX now upscale the 3D scene only; menus and
-  text are drawn afterwards at full resolution.
-- **FSR 4** (AMD RX 6000 or later, Linux and Windows): a new Upscaler choice. AMD's files can't be
-  included; put them in `fsr4/` (its `README.txt` lists them). On Linux they run natively through
-  ffx-vk-linux, without Wine.
-- **FSR 3.1.6:** the built-in FSR is updated to AMD's FSR SDK 2.4.
-
-### Vita copies
-
-- **Prequel Trilogy:** CR3-U no longer takes the other games' archives in a Trilogy folder for its
-  own, which left it without sound or models.
+- **Bloom** is on where the story turns it on, the same on Vulkan and OpenGL.
 
 The story still hasn't been played through end to end.
 
@@ -106,9 +92,9 @@ The README's "What you need" section lists which releases of the game work and w
 
 ## Good to know
 
-- **Android, updating:** from this version on, each release installs over the one before it.
-  Earlier versions were each signed with a different key, so uninstall the old one first - one
-  last time. That deletes the game files you copied in and your saves, so keep a copy of them.
+- **Android, updating:** installs over v0.4.0. From a version before v0.4.0, uninstall the old one
+  first (each was signed with a different key); that deletes the game files you copied in and your
+  saves, so keep a copy of them.
 - **No game data is included.** You need your own copy; the port reads it at run time.
 - **Tested on:** Linux (played), Windows (under Wine), Android (the emulator). The macOS build is
   made by CI but hasn't been run on real hardware yet. The Vita controls were tested with a virtual
