@@ -943,6 +943,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     // (the rules' random numbers: the clock's, or CR3_BATTLE_SEED's for a battle to replay)
     const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
     const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) : uint32_t(SDL_GetTicks()) | 1u;
+    cr3CamRng.seed(seed ^ 0x5bd1e995u), cr3LastGlobalCam.clear(); // (the global cameras' picks: from the same seed, a stream of their own)
     cr3PartyRules();
     cr3Rules.partyMpLeft = game.cr3Mp; // (the MP the last battle left)
     cr3Rules.lastAttackLevel = game.cr3LastAttackLevel, cr3Rules.finestArtsLevel = game.cr3FinestArtsLevel; // (the finishers' tiers: CrxCharacterData +0x14 / +0x18)
@@ -981,6 +982,13 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     if (!cr3FieldEffects.empty()) SDL_Log("battle %d: %zu field status effects", coupling, cr3FieldEffects.size());
     playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0); // (PlayBattleIn)
     cr3BattleMode = true;
+    // (BtlSystem::Init: the colosseum's commentators in a VS battle - BtlBootParam +0x34 -; phaseStart's
+    // PlayBattleInByGhostIndex 0x9a84f8: the first battle categories 1, 4, 5 queued, the second 2, the third 3)
+    if (vs.screen == 5) {
+        startVsCommentary(vsCommentators[0], vsCommentators[1]);
+        if (vs.battle == 0) requestVsComment(1, 1.0f), requestVsComment(4, 0.1f), requestVsComment(5, 0.1f);
+        else playVsComment(vs.battle == 1 ? 2 : 3);
+    } else vsCommentary = VsCommentary();
     dev->resetHistory();
     status = "battle " + std::to_string(coupling) + " on " + cr3Battle.field;
     SDL_Log("battle %d: %s, %zu units, camera size %d (%s, %.2f s)", coupling, cr3Battle.field.c_str(), cr3Battle.units.size(),
@@ -1524,6 +1532,7 @@ int Viewer::cr3FighterOfUnit(size_t k) const {
 
 void Viewer::beginCr3Turn(bool countTurn) {
     if (countTurn) ++cr3Turn; // (BtlSysStateSelect::phaseStart)
+    if (countTurn) playVsComment(6); // (PlayBattleStartByTurn 0x9a85b4)
     cr3Choices.clear(), cr3TurnItems.clear();
     cr3ComboStartHp.clear(), cr3ComboDamage.clear(), cr3ComboHits.clear(), cr3ComboSince = -1;
     cr3Chooser = -1;
@@ -1745,7 +1754,7 @@ void Viewer::chooseCr3Command(int button) {
         cr3Choices.push_back({cr3Chooser, -1, -1});
         nextCr3Chooser();
     } else if (button == 0) { // (Attack: its target next)
-        cr3ChosenCommand = cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, cr3ChosenItem = 0;
+        cr3ChosenCommand = cr3Rules.attackCommandOf(cr3Chooser), cr3ChosenItem = 0; // (a transformation's: 8 / 9)
         cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0, cr3TargetChanged = false;
     } else if (button == 1 || button == 2) { // (Gene: its commands; Item)
         openCr3List(button == 2);
@@ -1782,7 +1791,7 @@ void Viewer::chooseCr3Target(int n) {
     audio.playSe(0x153, false);
     const int target = alive[size_t(std::clamp(n, 0, int(alive.size()) - 1))];
     if (cr3ChosenItem) game.cr3Items[cr3ChosenItem] = std::max(game.cr3Items[cr3ChosenItem] - 1, 0), cr3TurnItems[cr3Chooser] = cr3ChosenItem;
-    cr3Choices.push_back({cr3Chooser, cr3ChosenCommand >= 0 ? cr3ChosenCommand : cr3Rules.fighters[size_t(cr3Chooser)].attackCommand, target});
+    cr3Choices.push_back({cr3Chooser, cr3ChosenCommand >= 0 ? cr3ChosenCommand : cr3Rules.attackCommandOf(cr3Chooser), target});
     nextCr3Chooser();
 }
 
@@ -1799,6 +1808,62 @@ void Viewer::playCr3AttackCamera(const cr3::Cr3Action& action, size_t source) {
     playCr3Camera(name, cr3ActionPlay.end, false, at, 0, 0);
     cr3Cam.lookAt = unitPoint(target, "DummyCP", 1.2f);
     cr3Cam.lookWeight = actor.player ? 0.2f : 0.4f;
+}
+
+// BtlCameraSystem::PlayGlobal 0x977d4c / PlayGlobalToTarget 0x97811c -> FUN_00977e7c: a random entry of the
+// Camera table's attack_ALL list (cameras[4], the battle's camera size) but the last clip either played
+// (+0xff8) - the one entry where it is all there is
+std::string Viewer::pickCr3GlobalCamera() {
+    std::vector<std::string> all, pool;
+    for (size_t at = 0; at <= cr3Battle.cameras[4].size();) {
+        const size_t end = std::min(cr3Battle.cameras[4].find('\n', at), cr3Battle.cameras[4].size());
+        if (end > at) all.push_back(cr3Battle.cameras[4].substr(at, end - at));
+        at = end + 1;
+    }
+    for (const std::string& n : all)
+        if (n != cr3LastGlobalCam) pool.push_back(n);
+    if (pool.empty()) pool = all;
+    if (pool.empty()) return std::string();
+    cr3LastGlobalCam = pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(cr3CamRng)];
+    return cr3LastGlobalCam;
+}
+
+// BtlUnit::PlayCamera 0x9dd234 (from BtlUnitList::PlayAnimation): the motion's AnimDirection camera (+0x08),
+// where the row has one, over whatever plays - posed on the unit at its home, its home turn, its scale
+void Viewer::playCr3MotionCamera(size_t source, int motion) {
+    const std::string camera = cr3BattleTables.unitCamera(cr3Battle.units[source].model, motion);
+    if (camera.empty()) return;
+    playCr3CasterCamera(camera, source);
+    if (cr3Cam.name == camera) SDL_Log("battle %.2f s: motion %d's camera %s", cr3BattleClock, motion, camera.c_str());
+}
+
+// BtlRangedDirection::vPlay 0x98d9b8 / BtlShotDirection::vPlay 0x99a540 (CommandDirection kinds 2, 3):
+// playCameraByType first - BtlDamageChunk::PlayCameraByType 0x97c2cc by the row's +0x0c (-1: the attack
+// command's): 1 PlayRangedCamera 0x9ddcf8 and 4 PlayGlobalCamera, both PlayGlobalToTarget 0x97811c - an
+// attack_ALL clip at the origin turned 0.4 toward the target -, 0 the melee's -, then PlayAnimation(0xf) and
+// its PlayCamera(15) over it (the one s01 clip: Cam_s01_m316_00). No white (their unit observers take
+// states 1, 2, 6 only) and the end the motion's, not the clip's. (A combo's PlayRangedComboCamera 0x9ddd1c
+// not in. BtlShotCoverDirection - IsCover - plays PlayGlobal(5.0) at once over the s01 camera: how a cover
+// shot is told apart, BtlDamageChunk::IsCover, not traced, so a cover shot is played as a Shot here)
+bool Viewer::startCr3RangedCamera(const cr3::Cr3Action& a, size_t su) {
+    cr3::MbeFile::Row dir;
+    if (!cr3BattleTables.direction.find("CommandDirection", cr3ActionPlay.directionCommand, "iiii", dir)) return false;
+    if (dir.i(1) != 2 && dir.i(1) != 3) return false;
+    int type = dir.i(3);
+    if (cr3::MbeFile::Row attack; type < 0 &&
+        cr3BattleTables.direction.find("CommandDirection", cr3Rules.fighters[size_t(a.source)].attackCommand, "iiii", attack))
+        type = attack.i(3);
+    if ((type == 1 || type == 4) && a.target >= 0) {
+        const size_t target = size_t(cr3Rules.fighters[size_t(a.target)].unit);
+        playCr3Camera(pickCr3GlobalCamera(), cr3BattleCam.duration(), false, {}, 0, 0);
+        if (cr3Battle.cameraSize != 0) cr3Cam.lookAt = unitPoint(target, "DummyCP", 1.2f), cr3Cam.lookWeight = 0.4f;
+    } else {
+        playCr3AttackCamera(a, su);
+    }
+    SDL_Log("battle %.2f s: a ranged direction (kind %d, camera type %d) - %s", cr3BattleClock, dir.i(1), type, cr3Cam.name.c_str());
+    cr3ActionPlay.ranged = true;
+    playCr3MotionCamera(su, 15);
+    return true;
 }
 
 void Viewer::playCr3CasterCamera(const std::string& name, size_t source, const cr3::Vec3* at) {
@@ -1844,14 +1909,27 @@ bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
     }
     if (kind != 10) view.meleeOffset = {at[0] - bu.home[0], 0, at[2] - bu.home[2]}, view.meleeStep = Ramp{1, 1}, view.meleeTurn = Ramp{0, 0};
     else at = bu.home; // (MultiLastAttack: ChangePositionToFront - its own front, here its home)
-    // (hideOtherThanTarget: all but the attacker and its targets)
+    // (hideOtherThanTarget - BtlDamageChunk::initializeProcessingList 0x97c7f0: all but the attacker and its
+    // targets; a command of target kind 6 - a random foe - leaves every foe of the attacker shown too)
+    cr3::Cr3Command cc;
+    const bool allFoes = cr3Rules.command(a.command, cc) && cc.target == 6;
     for (size_t k = 0; k < cr3BattleUnits.size(); ++k) {
-        bool keep = k == su;
+        bool keep = k == su || (allFoes && k < cr3Battle.units.size() && cr3Battle.units[k].player != bu.player);
         for (const cr3::Cr3Hit& t : a.targets) keep |= cr3Rules.fighters[size_t(t.target)].unit == int(k);
         cr3BattleUnits[k].directionHidden = !keep;
     }
     cr3LastAttack = Cr3LastAttack();
-    cr3LastAttack.on = true, cr3LastAttack.unit = su, cr3LastAttack.finestArts = finestArts;
+    cr3LastAttack.on = true, cr3LastAttack.unit = su, cr3LastAttack.finestArts = finestArts, cr3LastAttack.kind = kind;
+    if (kind == 12 && bu.player && vsCommentary.on) { // (vPlay: PlayClimax 0x9a946c - the queue dropped, category 0x75;
+        // PlayClimaxAfter 0x9a94cc at the first hit: 0x76 or 0x76 + the Char id (1 .. 5, else none), 50 / 50, a second on -
+        // queued here, the queue waiting for the climax line anyway)
+        vsCommentary.queue.clear();
+        playVsComment(0x75);
+        const int f = cr3FighterOfUnit(su), c = f >= 0 ? cr3Rules.fighters[size_t(f)].id : 0;
+        const int other = c >= 1 && c <= 5 ? 0x76 + c : 0;
+        requestVsComment(SDL_rand(2) ? 0x76 : other, 1.0f);
+    }
+    const float baseEnd = cr3ActionPlay.end; // (the hits' end)
     if (finestArts) cr3StageHidden = true; // (BtlField::Hide: the stage's update, pose and draw stopped)
     if (!camera.empty()) {
         playCr3CasterCamera(camera, su, &at);
@@ -1868,8 +1946,34 @@ bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
         cr3ActionPlay.end = std::max(cr3ActionPlay.end, motionEnd + 2.0f);
         if (white < 0) cr3White.begin(cr3BattleClock + motionEnd, 1, 1, 0), cr3LastAttack.white = true; // (no frame in the row: white at its end)
     }
-    SDL_Log("battle %.2f s: a %s (kind %d, motion %d) - camera %s, white %s", cr3BattleClock, finestArts ? "finest arts" : "last attack", kind, ext,
-            camera.empty() ? "(none)" : camera.c_str(), white >= 0 ? std::to_string(int(white)).c_str() : "none");
+    if (kind == 30) { // (BtlHoldLastAttackDirection: the hold at the motion's change cue - its unit observer's state 1)
+        cr3LastAttack.holdAt = cr3BattleTables.animationChangeTime(bu.model, ext);
+        cr3LastAttack.holdUnit = tu;
+    }
+    if (kind == 39) {
+        // (BtlChildLastAttackDirection::vPlay 0x993a10: last, PlayAnimation(first target, 0x14) - the target's
+        // bt03, held on its last frame - updateAnimationEnd: types from 18 aren't sent back to the stance -,
+        // and its PlayCamera(20) on the target. Where that row has a camera it replaces the actor's at once:
+        // the camera observer's state 2 - VUpdate(BtlCameraMotion) 0x993cb4 - inside vPlay, the direction
+        // undone (home, showOtherThanTarget, PlayStayAnimation, the unit observer gone - no white -, FadeIn
+        // 0.15 over nothing white) and its end the hits'. Without one, a plain Last Attack)
+        setCr3Motion(tu, cr3MotionOf(20), false, true);
+        const std::string targetCamera = cr3BattleTables.unitCamera(foe.model, 20);
+        if (!targetCamera.empty()) playCr3CasterCamera(targetCamera, tu);
+        if (!targetCamera.empty() && cr3Cam.name == targetCamera) {
+            view.meleeOffset = {}, view.meleeStep = Ramp{0, 0};
+            for (Cr3BattleUnitView& u : cr3BattleUnits) u.directionHidden = false;
+            setCr3Motion(su, "bb01", true);
+            cr3White = Ramp{0, 0};
+            cr3LastAttack = Cr3LastAttack();
+            cr3ActionPlay.end = baseEnd;
+            SDL_Log("battle %.2f s: a child last attack - the target's %s camera %s, the direction undone", cr3BattleClock,
+                    cr3MotionOf(20).c_str(), targetCamera.c_str());
+            return true;
+        }
+    }
+    SDL_Log("battle %.2f s: a %s (kind %d, motion %d) - camera %s, white %s%s", cr3BattleClock, finestArts ? "finest arts" : "last attack", kind, ext,
+            camera.empty() ? "(none)" : camera.c_str(), white >= 0 ? std::to_string(int(white)).c_str() : "none", allFoes ? ", every foe shown" : "");
     return true;
 }
 
@@ -1890,14 +1994,39 @@ void Viewer::stepCr3LastAttack() {
     if (cr3LastAttack.restored && !cr3LastAttack.shown && cr3BattleClock >= cr3LastAttack.whiteEnd + 1.0f) {
         cr3LastAttack.shown = true;
         cr3StageHidden = false;
-        playCr3Camera(cr3Battle.cameras[4], 1.0f, false, {}, 0, 0);
+        playCr3Camera(pickCr3GlobalCamera(), 1.0f, false, {}, 0, 0); // (PlayGlobal(1.0))
         cr3White.begin(cr3BattleClock, 1, 0, 1.0f);
         SDL_Log("battle %.2f s: the finest arts' white lifted", cr3BattleClock);
     }
 }
 
+// BtlHoldLastAttackDirection (kind 30): VUpdate(BtlUnit) 0x99456c's state 1 - the actor's change cue -
+// holdTarget(): BtlDamageChunk::HoldTarget 0x97d284 -> BtlDamageTarget::Hold 0x988474, each target the hold
+// (status effect 32) took on, attached on the holder's effect point 2 (BtlUnit::Attach 0x9dfdd8); the first
+// target's stance and hit reactions bt07 (AnimCommon 24), locked (+0x206). Its event timer's event 3 - the
+// last hit - 0x994638 lets go: unlocked, BtlStatusEffectList::ChangeAnim's stance, PlayStayAnimation,
+// BtlStatusList::PlayRelease (releaseCr3Hold); nothing stays held after it
+void Viewer::stepCr3HoldLastAttack(const cr3::Cr3Action& a, float t) {
+    Cr3LastAttack& la = cr3LastAttack;
+    if (!la.on || la.kind != 30 || la.holding || la.released || la.holdAt < 0 || t < la.holdAt) return;
+    la.holding = true;
+    for (const cr3::Cr3Hit& th : a.targets)
+        if (std::find(th.effectsGiven.begin(), th.effectsGiven.end(), 32) != th.effectsGiven.end() || cr3Rules.hasEffect(th.target, 32)) {
+            cr3Held[a.source] = {th.target, 2};
+            SDL_Log("battle %.2f s: %d holds %d (a hold last attack)", cr3BattleClock, a.source, th.target);
+        }
+    setCr3Motion(la.holdUnit, cr3MotionOf(24), true);
+    cr3BattleUnits[la.holdUnit].heldPose = true;
+    SDL_Log("battle %.2f s: a hold last attack's hold - %s on %s", cr3BattleClock, cr3MotionOf(24).c_str(), cr3Battle.units[la.holdUnit].name.c_str());
+}
+
 void Viewer::endCr3LastAttack() {
     if (!cr3LastAttack.on) return;
+    if (cr3LastAttack.kind == 30 && cr3LastAttack.holding && !cr3LastAttack.released) { // (cut short: let go)
+        cr3BattleUnits[cr3LastAttack.holdUnit].heldPose = false;
+        for (size_t f = 0; f < cr3Rules.fighters.size(); ++f)
+            if (cr3Rules.fighters[f].unit == int(cr3LastAttack.unit)) releaseCr3Hold(int(f));
+    }
     cr3StageHidden = false;
     if (cr3LastAttack.finestArts && cr3LastAttack.shown) return void(cr3LastAttack = Cr3LastAttack());
     Cr3BattleUnitView& view = cr3BattleUnits[cr3LastAttack.unit];
@@ -1927,8 +2056,8 @@ void Viewer::playCr3SpellReceiverCamera(const cr3::Cr3Action& action, size_t sou
             playCr3Camera(name, duration, false, point, foe.player ? 0 : foe.yaw, 0);
             break;
         }
-        case 4:
-            playCr3Camera(cr3Battle.cameras[4], duration, false, {}, 0, 0);
+        case 4: // (PlayGlobalCamera -> PlayGlobalToTarget)
+            playCr3Camera(pickCr3GlobalCamera(), duration, false, {}, 0, 0);
             if (cr3Battle.cameraSize != 0) {
                 cr3Cam.lookAt = unitPoint(actor.player ? target : source, "DummyCP", 1.2f);
                 cr3Cam.lookWeight = 0.4f;
@@ -2094,6 +2223,7 @@ void Viewer::startCr3Action() {
     if (motion == "bo01" && a.targets.size() == 1 && a.partners.empty())
         startCr3Melee(su, size_t(cr3Rules.fighters[size_t(a.targets.front().target)].unit));
     if (startCr3LastAttack(a, su)) return;
+    if (startCr3RangedCamera(a, su)) return;
     auto& play = cr3ActionPlay;
     if (play.timing.spellHandoff < 0 || cr3TurnItems.count(a.source)) {
         playCr3AttackCamera(a, su);
@@ -2126,9 +2256,11 @@ void Viewer::stepCr3Action() {
         const std::string motion = cr3MotionOf(next.type);
         setCr3Motion(source, motion, false, cr3ActionPlay.melee);
         for (int partner : a.partners) setCr3Motion(size_t(cr3Rules.fighters[size_t(partner)].unit), motion, false);
+        if (cr3ActionPlay.ranged) playCr3MotionCamera(source, next.type); // (onAnimationChange 0x98dc34 / 0x99a414: 16, 17 through PlayAnimation)
         if (cr3BattleUnits[source].motion == motion && cr3BattleUnits[source].body.animLoaded)
             cr3ActionPlay.end = std::max(cr3ActionPlay.end, t + cr3BattleUnits[source].body.anim.duration());
     }
+    stepCr3HoldLastAttack(a, t);
     stepCr3CastEffects(source, t);
     if (!finishCr3SpellHandoff(a, source, t)) return;
     stepCr3ActionEffects(a, source, t);
@@ -2175,11 +2307,19 @@ void Viewer::stepCr3Action() {
             SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: %d damage (%d mp) on %s", cr3BattleClock, d, mpD, cr3Battle.units[tu].name.c_str());
             if (flags & 1) cr3Popups.push_back({-1, dp, cr3BattleClock, 5});
             cr3HitEffects(cr3ActionPlay.directionCommand, hc.element, tu, flags & 1);
-            if (d > 0 || (d == 0 && mpD > 0) || (d == 0 && mpD == 0 && !hc.ally())) setCr3Motion(tu, "bd01", false);
+            if (cr3BattleUnits[tu].heldPose) setCr3Motion(tu, cr3MotionOf(24), true); // (held: ChangeDamageAnimation(0x18))
+            else if (d > 0 || (d == 0 && mpD > 0) || (d == 0 && mpD == 0 && !hc.ally())) setCr3Motion(tu, "bd01", false);
             else if (shown > 0 && cr3BattleUnits[tu].knockedOut) restoreCr3Unit(tu);
         }
         audio.playSe(0x164, false);
         if (cr3ActionPlay.hitsShown == int(mostHits)) {
+            if (Cr3LastAttack& la = cr3LastAttack; la.on && la.kind == 30 && la.holding && !la.released) { // (the hold's event 3)
+                la.released = true;
+                cr3BattleUnits[la.holdUnit].heldPose = false;
+                setCr3Motion(la.holdUnit, "bb01", true);
+                releaseCr3Hold(a.source);
+                SDL_Log("battle %.2f s: a hold last attack's release at its last hit", cr3BattleClock);
+            }
             announceCr3Effects(a);
             // BtlDirection::playKnockout follows the hit sequence, including misses.
             for (const cr3::Cr3Hit& th : a.targets) {
@@ -2213,7 +2353,7 @@ void Viewer::stepCr3Action() {
         if (a.command == kCr3ReleaseDirection || a.command == kCr3WaitDieDirection) {
             releaseCr3Hold(a.source);
         } else if (cr3::Cr3Command dc; a.command >= 0 && cr3Rules.command(a.command, dc)) {
-            if (dc.direction == 0x11 || dc.direction == 0x1e) {
+            if (dc.direction == 0x11) { // (0x1e's hold: the direction's own - stepCr3HoldLastAttack -, let go at its last hit)
                 for (const cr3::Cr3Hit& th : a.targets)
                     if (std::find(th.effectsGiven.begin(), th.effectsGiven.end(), 32) != th.effectsGiven.end() || cr3Rules.hasEffect(th.target, 32)) {
                         cr3Held[a.source] = {th.target, 2};

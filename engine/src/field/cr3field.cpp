@@ -277,6 +277,14 @@ const char* cr3MotionName(Cr3Motion m) {
     switch (m) {
     case Cr3Motion::Walk: return "ff01";
     case Cr3Motion::Run: return "ff02";
+    case Cr3Motion::Fall: return "ff03";
+    case Cr3Motion::LadderOn: return "fh01";
+    case Cr3Motion::LadderUp: return "fh03";
+    case Cr3Motion::LadderOffTop: return "fh04";
+    case Cr3Motion::LadderOnTop: return "fh05";
+    case Cr3Motion::LadderDown: return "fh06";
+    case Cr3Motion::LadderOffBottom: return "fh07";
+    case Cr3Motion::LadderHold: return "fh02";
     case Cr3Motion::RideIdle: return "fr01";
     case Cr3Motion::RideWalk: return "fr02";
     case Cr3Motion::RideRun: return "fr03";

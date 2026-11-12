@@ -60,7 +60,18 @@ void Viewer::checkBalloons() {
 
 bool Viewer::areaDragFree() const { return areaMode && !eventMode && !(areaEvents && areaEvents->running()) && cr3Camp.stage == 0; }
 
+// (Fld2TaskTouch +0xe8, ChangeToyCamera's: UpdateTouch 0x87a05c takes a press only within the screen's centred 3:2 -
+// all of it at 3:2, 1620 x 1080 of 1920 x 1080)
+bool Viewer::toyCamTouchBox(float fx, float fy) const {
+    if (!toyCam.on) return true;
+    int w = 960, h = 640;
+    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    const float W = float(w), H = float(std::max(h, 1));
+    return std::fabs(fx - 0.5f) * W <= 0.5f * std::min(W, 1.5f * H) && std::fabs(fy - 0.5f) * H <= 0.5f * std::min(H, W / 1.5f);
+}
+
 void Viewer::areaDragStart(float fx, float fy, bool own, SDL_FingerID finger) {
+    if (!toyCamTouchBox(fx, fy)) return;
     areaDrag = Cr3AreaDrag(), areaDrag.on = true, areaDrag.x0 = areaDrag.x = fx, areaDrag.y0 = areaDrag.y = fy;
     areaDrag.own = own, areaDrag.finger = finger;
 }
@@ -78,7 +89,7 @@ void Viewer::areaDragEnd() {
     if (tapped) tap(); // (a touch without a move: the field's tap)
 }
 
-bool Viewer::areaCamFree() const { return areaDragFree() && areaCamera.turnable(); }
+bool Viewer::areaCamFree() const { return areaDragFree() && areaCamera.turnable() && !area2D.on; } // (Fld2CameraOrtho::Setup: Fld2TaskTouch +0xbc = 2 - all the screen the move pad)
 
 bool Viewer::cameraHalf(float fx, float fy) const { return campOptions.hands == 1 ? fy < 0.5f : fx > 0.5f; }
 
@@ -88,6 +99,7 @@ void Viewer::uiUnits(float fx, float fy, float& ux, float& uy) const { // (the U
 }
 
 void Viewer::areaCamStart(float fx, float fy, bool mouse, bool own, SDL_FingerID finger) {
+    if (!toyCamTouchBox(fx, fy)) return;
     areaCam = Cr3AreaCam(), areaCam.on = true, areaCam.mouse = mouse, areaCam.own = own, areaCam.finger = finger;
     areaCam.x0 = areaCam.x = fx, areaCam.y0 = areaCam.y = fy;
 }
@@ -165,6 +177,8 @@ void Viewer::tap() {
     if (cr3BattleMode) return cr3BattleTap();
     if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
         if (areaEvents->running()) areaEvents->touch();
+        else if (areaClimb.on || areaFall.on) {}
+        else if (areaLadderNear >= 0 && !toyCam.on) startAreaClimb(areaLadderNear, areaLadderNearEnd); // (CheckGimmick_Ladder -> SetStateLadder)
         else if (areaCheckNear >= 0 && !toyCam.on) {
             const AreaGimmick& g = areaGimmicks[size_t(areaCheckNear)];
             if (g.box >= 0) game.cr3OpenBox = g.box; // (Fld2Box::ExecOpen: Fld2TBoxList::SetOpenBox)
@@ -1656,7 +1670,206 @@ void Viewer::stepFieldBombs(float dt) {
     }
 }
 
+// Fld2TaskPlayer's footsteps (SM_Walk 0x8737a0 / SM_Run 0x873a2c / SM_RideWalk 0x8740c0 / SM_RideRun
+// 0x874348): only on the ground, the model's (x, z) way gone added up (SM_Idle keeps the last place
+// but not the sum); past 0.6 / 1.5 (riding 0.9 / 2.25) GetMoveSE (0x8783b0): the surface 1.0 below
+// (its first "se00" .. "se11", else row 0), one of its three SEs at random (0x00f3e3a4); riding, any
+// matched row but se06's is "se_vehicle"'s. A matched row 0 / 1 / 3 / 5 / 6 also leaves its foot
+// effect (CreateFootEffect 0x879148: fe001kem01 / 03 / 02, at the feet, played once). Not while
+// moved by a script (SM_MoveTo), falling or on a ladder
+void Viewer::stepAreaFootsteps(bool stepping, bool run, float dt) {
+    for (AreaDust& d : areaDust) d.t += dt;
+    areaDust.erase(std::remove_if(areaDust.begin(), areaDust.end(), [&](const AreaDust& d) { return d.t >= fieldAnimDuration(d.model); }), areaDust.end());
+    if (!areaWalker) return;
+    const cr3::Vec3 p = areaWalker->position();
+    if (!areaWalker->onGround()) return;
+    const float gone = areaStepHave ? std::hypot(p[0] - areaStepFrom[0], p[2] - areaStepFrom[2]) : 0.0f;
+    areaStepFrom = p, areaStepHave = true;
+    if (!stepping) return;
+    areaStepGone += gone;
+    const float limit = (run ? 1.5f : 0.6f) * (areaRide.on ? 1.5f : 1.0f);
+    if (areaStepGone <= limit) return;
+    areaStepGone = 0;
+    const std::string under = area.walls.surfaceBelow(p, areaWalker->radius + 1.0f);
+    int row = -1;
+    for (int k = 0; k < 12 && row < 0; ++k) {
+        char name[8];
+        std::snprintf(name, sizeof name, "se%02d", k);
+        if (under.find(name) != std::string::npos) row = k;
+    }
+    if (row < 0 && under.find("se_vehicle") != std::string::npos) row = 12;
+    if (row >= 0) {
+        const char* dust = row == 0 || row == 1 || row == 3 ? "fe001kem01" : row == 5 ? "fe001kem03" : row == 6 ? "fe001kem02" : nullptr;
+        if (dust) areaDust.push_back({dust, {p[0], p[1] - areaWalker->radius, p[2]}, 0, 0});
+        if (areaRide.on && row != 6) row = 12;
+    } else row = 0;
+    static const int kFirst[13] = {101, 104, 107, 110, 113, 116, 119, 122, 125, 128, 131, 137, 134};
+    char se[16];
+    std::snprintf(se, sizeof se, "fe_%03d", kFirst[row] + int(SDL_rand(3)));
+    audio.playSe(se, false);
+    if (SDL_getenv("CR3_EVTANIM")) SDL_Log("area %s: step on \"%s\": %s", area.name.c_str(), under.c_str(), se);
+}
+
+void Viewer::stepAreaFall() {
+    if (!areaWalker) return;
+    AreaFall& f = areaFall;
+    const cr3::Vec3 p = areaWalker->position(); // (the controller - GetPositionCol; the model radius below)
+    const float probe = areaRide.on ? 1.0f : 0.5f, model = p[1] - areaWalker->radius;
+    if (!f.on) {
+        if (area.walls.distanceBelow(p, probe) >= 0) f.ground = true;
+        else if (f.ground) f.edge = {p[0], model, p[2]}, f.ground = false; // (+0x1e0: the edge's model place)
+        else if (model - f.edge[1] < -probe) { // (SetStateFall)
+            f.on = true;
+            if (areaRide.on) setAreaMotion(cr3::Cr3Motion::RideIdle), setAreaRideMotion(0);
+            else setAreaMotion(cr3::Cr3Motion::Fall);
+            SDL_Log("area %s: falling from (%.2f %.2f %.2f)", area.name.c_str(), f.edge[0], f.edge[1], f.edge[2]);
+        }
+        f.lastY = p[1];
+        return;
+    }
+    bool landed = false;
+    if (!areaRide.on) { // (SM_Fall: a ray from the edge's height to 0.5 under the controller)
+        const float depth = f.edge[1] - (p[1] - 0.5f);
+        landed = depth > 0 && area.walls.distanceBelow({p[0], f.edge[1], p[2]}, depth) >= 0;
+    } else if (p[1] - f.lastY >= -1e-4f) { // (SM_RideFall: once it no longer goes down - to 0.3 under it)
+        const float depth = f.edge[1] - (p[1] - 0.3f);
+        landed = depth > 0 && area.walls.distanceBelow({p[0], f.edge[1], p[2]}, depth) >= 0;
+    }
+    f.lastY = p[1];
+    if (!landed) return;
+    f.on = false, f.ground = true;
+    if (!areaRide.on) setAreaMotion(cr3::Cr3Motion::Idle), audio.playSe("fe_033", false);
+    SDL_Log("area %s: landed at (%.2f %.2f %.2f)", area.name.c_str(), p[0], model, p[2]);
+}
+
+// (SM_Ladder's ReqPlaySE: one of fe_125 .. fe_127 - table 0x00f3e404 - at each time after now)
+void Viewer::areaClimbSes(std::initializer_list<float> at) {
+    AreaClimb& c = areaClimb;
+    c.ses = 0, c.seT = 0;
+    for (float t : at)
+        if (c.ses < 6) c.seAt[c.ses++] = t;
+}
+
+// SetStateLadder (0x878ae0): the player to the end's joint, 0.5 back along its z, over 0.5 s,
+// turned to it (sub-state 0 / 1), then on (fh01 from the foot / fh05 from the top)
+void Viewer::startAreaClimb(int ladder, int end) {
+    if (!areaWalker || ladder < 0 || size_t(ladder) >= areaLadders.size()) return;
+    const AreaLadder& l = areaLadders[size_t(ladder)];
+    const cr3::Mat34& j = end == 0 ? l.ups : l.dws;
+    float z[3] = {j.m[2], j.m[6], j.m[10]};
+    const float zl = std::max(std::hypot(z[0], z[1], z[2]), 1e-6f);
+    for (float& v : z) v /= zl;
+    AreaClimb& c = areaClimb;
+    c = AreaClimb();
+    c.on = true, c.ladder = ladder, c.down = end, c.stage = 1, c.t = 0;
+    const cr3::Vec3 p = areaWalker->position();
+    c.from = {p[0], p[1] - areaWalker->radius, p[2]};
+    c.to = {j.m[3] - z[0] * 0.5f, c.from[1], j.m[11] - z[2] * 0.5f};
+    c.yawFrom = areaYaw, c.yawTo = std::atan2(z[0], z[2]);
+    // (each end's floor under its joint - the joints stand above it)
+    auto floorUnder = [&](const cr3::Mat34& m, float fallback) {
+        const float d = area.walls.distanceBelow({m.m[3], m.m[7] + 0.1f, m.m[11]}, 3.0f);
+        return d >= 0 ? m.m[7] + 0.1f - d : fallback;
+    };
+    c.footFloor = l.hasUps ? floorUnder(l.ups, l.ups.m[7]) : c.from[1] - 3;
+    c.topFloor = l.hasDws ? floorUnder(l.dws, l.dws.m[7]) : c.from[1] + 3;
+    setAreaMotion(cr3::Cr3Motion::Walk);
+    SDL_Log("area %s: ladder %s from the %s (floors %.2f .. %.2f)", area.name.c_str(), l.name.c_str(), end == 0 ? "foot" : "top", c.footFloor, c.topFloor);
+}
+
+void Viewer::stepAreaClimb(float dt, float sy) {
+    AreaClimb& c = areaClimb;
+    const AreaLadder& l = areaLadders[size_t(c.ladder)];
+    auto axis = [](const cr3::Mat34& m) {
+        cr3::Vec3 z{m.m[2], m.m[6], m.m[10]};
+        const float n = std::max(std::hypot(z[0], z[1], z[2]), 1e-6f);
+        return cr3::Vec3{z[0] / n, z[1] / n, z[2] / n};
+    };
+    auto place = [&](const cr3::Vec3& model) { areaWalker->setPosition({model[0], model[1] + areaWalker->radius, model[2]}), areaWalker->setVelocity({0, 0, 0}); };
+    auto lerp = [](const cr3::Vec3& a, const cr3::Vec3& b, float k) { return cr3::Vec3{a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k}; };
+    c.t += dt, c.seT += dt;
+    for (int k = 0; k < c.ses; ++k)
+        if (c.seAt[k] >= 0 && c.seT >= c.seAt[k]) {
+            char se[16];
+            std::snprintf(se, sizeof se, "fe_%03d", 125 + int(SDL_rand(3)));
+            audio.playSe(se, false), c.seAt[k] = -1;
+        }
+    const cr3::Vec3 upsZ = axis(l.ups), dwsZ = axis(l.dws);
+    auto offLadder = [&](bool atTop) { // (sub-state 6: fh04 - the foot's z on, a rung up, SEs now, 0.5, 1.0 -
+        // or fh07 - the top's z on, a rung down, SEs now, 0.5)
+        const cr3::Vec3 z = atTop ? upsZ : dwsZ;
+        place({c.to[0] + z[0], c.to[1] + (atTop ? 1.0f : -1.0f), c.to[2] + z[2]});
+        if (atTop) setAreaMotion(cr3::Cr3Motion::LadderOffTop, true), areaClimbSes({0.0f, 0.5f, 1.0f});
+        else setAreaMotion(cr3::Cr3Motion::LadderOffBottom, true), areaClimbSes({0.0f, 0.5f});
+        c.stage = atTop ? 5 : 6, c.t = 0;
+    };
+    switch (c.stage) {
+    case 1: { // (0.5 s to the joint, turned to it - Fld2ValueCramp)
+        const float k = std::min(c.t / 0.5f, 1.0f);
+        place(lerp(c.from, c.to, k));
+        areaYaw = c.yawFrom + std::remainder(c.yawTo - c.yawFrom, 6.2831853f) * k;
+        if (k < 1) break;
+        c.stage = 2, c.t = 0;
+        if (c.down) setAreaMotion(cr3::Cr3Motion::LadderOnTop, true), areaClimbSes({1.0f, 1.5f, 2.0f, 2.5f, 3.0f});
+        else setAreaMotion(cr3::Cr3Motion::LadderOn, true), areaClimbSes({0.5f, 1.0f});
+        break;
+    }
+    case 2: // (the motion out; then on the ladder - its z on, a rung up / down - fh02)
+        if (c.t < (c.down ? 3.0f : 1.233f)) break;
+        {
+            const cr3::Vec3 z = c.down ? dwsZ : upsZ;
+            place({c.to[0] + z[0], c.to[1] + (c.down ? -1.0f : 1.0f), c.to[2] + z[2]});
+            if (c.down) areaYaw = std::atan2(upsZ[0], upsZ[2]); // (from the top: the foot's turn)
+        }
+        c.stage = 3, c.t = 0, c.rungs = 0;
+        setAreaMotion(cr3::Cr3Motion::LadderHold);
+        break;
+    case 3: { // (held: up / down a rung - fh03 / fh06, 1.0 over 0.8333 s, an SE now and 0.5 s on; back past
+        // where it got on - down from the foot's, up from the top's - straight off)
+        const int way = sy > 0.3f ? 1 : sy < -0.3f ? -1 : 0;
+        if (!way) break;
+        const cr3::Vec3 p = areaWalker->position();
+        c.from = {p[0], p[1] - areaWalker->radius, p[2]};
+        if ((way < 0 && !c.down && c.rungs == 0) || (way > 0 && c.down && c.rungs == 0)) {
+            c.to = c.from;
+            offLadder(way > 0);
+            break;
+        }
+        c.to = {c.from[0], c.from[1] + float(way), c.from[2]};
+        c.rungs += way, c.stage = 4, c.t = 0;
+        setAreaMotion(way > 0 ? cr3::Cr3Motion::LadderUp : cr3::Cr3Motion::LadderDown, true, true);
+        areaClimbSes({0.0f, 0.5f});
+        break;
+    }
+    case 4: { // (the rung's move; at the top's end (upe) / the foot: off, else held again)
+        const float k = std::min(c.t / 0.8333f, 1.0f);
+        place(lerp(c.from, c.to, k));
+        if (k < 1) break;
+        if (c.to[1] + 1.0f >= c.topFloor - 0.25f) offLadder(true);
+        else if (c.to[1] - 1.0f <= c.footFloor + 0.25f) offLadder(false);
+        else c.stage = 3, setAreaMotion(cr3::Cr3Motion::LadderHold);
+        break;
+    }
+    case 5:
+    case 6: // (the motion out: idle again, the field's menu back)
+        if (c.t < (c.stage == 5 ? 3.0f : 1.233f)) break;
+        SDL_Log("area %s: off ladder %s at the %s", area.name.c_str(), l.name.c_str(), c.stage == 5 ? "top" : "foot");
+        c = AreaClimb();
+        areaFall.ground = true;
+        setAreaMotion(cr3::Cr3Motion::Idle);
+        break;
+    }
+}
+
 void Viewer::drawFieldBombs(const float* vp) {
+    for (const AreaDust& d : areaDust) { // (the footsteps' effects: at the feet, unturned)
+        ViewFigure& f = fieldEffectFigs[d.model];
+        if (f.meshes.empty()) continue;
+        f.place = cr3::Mat34();
+        f.place.m[3] = d.pos[0], f.place.m[7] = d.pos[1], f.place.m[11] = d.pos[2];
+        pose(f, d.t, false);
+        drawFigure(f, vp);
+    }
     for (const FieldBomb& b : fieldBombs) {
         if (!b.on) continue;
         const std::string model = b.stage == 1 ? "fe002bom01" : "fe002bom02";
@@ -1697,7 +1910,8 @@ void Viewer::drawFieldBombs(const float* vp) {
 void Viewer::setupAreaGimmicks(const std::string& name) {
     for (AreaNpc& npc : areaNpcs) unload(npc.body), unload(npc.head), unload(npc.alt);
     areaNpcs.clear();
-    areaGimmicks.clear(), areaCheckNear = -1, areaVehicleBoxes.clear();
+    areaGimmicks.clear(), areaCheckNear = -1, areaVehicleBoxes.clear(), areaLadders.clear(), areaLadderNear = -1;
+    areaClimb = AreaClimb(), areaFall = AreaFall(), areaDust.clear(), areaStepHave = false, areaStepGone = 0;
     std::vector<uint8_t> d;
     cr3::Skeleton sk;
     if (!archive.read(name + "p.skel", d) || !cr3::parseSkeleton(d, sk)) return;
@@ -1714,6 +1928,14 @@ void Viewer::setupAreaGimmicks(const std::string& name) {
             // party's j<id>_00, the monsters' m<id>_<nn>, each's function named so, tapped like
             // a check object)
             areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false, {}});
+        else if (names[j].compare(0, 12, "ragdoll_ldr_") == 0 && names[j].size() >= 18) { // (Fld2Ladder::Create: ragdoll_ldr_NN_ups / dws / upe; lad unused)
+            const std::string ladder = names[j].substr(8, 6), part = names[j].substr(15, 3);
+            auto it = std::find_if(areaLadders.begin(), areaLadders.end(), [&](const AreaLadder& l) { return l.name == ladder; });
+            if (it == areaLadders.end()) areaLadders.push_back({ladder, {}, {}, {}}), it = areaLadders.end() - 1;
+            if (part == "ups") it->ups = w[j], it->hasUps = true;
+            else if (part == "dws") it->dws = w[j], it->hasDws = true;
+            else if (part == "upe") it->upe = w[j], it->hasUpe = true;
+        }
         else if (names[j].compare(0, 10, "ragdoll_vc") == 0) // (Fld2TaskGimmick::SetGimmick: table 20, Fld2VehicleCollision)
             areaVehicleBoxes.push_back({names[j].substr(8), w[j]});
         else if (names[j].compare(0, 11, "ragdoll_ac_") == 0) // (the way on to another area: ac_t0202_p1)
@@ -1723,6 +1945,9 @@ void Viewer::setupAreaGimmicks(const std::string& name) {
             g.box = b, g.boxName = names[j].substr(8);
             areaGimmicks.push_back(g);
         }
+    for (const AreaLadder& l : areaLadders)
+        SDL_Log("area %s: ladder %s, foot (%.2f %.2f %.2f), top (%.2f %.2f %.2f)", name.c_str(), l.name.c_str(), l.ups.m[3], l.ups.m[7], l.ups.m[11],
+                l.dws.m[3], l.dws.m[7], l.dws.m[11]);
     for (const auto& [n, m] : areaVehicleBoxes)
         SDL_Log("area %s: vehicle collision %s at (%.2f %.2f %.2f), %.2f x %.2f x %.2f", name.c_str(), n.c_str(), m.m[3], m.m[7], m.m[11],
                 std::hypot(m.m[0], m.m[4], m.m[8]) * 0.1f, std::hypot(m.m[1], m.m[5], m.m[9]) * 0.1f, std::hypot(m.m[2], m.m[6], m.m[10]) * 0.1f);
@@ -2177,6 +2402,16 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
     vm.setNative("InterfaceWindow", "EndTalkNextSeasonEventMenu", [](cr3::NativeCall&) {});
     vm.setNative("InterfaceWindow", "EndColosseumTalk", [](cr3::NativeCall&) {});
     vm.setNative("InterfaceWindow", "CheckAliveDownLoadMenuMain", [](cr3::NativeCall& c) { c.result(false); });
+    // (the season event's and the colosseum's menus: only ReserveSeasonEventMenu / ReserveColosseumMenu
+    // call these, and no shipped script calls those - VS mode replaced the colosseum. Inert, so the dead
+    // code can't misbehave: ReserveColosseumMenu's CheckColosseumReturn() - 1 needs a number)
+    vm.setNative("InterfaceWindow", "CreateSeasonEventMenu", [](cr3::NativeCall&) {});
+    vm.setNative("InterfaceWindow", "CheckEndSeasonEventMenu", [](cr3::NativeCall& c) { c.result(false); });
+    vm.setNative("InterfaceWindow", "CheckSelectTalkSeasonEventMenu", [](cr3::NativeCall& c) { c.result(0); });
+    vm.setNative("InterfaceWindow", "CreateColosseumMenuMain", [](cr3::NativeCall&) {});
+    vm.setNative("InterfaceWindow", "CheckColosseumSelectTalk", [](cr3::NativeCall& c) { c.result(false); });
+    vm.setNative("InterfaceWindow", "CheckColosseumReturn", [](cr3::NativeCall& c) { c.result(1); }); // (1: closed, nothing chosen)
+    vm.setNative("Cr3System", "ColosseumIn", [](cr3::NativeCall&) { SDL_Log("ColosseumIn: not in the shipped game"); });
     vm.setNative("Cr3FieldMapCharacter", "SetPos_p000", [](cr3::NativeCall&) {});
     vm.setNative("Cr3FieldMapCharacter", "SetRot_p000", [](cr3::NativeCall&) {});
     // (Cr3BindFieldMapCamera 0x00851d20: SetMode / Scroll / ScrollTo - Fld2SetFieldMapCameraMode
@@ -2198,6 +2433,26 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
         area2D.t = 0, area2D.dur = float(c.integer(2)) * 0.033333335f;
         SDL_Log("area %s: scrolling to (%.3f %.3f) over %.2f s", this->area.name.c_str(), double(area2D.toX), double(area2D.toY), double(area2D.dur));
     });
+    // (Fld2SetFieldMapCameraPos 0x0086f198 / GetPos_X 0x0086f268 / GetPos_Y 0x0086f318: the ortho camera's alone -
+    // SetDirectScroll((W x / -960) k, (H y / -640) k), k = (W / H) / 1.5, held within the scroll's stops; the
+    // mode left as it is. No shipped script calls them in a 2D area)
+    vm.setNative("Cr3FieldMapCamera", "SetPos", [this, area](cr3::NativeCall& c) {
+        if (!area || !area2D.on) return;
+        int w = 960, h = 640;
+        if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+        const float k = float(w) / float(std::max(h, 1)) / 1.5f;
+        area2D.x = std::clamp(-c.number(0) / 960.0f * k, -area2DMaxX(), area2DMaxX());
+        area2D.y = std::clamp(-c.number(1) / 640.0f * k, -area2DMaxY(), area2DMaxY());
+        SDL_Log("area %s: the 2D camera put at (%.3f %.3f)", this->area.name.c_str(), double(area2D.x), double(area2D.y));
+    });
+    for (int axis = 0; axis < 2; ++axis)
+        vm.setNative("Cr3FieldMapCamera", axis ? "GetPos_Y" : "GetPos_X", [this, area, axis](cr3::NativeCall& c) {
+            if (!area || !area2D.on) return c.result(0.0f);
+            int w = 960, h = 640;
+            if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+            const float k = float(w) / float(std::max(h, 1)) / 1.5f;
+            c.result(-(axis ? area2D.y * 640.0f : area2D.x * 960.0f) / k);
+        });
     // the camp's top over an event (InterfaceMain::SetCampWindowParty: PauseFieldInterface, the
     // camp's windows - CampTopMenu in its event mode -, Cr3FadeIn(0, 5))
     vm.setNative("InterfaceWindow", "SetCampWindowParty", [this](cr3::NativeCall&) {
@@ -2220,8 +2475,13 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
         SDL_Log("camp: party panels unlocked");
     });
     // (round 9: the gene status window and the gene disposal before a reward - Func3<int, int, bool>,
-    // Func0 bool, Func0, Func0 int; the skill slots' help - the bool - isn't in, any tap closes it)
-    vm.setNative("InterfaceWindow", "CreateGeneStatusSCModalMenu", [this](cr3::NativeCall& c) { openScriptGeneStatus(c.integer(0), c.integer(1)); });
+    // Func0 bool, Func0, Func0 int. The bool - 0xa7 param 9, GeneStatusMenu +0xf70: the skill slots'
+    // help on a tap (TouchGestureTap 0xa9e504), the window kept - isn't in: no shipped script passes
+    // true, so any tap closes it)
+    vm.setNative("InterfaceWindow", "CreateGeneStatusSCModalMenu", [this](cr3::NativeCall& c) {
+        if (c.boolean(2, false)) SDL_Log("gene: status with its skills' help asked (not in: closed by any tap)");
+        openScriptGeneStatus(c.integer(0), c.integer(1));
+    });
     vm.setNative("InterfaceWindow", "AliveGeneStatusMenu", [this](cr3::NativeCall& c) { c.result(scriptGeneStatus && geneInspectOpen); });
     vm.setNative("InterfaceWindow", "CreateDisposalEquipMenu_Gene", [this](cr3::NativeCall&) { openScriptGeneDisposal(); });
     vm.setNative("InterfaceWindow", "GetDisposalEquipMenuResult", [this](cr3::NativeCall& c) { c.result(geneDisposal.result); });
@@ -2481,8 +2741,11 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
     // (Cr3System.GetDungeonNum / GetAreaNum: the dungeon - the Field_ table's, t01 0, d01 5 - and the area from 0)
     game.dungeon = cr3::cr3DungeonNum(name);
     game.area = std::atoi(name.substr(3, 2).c_str()) - 1;
-    if (game.dungeon != lastAreaDungeon || boxRedraw) { // (Fld2Main SM_Init / the dungeon changed - or SetBoxDrawing's +0xfa: Fld2TBoxList::Drawing)
-        boxRedraw = false;
+    // (Fld2Main SM_Init / the dungeon changed - or SetBoxDrawing's +0xfa, read and cleared by SM_ChangeArea 0x87b378 alone - an
+    // area-to-area change, not the field after a battle or a vista: Fld2TBoxList::Drawing, the gold boxes, CreateAceCoupling)
+    const bool redraw = boxRedraw && areaChanging;
+    if (redraw) boxRedraw = false;
+    if (game.dungeon != lastAreaDungeon || redraw) {
         game.cr3Boxes.clear(), game.cr3OpenBox = -1;
         if (game.dungeon > 4) drawCr3Boxes(name);
     }
@@ -2533,8 +2796,8 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
 }
 
 // Fld2TaskPlayer::SetMotion: the motion, blended in over 1/6 s
-void Viewer::setAreaMotion(cr3::Cr3Motion m) {
-    if (areaMotionSet && m == areaMotion) return;
+void Viewer::setAreaMotion(cr3::Cr3Motion m, bool once, bool again) {
+    if (areaMotionSet && m == areaMotion && !again) return;
     const std::string want = motionBase(areaPlayerName) + "_" + cr3::cr3MotionName(m) + ".anim";
     if (std::find(areaPlayer.anims.begin(), areaPlayer.anims.end(), want) == areaPlayer.anims.end()) return;
     for (ViewFigure* fp : {&areaPlayer, &areaPlayerHead}) { // (the head: its own animator, the same motion)
@@ -2547,7 +2810,7 @@ void Viewer::setAreaMotion(cr3::Cr3Motion m) {
         loadAnim(f, size_t(it - f.anims.begin()));
         time = keep;
     }
-    areaMotion = m, areaMotionSet = true, areaMotionAge = 0;
+    areaMotion = m, areaMotionSet = true, areaMotionAge = 0, areaMotionOnce = once;
 }
 
 // (CreateArea2D: by its map id alone - e0013 / e0015 -; <area>'s figure's camera - Setup:
@@ -2736,7 +2999,10 @@ bool Viewer::enterPopPoint(const std::string& pop) {
     const std::string map = pop.substr(0, 5);
     game.popPoint2.clear(); // (Fld2ClearPopPoint)
     SDL_Log("area %s: to %s at %s", area.name.c_str(), map.c_str(), pop.c_str());
-    if (!loadArea(map, areaPlayerArgName)) return false;
+    areaChanging = true; // (SM_ChangeArea)
+    const bool entered = loadArea(map, areaPlayerArgName);
+    areaChanging = false;
+    if (!entered) return false;
     std::vector<uint8_t> d;
     cr3::Skeleton sk;
     if (archive.read(map + "p.skel", d) && cr3::parseSkeleton(d, sk)) {
@@ -2874,7 +3140,9 @@ void Viewer::afterAreaScript() {
         if (const char* pfx = cr3::cr3DungeonPrefix(d)) {
             char map[16];
             std::snprintf(map, sizeof map, "%s%02d", pfx, a + 1);
+            areaChanging = true; // (SM_ChangeArea)
             loadArea(map, areaPlayerArgName);
+            areaChanging = false;
             return;
         }
     }
@@ -3121,12 +3389,16 @@ void Viewer::countEncounter() {
 
 void Viewer::updateArea(float dt, float sx, float sy, bool run) {
     takeAutoBattleToken();
-    areaClock += dt, areaMotionAge += dt;
-    stepFieldEffects(dt);
+    // (SetEncount 0x86eeb4 - Fld2System +0x342: Fld2TaskPlayer::OnUpdate and Fld2TaskGimmick::OnUpdate skip all - the
+    // player, the gimmicks, the people and their effects frozen in pose; the camera, the touch and the script run on)
+    if (!areaHeld) {
+        areaClock += dt, areaMotionAge += dt;
+        stepFieldEffects(dt);
+        stepAreaMotions();
+        stepAreaTurns(dt);
+        stepAreaWanderers(dt);
+    }
     stepAreaScriptCam(dt);
-    stepAreaMotions();
-    stepAreaTurns(dt);
-    stepAreaWanderers(dt);
     if (areaEvents) { // (the area's script at the game's updates - its fades and windows on after it)
         const bool wasRunning = areaEvents->running();
         areaEventClock = std::min(areaEventClock + dt, 0.25f);
@@ -3451,10 +3723,15 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         sx = sy = 0, run = false, wanderLeft = 0;
         areaCamera.eye = toyCam.eye, areaCamera.at = toyCam.look;
     }
+    const float climbIn = sy; // (on a ladder the stick climbs - SM_Ladder: touch +0x11c / +0x11d)
+    if (areaFall.on || areaClimb.on) sx = sy = 0, run = false, wanderLeft = 0; // (SM_Fall: Move(0, 0))
     const bool* keys = SDL_GetKeyboardState(nullptr);
-    if (keys && !toyCam.on) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
-    if (!toyCam.on) areaCamStep(dt); // (the camera's half held: Fld2CameraGom::UpdateControl)
-    const float fx = areaCamera.at[0] - areaCamera.eye[0], fz = areaCamera.at[2] - areaCamera.eye[2];
+    if (keys && !toyCam.on && !area2D.on) areaCamera.turn(float(keys[SDL_SCANCODE_E] - keys[SDL_SCANCODE_Q]) * 1.5f * dt, float(keys[SDL_SCANCODE_R] - keys[SDL_SCANCODE_V]) * 0.8f * dt);
+    if (!toyCam.on && !area2D.on) areaCamStep(dt); // (the camera's half held: Fld2CameraGom::UpdateControl)
+    // (CalcPlayerMoveDir 0x87704c: the stick turned by the camera's heading - under Fld2CameraOrtho, <area>'s figure
+    // camera's, GetContaindCamera)
+    const bool flat = area2D.on && area2D.camOk;
+    const float fx = flat ? -area2D.cam.m[2] : areaCamera.at[0] - areaCamera.eye[0], fz = flat ? -area2D.cam.m[10] : areaCamera.at[2] - areaCamera.eye[2];
     const float fl = std::max(std::hypot(fx, fz), 1e-4f);
     const float forward[2] = {fx / fl, fz / fl}, right[2] = {-forward[1], forward[0]};
     float dx = forward[0] * sy + right[0] * sx, dz = forward[1] * sy + right[1] * sx;
@@ -3472,15 +3749,20 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         areaYaw += std::copysign(std::min(std::fabs(diff), 12.0f * dt), diff);
     }
     const int steps = std::max(1, int(std::ceil(dt * 60 - 1e-3f)));
-    for (int k = 0; k < steps; ++k) {
+    for (int k = 0; k < steps && !areaClimb.on && !areaHeld; ++k) { // (on a ladder - placed - or held for a battle: no physics)
         areaWalker->setVelocity({dx * speed, 0, dz * speed});
         areaWalker->step(dt / float(steps));
     }
-    if (areaRide.on) { // (SM_RideIdle / Walk / Run: fr01 .. fr03, the animal's fn01 / ff01 / ff02)
+    if (areaClimb.on) stepAreaClimb(dt, climbIn);
+    else if (areaFall.on) {
+        if (areaRide.on) areaRide.age += dt;
+    } else if (areaRide.on) { // (SM_RideIdle / Walk / Run: fr01 .. fr03, the animal's fn01 / ff01 / ff02)
         setAreaMotion(!moving ? cr3::Cr3Motion::RideIdle : run ? cr3::Cr3Motion::RideRun : cr3::Cr3Motion::RideWalk);
         setAreaRideMotion(!moving ? 0 : run ? 2 : 1);
         areaRide.age += dt;
     } else setAreaMotion(!moving ? cr3::Cr3Motion::Idle : run ? cr3::Cr3Motion::Run : cr3::Cr3Motion::Walk);
+    stepAreaFootsteps(moving && !areaMoveTo.on, run, dt);
+    if (!areaMoveTo.on && !areaClimb.on && !areaHeld) stepAreaFall();
     if (areaMoveTo.on) { // (SM_MoveTo: set on the line - no walls, no fall -, facing its way, walking)
         AreaMoveTo& mv = areaMoveTo;
         mv.t += dt;
@@ -3500,7 +3782,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
     // the gimmicks: an event box walked into sets off its function; the nearest check object
     areaCheckNear = -1;
     float bestCheckDist = 1e30f;
-    for (size_t k = 0; k < areaGimmicks.size(); ++k) {
+    for (size_t k = 0; k < areaGimmicks.size() && !areaHeld; ++k) { // (none checked while held for the battle)
         AreaGimmick& g = areaGimmicks[k];
         const bool in = gimmickHolds(g);
         if (!g.areaChange.empty()) { // (Fld2AreaChange::CollisionEventF: SetNextEvent, then SM_ChangeArea to its point - a SetPopPoint2's first)
@@ -3526,6 +3808,18 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         }
         g.inside = in;
     }
+    // (a ladder's end: Fld2Ladder::CollisionEventF - its ups / dws box in range 1.5 (Field +0x34),
+    // the "!" (+0x3a); none riding or on it)
+    areaLadderNear = -1;
+    for (size_t k = 0; k < areaLadders.size() && !game.flag(4105) && !areaClimb.on && !areaFall.on; ++k)
+        for (int end = 0; end < 2; ++end) {
+            const AreaLadder& l = areaLadders[k];
+            if (end == 0 ? !l.hasUps : !l.hasDws) continue;
+            const cr3::Mat34& m = end == 0 ? l.ups : l.dws;
+            const float across = std::hypot(p[0] - m.m[3], p[2] - m.m[11]);
+            if (across <= 1.5f && across < bestCheckDist && std::fabs(p[1] - areaWalker->radius - m.m[7]) < 1.0f)
+                bestCheckDist = across, areaCheckNear = -1, areaLadderNear = int(k), areaLadderNearEnd = end;
+        }
     // (--input encount:force - the field's Battle button in a dungeon -: tests)
     if (!scripted && !inputScript.empty() && inputScript.front() == "encount:force") {
         inputScript.pop_front();
@@ -3673,7 +3967,7 @@ void Viewer::drawArea(int w, int h) {
         f.blendWeight = f.blendLoaded ? std::min(areaMotionAge * 6.0f, 1.0f) : 1.0f; // (SetAnimationBlend 1/6 s)
         // (CreatePlayer / ChangePlayer: a j model's face f001, looped - the head's)
         fieldFace(f, areaPlayerName.compare(0, 1, "j") == 0 ? "f001" : std::string(), areaClock);
-        pose(f, areaMotionAge, true);
+        pose(f, areaMotionAge, !areaMotionOnce);
         drawFigure(f, vp.data());
     }
     drawAreaRide(vp);
@@ -4155,7 +4449,7 @@ void Viewer::drawCr3Field(int w, int h) {
         if (!cr3FieldIdle()) cr3CampTaps.clear();
         return;
     }
-    if (cr3Camp.stage == 0 && !cr3FieldIdle()) return;
+    if (cr3Camp.stage == 0 && (!cr3FieldIdle() || areaFall.on || areaClimb.on)) return; // (SetMenuVisible / Fld2SetUIVisible(false): falling, on a ladder)
     Mat4 camera = cr3::mat4Identity();
     camera[14] = -0.881f * 10;
     const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
@@ -4526,8 +4820,13 @@ std::string Viewer::toyCamFocus() const {
 void Viewer::stepToyCam(float dt) {
     if (!toyCam.on) return;
     toyCam.spin += dt * 30 * 0.1f; // (ToyCameraMenu: +0x98 by 0.1 a frame)
-    if (toyCam.cooldown > 0) toyCam.cooldown = std::max(toyCam.cooldown - dt * 30, 0.0f);
+    if (toyCam.cooldown > 0) toyCam.cooldown = std::max(toyCam.cooldown - dt * 60, 0.0f); // (+0x54: down once a 60-Hz update)
+    toyCam.irisT += dt;
+    if (toyCam.iris == 0 && toyCam.irisT >= 1.0f / 6) toyCam.iris = 1;
+    else if (toyCam.iris == 2 && toyCam.irisT >= 0.6667f) toyCam.iris = 3, toyCam.irisT = 0;
+    else if (toyCam.iris == 3 && toyCam.irisT >= 0.6667f) toyCam.iris = 1;
     if (!toyCam.permit) return;
+    if (toyCam.backLatched) return toyCamSet(false, true); // (CheckCanselToyCameraMenu: polled while enabled)
     auto rate = [](float diff) { const float a = std::fabs(diff); return a < 20 ? 0.0f : (diff >= 0 ? -1.0f : 1.0f) * (a < 80 ? 6.0f : 45.0f); };
     float dxu = 0, dyu = 0;
     if (toyCam.stickX != 0 || toyCam.stickY != 0) dxu = -toyCam.stickX * 160, dyu = -toyCam.stickY * 160;
@@ -4565,8 +4864,15 @@ void Viewer::stepToyCam(float dt) {
 // ToyCameraMenu's taps (TouchGestureTap 0xb5005c - permitted, the flash over): feGoodsToyBtn the
 // shutter - in focus ShutterToyCameraMenu, SE 0x25f, 30 frames, SetNextEvent(the target); out of
 // it CancelShutter, SE 0x16f -; feGoodsBack (and the back key): ChangeToyCamera(false, true)
+void Viewer::toyCamHardBack() {
+    if (!toyCam.on) return;
+    toyCam.backLatched = true;
+    SDL_Log("toy camera: back key");
+}
+
 void Viewer::toyCamPress(bool shutter) {
     if (!toyCam.on || !toyCam.permit || (areaEvents && areaEvents->running())) return;
+    if (toyCam.iris != 1) return SDL_Log("toy camera: the iris moving - the tap not taken"); // (TouchGestureTap: IsEndCurrentAnime)
     if (!shutter) return toyCamSet(false, true);
     if (toyCam.cooldown >= 1) return;
     if (toyCam.focus.empty()) {
@@ -4576,6 +4882,7 @@ void Viewer::toyCamPress(bool shutter) {
     }
     audio.playSe(0x25f, false);
     toyCam.cooldown = 30, toyCam.flashAt = uiClock;
+    toyCam.iris = 2, toyCam.irisT = 0; // (SetParamNumber(6): the iris closed and opened again)
     SDL_Log("toy camera: shot %s", toyCam.focus.c_str());
     runAreaFunction(toyCam.focus);
 }
@@ -4588,9 +4895,26 @@ void Viewer::toyCamPress(bool shutter) {
 void Viewer::drawToyCam(int w, int h, const Mat4& view) {
     const float t = uiClock - toyCam.openAt;
     float x, y, bx, by, ax, ay, ex, ey;
+    if (toyCam.iris != 1) { // (ProvisionalDraw: the iris first, under the rest - at the middle, scaled (50, 1, 50) about
+        // its root's 90-degree turn: the blades' plane 50 across and up)
+        UiFig& iris = uiFig("fe008came03");
+        const float it = toyCam.iris == 0 ? 1.0f / 6 - toyCam.irisT : toyCam.iris == 2 ? toyCam.irisT : 0.6667f - toyCam.irisT;
+        const float k = 50 * cr3UiScale;
+        iris.fig.place = cr3::Mat34();
+        iris.fig.place.m[0] = k, iris.fig.place.m[5] = k, iris.fig.place.m[10] = cr3UiScale, iris.fig.place.m[11] = cr3UiZ;
+        poseUi(iris, "fe008came03", std::max(it, 0.0f), false);
+        iris.fig.tint[0] = iris.fig.tint[1] = iris.fig.tint[2] = iris.fig.tint[3] = 1;
+        drawFigure(iris.fig, view.data());
+        dev->clearDepth(); // (under the rest: its blades' depth not kept against the menu's parts)
+    }
     UiFig& pos = cr3UiPut("fegoodstoyframepositon", "fegoodstoyframepositon_io", std::min(t, 1.0f), 0, 0, view);
     if (cr3UiCall(pos, "ragdoll_call_feGoodsToyFrameMenu", x, y)) {
-        UiFig& frame = cr3UiPut("fegoodstoyframemenu", "", 0, x, y, view);
+        // (Initialize: a type-1 screen - Cr3UtilGetScreenType, the iPads' - feGoodsToyFrameLMenu at 0.94, its taller frame)
+        const bool tall = float(w) <= 1.55f * float(std::max(h, 1));
+        const float keep = cr3UiScale;
+        if (tall) cr3UiScale *= 0.94f;
+        UiFig& frame = cr3UiPut(tall ? "fegoodstoyframelmenu" : "fegoodstoyframemenu", "", 0, x, y, view);
+        cr3UiScale = keep;
         if (cr3UiCall(frame, "call_feGoodsToyBtn", bx, by)) {
             UiFig& btn = cr3UiPut("fegoodstoybtn", "", 0, bx, by, view);
             if (cr3UiCall(btn, "tapAreaCP01", ax, ay) && cr3UiCall(btn, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 130));

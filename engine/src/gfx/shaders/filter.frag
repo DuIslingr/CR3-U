@@ -3,7 +3,8 @@
 #include "common.glsl"
 // The bloom's filters (MVGL's filterCopyFP / filterBrightFP / filterBlurFP): texMode 0 copy,
 // 1 bright (colour x 2 where r + g + b exceeds color.z - bloomLimit), 2 blur (five taps, x color.w -
-// bloomScale). Alpha 1: the original's targets are RGB565
+// bloomScale). Alpha 1: the original's targets are RGB565 - each pass's output clamped and rounded
+// to 5 / 6 / 5 bits as that write would (Vulkan's images are RGBA8)
 layout(set = 0, binding = 0) uniform sampler2D uTex;
 layout(location = 0) in vec2 vTex[5];
 layout(location = 0) out vec4 fragColor;
@@ -22,5 +23,6 @@ void main() {
     } else {
         c = texture(uTex, vTex[2]);
     }
-    fragColor = vec4(c.rgb, 1.0);
+    const vec3 bits = vec3(31.0, 63.0, 31.0);
+    fragColor = vec4(floor(clamp(c.rgb, 0.0, 1.0) * bits + 0.5) / bits, 1.0);
 }

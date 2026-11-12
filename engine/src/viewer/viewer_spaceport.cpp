@@ -2553,20 +2553,21 @@ void Viewer::openScriptGeneStatus(int master, int level) {
 void Viewer::openScriptGeneDisposal() {
     ScriptGeneDisposal& d = geneDisposal;
     d = ScriptGeneDisposal();
-    // (DisposalEquipMain::Update: CrxGameData::IsGeneFull - CR3-U's GeneGet's own room, so a gene
-    // discarded here is room for the one given next)
+    // (DisposalEquipMain::Update 0xa60188 state 0x14: CrxGameData::IsGeneFull 0x954f6c - the 50 box
+    // places, the stock not counted -, GeneGet's own room, so a gene discarded here is room for the
+    // one given next)
     const int capacity = game.cr3Db ? game.cr3Db->constant("GENE_CAPACITY", 50) : 50;
-    if (int(game.cr3Genes.size()) < capacity) {
-        d.result = 8;
-        SDL_Log("gene disposal: room in the box (%zu of %d) - done", game.cr3Genes.size(), capacity);
-        return;
-    }
     for (int g = 0; g < int(game.cr3Genes.size()); ++g)
         if (!game.cr3Genes[size_t(g)].stocked) d.genes.push_back(g);
+    if (int(d.genes.size()) < capacity) {
+        SDL_Log("gene disposal: room in the box (%zu of %d) - done", d.genes.size(), capacity);
+        d.genes.clear(), d.result = 8;
+        return;
+    }
     d.stage = 1, d.told = menuAnnounce(0x218);
     if (const size_t at = d.told.find("{categoryname}"); at != std::string::npos) d.told.replace(at, 14, menuAnnounce(0x303));
     audio.playSe("com_003", false);
-    SDL_Log("gene disposal: the box full (%zu) - a gene to discard", game.cr3Genes.size());
+    SDL_Log("gene disposal: the box full (%zu) - a gene to discard", d.genes.size());
 }
 
 void Viewer::drawCr3ScriptGenes(int w, int h) {
@@ -4560,7 +4561,7 @@ void Viewer::bindVsNatives(cr3::ScriptVM& vm) {
         c.result(game.vsSelected >= 0 && size_t(game.vsSelected) < list.size() ? list[size_t(game.vsSelected)].id : -1);
     });
     // (FldUtilReserveVsBattleIN 0x872630: the battle reserved - the tournament's couplings after the
-    // vista -, DAT_0149ef7c its index; p2 / p3 the colosseum's commentators - not in)
+    // vista -, DAT_0149ef7c its index; p2 / p3 the colosseum's commentators)
     vm.setNative("Cr3System", "VsBattleIn", [this](cr3::NativeCall& c) {
         const int id = c.integer(0);
         vsPendingTournament = id;
@@ -4569,6 +4570,7 @@ void Viewer::bindVsNatives(cr3::ScriptVM& vm) {
             for (size_t k = 0; k < list.size(); ++k)
                 if (list[k].id == id) game.vsSelected = int(k);
         }
+        vsCommentators[0] = c.integer(1), vsCommentators[1] = c.integer(2); // (BtlBootParam +0x38 / +0x3c)
         SDL_Log("vs: battle reserved - tournament %d (commentators %d, %d)", id, c.integer(1), c.integer(2));
     });
     vm.setNative("InterfaceWindow", "CreateGeneCardSelector", [this](cr3::NativeCall& c) {
@@ -5830,6 +5832,13 @@ bool Viewer::vsMoreBattles() const {
     return false;
 }
 
+bool Viewer::vsMoreBattlesAfter() const {
+    const cr3::Cr3OfflineDb::VsTournament& tt = game.cr3Db->vsTournaments()[size_t(vs.chosen)];
+    for (int b = vs.battle + 1; b < 3 && b < std::max(tt.count, 1); ++b)
+        if (tt.coupling[b] > 0) return true;
+    return false;
+}
+
 bool Viewer::vsBattleOver(bool won) {
     if (vs.screen == 5) {
         vs.score = cr3Rules.partyDamage;
@@ -5842,6 +5851,9 @@ bool Viewer::vsBattleOver(bool won) {
         SDL_Log("vs: battle %d %s - score %ld (+%ld for %d MP), tournament %d", vs.battle + 1, won ? "won" : "lost", vs.score, vs.mpBonus,
                 cr3Rules.partyMp, game.cr3Vs.score);
         vs.lost = !won;
+        // (PlayVictory 0x9a92dc: 0x7c, the last battle 0x7d; PlayDefeat 0x9a9380: 0x7e then 0x81)
+        if (won) requestVsComment(vsMoreBattlesAfter() ? 0x7c : 0x7d, 0.0f);
+        else requestVsComment(0x7e, 0.0f), requestVsComment(0x81, 0.0f);
         if (won) {
             vs.screen = 6, vs.since = 0, vs.scoreAt = uiClock; // (the score shown over the battle)
             return true;
@@ -6144,6 +6156,85 @@ bool Viewer::vsKey(SDL_Keycode key) {
     else if (vs.screen == 4 && enter) chooseVs(200);
     else if (vs.screen == 7 && enter) chooseVs(300);
     return true;
+}
+
+
+// BtlColosseumVoiceSystem::Add (0x9aa5f0): each category's voices of the commentators (MbGetCommentatorInfo 0x911e08: 0 .. 7,
+// else none), shuffled; CommentCategory's priority and chance
+void Viewer::startVsCommentary(int a, int b) {
+    vsCommentary = VsCommentary();
+    static cr3::MbeFile mbe;
+    if (!mbe.table("Commentator")) {
+        std::vector<uint8_t> d;
+        if (archive.read("data\\commentator.mbe", d)) mbe.parse(d);
+    }
+    const cr3::MbeFile::Table* cats = mbe.table("CommentCategory");
+    const cr3::MbeFile::Table* lines = mbe.table("Commentator");
+    if (!cats || !lines) return;
+    cr3::MbeFile::Row r;
+    for (int who : {a, b}) {
+        if (who < 0 || who > 7) continue;
+        for (size_t k = 0; k < lines->rows.size(); ++k) {
+            if (!mbe.row(*lines, k, "iip", r) || r.i(0) != who) continue;
+            std::vector<std::string>& v = vsCommentary.categories[r.i(1)].voices;
+            const std::string list = r.s(2);
+            for (size_t at = 0; at < list.size();) {
+                size_t end = list.find('\n', at);
+                if (end == std::string::npos) end = list.size();
+                std::string name = list.substr(at, end - at);
+                while (!name.empty() && (name.back() == '\r' || name.back() == ' ')) name.pop_back();
+                if (!name.empty()) v.push_back(name);
+                at = end + 1;
+            }
+            vsCommentary.on = true;
+        }
+    }
+    for (size_t k = 0; k < cats->rows.size(); ++k)
+        if (mbe.row(*cats, k, "iii", r)) {
+            auto it = vsCommentary.categories.find(r.i(0));
+            if (it != vsCommentary.categories.end()) it->second.priority = r.i(1), it->second.chance = r.i(2);
+        }
+    for (auto& [id, c] : vsCommentary.categories) // (shuffled once - the battle's)
+        for (size_t k = c.voices.size(); k > 1; --k) std::swap(c.voices[k - 1], c.voices[size_t(SDL_rand(int32_t(k)))]);
+    SDL_Log("vs commentary: commentators %d, %d - %zu categories", a, b, vsCommentary.categories.size());
+}
+
+// BtlColosseumVoiceSystem::Play (0x9aa330): over a voice speaking only with a higher priority; then rand & 0xff < its
+// chance; its next voice - not the last one again (NextIfSame) - played
+void Viewer::playVsComment(int category) {
+    VsCommentary& v = vsCommentary;
+    if (!v.on) return;
+    auto it = v.categories.find(category);
+    if (it == v.categories.end() || it->second.voices.empty()) return;
+    VsCommentary::Category& c = it->second;
+    if (audio.voicePlaying() && v.speaking >= 0) {
+        auto now = v.categories.find(v.speaking);
+        if (now != v.categories.end() && c.priority <= now->second.priority) return;
+    }
+    if (int(SDL_rand(256)) >= c.chance) return;
+    if (c.voices.size() > 1 && c.voices[c.next % c.voices.size()] == v.last) ++c.next;
+    const std::string name = c.voices[c.next++ % c.voices.size()];
+    audio.stopAllVoices(0);
+    audio.playVoice(name);
+    v.last = name, v.speaking = category;
+    SDL_Log("vs commentary: %d - %s", category, name.c_str());
+}
+
+void Viewer::requestVsComment(int category, float delay) {
+    if (vsCommentary.on) vsCommentary.queue.push_back({category, delay, 0});
+}
+
+// (OnUpdate 0x9aa26c: once no voice speaks, the queue's first after its delay - counted only while waiting)
+void Viewer::stepVsCommentary(float dt) {
+    VsCommentary& v = vsCommentary;
+    if (!v.on || v.queue.empty() || audio.voicePlaying()) return;
+    VsCommentary::Request& r = v.queue.front();
+    r.waited += dt;
+    if (r.waited < r.delay) return;
+    const int category = r.category;
+    v.queue.erase(v.queue.begin());
+    v.speaking = -1;
+    playVsComment(category);
 }
 
 } // namespace cr3_viewer

@@ -89,6 +89,18 @@ want goods && run ride "3:east 4:east 5:east 6:east 7:east 8:east 10:ly=1 11:ly=
 want goods && run toy-camera "7:ry=1 7.6:ry=0 8.5:east 9.5:east 11.5:south 13:quit" \
     "the toy camera on|toy camera: focus cam_00|toy camera: shot cam_00|area script: ended|ToyCameraOut|the toy camera off" \
     -- --area d1102 --player j001 --input "wait:2 put:22/6/2/-0.153 wait:3 goods:show1 goods:1"
+# Fld2TaskPlayer's footsteps (SM_Run 0x873a2c -> GetMoveSE 0x8783b0): t0101's se08 floor, a step past 1.5 run, one of
+# fe_125 .. fe_127 (CR3_EVTANIM logs each)
+export CR3_EVTANIM=1
+want field && run footsteps "3:ly=1 5:ly=0 6:quit" 'step on "se08": fe_12|step on "se08": fe_12' -- --area t0101 --flag 26 --flag 27
+unset CR3_EVTANIM
+# CheckFall (0x8781b0): put 1 above d0202's floor by the ladder - the fall, landed (fe_033); then the ladder's foot
+# (SetStateLadder 0x878ae0, the "!"), a rung up, off at the top (SM_Ladder 0x8749b4); the tutorials tapped through first
+ladder_pad=""
+for i in $(seq 2 40); do ladder_pad="$ladder_pad $((i / 2)).$((i % 2 * 5)):east"; done
+want field && run ladder "$ladder_pad 24:ly=1 26:ly=0 30:quit" \
+    "falling from|landed at|ladder ldr_01 from the foot (floors 2.00 .. 5.00)|off ladder ldr_01 at the top" \
+    -- --area d0202 --player j001 --input "put:-19/3.2/-13.4/3.14159 wait:1 check"
 want lunch && run lunch-balloons "0.1:until=the_balloons,_at_frame 0.5:up 1:down 1.5:east 4:quit" \
     "lunch: the balloons, at frame|lunch: the cursor on|lunch: the cursor on|lunch: s001_t02_00301_" \
     -- --area t0101 --page 0.01 --input "lunch:start:s001_t02_00301_evt:s001_t02_00301"

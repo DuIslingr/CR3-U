@@ -201,6 +201,11 @@ struct Frame {
     uint8_t* uboMapped = nullptr;
     VkDeviceSize uboSize = 0, uboUsed = 0;
     VkDescriptorSet uboSet = VK_NULL_HANDLE;
+    // readTexture's copy, recorded in this frame and read once its fence has passed (kFrames later)
+    VkBuffer readTex = VK_NULL_HANDLE;
+    VkDeviceMemory readTexMemory = VK_NULL_HANDLE;
+    uint8_t* readTexMapped = nullptr;
+    VkDeviceSize readTexSize = 0, readTexBytes = 0;
 };
 
 // (setPipelineCacheFile's: the file each device's pipeline cache is kept in, "" none)
@@ -236,6 +241,8 @@ public:
             if (f.ringMemory) vkFreeMemory(device_, f.ringMemory, nullptr);
             if (f.ubo) vkDestroyBuffer(device_, f.ubo, nullptr);
             if (f.uboMemory) vkFreeMemory(device_, f.uboMemory, nullptr);
+            if (f.readTex) vkDestroyBuffer(device_, f.readTex, nullptr);
+            if (f.readTexMemory) vkFreeMemory(device_, f.readTexMemory, nullptr);
         }
         for (VkSemaphore s : presentSems_) vkDestroySemaphore(device_, s, nullptr);
         presentSems_.clear();
@@ -1053,6 +1060,37 @@ public:
                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
         return true;
+    }
+
+    // A filter target read back without stalling: the copy is recorded into this frame's slot and
+    // returned when the slot comes round again (kFrames frames on) - the original's
+    // ReadColorBufferImage reads one frame late, this one kFrames + 1 (the bloom's key: 0.995 .. 1.001)
+    bool readTexture(const Texture& tex, std::vector<uint8_t>& rgba) override {
+        if (!inFilters_ || !tex.id || tex.id > textures_.size() || !filterTargets_.count(tex.id)) return false;
+        const TextureRec& rec = textures_[tex.id - 1];
+        if (!rec.live) return false;
+        Frame& f = frames_[serial_ % kFrames];
+        const VkDeviceSize bytes = VkDeviceSize(tex.width) * VkDeviceSize(tex.height) * 4;
+        bool have = false;
+        if (f.readTexMapped && f.readTexBytes == bytes) rgba.assign(f.readTexMapped, f.readTexMapped + bytes), have = true;
+        if (f.readTexSize < bytes) {
+            if (f.readTex) vkDestroyBuffer(device_, f.readTex, nullptr), vkFreeMemory(device_, f.readTexMemory, nullptr);
+            f.readTex = VK_NULL_HANDLE, f.readTexMemory = VK_NULL_HANDLE, f.readTexMapped = nullptr, f.readTexSize = 0;
+            if (!createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, f.readTex, f.readTexMemory, f.readTexMapped)) return have;
+            f.readTexSize = bytes;
+        }
+        barrier(cmd_, rec.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {uint32_t(tex.width), uint32_t(tex.height), 1};
+        vkCmdCopyImageToBuffer(cmd_, rec.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, f.readTex, 1, &region);
+        barrier(cmd_, rec.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        f.readTexBytes = bytes;
+        return have;
     }
 
     // the frame's rendering resumed (MSAA: its samples not kept - the frame copy drawn back first)

@@ -659,6 +659,7 @@ int main(int argc, char** argv) {
     std::vector<std::pair<int, int>> sopiaArg;
     bool skipBattlesOpt = false;
     uint32_t fightSeed = 1;
+    int battleLevelArg = 0;
     int battleId = 0, battleParty[2] = {1, 2}; // (--battle: Darwin and Orlando unless --party)
     int battleFieldArg = 44; // (CR3's --battle-field: battle_field.mbe's; d1251b, the first battle's, unless given)
     float page = 3.0f;
@@ -700,6 +701,7 @@ int main(int argc, char** argv) {
         else if (a == "--player" && next) areaPlayerArg = next, ++i;
         else if (a == "--battle" && next) battleId = std::atoi(next), ++i;
         else if (a == "--battle-field" && next) battleFieldArg = std::atoi(next), ++i;
+        else if (a == "--battle-level" && next) battleLevelArg = std::atoi(next), ++i; // (the monsters' level - Battle.Set's third: tests)
         else if (a == "--skip-battles") skipBattlesOpt = true;
         else if (a == "--fight" && next) fightMode = !std::strcmp(next, "pair") ? 2 : !std::strcmp(next, "manual") ? 3 : 1, ++i;
         else if (a == "--input" && next) inputArg = next, ++i;
@@ -1399,6 +1401,7 @@ int main(int argc, char** argv) {
     v.stateArg = stateArg;
     v.chargeArg = chargeArg, v.gaugeArg = gaugeArg;
     if (battleId > 0 && v.archive.contains("data\\battle_field.mbe")) { // (CR3's: battle/cr3battle.hpp)
+        if (battleLevelArg > 0) v.game.next.battleLevel = battleLevelArg;
         if (!v.startCr3Battle(battleId, battleFieldArg)) return 1;
     } else if (battleId > 0 && !v.startBattle(battleId, battleParty)) return 1;
     // the commands: chosen on the screen in a window (--fight manual, or --play), or given (--input)
@@ -1702,6 +1705,10 @@ int main(int argc, char** argv) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
                     if (v.eventMode && v.event && v.event->vistaPaused) continue;
+                    if (k == SDLK_BACKSPACE && v.toyCam.on && v.areaMode && v.cr3Camp.stage == 0) { // (the toy camera's back key: latched)
+                        v.toyCamHardBack();
+                        continue;
+                    }
                     if (v.movie.mv && k != SDLK_RETURN && k != SDLK_KP_ENTER && k != SDLK_ESCAPE) continue;
                     if (v.lunchKey(k)) continue;
                     if (v.cr3OptionsOver()) { // (CR3-U's Options over the title or a battle: all its keys)
@@ -1853,7 +1860,7 @@ int main(int argc, char** argv) {
                     const SDL_GamepadButton circle = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
                     const SDL_GamepadButton cross = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH;
                     if (v.moviePad(b) || v.vistaPad(b)) continue;
-                    if (v.toyCam.on && v.areaMode && v.cr3FieldIdle()) { // (the toy camera: ○ the shutter, × back - the Vita's pad indices 7 / 5, which buttons UNKNOWN)
+                    if (v.toyCam.on && v.areaMode && v.cr3FieldIdle()) { // (the toy camera: ○ the shutter, × back - the Vita's PadTrigger indices 7 / 5: codes 0xe / 0xd, the pad table's ○ / ×)
                         if (b == circle || b == cross) v.toyCamPress(b == circle);
                         continue;
                     }

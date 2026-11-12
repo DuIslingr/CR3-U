@@ -18,6 +18,7 @@
 #include <sstream>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -1301,12 +1302,19 @@ struct Viewer {
         float cooldown = 0;             // (+0x54: 30 frames after a shot)
         float spin = 0, r = 0.15f, step = 0.06f; // (the focus brackets: ToyCameraMenu +0x98 / +0x9c / +0xa0)
         float openAt = 0, flashAt = -1;
+        // (ToyCameraMenu +0x88 / +0xa8: fe008came03, the iris - 0 opening (backwards from 1/6 s), 1 away,
+        // 2 closing (0 .. 0.667 s), 3 opening again (backwards from 0.667 s); taps wait for it)
+        int iris = 0;
+        float irisT = 0;
+        bool backLatched = false; // (+0xa4: the back key, kept till the camera is enabled)
     } toyCam;
     void loadToyTargets(const std::string& area, const std::vector<std::string>& joints, const std::vector<cr3::Mat34>& world);
     void toyCamSet(bool on, bool notify);
     void stepToyCam(float dt);
     std::string toyCamFocus() const;
     void toyCamPress(bool shutter);
+    bool toyCamTouchBox(float fx, float fy) const;
+    void toyCamHardBack(); // (InterfaceMain::GetHardReturnTap: latched, whatever the iris)
     void drawToyCam(int w, int h, const Mat4& view);
     // the moving objects (Fld2MovingObject::SetMove / UpdatePosRot): SetMove's end frame / 30 reached
     // at end / frames a second from 0, <area>p posed at that time, the object on its ragdoll joint
@@ -1469,8 +1477,52 @@ struct Viewer {
         float age = 0;
     } areaRide;
     void areaRideSet(const std::string& gimmick, bool on);
+    // The footsteps (SM_Walk / SM_Run / SM_RideWalk / SM_RideRun -> Fld2TaskPlayer::GetMoveSE
+    // 0x8783b0): the ground distance gone; past 0.6 / 1.5 (riding 0.9 / 2.25) a step SE for the
+    // surface below, and its foot effect
+    float areaStepGone = 0;
+    cr3::Vec3 areaStepFrom{};
+    bool areaStepHave = false;
+    struct AreaDust {
+        std::string model;
+        cr3::Vec3 pos{};
+        float yaw = 0, t = 0;
+    };
+    std::vector<AreaDust> areaDust;
+    void stepAreaFootsteps(bool stepping, bool run, float dt);
+    // Falls (Fld2TaskPlayer::CheckFall 0x8781b0, SetStateFall 0x878620, SM_Fall 0x873ca8, SM_RideFall
+    // 0x8745c4): no ground 0.5 (riding 1.0) under the controller - the edge kept; deeper than that
+    // below it, the fall: no steering, ff03 (riding fr01, the animal fn01), the field's menu hidden;
+    // landed - fn01 and fe_033 (riding: no SE)
+    struct AreaFall {
+        bool ground = true, on = false;
+        cr3::Vec3 edge{};
+        float lastY = 0;
+    } areaFall;
+    void stepAreaFall();
+    // Ladders (Fld2Ladder 0x9fb4dc; SM_Ladder 0x8749b4): ragdoll_ldr_NN_ups (the foot), _dws (the
+    // top), _upe (the top's end); the "!" at either end on foot, none riding (CollisionEventF /
+    // CollisionEventB / GetHitBalloon refuse flag 4105)
+    struct AreaLadder {
+        std::string name;
+        cr3::Mat34 ups, dws, upe;
+        bool hasUps = false, hasDws = false, hasUpe = false;
+    };
+    std::vector<AreaLadder> areaLadders;
+    int areaLadderNear = -1, areaLadderNearEnd = 0; // (the end offered: 0 the foot, 1 the top)
+    struct AreaClimb {
+        bool on = false;
+        int ladder = -1, down = 0, stage = 0, rungs = 0;
+        float t = 0, yawFrom = 0, yawTo = 0, seAt[6]{}, seT = 0, footFloor = 0, topFloor = 0;
+        int ses = 0;
+        cr3::Vec3 from{}, to{};
+    } areaClimb;
+    void startAreaClimb(int ladder, int end);
+    void stepAreaClimb(float dt, float sy);
+    void areaClimbSes(std::initializer_list<float> at);
     void setAreaRideMotion(int motion);
     void drawAreaRide(const Mat4& vp);
+    bool areaChanging = false; // (loadArea from SM_ChangeArea: an area-to-area change)
     bool boxRedraw = false; // (Cr3GimmickData.SetBoxDrawing - Fld2EnableTrasureBoxDrawing 0x0086ed60: Fld2Main +0xfa, the boxes drawn again at the next area change)
     // InterfaceWindow.SetCampWindowParty (InterfaceMain::SetCampWindowParty 0x008f00dc): the camp's
     // top over an event - CampTopMenu +0xf5 -, the scripts waiting while it's open
@@ -1480,6 +1532,15 @@ struct Viewer {
     bool cr3CampEvent = false;
     std::string campTopTold; // (the camp top's alert - 0x307: a member without a gene, in the VS mode)
     float campTopToldAt = 0;
+    // (the event mode's back - CampTopMenu::SetParamNumber 2 0xa389cc, GetPartyMemberEquipGene 0x8fbd6c:
+    // every member wearing a gene, SetBasicYNChoiceWindow(0x1f0) - CampTopMenu::Update 0xa38130 state 7:
+    // Yes com_003, state 1 - Cr3FadeOut(0, 5), 0.23333 s, BuildUnitModel(true), 0x1c: the camp closed -;
+    // No com_004, state 0; the hard return com_004, state 6 - the buttons not polled, a panel taken up
+    // and put down state 0 again, the back asking again. 0 none, 1 asked, 2 Yes: closing)
+    int campTopAsk = 0, campTopAskFocus = 0;
+    float campTopAskAt = 0;
+    bool campTopStalled = false;
+    void closeCampTopEvent();
     std::array<bool, 5> cr3PanelLock{};
     bool cr3PanelLocked(int member) const; // (a panel - the party's members in order - its slot's lock)
     // An event's gene windows (round 9). InterfaceWindow.CreateGeneStatusSCModalMenu(gene, level, skills)
@@ -1523,7 +1584,8 @@ struct Viewer {
     std::array<float, 3> savedPos{};
     float savedYaw = 0;
     bool loadArea(std::string name, const std::string& player);
-    void setAreaMotion(cr3::Cr3Motion m);
+    void setAreaMotion(cr3::Cr3Motion m, bool once = false, bool again = false);
+    bool areaMotionOnce = false; // (a motion played once and held: the ladder's)
     bool gimmickHolds(const AreaGimmick& g) const;
     bool enterPopPoint(const std::string& pop);
 
@@ -1614,6 +1676,9 @@ struct Viewer {
         bool knockedOut = false;
         bool scriptHidden = false; // (BattleUnit.Hide - BtlUnit::DisableDraw: undrawn at once, for the battle's rest)
         bool directionHidden = false; // (a Last Attack's hideOtherThanTarget, till the next camera)
+        // (BtlHoldLastAttackDirection's held target: ChangeStayAnimation / ChangeDamageAnimation(0x18) and
+        // +0x206 - its stance and hit reactions bt07 till the release)
+        bool heldPose = false;
         Ramp opacity;
         cr3::Vec3 meleeOffset{};
         Ramp meleeStep{0, 0}, meleeTurn{0, 0};
@@ -1793,6 +1858,7 @@ struct Viewer {
         int hitsShown = 0;
         int directionCommand = -1;
         bool melee = false;
+        bool ranged = false; // (BtlRangedDirection / BtlShotDirection - kinds 2, 3: each swing's motion camera)
         cr3::Cr3BattleTables::MotionTravel returnTravel{};
         std::vector<int> spellCards;
         float spellCardAge = -1;
@@ -1944,7 +2010,21 @@ struct Viewer {
         bool on = false, white = false, finestArts = false, restored = false, shown = false;
         size_t unit = 0;
         float whiteEnd = 0; // (the clock at full white: the motion's end)
+        int kind = 0;
+        // (BtlHoldLastAttackDirection, kind 30: the hold at the actor's change cue - action time -, its
+        // target's unit, released at the last hit)
+        float holdAt = -1;
+        bool holding = false, released = false;
+        size_t holdUnit = 0;
     } cr3LastAttack;
+    // (BtlCameraSystem +0xff8: the last clip PlayGlobal / PlayGlobalToTarget played - FUN_00977e7c's pick
+    // skips it -; the pick's own random numbers, from the battle's seed)
+    std::string cr3LastGlobalCam;
+    std::mt19937 cr3CamRng{1};
+    std::string pickCr3GlobalCamera();
+    bool startCr3RangedCamera(const cr3::Cr3Action& a, size_t source);
+    void playCr3MotionCamera(size_t source, int motion);
+    void stepCr3HoldLastAttack(const cr3::Cr3Action& a, float actionTime);
     Ramp cr3White{0, 0};
     bool cr3StageHidden = false;
     bool startCr3LastAttack(const cr3::Cr3Action& a, size_t source);
@@ -3897,6 +3977,31 @@ struct Viewer {
     bool vsOverlay = false;
     bool vsFromVista = false;     // (a vista VS reserved: back to VS after it - its battle, or VSMain anew)
     int vsPendingTournament = -1; // (VsBattleIn's id: the tournament's battles once the vista's over)
+    // The colosseum's commentary (BtlColosseumVoiceSystem 0x9aa0e0, in a VS battle alone - BtlBootParam +0x34): VsBattleIn's
+    // p2 / p3 the two commentators (data\commentator.mbe, 1 the MC, 2 .. 7 the guests; any other none), each category's
+    // voices of both, shuffled and taken in turn; Play by priority and chance, Request queued with a delay
+    int vsCommentators[2] = {-1, -1};
+    struct VsCommentary {
+        bool on = false;
+        struct Category {
+            int priority = 1, chance = 256;
+            std::vector<std::string> voices;
+            size_t next = 0;
+        };
+        std::map<int, Category> categories;
+        std::string last;
+        int speaking = -1; // (the category of the voice speaking)
+        struct Request {
+            int category = 0;
+            float delay = 0, waited = 0;
+        };
+        std::vector<Request> queue;
+    } vsCommentary;
+    void startVsCommentary(int a, int b);
+    void playVsComment(int category);
+    void requestVsComment(int category, float delay);
+    void stepVsCommentary(float dt);
+    bool vsMoreBattlesAfter() const;
     bool vsCampOpened = false, vsLabOpened = false;
     bool vsBattleHookPending = false; // (VS_BattleIn running: its battles once it's over)
     void vsEnter();               // (VSMain: evt000, then the vista it reserved or the menu)

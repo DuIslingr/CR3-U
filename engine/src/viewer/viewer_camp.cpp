@@ -1428,10 +1428,20 @@ bool Viewer::cr3PanelLocked(int member) const {
     return false;
 }
 
-bool Viewer::cr3CampButtonOn(int id) const { return id != 2 || (game.flag(41) && (vs.screen != 0 || game.flag(21))); }
+// (SetVisibleGeneChangeButton 0xa360cc, both modes: also a gene in the 50 box places - 0x14bf8d0 -
+// 0x16a8, any id > 0 -, CR3-U's genes not stocked. The event mode - InterfaceMain::SetCampWindowParty
+// 0x8f00dc, CampcomBtnMenu::SetParamNumber 5 0xa35e44 -: Equipment and Status, Gene Swap by that
+// rule, the rest not selectable)
+bool Viewer::cr3CampButtonOn(int id) const {
+    const bool geneSwap = game.flag(41) && (vs.screen != 0 || game.flag(21)) &&
+                          std::any_of(game.cr3Genes.begin(), game.cr3Genes.end(), [](const cr3::Cr3Gene& g) { return !g.stocked; });
+    if (cr3CampEvent) return id == 1 || id == 3 || (id == 2 && geneSwap);
+    return id != 2 || geneSwap;
+}
 
 void Viewer::openCr3Camp() {
     cr3Camp.stage = 1, cr3Camp.since = 0, cr3Camp.button = 0, cr3Camp.panel = -1;
+    campTopAsk = 0, campTopStalled = false;
     audio.playSe("com_003", false);
     SDL_Log("camp: open (CR3)");
 }
@@ -1476,11 +1486,9 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
             } restore{cr3UiTint};
             if (locked) cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 0.5f;
             UiFig& panel = cr3UiPut("camtopcharapanel", "", 0, cx, cy, view);
-            if (vitaButtons() && k == cr3Camp.panel && !locked) {
-                cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
-                cr3UiPut("camtopcharapanel", "", 0, cx, cy, view);
-                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
-            }
+            // (the Vita's focus - FUN_81114054: +0x16c 2, the diffuse white, no tint - is camTopSort
+            // alone, drawn below)
+            const bool focused = vitaButtons() && k == cr3Camp.panel && !locked;
             const int gk = game.wornGene(members[size_t(k)]);
             const cr3::Cr3Gene* g = gk >= 0 ? &game.cr3Genes[size_t(gk)] : nullptr;
             const cr3::Cr3OfflineDb::GeneInfo* gi = g && game.cr3Db ? game.cr3Db->geneInfo(g->master) : nullptr;
@@ -1523,6 +1531,15 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
                     }
                 }
             }
+            // (CampCharaPanel::Render 0x8111308a: camTopSort - its loop camTopSort_loop - at
+            // call_camTopSort while +0x16c is 2: the focused panel, arrow01 / arrow02 hidden
+            // (FUN_81114054); taken up by ○ held, SetSelectStatus(2) 0xa33f70 shows them. Its +0.5 z
+            // isn't followed: the panels are flat)
+            if (focused && cr3UiCall(panel, "call_camTopSort", px, py)) {
+                UiFig& sort = uiFig("camtopsort");
+                for (const char* arrow : {"arrow01", "arrow02"}) showJoint(sort, arrow, cr3Camp.confirmHeld);
+                cr3UiPut("camtopsort", "camtopsort_loop", t, px, py, view, 1, true);
+            }
         }
     }
     if (cr3Camp.stage == 1 && cr3UiCall(top, "call_camTopFramMenu", x, y, w, h)) cr3UiPut("camtopframmenu", "", 0, x, y, view);
@@ -1557,6 +1574,22 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
         drawCr3Header(t, 0, {}, w, h, view);
     }
     drawCr3CampFooter(w, h, view);
+    // (the event mode's question, 0x1f0, over all: its Yes and No the only taps - CampTopMenu state 7
+    // takes no button nor panel -; Yes taken, nothing till the camp closes)
+    if (cr3Camp.stage == 1 && campTopAsk != 0) cr3CampTaps.clear();
+    if (cr3Camp.stage == 1 && campTopAsk == 1)
+        drawCr3Asked(menuAnnounce(0x1f0), uiClock - campTopAskAt, vitaButtons() ? campTopAskFocus : 0, true, 503, 504, w, h, view);
+}
+
+// (CampTopMenu::Update 0xa38130 state 2: 0.23333 s after Yes - InterfaceMain +0x98, the event mode's
+// DeleteBattleAnnouncementMenu and GameMain::BuildUnitModel(true) -, 0x1c: the header, footer and
+// buttons closed, RePauseFieldInterface; CheckAliveCampWindowParty false. No Cr3FadeIn: +0x13b
+// isn't set by SetCampWindowParty)
+void Viewer::closeCampTopEvent() {
+    campTopAsk = 0, campTopStalled = false;
+    cr3Camp.stage = 0, cr3Camp.since = 0;
+    cr3RebuildLeader();
+    SDL_Log("camp: closed (CR3)");
 }
 
 // (CampFutterMenu / ItemFutterMenu: the team - its name at typeM_L01 -, the back)
@@ -1736,12 +1769,48 @@ void Viewer::chooseCr3Camp(int id) {
         if (id == 502 || id == -1 || id >= 200) campTopTold.clear(), audio.playSe("com_004", false);
         return;
     }
-    // (CampTopMenu::SetParamNumber 2 0xa389cc: the VS mode's camp closing - not the event's party
-    // window - with flag 42 off: every member wearing a gene sets 42 and 3505 (the VS tutorial's
-    // next step); one without, alert 0x307 and the camp stays)
-    if (id == -1 && cr3Camp.stage == 1 && vs.screen != 0 && !cr3CampEvent && !game.flag(42)) {
+    if (cr3Camp.stage == 1 && campTopAsk == 2) return; // (Yes taken: closing)
+    if (cr3Camp.stage == 1 && campTopAsk == 1) { // (CampTopMenu::Update state 7)
+        if (id == 503) { // (Yes - GetBattleYNChoicePushBottom 1: com_003, state 1 .. 2)
+            audio.playSe("com_003", false);
+            campTopAsk = 2, campTopAskAt = uiClock;
+            SDL_Log("camp: the party chosen (0x1f0 Yes)");
+        } else if (id == 504) { // (No - 2: com_004, state 0)
+            audio.playSe("com_004", false);
+            campTopAsk = 0;
+            SDL_Log("camp: the party not chosen (0x1f0 No)");
+        } else if (id == -1) { // (the hard return, checked first: com_004, the YN ended, state 6)
+            audio.playSe("com_004", false);
+            campTopAsk = 0, campTopStalled = true;
+            SDL_Log("camp: the question put away - the buttons not taken (state 6)");
+        }
+        return;
+    }
+    // (CampTopMenu::SetParamNumber 2 0xa389cc, the event mode - +0xf5 -: the footer's com_004,
+    // ResetCampTopFutter; GetPartyMemberEquipGene 0x8fbd6c - every member of CreateListForCamp
+    // wearing a gene -: +0xc0 7, SetBasicYNChoiceWindow(0x1f0); one without, the alert 0x307
+    // (SetAutoEndAlertWindowMenu: any tap ends it), the camp staying at state 0)
+    if (id == -1 && cr3Camp.stage == 1 && cr3CampEvent) {
+        audio.playSe("com_004", false);
+        campTopStalled = false;
         bool all = true;
         for (int m : cr3PartyMembers()) all = all && game.wornGene(m) >= 0;
+        if (!all) {
+            campTopTold = menuAnnounce(0x307), campTopToldAt = uiClock;
+            SDL_Log("camp: a member without a gene - 0x307");
+        } else {
+            campTopAsk = 1, campTopAskAt = uiClock, campTopAskFocus = 0;
+            SDL_Log("camp: is this the party? (0x1f0)");
+        }
+        return;
+    }
+    // (CampTopMenu::SetParamNumber 2 0xa389cc: the VS mode's camp closing with flag 42 off -
+    // GetPartyMainMemberEquipGene 0x8fbdf8, CreateListForCamp's first three alone -: each wearing a
+    // gene sets 42 and 3505 (the VS tutorial's next step); one without, alert 0x307 and the camp stays)
+    if (id == -1 && cr3Camp.stage == 1 && vs.screen != 0 && !cr3CampEvent && !game.flag(42)) {
+        bool all = true;
+        const std::vector<int> members = cr3PartyMembers();
+        for (size_t k = 0; k < members.size() && k < 3; ++k) all = all && game.wornGene(members[k]) >= 0;
         if (!all) {
             campTopTold = menuAnnounce(0x307), campTopToldAt = uiClock;
             audio.playSe("com_004", false);
@@ -1766,8 +1835,11 @@ void Viewer::chooseCr3Camp(int id) {
     if (cr3Camp.stage == 1 && id >= 200) {
         // (InterfaceMain::Update 0x1d: by the button's place - 0 Items, 1 Equipment, 2 Gene Swap,
         // 3 Fuse Gifts, 4 Quests, 5 Status, 6 Options)
+        // (button 7 - the event mode's Gene Swap, CampTopMenu::Update 0xa38130 state 0: case 7 is
+        // CreateGeneCharaListMenu with BanCoinButtonHeaderMenu, CR3-U's header having no coin tap: 2's)
         const int b = id - 200;
         if (b < 0 || b >= 7) return;
+        if (campTopStalled) return; // (state 6: GetTapButtonListButtonNumberCamp not polled)
         if (!cr3CampButtonOn(kCampButtons[b])) return (void)audio.playSe("com_005", false);
         audio.playSe("com_003", false);
         cr3Camp.button = b;
@@ -1845,7 +1917,14 @@ bool Viewer::cr3CampClick(float fx, float fy) {
     return cr3Camp.stage != 0; // (the camp holds the screen; the field's taps go on)
 }
 
-void Viewer::cr3CampPadHeld(bool held) { cr3Camp.confirmHeld = held; }
+void Viewer::cr3CampPadHeld(bool held) {
+    // (a panel taken up and put down - CampTopMenu 3 -> 4 -> 0: state 6's buttons polled again)
+    if (cr3Camp.confirmHeld && !held && cr3Camp.stage == 1 && cr3Camp.panel >= 0 && !cr3PanelLocked(cr3Camp.panel) && campTopStalled) {
+        campTopStalled = false;
+        SDL_Log("camp: a panel put down - the buttons taken again");
+    }
+    cr3Camp.confirmHeld = held;
+}
 
 bool Viewer::campGeneShoulder(bool right) {
     (void)right;
@@ -1897,6 +1976,13 @@ bool Viewer::cr3CampKey(SDL_Keycode key) {
         if (key == SDLK_LEFT || key == SDLK_RIGHT || up || down) cr3Camp.geneAskFocus ^= 1, audio.playSe("com_002", false);
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE || (enter && cr3Camp.geneAskFocus)) cr3Camp.geneTake = -1, audio.playSe("com_004", false);
         else if (enter) chooseCr3Camp(kTapCard + cr3Camp.geneTake);
+        return true;
+    }
+    if (cr3Camp.stage == 1 && campTopAsk == 2) return true;
+    if (cr3Camp.stage == 1 && campTopAsk == 1) { // (the question's Yes and No - FUN_81118718 state 7: × its hard return first)
+        if (key == SDLK_LEFT || key == SDLK_RIGHT || up || down) campTopAskFocus ^= 1, audio.playSe("com_002", false);
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCr3Camp(-1);
+        else if (enter) chooseCr3Camp(campTopAskFocus == 0 ? 503 : 504);
         return true;
     }
     if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCr3Camp(-1);

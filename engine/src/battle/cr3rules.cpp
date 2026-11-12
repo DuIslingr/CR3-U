@@ -321,8 +321,10 @@ static int finisherGeneValue(const Cr3BattleTables& t, const Cr3Fighter& f) {
 int Cr3BattleRules::lastAttackCommand(int fi) {
     if (!tables_ || fi < 0 || size_t(fi) >= fighters.size()) return -1;
     const Cr3Fighter& f = fighters[size_t(fi)];
-    if (hasEffect(fi, 0x3f)) return -1;
-    if (hasEffect(fi, 0x40)) return 18;
+    // (BtlStatus::GetLastAttackCommandId 0x009b722c: the transformations - effect kinds, BtlStatusEffectUtility::
+    // HasTransformation 0x009b1ef0 -: 63 none, 64 - the pig form - command 18, Black Impact)
+    if (hasKind(f, 63)) return -1;
+    if (hasKind(f, 64)) return 18;
     if (!f.player) return f.lastAttack;
     MbeFile::Row ch;
     if (!tables_->character.find("Char", f.id, kCharFinishers, ch)) return -1;
@@ -342,11 +344,17 @@ int Cr3BattleRules::lastAttackCommand(int fi) {
     return rows.back().first;
 }
 
+int Cr3BattleRules::attackCommandOf(int fi) const {
+    if (fi < 0 || size_t(fi) >= fighters.size()) return -1;
+    const Cr3Fighter& f = fighters[size_t(fi)];
+    return hasKind(f, 63) ? 8 : hasKind(f, 64) ? 9 : f.attackCommand;
+}
+
 int Cr3BattleRules::finestArtsCommand(int fi) {
     if (!tables_ || fi < 0 || size_t(fi) >= fighters.size()) return -1;
     const Cr3Fighter& f = fighters[size_t(fi)];
+    if (hasKind(f, 63) || hasKind(f, 64)) return -1; // (BtlCharacterStatus 0x009b29b0: none under a transformation's kind)
     if (!f.player) return f.finestArts;
-    if (hasEffect(fi, 0x3f) || hasEffect(fi, 0x40)) return -1; // (BtlCharacterStatus 0x009b29b0)
     MbeFile::Row ch;
     if (!tables_->character.find("Char", f.id, kCharFinishers, ch)) return -1;
     const auto lv = finestArtsLevel.find(ch.i(2));
@@ -779,7 +787,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             for (int id : sc->second) raw.push_back({int(k), id, -1, 0});
             continue;
         }
-        int cmd = f.attackCommand;
+        int cmd = attackCommandOf(int(k));
         int total = 0;
         for (const auto& [id, ratio] : f.commands) total += ratio;
         if (total > 0) {
@@ -858,6 +866,12 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         const Cr3Fighter& s = fighters[size_t(src)];
         const bool own = c.ally() || c.target == 1 || c.target == 2 || c.target == 12 || c.target == 13;
         if (c.target == 0) return std::vector<int>{src};
+        if (c.target == 6) { // (collectDamageTargetRandomEnemy 0x009bd320: one living opponent at random - no target filter)
+            for (size_t k = 0; k < fighters.size(); ++k)
+                if (!fighters[k].dead() && fighters[k].player != s.player) out.push_back(int(k));
+            if (out.size() > 1) out = {out[std::min(size_t(random() * float(out.size())), out.size() - 1)]};
+            return out;
+        }
         if (!c.all && tgt >= 0 && size_t(tgt) < fighters.size() && !fighters[size_t(tgt)].dead()) return std::vector<int>{tgt};
         for (size_t k = 0; k < fighters.size(); ++k)
             if (!fighters[k].dead() && (c.target == 5 || fighters[k].player == (c.target == 10 || c.target == 11 ? true : own ? s.player : !s.player)))
@@ -881,7 +895,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         // (addLastAttack: two linked actions at least; the last one's command able to lead into one -
         // MbCommandInfo +0xbd bit 1 -, its combo; the next not inserted and breaking the chain -
         // BtlDamageChunk::HaveChanceReset 0x0097e56c: the other side, its actor under status effect
-        // 0x1f, or none of the same units hit -; the first target standing)
+        // kind 31 - no action -, or none of the same units hit -; the first target standing)
         if (chunk.set && comboActors.size() >= 2 && chunk.combo && order[at][3] == 0) {
             Cr3Command lc;
             const auto& [nSrc, nCmd, nTgt, nFrom] = order[at];
@@ -890,7 +904,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                 const bool otherSide = fighters[size_t(chunk.attacker)].player != fighters[size_t(nSrc)].player;
                 Cr3Command nc;
                 bool shared = false;
-                if (!otherSide && !hasEffect(nSrc, 0x1f) && (nCmd < 0 || command(nCmd, nc)))
+                if (!otherSide && !hasKind(fighters[size_t(nSrc)], 31) && (nCmd < 0 || command(nCmd, nc))) // (effect kind 31, IsNoAction)
                     for (int t : wouldHit(nSrc, nCmd, nTgt))
                         shared |= std::find(chunk.hit.begin(), chunk.hit.end(), t) != chunk.hit.end();
                 reset = !shared;
@@ -900,17 +914,18 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                 // (the side's gauge pinned at its full advantage - BtlBreakGaugeUI::HaveAdvantageOver
                 // 0x0099d41c: +-1000 -: a participant's Finest Arts, at random; else the attacker's Last Attack)
                 int actor = -1, finisher = -1;
+                bool isArts = false; // (BtlCommand +0x24: addLastAttack's pick a Finest Arts)
                 if (gauge == (fighters[size_t(chunk.attacker)].player ? 1000 : -1000)) {
                     std::vector<std::pair<int, int>> arts;
                     for (int p : comboActors)
                         if (const int fa = finestArtsCommand(p); fa >= 0) arts.emplace_back(p, fa);
-                    if (!arts.empty()) std::tie(actor, finisher) = arts[std::min(size_t(random() * float(arts.size())), arts.size() - 1)];
+                    if (!arts.empty()) std::tie(actor, finisher) = arts[std::min(size_t(random() * float(arts.size())), arts.size() - 1)], isArts = true;
                 }
-                if (finisher < 0) actor = chunk.attacker, finisher = lastAttackCommand(actor);
+                if (finisher < 0) actor = chunk.attacker, finisher = lastAttackCommand(actor), isArts = false;
                 if (finisher >= 0 && actor >= 0 && !fighters[size_t(actor)].dead()) {
                     // (BtlCommandList::VInsertTop 0x007e4fd8: before the next, marked inserted - 2 here,
                     // a finisher: it leads into no other)
-                    order.insert(order.begin() + long(at), {actor, finisher, first, 2});
+                    order.insert(order.begin() + long(at), {actor, finisher, first, isArts ? 3 : 2}); // (3: a Finest Arts)
                     if (at < bucket0End) ++bucket0End;
                     chunk.set = false;
                 }
@@ -922,7 +937,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         if (s.dead()) continue;
         Cr3Action a;
         a.source = src, a.command = cmd;
-        a.finisher = fromSkill == 2; // (a Last Attack or Finest Arts addLastAttack put in)
+        a.finisher = fromSkill >= 2; // (a Last Attack - 2 - or Finest Arts - 3 - addLastAttack put in)
         // (MbStatusEffectInfo::IsNoAction: a kind 31 effect - stunned, asleep - and it does nothing;
         // a skill's command plays all the same)
         if (hasKind(s, 31) && !fromSkill) {
@@ -968,7 +983,8 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             else if (roll < spd * (1.0f / 256.0f)) c.repeat += 2;
             else if (roll < spd * (1.0f / 128.0f)) c.repeat += 1;
         }
-        c.hits = std::max(c.hits, 1) * std::max(c.repeat, 1);
+        const int perAction = std::max(c.hits, 1); // (each action's hits: BtlCalculator +0x48 actions)
+        c.hits = perAction * std::max(c.repeat, 1);
         // (calculateCooperation @ 0x007dc7f4: normal bucket0 only, +0xbc bit 7, not a skill's, free of
         // kind 47 for a gene's; random byte under 154 (with advantage) or 77 + skill kind 80)
         if (at < bucket0End && (c.flags & 0x80) && !fromSkill && !((c.flags & 1) && hasKind(s, 47))) {
@@ -1009,6 +1025,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         const bool ally = c.ally();
         bool anyCrit = false, anyDown = false;
         std::vector<int> targets;
+        std::map<int, int> actionsOn; // (target kind 6: the actions each pick took)
         // (the target kind's side - BtlStatusList::collectDamageTarget*, by MbTargetType: 0 self, 1 a
         // party member, 2 all of them, 3 an enemy, 4 all enemies, 5 everyone, 6 a random enemy, 8 / 9
         // either side's one / all - a heal its own -, 10 / 11 the player's, 12 / 13 the other party
@@ -1036,6 +1053,19 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                 for (size_t k = 0; k < fighters.size(); ++k)
                     if (fighters[k].player == s.player && targetable(int(k), &c) && (c.target != 12 || int(k) != src)) side.push_back(int(k));
                 if (!side.empty()) targets.push_back(side[size_t(random() * float(side.size())) % side.size()]);
+            }
+        }
+        else if (c.target == 6) {
+            // (6 a random enemy - BtlDamageChunk::Calculate 0x0097ac10 calls CollectDamageTarget once per action,
+            // collectDamageTargetRandomEnemy 0x009bd320: one opponent living before the command, at random, no
+            // target filter; picks may repeat, each action its own BtlDamageTargetList of its hits. Here the
+            // actions grouped by the unit they picked, in the order first picked)
+            std::vector<int> living;
+            for (size_t k = 0; k < fighters.size(); ++k)
+                if (!fighters[k].dead() && fighters[k].player != s.player) living.push_back(int(k));
+            for (int n = 0; n < std::max(c.repeat, 1) && !living.empty(); ++n) {
+                const int t = living.size() == 1 ? living[0] : living[std::min(size_t(random() * float(living.size())), living.size() - 1)];
+                if (actionsOn[t]++ == 0) targets.push_back(t);
             }
         }
         else if (int t = livingTarget(playersSide ? true : !s.player, tgt, &c); t >= 0) targets.push_back(t);
@@ -1089,7 +1119,8 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                 float rate = 1;
                 rollCritAndDown(u, t, c, critUnit, downUnit, rate);
                 const uint8_t elemColor = rate < 1.0f ? 2 : rate > 1.0f ? 1 : 0;
-                for (int wh = 0; wh < c.hits; ++wh) {
+                const int hitsOn = c.target == 6 ? perAction * actionsOn[ti] : c.hits;
+                for (int wh = 0; wh < hitsOn; ++wh) {
                     if (!hits(u, t, c)) { // (a miss: no damage, no points)
                         hit.hits.push_back(0), hit.mpHits.push_back(0), hit.flags.push_back(4), hit.colors.push_back(0);
                         continue;
@@ -1168,10 +1199,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             for (int pi : a.partners) shiftElem(fighters[size_t(pi)]);
         }
         // Break points (calculateBreakPoint @ 0x007e1400, calculateForceBreakPoint @ 0x007e15a8, skill 70 reset @ 0x0097ac10):
-        if (c.extraType == 13 && !c.extraConstants.empty()) {
-            const int forced = c.extraConstants[size_t(random() * float(c.extraConstants.size())) % c.extraConstants.size()];
-            gauge = std::clamp(forced, -1000, 1000), gaugeStarted = gauge != 0;
-        } else if (!ally && c.breakPoint >= 0) {
+        if (!ally && c.breakPoint >= 0) {
             int base = c.breakPoint, bonus = effectSum(s, 58);
             if (c.flags & 2) {
                 base = s.player ? s.weaponBreak : command(s.attackCommand, own) ? std::max(own.breakPoint, 0) : 0;
@@ -1203,6 +1231,15 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             }
         }
         if (hasSkillKind(s, 70)) gauge = 0, gaugeStarted = false; // (Break Reset passive skill 70 @ 0x0097ac10)
+        // (BtlDamageChunk::CalculateForceBreakPoint 0x0097b77c -> BtlCalculator::calculateForceBreakPoint 0x007e15a8, the
+        // chunk's +0x98: a Finest Arts - BtlCalculator +0xa5 - +500 for the party, -500 for the monsters; else extra
+        // type 13 - command 398 - one of its constants, shuffled; ConsumeBreakPointToCalculation 0x0097b920 then sets the
+        // gauge to it - BtlPoint::SetValue, held within its bounds - after the action's own points, where it isn't 0)
+        int forced = 0;
+        if (fromSkill == 3) forced = s.player ? 500 : -500;
+        else if (c.extraType == 13 && !c.extraConstants.empty())
+            forced = c.extraConstants[std::min(size_t(random() * float(c.extraConstants.size())), c.extraConstants.size() - 1)];
+        if (forced != 0) gauge = std::clamp(forced, -1000, 1000), gaugeStarted = true;
         coopNow_ = 1;
         for (Cr3Hit& th : a.targets)
             while (th.gauge.size() < th.hits.size()) th.gauge.push_back(gauge);

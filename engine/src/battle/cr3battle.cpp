@@ -105,6 +105,12 @@ float Cr3BattleTables::animationCueTime(int modelId, int motion) const {
     return anim.f(8) * kBattleFrame;
 }
 
+float Cr3BattleTables::animationChangeTime(int modelId, int motion) const {
+    MbeFile::Row anim;
+    if (!animationRow(battleAnim, "Anim", modelId, motion, kAnimTiming, anim) || !std::isfinite(anim.f(11)) || anim.f(11) < 0) return -1;
+    return anim.f(11) * kBattleFrame;
+}
+
 bool Cr3BattleTables::motionTravel(int modelId, int motion, MotionTravel& out) const {
     MbeFile::Row anim;
     if (!animationRow(battleAnim, "Anim", modelId, motion, "iifffffff_ipfff", anim)) return false;

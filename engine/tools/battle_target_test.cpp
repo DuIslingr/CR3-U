@@ -119,6 +119,9 @@ int main() {
         commands.chunks.push_back({});
         commands.rows.push_back({{0,761}, {1,0}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,0x414}, {33,1}});
         commands.chunks.push_back({});
+        // Round 18: 765 a random-enemy command (target kind 6) of 10 one-hit actions, as 1604 Omni Missiles
+        commands.rows.push_back({{0,765}, {1,0}, {4,6}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x10a}, {24,100}, {32,4}, {33,1}});
+        commands.chunks.push_back({});
         Table formulas{"CommandFomula", "iiii", {
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
             {{0,8},{2,8}}, {{0,12},{2,12}}, {{0,13},{2,13}}, {{0,16},{2,16}}, {{0,17},{2,18}},
@@ -499,6 +502,33 @@ int main() {
             bool any = false;
             for (const auto& a : acts) any |= a.finisher;
             check(!any, "a single action leads into no finisher");
+            // Round 18: a Finest Arts (the monsters' side at its full advantage, a participant's Finest Arts) sets the
+            // gauge to -500 after its own points (calculateForceBreakPoint: +-500 by the side)
+            reset();
+            rules.gauge = -1000, rules.gaugeStarted = true;
+            rules.fighters[2].finestArts = 761, rules.fighters[3].finestArts = 761;
+            rules.scripted[2].push_back(760), rules.scripted[3].push_back(760);
+            acts = rules.turn({{0, 30, 2}});
+            check(acts.size() == 4 && acts[2].finisher && acts[2].command == 761 && acts[2].gaugeAfter == -500 && acts[1].gaugeAfter == -1000,
+                  "a Finest Arts sets the break gauge to -500 for the monsters after its points");
+            // Round 18: target kind 6 - one living opponent at random per action, picks repeating, each pick its hits
+            reset();
+            rules.fighters[1].hp = 5000;
+            rules.monstersWait = false;
+            rules.scripted[2].push_back(765), rules.fighters[3].hp = 0;
+            acts = rules.turn({{0, -1, -1}, {1, -1, -1}});
+            bool seen765 = false;
+            for (const auto& a : acts) {
+                if (a.command != 765) continue;
+                seen765 = true;
+                size_t total = 0;
+                std::vector<int> who;
+                for (const auto& h : a.targets) total += h.hits.size(), who.push_back(h.target);
+                std::sort(who.begin(), who.end());
+                check(total == 10, "a random-enemy command's 10 actions land 10 hits in all");
+                check(who == std::vector<int>({0, 1}), "a random-enemy command spreads its actions over the living opponents, one entry each");
+            }
+            check(seen765, "the random-enemy command acts");
         }
         std::cout << "battle target side: all checks passed\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }

@@ -264,7 +264,7 @@ Round 8's census left two groups of natives. Both were traced from `Cr3BindInter
 |---|---|---|---|
 | `InterfaceWindow.CreateDisposalEquipMenu_Gene` / `GetDisposalEquipMenuResult` (`InterfaceMain::CreateDisposalMain(0x14)` `0x8f2688`, `DisposalEquipMain::Update` `0xa60188`; `Func0` / `Func0<int>`) | `DisposalEquipMain` (`0xc5`); the result is `InterfaceMain +0x290`: 0 running, 8 done, no cancel. The box not full (`CrxGameData::IsGeneFull` `0x954f6c`: 50 slots) is done at once. A full box shows told `0x218` (`{categoryname}` `0x303`), then a held gene picked (`CreateBaseGeneSelectMenu`, header sentence `0x2f6`, no back), asked `0x236` (`{genename}`; No returns to the list), `DBSystem::RemoveGene`, told `0x237`, then done | Stubs (3 events and `quest_report`). The wait ended on `null` and the reward's `GeneGet` failed on a full box | `openScriptGeneDisposal`: done at once with room (`GeneGet`'s own rule, so the discard always makes room). Full, the same steps over the event (the presents' discard pieces: `drawCr3CampGenes`, `drawCr3Told`, `drawCr3Asked`) |
 | `InterfaceWindow.CreateGeneStatusSCModalMenu(gene, level, skills)` / `AliveGeneStatusMenu` (`0x8dbee4` / `0x8dbaf4`; `Func3<int, int, bool>` / `Func0<bool>`) | `GeneStatusMenu` (`0xa7`, `Initialize` `0xa9b5ec`). It shows `CrxGeneManager::GetGene(gene, level)` on `mixStsPositon`: `geneCngStsMenu` at `call_geneCngStsMenu_fit0`, the portrait `mixGeneIcon_id00` (`mat_card_001` = `card_<series>`) at `call_geneCngCharaIcon_fr00`, then name, level (MAX at the cap), HP / MP, four stats and the eight skills (unlearned dim). No element, lock or card beside it. Any tap or back closes it (0.2 s fade). With `skills`, a tap on a skill slot shows its help in the header instead | Stubs: never shown | `openScriptGeneStatus` with `drawGeneBase`'s new `GeneStatusMenu` layout, over an area's or a vista's event; any tap, ○ or back closes it. Matches Part 3's `17:20` frame (panel and portrait in place). The `skills` help taps aren't in |
-| VS tutorial natives: `CreateGeneCardSelector` (menu `0xe1`, `Func6<int>`; three `CardModel`s on `VsWildNull`'s `VsWildTouch_002..004`, `bt_602`; press, then press again to pick; result: the index, −1 till then; no cancel), `CreateOverLay` / `DeleteOverLay` (`OverLayMain` `0xdf`: a modal container, an RGBA `(0, 0, 0, 0.7)` mask on layer `0x12`, later windows inside it; immediate), `GetSelectTournamentID` (`InterfaceMain +0x704`, −1 until a tournament is picked), `Cr3System.VsBattleIn(id, p2, p3)` (`FldUtilReserveVsBattleIN` `0x872630`, `Func3<int>`: a battle reserved from the VS tournament row, black battle-entry colour, `SetGlassEffect`) | Run by the VS tutorial: `VSMain::OnUpdate` `0x96e2dc` loads `vs.nut` and runs `evt000` before the VS menu exists. That chains `s910_t01_00101_set` (flags `3501` ..: the starter-gene choice, `CreateGeneCardSelector(1, 17, 4, 18, 7, 19)` -> `Sync2('tuto_get_gene1..3')`) and `00201` (`VsBattleIn(1, -1, 1)`); `VsModeMain`'s states call `VS_Top`, `VS_Top2`, `VS_Normal_Top`, `VS_BattleIn` for the rest. `DBSystem::SM_SkipVSTuto` `0x814ad0` is the skip | Stubs; CR3-U's VS mode (`openVs`) doesn't run `vs.nut` or its hooks, so none of it is reached | Unchanged: the tutorial flow is *Not settled* (binding these alone would change nothing) |
+| VS tutorial natives: `CreateGeneCardSelector` (menu `0xe1`, `Func6<int>`; three `CardModel`s on `VsWildNull`'s `VsWildTouch_002..004`, `bt_602`; press, then press again to pick; result: the index, −1 till then; no cancel), `CreateOverLay` / `DeleteOverLay` (`OverLayMain` `0xdf`: a modal container, an RGBA `(0, 0, 0, 0.7)` mask on layer `0x12`, later windows inside it; immediate), `GetSelectTournamentID` (`InterfaceMain +0x704`, −1 until a tournament is picked), `Cr3System.VsBattleIn(id, p2, p3)` (`FldUtilReserveVsBattleIN` `0x872630`, `Func3<int>`: a battle reserved from the VS tournament row, black battle-entry colour, `SetGlassEffect`) | Run by the VS tutorial: `VSMain::OnUpdate` `0x96e2dc` loads `vs.nut` and runs `evt000` before the VS menu exists. That chains `s910_t01_00101_set` (flags `3501` ..: the starter-gene choice, `CreateGeneCardSelector(1, 17, 4, 18, 7, 19)` -> `Sync2('tuto_get_gene1..3')`) and `00201` (`VsBattleIn(1, -1, -1)`: two `NEG`s); `VsModeMain`'s states call `VS_Top`, `VS_Top2`, `VS_Normal_Top`, `VS_BattleIn` for the rest. `DBSystem::SM_SkipVSTuto` `0x814ad0` is the skip | Stubs; CR3-U's VS mode (`openVs`) doesn't run `vs.nut` or its hooks, so none of it is reached | Unchanged: the tutorial flow is *Not settled* (binding these alone would change nothing) |
 
 ### 13. Round 10 parity audit (finishers; bloom)
 
@@ -426,6 +426,88 @@ Round 10 chose the Finest Arts right but they played as ordinary attacks. A dele
 `--gauge -4 .. 4` now sets CR3's break gauge too (x 250, started), a test aid; a Finest Arts also needs
 its actor to wear a gene (the tier's gene value 0: `finisherGeneValue` is -1 without one).
 
+### 21. Round 18 parity audit (the rest of *Not settled*)
+
+Six delegated read-only passes took the *Not settled* list apart (reports in `/tmp/cr3-opening-audit/round18-*.md`:
+`staging`, `rules`, `steps`, `field2d`, `camp`, `vs`), read from `re/android/arm64/decomp.c` and the shipped data.
+
+**The field player.** None of this was in CR3-U.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Footsteps (`Fld2TaskPlayer::SM_Walk` `0x8737a0`, `SM_Run` `0x873a2c`, `SM_RideWalk` `0x8740c0`, `SM_RideRun` `0x874348`; `GetMoveSE` `0x8783b0`) | By distance, not animation events: on the ground, the model's `(x, z)` way added up (`+0x1b4`); past `0.6` walking, `1.5` running, `0.9` / `2.25` riding (one step each `0.5` / `0.3125` s), `GetMoveSE`: the `.phys` surface `1.0` under the controller, its first `se00` .. `se11` (else row 0), one of three SEs at random (table `0x00f3e3a4`: `fe_101` .. `fe_133`, `se11` `fe_137` ..); riding, any matched row but `se06`'s is `se_vehicle`'s `fe_134` .. `fe_136`. A matched row 0 / 1 / 3 / 5 / 6 also leaves a foot effect (`CreateFootEffect` `0x879148`: `fe001kem01` / `03` / `02`). Not in `SM_MoveTo`, falls or ladders | None | `Viewer::stepAreaFootsteps`; the effects drawn with the bombs' figures. t0101's `se08`: `fe_125` .. `fe_127` about every 0.31 s running; d0302 riding `fe_134` .. (`footsteps` case) |
+| Falls (`CheckFall` `0x8781b0`, `SetStateFall` `0x878620`, `SM_Fall` `0x873ca8`, `SM_RideFall` `0x8745c4`) | No ground `0.5` (riding `1.0`) under the controller: the edge's model place kept; more than that below it, the fall - no steering, `ff03` (riding `fr01`, the animal `fn01`), the field's menu hidden. Landed by a ray from the edge's height to `0.5` under the controller (riding: once it stops going down, `0.3`): `fn01` and `fe_033` (riding no SE) | Gravity only, the motion on | `AreaFall` / `stepAreaFall`, `CollisionWorld::distanceBelow`; the field's buttons hidden meanwhile (`ladder` case: put 1 above d0202's floor) |
+| Ladders (`Fld2Ladder` `0x9fb4dc`, `CollisionEventF` / `B`, `SetStateLadder` `0x878ae0`, `SM_Ladder` `0x8749b4`) | `ragdoll_ldr_NN_ups` (the foot), `_dws` (the top), `_upe` (the top's end); the "!" at either end within `1.5` (Field `+0x34`, `+0x3a`), none riding (flag 4105). `0.5` s to the joint (`0.5` back along its `z`), then `fh01` from the foot / `fh05` from the top, `fh02` held; up / down a rung (`fh03` / `fh06`, `1.0` over `0.8333` s, SEs now and `0.5` s on); off at `upe` (`fh04`) or the foot (`fh07`); back past where it got on straight off. SEs one of `fe_125` .. `fe_127` (`0x00f3e404`) | None (the tap did nothing) | `AreaLadder` / `AreaClimb`, `startAreaClimb` / `stepAreaClimb`; `setAreaMotion`'s `once` (the ladder's motions held at their end). d0202's ladder: on from the foot, a rung, off at the top (`ladder` case). Each end's floor is measured under its joint (the joints stand `0.5` above it); `upe` itself isn't used |
+
+**Faces and bloom.**
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| A looped face's wrap (`MVGL::Draw::Animator::Step` `0xb93118`) | `time += rate * dt`; past `end + 1e-5`: clamped to `end`, and only if the time **before** the step was already at `end` (and it loops) wrapped to `start + new - end`. So the step after reaching the end shows `end`, the next `start + d` (the overshoot dropped): a looped cycle is `N` steps `[end, d, 2d .. (N-1) d]`. The evaluated time (`+0x6c`) is `floor(t * 512) / 512`. The 60-Hz pass's `dt = 0` steps never wrap | `fmod` at once | `pose()`'s face `frameOf` follows the cycle on 1/30-s steps, quantised to 1/512 |
+| Two crossfading faces | Edge's op 3 composes each over the motion | Mixed after composing | Unchanged: a slerp is invariant under a common left rotation and a lerp under a common offset, so mixing the composed results equals composing the mixed deltas |
+| Vulkan's bloom (`RenderBloom` `0x00b90908`) | RGB565 targets; the 32 x 32 read back a frame late (black pixels skipped: `if (s <= 0)`) | RGBA8, the luminance key taken as 1 | `filter.frag` rounds each pass to 5 / 6 / 5 bits; `readTexture` records a copy in the frame and returns it when that frame's slot comes round (`kFrames` later - the original's is one frame). `s902_d02_01103_evt`: Vulkan and GL frames differ by `0.17` / 255 on average; no validation messages |
+| `PostEffectBloom2` / `PostEffectBloom3` | Empty (`0x0096c6e0`) / never called (`0x0096db74`) | - | Nothing to do |
+| `PostEffectBloomMask` (`GS +0x55`) | Set by `Fld2TaskMap::CreateArea` `0x0086a81c` when the area's `<area>m1` builds (d0651, d0652, d12xx - d14xx; `d0600m2` at graphic level 1 / 2): the scene copied (RT10), the m1 model (layer 10, drawn only here) and the player and gimmicks in mask mode (`Fld2Main::SetMaskMode` `0x87dc50`: the player's diffuse `(0, 0, 0)` - `Fld2TaskPlayer::SetMaskMode` `0x8795a8` -, the gimmicks' vfunc `+0x50` mode 1) over the uncleared scene, blurred (`0.013`, `3.3`) and added over the copy at `0.3`; RT10 shown | None | Not in (*Not settled*): it needs a second 3D pass after the scene |
+
+**The 2D areas and the toy camera.**
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The walk under `Fld2CameraOrtho` (`CalcPlayerMoveDir` `0x87704c`, `Fld2CameraOrtho::Setup` `0x9ed530`) | The stick turned by `<area>`'s figure camera's heading (the `+0x70` quaternion, `GetContaindCamera`); `Fld2TaskTouch +0xbc = 2`: the whole screen the move pad, no camera turning. The follow's `0.2` (`CalcScroll` `0x9ed39c`) once a 60-Hz update | The Gom camera's heading; the camera half and turning on | The figure camera's heading; `areaCamFree` false, no turning or stick camera (e0015's only free walk is behind its story event: not checked live) |
+| `Cr3FieldMapCamera.SetPos` / `GetPos_X` / `GetPos_Y` (`0x0086f198` / `0x0086f268` / `0x0086f318`) | Ortho only: `SetDirectScroll((W x / -960) k, (H y / -640) k)`, `k = (W / H) / 1.5`, within the stops; the getters its inverse. No shipped 2D script calls them | Unbound | Bound as traced. The picture is ETC1 (no alpha) and every scroll stays within the clamp: the clear colour never shows |
+| The iris (`ToyCameraMenu::Initialize` `0xb4f030` `+0x88`, `Update` `0xb4f54c`, `TouchGestureTap` `0xb5005c`) | `fe008came03` - eight shutter blades, a menu part at the middle, scale `(50, 1, 50)`, drawn first: on open backwards from `1/6` s (the iris opens), on a shot `0 .. 0.667` s then back (`SetParamNumber(6)`); taps refused while it moves | A white flash assumed | Drawn first - its depth cleared after it, so the menu's parts always cover it -, the y scale taken about the root's 90-degree turn (the blades' plane 50 across and up: their joints stay in the screen's plane); taps refused meanwhile. The blades' texture (`cam`, opaque ETC1 grey metal; blending on, diffuse alpha 2.5) as the asset has it. The 30-frame wait counts 60-Hz updates (`0.5` s) |
+| `feGoodsToyFrameLMenu` | `Cr3UtilGetScreenType() == 1` (the iPads): it at `0.94`, at the same `ragdoll_call_feGoodsToyFrameMenu` joint | Not drawn | The taller frame where `w <= 1.55 h` (CR3-U's type-1 rule) |
+| The touch box (`Fld2TaskTouch +0xe8`, `UpdateTouch` `0x87a05c`) | While the toy camera is on, a press is taken only within the screen's centred 3:2 | Anywhere | `toyCamTouchBox` on the field's drags |
+| The back key (`GetHardReturnTap`, `CheckCanselToyCameraMenu`) | Latched whatever the iris; acted on once the camera is enabled again | Not routed | Backspace / Android Back latch it (`toyCamHardBack`) |
+| The Vita's pad (`InputEquipment::Setup` `0x81353046`, pad table `0x8160cb70`) | `PadTrigger` 7 = code `0xe` = ○ the shutter, 5 = code `0xd` = × back; `GetRotateSpeed` the touch's (`20` / `80`, `6` / `45`) | Assumed | Settled as CR3-U has it |
+
+**The field's other natives.**
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| `SetEncount` (`0x86eeb4`, `Fld2System +0x342`) | `Fld2TaskPlayer::OnUpdate` and `Fld2TaskGimmick::OnUpdate` skip everything - the player, gimmicks, people and their effects frozen in pose; the camera, touch and script run on | Only the player's input held | The field's clocks, effects, people, gimmick checks and the player's physics stop too |
+| `SetBoxDrawing` (`0x86ed60`, `Fld2Main +0xfa`) | Read and cleared only by `SM_ChangeArea` `0x87b378` (an area-to-area change): the boxes, gold boxes and `CreateAceCoupling` redrawn; the field after a battle or a vista leaves it | Used up by any `loadArea` | Only an area change uses it (`areaChanging`). The ace couplings (`ace_coupling.mbe`, the rare "Ace" encounters) aren't fought in CR3-U yet |
+| The season event and colosseum menus (`CreateSeasonEventMenu`, `CreateColosseumMenuMain`, `ColosseumIn` ..) | Only `ReserveSeasonEventMenu` / `ReserveColosseumMenu` call them, and no shipped script calls those (the clerks run quest 79 and the colosseum's story events directly; the `colosseums` table is VS mode's predecessor) | Unbound | Inert stubs (`CheckColosseumReturn` `1`, for the dead code's `- 1`) |
+
+**Battle staging.** Implemented by a delegated pass in its own worktree, merged here.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Ranged / Shot (kinds 2 / 3; `BtlRangedDirection` `0x98d9b8`, `BtlShotDirection` `0x99a540`, `BtlUnit::PlayCamera` `0x9dd234`) | The command's camera type first (types 1 / 4: `PlayGlobalToTarget` `0x97811c` - a `Cam_bt_attack_ALL_xx` of the battle's `Camera` row at the origin, looking at the target at `0.4`), then `bs01` (motion 15), whose own camera (the `AnimDirection` row's; only `Cam_s01_m316_00` exists) replaces it; no white, the action not held for the clip; the swings' 16 / 17 likewise | The melee attack camera | `startCr3RangedCamera`: as traced. `ranged-camera` case (battle 22, party 2, 4, 1, seed 1: `Cam_bt_attack_ALL_14`, `_11`, `_12`, `_10`). ShotCover's `PlayGlobal(5.0)` isn't in (`IsCover` untraced) |
+| ChildLastAttack (kind 39; `vPlay` `0x993a10`, its "replaced" handler `0x993cb4`) | A Last Attack, then motion 20 (`bt03`) on the first target - whose own motion-20 camera, placed on it, replaces the actor's: the direction undone at once (the actor home, everyone shown, the stance, no white); the target's clip stays on until the next camera | A Last Attack | As traced, held `bt03`. Only command 1705 (monster 301) has the kind; its coupling's target j007 has no motion-20 camera, so the shipped case is a plain Last Attack (the undo checked with a forced model) |
+| HoldLastAttack (kind 30) | At the actor's change cue (`battle_anim` `Anim +0x38`; m307's frame 90) each held target (status 32) attached to the holder's effect point 2 (`poseChild` `0x9db6ac`), the first in `bt07` (motion 24) locked against status stances; at the last hit (`0x994638`) unlocked, its stance, `PlayRelease` | A hold for good from the action's end | `Cr3BattleTables::animationChangeTime`, `stepCr3HoldLastAttack`, `heldPose`; released at the last hit or when the direction is cut. The held unit's turn from effect point 2 (`0x9dec2c`) isn't traced |
+| `hideOtherThanTarget` with target 6 (`initializeProcessingList` `0x97c7f0`) | Every foe of the actor taken off the hide list | Hidden | Kept shown (commands 1604, 1607, 1815) |
+| `PlayGlobal`'s clip (`0x977d4c`) | A random entry of the `Camera` row's `+0x28` list, never the last global clip again (`+0xff8`) | The list's first | `pickCr3GlobalCamera`, its own generator seeded from the battle seed (seeded cases unchanged) |
+| What shows behind Finest Arts' hidden stage (`BtlField::Hide` `0x99c714`) | The stage's figure, lights, effects and objects stopped; no backdrop loaded, no script sets a colour: the clear colour | Black | Unchanged (the clear colour's default is taken as black) |
+
+**Battle rules.**
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| A Finest Arts' break points (`CalculateForceBreakPoint` / `calculateForceBreakPoint` `0x7e15a8`, `BtlCalculator +0xa5`) | `addLastAttack`'s `+0x24` (Finest Arts) sets `+0xa5`: after the action's own points the gauge is **set** (`ConsumeBreakPointToCalculation`, `BtlPoint::SetValue`) to `+500` (a player) / `-500` - from the full `±1000` back to half. Extra type 13 (command 398 only) adds its points, then sets its random constant | Not set | The finisher marked 3 in the order for Finest Arts (2 Last Attacks); the gauge set to `±500` after; type 13 adds first. `battle-target-tests` checks a monster's Finest Arts at `-500` |
+| Effect kinds `0x1f`, `0x3f`, `0x40` (`BtlStatusEffectList::HasEnableEffect` `0x9b854c`) | Effect **kinds**, not status ids: 31 no action (statuses 1, 16, 32, 33, 42, 43, 47, 80, 81, 108, 126); 63 / 64 the two transformations (63: statuses 19, 54, 160 - attack command 8, no finishers; 64: 20, 146 - the pig form, attack command 9, Last Attack command 18 "Black Impact", no Finest Arts) | Tested as status ids | `hasKind`; `attackCommandOf` (8 / 9) for the default attack |
+| Random-target commands (target 6; `collectDamageTargetRandomEnemy` `0x9bd320`) | One living foe per action, picked before any damage (may repeat), each action its own target | Every living foe hit | A pick per action; `wouldHit` one foe. `battle-target-tests`: command 765's ten hits spread over both players |
+| A finisher after the turn's last command (`calculateCommands` `0x7db93c`, `phaseStatusEffect` `0x9d0098`) | Only before a next command: a turn-end (trigger 12) or assist command following the last one can be that next; `+0x188` isn't cleared but `+0xb8` (the participants) is | Before a next command | Unchanged: CR3-U has no turn-end commands or assists |
+
+**The camp and gene windows.** Implemented by a delegated pass in its own worktree, merged here.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The camp's event mode (`SetCampWindowParty` `0x8f00dc`, `CampcomBtnMenu::SetParamNumber` `0xa35e44`, `CampTopMenu::Update` `0xa38130`) | Items, Fuse Gifts, Quests and Options off; Equipment and Status on; Gene Swap by its rule (flag 41, VS or flag 21, a gene in the 50 box slots). "Button 7" is Gene Swap's list with the header's coin button banned (`BanCoinButtonHeaderMenu`) | Every button | As traced; Gene Swap also needs a box gene outside event mode |
+| Leaving it (`CampTopMenu::SetParamNumber(2)` `0xa389cc`, `GetPartyMemberEquipGene` `0x8fbd6c`) | `com_004`; every member wearing a gene: Yes / No `0x1f0` ("Are you satisfied with this party?") - Yes `com_003`, closed `0.233` s on (the field's model rebuilt), the script's wait ends; No `com_004`, back. Otherwise the alert `0x307`. A hard back during the Yes / No: `com_004` and state 6 (the buttons not taken until a panel moves or back again). VS mode checks only the first three | Closed at once | As traced (`camp-event-ask`, `camp-event-nogene`; `camp-event-lock` and `vs-tutorial` now answer Yes). The `Cr3FadeOut(0, 5)` on Yes isn't in (the fade back is unknown) |
+| The Vita's focused panel (`FUN_81118718`) | No tint: `camTopSort` (`camTopSort_loop` at `call_camTopSort`), its arrows when ○ is held. (Touch: the taken panel status 2 white, the rest status 1 `(0.714, 0.714, 0.851)`) | CR3-U's own `(0.5, 1, 1.5)` tint | `camtopsort` drawn; the tint gone |
+| Gene fullness (`CrxGameData::IsGeneFull` `0x954f6c`, `utils::GetGene` `0x92dc30`, `CheckGeneFull` `0x92e6d8`) | The 50 box slots only; the stock has its own `IsGeneStockFull` | All held genes, the stock's capacity added | The box genes counted against 50 in `GeneGet`, `CheckGeneFull` and the disposal's room test |
+| `GeneStatusMenu`'s `skills` (`+0xf70`, `TouchGestureTap` `0xa9e504`) | A tap on a slot puts its help (`0x26d` "Learn at Level {level}" unlearned) on the header's sentence line. No shipped script passes `true` | - | The argument read; the taps not in |
+
+**VS mode.**
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The colosseum's commentary (`BtlSystem::Init` `0x7d88cc`, `BtlColosseumVoiceSystem` `0x9aa0e0`: `Add` `0x9aa5f0`, `Play` `0x9aa330`, `Request` `0x9aa8a0`, `OnUpdate` `0x9aa26c`) | In a VS battle only (`BtlBootParam +0x34`), `VsBattleIn`'s p2 / p3 (`+0x38` / `+0x3c`) the commentators (`commentator.mbe`: 1 the MC `c121`, 2 .. 7 guests `c123k`, `c111k`, `c105k`, `c107k`, `c140k`, `c119k`; others none - the tutorial's first tournament is silent). Each category's voices shuffled and taken in turn; `Play` over a speaking voice only at a higher priority, then `rand & 0xff < chance`, no repeat; `Request` queued, played a delay after the voices stop. Battle start (after the banner): the first battle 1 (1 s), 4, 5; the second 2; the third 3. Each turn 6. A player's Finest Arts 0x75, then 0x76 or 0x76 + Char id a second after its first hit. A win 0x7c / the last 0x7d; a loss 0x7e, 0x81 | Dropped | `VsCommentary`: `startVsCommentary` / `playVsComment` / `requestVsComment` / `stepVsCommentary` (with commentators forced to 1, 2 in a tutorial battle: `c121_005`, `c123k_001`, `c121_009`). The Finest Arts' second line is queued at once (the queue waits for the climax line); the perfect (0x7f, 0x80, 0x82), continue and damage / cooperation categories aren't in |
+| VSMain's results (`VSMain::Init` `0x96e25c`, `VsAchieveProductionMenu`) | After any tournament, before `evt000` | Results, prizes, then `vsEnter` | Same order (the rewards inside one menu in the original; here two screens). The greeting `c121_701` (`InterfaceMain +0x74d`) isn't in |
+| OverLayMain (`Initialize` `0xaf2cd0`, `CreateInterface` `0x88c72c`) | One 14 x 14 quad at `(0, 0, 5)`, `(0, 0, 0, 0.7)`; windows created while it's on are its children, drawn over it | The same | Settled |
+| `SM_SkipVSTuto` (`0x814ad0`, request 0x97) | No shipped caller: debug only | - | Nothing to do |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -501,76 +583,58 @@ Deterministic REA evidence bundles are stored outside the repository at
 
 ## Not settled
 
-- **Battle staging (Round 5, 16, 17)**: a motion's own camera plays for the Last Attacks and a
-  script's motions; the cast's goes its own way (`castCamera`), and a Ranged / Shot's (`s01`) and
-  ChildLastAttack's target's `bt03` camera aren't in. The white-out wasn't seen live (no finisher tier
-  above 0 reachable headless). HoldLast's hold and ChildLast's target motion aren't staged;
-  `hideOtherThanTarget`'s "all foes" case (CommandInfo `+0x10` 6) isn't in. Round 7's approximations: the held unit's
-  rotation, the release's timing, `SetStart`'s place in the turn, `IsWildCard`, and the addition
-  units (above).
-- **Unbound natives (Round 10)**: none in the census; the VS tutorial's are bound by the viewer (its
-  `vsEvents` and the vistas).
-- **The VS tutorial (Round 10)**: these parts aren't in or aren't traced.
-  - Not in: `VsBattleIn`'s commentators (`p2` / `p3`: `BtlBootParam +0x38 / +0x3c`, colosseum voices
-    in `BtlSystem::Init`); `VSMain`'s results state (`0xb`, `CreateVsAchieveProductionMenu`) before
-    `evt000` (CR3-U's own results and prizes come first, then `vsEnter`).
-  - Not traced: the overlay's exact quad (`CustomFigure` 14 x 14 at depth 5); whether `CreateInterface`
-    routes the script's message windows into the overlay (CR3-U draws them over it); who sends
-    `SM_SkipVSTuto` (request `0x97`).
-  - Never called: `s910_t01_00602 .. 00605` and `00704` (dead code in every script).
-  - `VS_Special_Top` only prints.
-  - `FldUtilReserveVsBattleIN` reads the tournament row at the old index before looking the new
-    id up (the tutorial's: the `.bss` 0, tournament 1 anyway).
-  - The pad case stops when tournament 1's battles start. Its battles, `00701`'s join and
-    `00601`'s locks run as VS's own (the battles' wildcard and score screens are CR3-U's).
-- **Gene windows (Round 9)**: the `skills` help taps on `GeneStatusMenu`'s skill slots aren't in.
-  The disposal list's header title isn't traced (CR3-U shows Gene Swap's). Fullness follows
-  `GeneGet`'s count (all held), while `IsGeneFull` counts the 50 box slots. They differ only when the
-  stock holds genes, and `GeneGet`'s own rule then refuses earlier than the original's.
-- **Finishers (Round 10, 17)**: the Finest Arts' colosseum commentary (`PlayClimax`) isn't in; what
-  shows behind the hidden stage is taken as the clear colour (black); `PlayGlobal(1.0)` is taken as the
-  battle's global camera for 1 s; the white covers the scene, the HUD drawn over it. `CalculateForceBreakPoint(true)`'s
-  `BtlCalculator +0xa5` (a Finest Arts' break points) is UNKNOWN. The finisher check runs only before a
-  next command in the same turn (the original's also carries `+0x188` to the turn-end list).
-  `CR3-U`'s `wouldHit` treats a random target's side as all of it (`CollectDamageTarget`'s random pick
-  isn't traced). Status effects `0x1f`, `0x3f` and `0x40` are tested by id; their names are UNKNOWN.
-- **Bloom (Round 10)**: Vulkan's targets are RGBA8, not the original's RGB565 (no 5/6/5 quantising),
-  and Vulkan doesn't read the 32x32 luminance back (its term taken as 1: it can only be 0.995 .. 1.001).
-  `PostEffectBloomMask` (`GS +0x55`, off by default, its writer unknown) and `PostEffectBloom2` / `3`
-  are separate effects, not traced.
-- **The field (Round 11)**: these are traced but not in CR3-U.
-  - **The season event and colosseum menus.**
-
-  `SetEncount` holds only the player's input, not the gimmicks. `SetBoxDrawing` doesn't redraw the
-  ace couplings.
-- **Faces (Round 14)**: a looped face holds its last frame for one update before wrapping
-  (`Animator::Step`), and leaf times are quantised to 1/512 s; CR3-U wraps at once. Two crossfading
-  faces are mixed after composing each over the motion, not as deltas. Which side of op 3 is the
-  base was read by Edge's convention, not from its stack order. The face's user-channel blend mode
-  is taken as additive.
-- **The toy camera (Round 13)**: these parts aren't in or aren't settled.
-  - Not in: the shutter's flash `fe008came03` (a 3D effect, scale 50; the photo's script flashes white
-    itself); `feGoodsToyFrameLMenu` (screen type 1, scale 0.94); the touch's centred box
-    (`Fld2TaskTouch +0xe8`) and the back key; the menu's close.
-  - Not settled: the Vita's pad indices 7 / 5 as buttons (CR3-U: ○ / ×); its `GetRotateSpeed` taken as
-    the touch's 20 / 80 steps; the drag's units as the Gom camera's (`uiUnits` x 100).
-- **The ride (Round 12)**: these parts aren't in or aren't settled.
-  - Not in: ride falls (state 8, `CheckFall`'s 1.0 probe) and the footstep SEs (`GetMoveSE`: riding,
-    `se_vehicle` except on `se06`); CR3-U has no footsteps or ladders yet (ladders refuse a rider:
-    `Fld2Ladder::CollisionEventF` / `B`).
-  - Not settled: the boxes' `GetFieldParamByName` registration is assumed for every `ragdoll_vc` joint.
-    In entry modes that don't call `SetRide`, the original leaves both `vct` and `vch` solid; CR3-U
-    follows flag 4105 always. What `se06` is (water?) is UNKNOWN. No footage checked against.
-- **The 2D areas (Round 15)**: the walk under the 2D camera (which way the stick moves the player)
-  isn't traced; the follow's fifth a frame is taken at 60 Hz; `Fld2SetFieldMapCameraPos` (`SetPos`,
-  a 960 x 640 reference) isn't bound; the picture's blend and the clear colour behind it are
-  taken as plain alpha and black.
-- **Camp event mode (Round 8)**: in `CampTopMenu`'s event mode button 2 becomes 7, and a Yes/No
-  (`0x1f0`) or an alert (`0x307`) can appear. What each button does there is UNKNOWN; CR3-U keeps
-  the camp's normal buttons. The Vita focus tint `(0.5, 1, 1.5)` is CR3-U's own; the original's
-  status-1 colour is `(0.714, 0.714, 0.851)`. A visible armour change by `ChangePlayerEquip` wasn't
-  exercised headless (`s001_t02_00101`'s armour 83 is j001's default body, `b02`); the rebuild reuses
-  `loadArea`'s figure loading.
+- **Battle staging (Round 5, 16 - 18)**: ShotCover's `PlayGlobal(5.0)` (`IsCover` untraced); the
+  held unit's turn from effect point 2 (`0x9dec2c`) and when a surviving ChildLastAttack target leaves
+  `bt03`; the white over or under the HUD (the battle menus' window depths aren't traced) and the
+  clear colour's default behind a Finest Arts' hidden stage (taken as black). The white-out wasn't
+  seen live (no finisher tier above 0 reachable headless). Round 7's approximations: the held
+  unit's rotation, the release's timing, `SetStart`'s place in the turn, `IsWildCard`, and the
+  addition units.
+- **Battle rules (Round 18)**: skill kind 70's `SetBreakPointToFront(-gauge)` (whether it zeroes the
+  gauge before the action's points; its function not read). Turn-end (trigger 12) and assist
+  commands aren't in, so no finisher follows a turn's last command. The status effects' in-game
+  names aren't in any table.
+- **The VS tutorial (Round 10, 18)**: the overlay's windows are routed as the original's; not traced:
+  `DAT_0141ab10` (VSMain's results gate), the reward windows' order inside `VsAchieveProductionMenu`
+  (CR3-U's own prizes screen), and the `c121_701` greeting's `InterfaceMain +0x74d`. Never called:
+  `s910_t01_00602 .. 00605` and `00704`. `FldUtilReserveVsBattleIN` reads the tournament row at the
+  old index before looking the new id up (the tutorial's: tournament 1 anyway). The pad case stops
+  when tournament 1's battles start.
+- **The commentary (Round 18)**: the categories of `PlayGetSetByTurn`, `PlayCooperation`,
+  `PlayAfterDamageToPlayer` / `ToEnemy`, `PlayCommandHit`, `PlayAfterNoDamage` and the perfect,
+  continue, no-continue and retire lines aren't in; `PlayClimaxAfter`'s line is queued at the
+  climax, not at the first hit. Live checks used commentators forced to 1, 2 (the reachable tutorial
+  tournament is silent).
+- **Gene windows (Round 9, 18)**: `GeneStatusMenu`'s `skills` taps (no shipped script uses them);
+  the disposal list's header title (`CreateHeaderMenu(-1)`: which frame -1/30 s shows is UNKNOWN).
+  The VS prize check (`earnGenePrize`) still counts the stock.
+- **Finishers (Round 10, 17)**: the Finest Arts' `PlayGlobal(1.0)` is the battle's global camera
+  for 1 s; `CollectDamageTarget`'s per-action picks are in, its shuffle's generator is CR3-U's.
+- **Bloom (Round 10, 18)**: Vulkan rounds to 5 / 6 / 5 in its shader (RGBA8 images) and reads the
+  luminance `kFrames + 1` frames late (the original one). `PostEffectBloomMask` - the m1 areas'
+  glow (d0651, d0652, d12xx - d14xx, `d0600m2`): traced (section 21) but not in; it needs a second 3D
+  pass after the scene (the m1 model, the player and gimmicks black) and footage to check against.
+- **The field (Round 11, 18)**: the season event and colosseum menus are unreachable (inert stubs).
+  The ace couplings aren't fought in CR3-U, so `SetBoxDrawing`'s redraw of them is moot. Whether
+  `SetBoxDrawing`'s flag survives a battle in between is UNKNOWN (CR3-U keeps it).
+- **Faces (Round 14)**: which side of op 3 is the base was read by Edge's convention, not from its
+  stack order; the face's user-channel blend is taken as additive.
+- **The toy camera (Round 13, 18)**: whether the Vita's pad presses also wait for the iris; the
+  close's 3-tick hold after a notifying close (`Fld2TaskCamera +0xfc`); the brackets' spin is taken
+  as 0.1 a 30-Hz update (`ToyCameraMenu::Pose` steps it per drawn frame). The iris's on-screen size
+  rests on the `(50, 1, 50)` scale being taken about the root's turn (no footage).
+- **The ride, falls and ladders (Round 12, 18)**: what `se06` and the other surfaces are (water is
+  likely for `se06`); `ragdoll_fall_NN`'s `+0x3a8` reader; the 20-unit void guard (`StepSimulation`
+  `0x876af4`: warped back to the last safe place) isn't in. Ladders: the top's end is found by each
+  end's floor, not the `upe` box; the camera follows the player rather than the traced 1-per-rung
+  ease; the exits' positions read from the traced axis maths (medium). In entry modes that don't call
+  `SetRide`, the original leaves both `vct` and `vch` solid; CR3-U follows flag 4105 always.
+- **The 2D areas (Round 15, 18)**: the walk's heading follows the area camera as traced, but e0015's
+  only free walk is behind its story event, so it wasn't seen live; the Vita's `CalcPlayerMoveDir`
+  isn't matched.
+- **Camp event mode (Round 8, 18)**: the Yes's `Cr3FadeOut(0, 5)` and whatever fades back; the
+  header coin-button ban's effect (`HeaderMenu +0x158`, no reader found); `CampEquipMenuMain +0x4c`'s
+  visible effect. A visible armour change by `ChangePlayerEquip` wasn't exercised headless.
 - **Quake reference height**: the original's shake is `offset / 2` *device* pixels, so it shrinks on
   denser displays; CR3-U fixes the divisor at the playthrough's `720` so the look matches the
   reference at any window size.
@@ -611,9 +675,13 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`40/40` cases, `0 problems`)**:
+- **Controller & UI integration suite (`45/45` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 40 headless controller cases. Round 17 added `finest-arts` (battle 22 at full advantage,
+  passes all 45 headless controller cases. Round 18 added `footsteps` (t0101's `se08` steps, with
+  `CR3_EVTANIM`), `ladder` (d0202: a fall onto the floor, the ladder from the foot, a rung, off at the
+  top), `ranged-camera` (battle 22's ranged direction's global clips, seed 1), `camp-event-ask` (the
+  event camp's Yes / No: No, the hard back's stall, Yes) and `camp-event-nogene` (the `0x307` alert);
+  `camp-event-lock` and `vs-tutorial` answer the Yes / No now. Round 17 added `finest-arts` (battle 22 at full advantage,
   `CR3_BATTLE_SEED` 6). Round 16 added `last-attack` (battle 22's finisher).
   Round 15 added `area-2d` (e0015's pan). Round 13 added `toy-camera` (d1102's photo target shot,
   then back). Round 12 added `ride` (d0302's animal ridden and left by the

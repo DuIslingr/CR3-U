@@ -194,8 +194,13 @@ void bindGameState(ScriptVM& vm, GameState& state) {
     // genes: utils::GetGene(id, level) - a gene in the first of the 50 places free (its index; -1
     // none) -, CheckGene (how many held, the stock's too), CheckNewGene (never had), CheckGeneFull,
     // GetGeneExp(id, level)
-    vm.setNative("Cr3System", "GeneGet", [&state, &db](NativeCall& c) {
-        if (int(state.cr3Genes.size()) >= (db ? db->constant("GENE_CAPACITY", 50) : 50)) return c.result(-1);
+    // (the box: CrxGameData's 50 places, crx_game_data + 0x15f78 - the stock, +0x17620, its own and
+    // not counted -; CR3-U's genes not `stocked`)
+    const auto boxHeld = [&state] {
+        return int(std::count_if(state.cr3Genes.begin(), state.cr3Genes.end(), [](const Cr3Gene& g) { return !g.stocked; }));
+    };
+    vm.setNative("Cr3System", "GeneGet", [&state, &db, boxHeld](NativeCall& c) {
+        if (boxHeld() >= (db ? db->constant("GENE_CAPACITY", 50) : 50)) return c.result(-1); // (utils::GetGene 0x92dc30: no place with id < 0)
         Cr3Gene g{c.integer(0)};
         if (db) { // (CrxGene::Initialize(level): that level's EXP, its commands and skills)
             if (c.integer(1) > 0) g.exp = db->geneExp(g.master, c.integer(1));
@@ -214,8 +219,10 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         c.result(int(std::count_if(state.cr3Genes.begin(), state.cr3Genes.end(), [id](const Cr3Gene& g) { return g.master == id; })));
     });
     vm.setNative("Cr3System", "CheckNewGene", [&state](NativeCall& c) { c.result(state.cr3GeneBook.count(c.integer(0)) == 0); });
-    vm.setNative("Cr3System", "CheckGeneFull", [&state, &db](NativeCall& c) {
-        c.result(int(state.cr3Genes.size()) >= (db ? db->constant("GENE_CAPACITY", 50) : 50) + state.cr3GeneStock);
+    // (Cr3System.CheckGeneFull 0x92e6d8 -> CrxGameData::IsGeneFull 0x954f6c: all 50 box places
+    // taken - the stock is IsGeneStockFull's, 0x954fa4)
+    vm.setNative("Cr3System", "CheckGeneFull", [&db, boxHeld](NativeCall& c) {
+        c.result(boxHeld() >= (db ? db->constant("GENE_CAPACITY", 50) : 50));
     });
     vm.setNative("Cr3System", "SetVistaFuncName", [&next](NativeCall& c) { next.vistaFunction = c.string(0), next.vista = true; });
     vm.setNative("Cr3System", "SetVistaMapName", [&next](NativeCall& c) { next.vistaMap = c.string(0); });

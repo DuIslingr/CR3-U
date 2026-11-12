@@ -72,8 +72,11 @@ public:
 
     // The surface name under a point (a ray straight down, within `depth`): "" none
     std::string surfaceBelow(const Vec3& p, float depth) const;
+    // The nearest triangle under a point within `depth` (a ray straight down): its distance, -1 none
+    float distanceBelow(const Vec3& p, float depth) const;
 
 private:
+    float rayDown(const Vec3& p, float depth, std::string* surface) const;
     struct Tri {
         Vec3 a, b, c, n; // n: unit normal
         std::string surface;

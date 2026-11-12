@@ -34,9 +34,10 @@ want vs && run vs-detail "3:east 3.5:east 4:east 4.5:r 5:l 5.5:south 6:left 7:qu
 
 # The VS tutorial (round 10): a fresh game's VS - vs.nut's evt000 reserves s910_t01_00101_evt; its
 # gene cards (CreateGeneCardSelector: one put in focus, then taken), the gene's status, VS again:
-# s910_t01_00201_evt's camp party window, its VsBattleIn - tournament 1's battles after the vista
-want vs && run vs-tutorial "0:until=gene_selector:_genes 1:right 1.5:east 2:east 2.5:until=gene:_status_4 1:east 1.5:until=opened_by_the_event 1:south 1:until=reserved_tournament 1:quit" \
-    "vs: to the vista s910_t01_00101_evt|gene selector: genes 1, 4, 7|gene selector: card 1 in focus (gene 4)|gene selector: card 1 taken (gene 4)|gene: status 4 at level 1|vs: to the vista s910_t01_00201_evt|camp: opened by the event|vs: battle reserved - tournament 1|vs: the reserved tournament 1's battles" \
+# s910_t01_00201_evt's camp party window (its back asking 0x1f0 - the party wears its genes -, ○ on
+# Yes), its VsBattleIn - tournament 1's battles after the vista
+want vs && run vs-tutorial "0:until=gene_selector:_genes 1:right 1.5:east 2:east 2.5:until=gene:_status_4 1:east 1.5:until=opened_by_the_event 1:south 1.5:east 2:until=reserved_tournament 1:quit" \
+    "vs: to the vista s910_t01_00101_evt|gene selector: genes 1, 4, 7|gene selector: card 1 in focus (gene 4)|gene selector: card 1 taken (gene 4)|gene: status 4 at level 1|vs: to the vista s910_t01_00201_evt|camp: opened by the event|camp: is this the party? (0x1f0)|camp: the party chosen (0x1f0 Yes)|camp: closed (CR3)|vs: battle reserved - tournament 1|vs: the reserved tournament 1's battles" \
     -- --area t0101 --cr3-party 1 --page 0.05 --input "auto vs:open"
 # After the first tournament (3501, 3502): VS_Top's s910_t01_00701 vista (the party joins), VS again,
 # VS_Top's 00601 under OverLayMain's mask - PleaseCampPush: only the camp's button not shut

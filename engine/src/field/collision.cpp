@@ -333,8 +333,16 @@ std::vector<CollisionWorld::Contact> CollisionWorld::overlaps(const Vec3& centre
 }
 
 std::string CollisionWorld::surfaceBelow(const Vec3& p, float depth) const {
-    float best = depth;
     std::string out;
+    rayDown(p, depth, &out);
+    return out;
+}
+
+float CollisionWorld::distanceBelow(const Vec3& p, float depth) const { return rayDown(p, depth, nullptr); }
+
+float CollisionWorld::rayDown(const Vec3& p, float depth, std::string* surface) const {
+    float best = depth;
+    bool hit = false;
     const Vec3 dir{0, -1, 0};
     for (const Tri& t : tris_) { // (Moller-Trumbore)
         const Vec3 e1 = sub(t.b, t.a), e2 = sub(t.c, t.a), pv = cross(dir, e2);
@@ -348,9 +356,12 @@ std::string CollisionWorld::surfaceBelow(const Vec3& p, float depth) const {
         const float v = dot(dir, qv) * inv;
         if (v < 0 || u + v > 1) continue;
         const float dist = dot(e2, qv) * inv;
-        if (dist >= 0 && dist < best) best = dist, out = t.surface;
+        if (dist >= 0 && dist < best) {
+            best = dist, hit = true;
+            if (surface) *surface = t.surface;
+        }
     }
-    return out;
+    return hit ? best : -1.0f;
 }
 
 } // namespace cr3

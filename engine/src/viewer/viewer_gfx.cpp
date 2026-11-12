@@ -784,10 +784,24 @@ void Viewer::pose(ViewFigure& f, float t, bool loop) {
         }
     }
     if (f.faceLoaded) { // (the face over the motion: Edge's relative blend - its joints alone -, its user channels added)
+        // MVGL::Draw::Animator::Step (0xb93118), stepped once a 1/30-s update: the first step past the
+        // end clamps to it; only the step after that wraps, to start + d (the overshoot dropped). A
+        // looped cycle is therefore N steps - [end, d, 2d .. (N-1)d] - with N the first step count
+        // past the end. The evaluated time is quantised to 1/512 (+0x6c).
         auto frameOf = [](const cr3::Animation& a, float t, bool loop) {
-            const float frames = float(std::max(a.frames() - 1, 1));
-            float fr = std::max(t, 0.0f) * a.sampleRate();
-            return fr > frames ? (loop ? std::fmod(fr, frames) : frames) : fr;
+            const float rate = std::max(a.sampleRate(), 1.0f);
+            const float end = float(std::max(a.frames() - 1, 1)) / rate;
+            constexpr float d = 1.0f / 30.0f;
+            const float n = std::max(t, 0.0f) / d;
+            const float steps = std::floor((end + 1e-5f) / d) + 1; // N
+            float time;
+            if (n < steps) time = std::min(n * d, end);
+            else if (!loop) time = end;
+            else {
+                const float j = std::fmod(n - steps, steps);
+                time = j < 1 ? end : j * d;
+            }
+            return std::floor(time * 512.0f) / 512.0f * rate;
         };
         std::vector<float> user(f.skeleton.userChannels.size(), std::nanf(""));
         std::vector<cr3::JointTransform> q = f.faceAnim.poseOver(p, frameOf(f.faceAnim, f.faceTime, f.faceLoop), f.faceAnim.hasUserChannels() ? &user : nullptr);
@@ -1566,6 +1580,7 @@ void Viewer::advance(float dt, float sx, float sy, bool run) {
     audio.pauseSceneSound(vistaPaused);
     if (vistaPaused) return;
     stepQuake(dt); // (the root's QuakeControlTask: whichever script started it)
+    stepVsCommentary(dt); // (BtlColosseumVoiceSystem::OnUpdate: its queue - a defeat's lines over what follows)
     // (tests: --input's language@s - the options' language one on at s seconds, as its arrow)
     if (!inputScript.empty() && inputScript.front().compare(0, 9, "language@") == 0 && uiClock >= float(std::atof(inputScript.front().c_str() + 9)))
         inputScript.pop_front(), optionTap(3106);
@@ -1630,6 +1645,7 @@ void Viewer::advance(float dt, float sx, float sy, bool run) {
     if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt, campOptions.askSince += dt; // (its clock: the field's camp keeps its own)
     if (cr3Title.stage) return updateCr3Title(dt);
     if (eventMode && cr3CampEvent && cr3Camp.stage != 0) cr3Camp.since += dt; // (the camp over a vista: its clock - the field's is updateArea's)
+    if (campTopAsk == 2 && cr3Camp.stage == 1 && uiClock - campTopAskAt >= 0.23333f) closeCampTopEvent(); // (CampTopMenu state 2: +0xcc past 0.23333 s)
     geneDisposal.since += dt; // (an event's gene disposal: its windows' clock)
     geneSelector.since += dt; // (the VS tutorial's gene cards - a vista's: out once taken)
     if (geneSelector.open && geneSelector.closeAt >= 0 && geneSelector.since >= geneSelector.closeAt) geneSelector.open = false;

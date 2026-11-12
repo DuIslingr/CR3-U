@@ -28,6 +28,9 @@ struct Cr3BattleTables {
     bool load(const MvglArchive& archive, std::string* error = nullptr);
     // The animation's authored cue, used for hit generation and the knockout fade. Returns -1 if absent.
     float animationCueTime(int modelId, int motion) const;
+    // battle_anim's Anim +0x38: the motion's change cue (BtlUnit::notifyOfAnimationChange 0x9e119c, the
+    // unit observers' state 1), in seconds; -1 if absent
+    float animationChangeTime(int modelId, int motion) const;
     struct MotionTravel {
         float stepStart, stepEnd, turnStart, turnEnd;
     };

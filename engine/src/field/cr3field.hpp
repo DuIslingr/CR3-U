@@ -74,7 +74,13 @@ private:
 };
 
 // Fld2AnimeNameTbl: the player's motions
-enum class Cr3Motion { Idle = 0, Walk = 2, Run = 3, RideIdle = 0xd, RideWalk = 0xe, RideRun = 0xf };
-const char* cr3MotionName(Cr3Motion m); // fn01, ff01 (SM_Walk), ff02 (SM_Run); riding fr01 .. fr03
+enum class Cr3Motion {
+    Idle = 0, Walk = 2, Run = 3, Fall = 4,
+    LadderOn = 6, LadderUp = 7, LadderOffTop = 8, LadderOnTop = 9, LadderDown = 10, LadderOffBottom = 11, LadderHold = 12,
+    RideIdle = 0xd, RideWalk = 0xe, RideRun = 0xf
+};
+// fn01, ff01 (SM_Walk), ff02 (SM_Run), ff03 (SM_Fall); the ladder's fh01, fh03, fh04, fh05, fh06, fh07, fh02;
+// riding fr01 .. fr03
+const char* cr3MotionName(Cr3Motion m);
 
 } // namespace cr3

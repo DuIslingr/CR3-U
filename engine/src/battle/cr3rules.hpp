@@ -197,6 +197,9 @@ public:
     // GetFinestArtsCommandId (0x00931d7c: the FinestArts rows allowed, the highest level's, ties at
     // random; a character's none under 0x3f / 0x40); -1 none
     int lastAttackCommand(int fighter);
+    // the attack command (BtlStatus::GetAttackCommandId 0x009b57ec / VGetAttackCommandId 0x009b294c): under a
+    // transformation's effect kind 63 command 8, 64 - the pig form - command 9, else its own
+    int attackCommandOf(int fighter) const;
     int finestArtsCommand(int fighter);
     bool playerStats(const Cr3BattleTables& tables, int character, Cr3Fighter& out) const;
     // the VS mode's tallies (BtlStatus::TakeDamageToDirection: the party's damage to the monsters -

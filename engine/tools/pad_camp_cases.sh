@@ -32,10 +32,22 @@ want camp && run camp-index "3:right 3.5:down 4:down 4.5:down 5:left 5.5:up 6:qu
 
 # InterfaceWindow.SetCampWindowParty over a quest's vista (q074_d05_00104_evt: LockPanel(0), then the
 # camp's top in its event mode, the script waiting on CheckAliveCampWindowParty): ○ held moves a panel
-# past slot 0's locked one (TouchSimpleMove), the locked one isn't taken up (CheckTopArea), × closes the
-# camp and the vista goes on to its battle
-want camp && run camp-event-lock "0:until=opened_by_the_event 0.5:left 1:left 1.5:left 2:left 2.5:hold=east 3:left 3.5:right 4:release=east 4.5:left 5:left 5.5:hold=east 6:right 6.5:release=east 7:south 12:quit" \
-    "camp: party slot 0's panel locked|camp: opened by the event|camp: party panel 1|camp: party panel 1|camp: party order moved 1 to 2|camp: party panel 0 is locked|camp: closed (CR3)|event ended at frame" \
+# past slot 0's locked one (TouchSimpleMove), the locked one isn't taken up (CheckTopArea), × asks
+# 0x1f0 (CampTopMenu::SetParamNumber 2: every member wearing a gene), ○ on Yes closes the camp after
+# 0.233 s and the vista goes on to its battle
+event_genes="--cr3-gene 1:1 --cr3-gene 2:2 --cr3-gene 3:3 --cr3-gene 4:4 --cr3-gene 5:5 --cr3-gene 6:6"
+want camp && run camp-event-lock "0:until=opened_by_the_event 0.5:left 1:left 1.5:left 2:left 2.5:hold=east 3:left 3.5:right 4:release=east 4.5:left 5:left 5.5:hold=east 6:right 6.5:release=east 7:south 7.5:east 12:quit" \
+    "camp: party slot 0's panel locked|camp: opened by the event|camp: party panel 1|camp: party panel 1|camp: party order moved 1 to 2|camp: party panel 0 is locked|camp: is this the party? (0x1f0)|camp: the party chosen (0x1f0 Yes)|camp: closed (CR3)|event ended at frame" \
+    -- --event d05:q074_d05_00104_evt --page 0.3 $event_genes
+
+# The event mode's question (CampTopMenu::Update 0xa38130 state 7): No (com_004) back to the top; × its
+# hard return - state 6, the buttons not polled (○ on Equipment does nothing) -, × again asking again,
+# Yes closing. A member without a gene: the alert 0x307 instead, the camp staying
+want camp && run camp-event-ask "0:until=opened_by_the_event 0.5:south 1:down 1.5:east 2:south 2.5:south 3:down 3.5:east 4:south 4.5:east 10:quit" \
+    "camp: is this the party? (0x1f0)|camp: the party not chosen (0x1f0 No)|camp: is this the party? (0x1f0)|camp: the question put away|camp: is this the party? (0x1f0)|camp: the party chosen (0x1f0 Yes)|camp: closed (CR3)|event ended at frame" \
+    -- --event d05:q074_d05_00104_evt --page 0.3 $event_genes
+want camp && run camp-event-nogene "0:until=opened_by_the_event 0.5:south 1:east 1.5:south 3:quit" \
+    "camp: opened by the event|camp: a member without a gene - 0x307|camp: a member without a gene - 0x307" \
     -- --event d05:q074_d05_00104_evt --page 0.3
 
 # An event's gene windows (round 9; s481_d16_00104_evt's reward, gene 378 at level 100): with room,

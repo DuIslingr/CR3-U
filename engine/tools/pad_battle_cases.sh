@@ -42,3 +42,12 @@ want battle && run finest-arts \
     "a finisher - command 1|a finest arts (kind 12|the finest arts' white lifted" \
     -- --battle 22 --team-level 20 --cr3-party 1,2,3 --cr3-gene 1:1 --cr3-gene 2:4 --cr3-gene 3:7 --gauge 4 --input "auto"
 unset CR3_BATTLE_SEED
+
+# BtlRangedDirection / BtlShotDirection (kinds 2, 3): Leary's and Elroux's attacks, camera type 1 - PlayRangedCamera ->
+# PlayGlobalToTarget, an attack_ALL clip of the battle's camera size at random (not the last one again), at the origin
+export CR3_BATTLE_SEED=1
+want battle && run ranged-camera \
+    "0.1:until=a_ranged_direction_(kind_3 1:quit" \
+    "a ranged direction (kind 2, camera type 1) - Cam_bt_attack_ALL_|a ranged direction (kind 3, camera type 1) - Cam_bt_attack_ALL_" \
+    -- --battle 22 --team-level 20 --cr3-party 2,4,1 --input "auto"
+unset CR3_BATTLE_SEED

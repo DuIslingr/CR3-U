@@ -1777,7 +1777,7 @@ void Viewer::resetSessionUi() {
     endMovie();
     geneInspectOpen = scriptGeneStatus = false;
     geneDisposal = ScriptGeneDisposal();
-    cr3CampEvent = false;
+    cr3CampEvent = false, campTopAsk = 0, campTopStalled = false;
     goodsFocus = -1;
     lunchFocus.clear();
     lunchActive = lunchWaitLogged = false;
