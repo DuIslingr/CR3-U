@@ -528,9 +528,12 @@ Not changed, for a later pass: `VsModeMenu::SetTotalScore` (`0xb672f0`) / `SetNo
 the footer's week total in **9** digits (CR3-U 10) and pose both footer panels by digit count (CR3-U doesn't),
 and `SetNowScore` drives the tournament's progress gauge ((prize - score) x 100 / prize frames); whether the
 footer's digits are placed backwards too (`VsModeMenu::Pose` `0xb60be4`) is not yet read. The battle's
-**Auto Battle** and **Mass Attack** buttons (Part 7's colosseum battles) are not in CR3-U: the player's auto
-battle runs on the monsters' `BtlAutomatic*` decisions (`ExecuteAutomaticToPlayer` beside
-`ExecuteAutomaticToEnemy`), so it belongs with the monster-AI audit.
+**Auto Battle** and **Mass Attack** buttons are not in CR3-U - in every battle, not only the colosseum's:
+walkthrough Part 4 (`SGcXGBiUwB4`, about 25:00) shows both over an ordinary field battle's Battle / Escape /
+Options. The player's auto battle runs on the monsters' `BtlAutomatic*` decisions
+(`ExecuteAutomaticToPlayer` beside `ExecuteAutomaticToEnemy`), so it belongs with the monster-AI audit.
+Also to check: Part 7's results show "You won the battle!" in the Information bar; CR3-U's bar was still empty
+4.6 s after battle 4's victory camera (its gene-card and level part not compared yet).
 
 ## Original-code evidence
 
