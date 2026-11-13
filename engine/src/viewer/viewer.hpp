@@ -3942,6 +3942,14 @@ struct Viewer {
         long score = 0, mpBonus = 0, total = 0; // (the last battle's)
         bool lost = false;
         float scoreAt = 0;     // (6: when the score came up - uiClock)
+        // (6: VsColosseumResultMenu::Update 0xb5892c's own steps - 0 the panel in (0 .. 0.6333 s), 1 .. 3
+        // its bonus lines one by one (0.2 s each, only the bonuses above 0, packed: SetParamNumber),
+        // 4 a tap awaited, 5 the bonuses drained into the score over 30 updates (a tap: at once), 6 a
+        // tap awaited, 7 the panel out (0.6333 .. 0.8 s), then on)
+        int scoreStage = 0, scoreLines = 0, scoreDrain = 0;
+        int lineKind[3] = {0, 0, 0};
+        long lineBonus[3] = {0, 0, 0};
+        float stageAt = 0, drainClock = 0;
         // (8 the Sp Shop, 9 the tournament's results - then 7 its prizes)
         std::vector<int> boosts; // (the lifeline items chosen: vsboostitems ids, four at most)
         int boostFocus = 0;      // (the last touched: its name shown)
@@ -4143,6 +4151,8 @@ struct Viewer {
     void drawVsResults(int w, int h, const Mat4& view);
     void drawVs(int w, int h);
     void drawVsScore(int w, int h);
+    void stepVsScore(float dt);
+    bool tapVsScore(); // (true: the score's panel is gone - the battle goes on)
     void vsNextBattle();
     bool vsMoreBattles() const;
     bool vsBattleOver(bool won);

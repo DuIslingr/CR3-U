@@ -5784,6 +5784,73 @@ void Viewer::drawVs(int w, int h) {
     if (!vs.told.empty()) drawCr3Told(vs.told, vs.toldSince, 602, w, h, view, &vsTaps);
 }
 
+// VsColosseumResultMenu::Update (0xb5892c): the panel in, the bonus lines one by one, then two taps -
+// the first drains the bonuses into the score (bt_609 repeated, 30 updates at 60 a second), the
+// second takes the panel out (bt_608) - and on once it is out
+void Viewer::stepVsScore(float dt) {
+    const float t = uiClock - vs.stageAt;
+    switch (vs.scoreStage) {
+    case 0: // (clVsPositon's 0 .. 0.6333 s)
+        if (t >= 0.6333333f) vs.stageAt = uiClock, vs.scoreStage = vs.scoreLines > 0 ? 1 : 6;
+        break;
+    case 1: case 2: case 3: // (clVsLine0n's 0 .. 0.2 s, then the next line, else the tap)
+        if (t >= 0.2f) vs.stageAt = uiClock, vs.scoreStage = vs.scoreStage < vs.scoreLines ? vs.scoreStage + 1 : 4;
+        break;
+    case 5: // (+0x15c: one a call of Update - 60 a second)
+        for (vs.drainClock += dt; vs.drainClock >= 1.0f / 60.0f && vs.scoreDrain < 30; vs.drainClock -= 1.0f / 60.0f) ++vs.scoreDrain;
+        if (vs.scoreDrain >= 30) {
+            vs.scoreStage = 6, vs.stageAt = uiClock, audio.stopSe("bt_609", 1);
+            long total = vs.score;
+            for (int k = 0; k < vs.scoreLines; ++k) total += vs.lineBonus[k];
+            SDL_Log("vs: score %ld - %d bonus lines drained into it", total, vs.scoreLines);
+        }
+        break;
+    case 7: // (0.6333 .. 0.8 s out, then on: the next battle, else the tournament's end)
+        if (t >= 0.8f - 0.6333333f) {
+            vs.scoreStage = 8;
+            if (!inputScript.empty() && inputScript.front() == "vs:next") inputScript.pop_front();
+            vsBattleOver(true);
+        }
+        break;
+    default: break;
+    }
+}
+
+// (TouchGestureTap 0xb5a40c - any tap, the Vita's ○ / Enter: +0x128, read by Update's waits)
+bool Viewer::tapVsScore() {
+    if (vs.scoreStage == 4) {
+        vs.scoreStage = 5, vs.scoreDrain = 0, vs.drainClock = 0, vs.stageAt = uiClock;
+        audio.playSe("bt_609", true);
+    } else if (vs.scoreStage == 5) {
+        vs.scoreDrain = 30; // (a tap while it drains: all of it at once)
+    } else if (vs.scoreStage == 6) {
+        vs.scoreStage = 7, vs.stageAt = uiClock;
+        audio.playSe("bt_608", false);
+        SDL_Log("vs: score panel out");
+    }
+    return true;
+}
+
+// VsColosseumResultMenu::SetViewNumbers (0xb59690) as Pose (0xb59814) places it: the panel's first
+// "<prefix>_" joint takes the units, the next the tens ...; leading zeros hidden; the panel posed
+// at 0, 1/30 or 2/30 s for under 4, 4 .. 6 or 7 digits
+static void vsResultNumber(Viewer& v, const char* panelFig, float px, float py, const char* prefix, const char* digitFig, long value, int places,
+                           const Mat4& view) {
+    long most = 1;
+    for (int k = 0; k < places; ++k) most *= 10;
+    value = std::clamp(value, 0L, most - 1);
+    int digits = 1;
+    for (long r = value / 10; r > 0; r /= 10) ++digits;
+    Viewer::UiFig& panel = v.cr3UiPut(panelFig, "", digits >= 7 ? 2.0f / 30 : digits >= 4 ? 1.0f / 30 : 0.0f, px, py, view);
+    long rest = value;
+    for (int k = 0; k < digits; ++k, rest /= 10) {
+        char joint[64];
+        std::snprintf(joint, sizeof joint, "%s_%03d", prefix, k + 1);
+        float x, y;
+        if (v.cr3UiCall(panel, joint, x, y)) v.cr3UiPut(digitFig, "", float(rest % 10) / 30, x, y, view);
+    }
+}
+
 // a battle's score (VsColosseumResultMenu), over the won battle
 void Viewer::drawVsScore(int w, int h) {
     Mat4 camera = cr3::mat4Identity();
@@ -5792,19 +5859,28 @@ void Viewer::drawVsScore(int w, int h) {
     cr3::SceneLighting none;
     dev->setLighting(none);
     dev->clearDepth();
-    UiFig& p = cr3UiPut("clvspositon", "", std::min(uiClock - vs.scoreAt, 0.4f), 0, 0, view); // (its own animation: in from the right over 5 frames, held - its out from frame 15)
+    // (clVsPositon: in over 0 .. 0.6333 s and held there; out over 0.6333 .. 0.8 s - stage 7)
+    const float panel = vs.scoreStage >= 7 ? std::min(0.6333333f + (uiClock - vs.stageAt), 0.8f) : std::min(uiClock - vs.scoreAt, 0.6333333f);
+    UiFig& p = cr3UiPut("clvspositon", "", panel, 0, 0, view);
     float x, y;
-    // (SetScoreVsColosseumResultMenu: the battle's score, then the bonuses - MP used, lifeline items, wildcards)
-    if (cr3UiCall(p, "call_clVsNumLPanel", x, y)) cr3UiNumber(cr3UiPut("clvsnumlpanel", "", 0, x, y, view), "call_clVsNumL_fr00", "clvsnuml_fr00", vs.score, 7, 0, view);
-    const long parts[3] = {vs.mpBonus, vs.itemBonus, vs.wildBonus};
-    for (int k = 0; k < 3; ++k) {
-        char j[40];
-        std::snprintf(j, sizeof j, "call_clVsLine0%d", k + 1);
-        if (cr3UiCall(p, j, x, y)) cr3UiPut("clvsline01", "", 0, x, y, view);
-        std::snprintf(j, sizeof j, "call_clText_fr00_%03d", k + 1);
-        if (cr3UiCall(p, j, x, y)) cr3UiPut("cltext_fr00", "", float(k) / 30, x, y, view);
-        std::snprintf(j, sizeof j, "call_clVsNumSPanel_%03d", k + 1);
-        if (cr3UiCall(p, j, x, y)) cr3UiNumber(cr3UiPut("clvsnumspanel", "", 0, x, y, view), "call_clVsNumS_fr00", "clvsnums_fr00", parts[k], 6, 0, view);
+    // (SetViewNumbers: the score plus each bonus's drained part; each bonus less it - Update's stage 5)
+    const int drained = vs.scoreStage >= 6 ? 30 : vs.scoreStage == 5 ? vs.scoreDrain : 0;
+    long shown = vs.score;
+    for (int k = 0; k < vs.scoreLines; ++k) shown += vs.lineBonus[k] * drained / 30;
+    if (cr3UiCall(p, "call_clVsNumLPanel", x, y)) vsResultNumber(*this, "clvsnumlpanel", x, y, "call_clVsNumL_fr00", "clvsnuml_fr00", shown, 7, view);
+    for (int k = 0; k < vs.scoreLines; ++k) {
+        const int line = k + 1; // (lines 1 .. 3 come in one by one: stages 1 .. 3)
+        if (vs.scoreStage < line) break;
+        const float in = vs.scoreStage == line ? std::min(uiClock - vs.stageAt, 0.2f) : 0.2f;
+        char j[40], fig[16];
+        std::snprintf(j, sizeof j, "call_clVsLine0%d", line);
+        std::snprintf(fig, sizeof fig, "clvsline0%d", line);
+        if (cr3UiCall(p, j, x, y)) cr3UiPut(fig, "", in, x, y, view);
+        std::snprintf(j, sizeof j, "call_clText_fr00_%03d", line);
+        if (cr3UiCall(p, j, x, y)) cr3UiPut("cltext_fr00", "", float(vs.lineKind[k]) / 30, x, y, view); // (its frame: the bonus's kind)
+        std::snprintf(j, sizeof j, "call_clVsNumSPanel_%03d", line);
+        if (cr3UiCall(p, j, x, y))
+            vsResultNumber(*this, "clvsnumspanel", x, y, "call_clVsNumS_fr00", "clvsnums_fr00", vs.lineBonus[k] - vs.lineBonus[k] * drained / 30, 6, view);
     }
 }
 
@@ -5856,6 +5932,13 @@ bool Viewer::vsBattleOver(bool won) {
         else requestVsComment(0x7e, 0.0f), requestVsComment(0x81, 0.0f);
         if (won) {
             vs.screen = 6, vs.since = 0, vs.scoreAt = uiClock; // (the score shown over the battle)
+            // (SetParamNumber 0xb5a32c: the bonuses above 0 only, packed into the lines in order -
+            // MP used, lifeline items, wildcards; Initialize 0xb587c8: bt_607)
+            vs.scoreStage = 0, vs.scoreLines = 0, vs.scoreDrain = 0, vs.stageAt = uiClock, vs.drainClock = 0;
+            const long bonus[3] = {vs.mpBonus, vs.itemBonus, vs.wildBonus};
+            for (int k = 0; k < 3; ++k)
+                if (bonus[k] > 0) vs.lineKind[vs.scoreLines] = k, vs.lineBonus[vs.scoreLines++] = bonus[k];
+            audio.playSe("bt_607", false);
             return true;
         }
         endCr3Battle();
@@ -6030,7 +6113,7 @@ bool Viewer::vsClick(float fx, float fy) {
         return true;
     }
     if (vs.screen == 0 || vs.screen == 5) return false;
-    if (vs.screen == 6) return vsBattleOver(true), true;
+    if (vs.screen == 6) return tapVsScore();
     const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
     const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
     for (auto it = vsTaps.rbegin(); it != vsTaps.rend(); ++it)
@@ -6128,7 +6211,7 @@ bool Viewer::vsKey(SDL_Keycode key) {
         return true;
     }
     if (vs.screen == 3 && key >= SDLK_1 && key <= SDLK_8) return chooseVs(500 + int(key - SDLK_1)), true; // (1 .. 8: a lifeline item)
-    if (vs.screen == 6) return enter ? (vsBattleOver(true), true) : true;
+    if (vs.screen == 6) return enter ? tapVsScore() : true;
     if (vitaButtons() && (vs.screen == 1 || vs.screen == 2)) {
         const int was = vs.buttonFocus;
         if (key == SDLK_UP && was > 0) vs.buttonFocus -= was < 3 ? 1 : 2;

@@ -1110,7 +1110,8 @@ void Viewer::updateCr3Battle(float dt) {
                (inputScript.front() == "battle" || inputScript.front() == "attack" || inputScript.front() == "guard" ||
                 (inputScript.front().size() > 1 && inputScript.front()[0] == 't' && std::isdigit(static_cast<unsigned char>(inputScript.front()[1])))))
             inputScript.pop_front(); // (the battle's leftover choices)
-        if (!inputScript.empty() && inputScript.front() == "vs:next" && uiClock - vs.scoreAt > 1.0f) inputScript.pop_front(), vsBattleOver(true);
+        stepVsScore(dt);
+        if (!inputScript.empty() && inputScript.front() == "vs:next" && (vs.scoreStage == 4 || vs.scoreStage == 6)) tapVsScore(); // (taps until it is out)
     } else if (cr3BattleStage == Cr3BattleStage::Won && !scripted && !cr3VictoryIn) {
         // (phaseVictoryEvent's end: a next wave - BattleCoupling.SetId -, else phaseVictoryIn:
         // PlayResultBgm)
