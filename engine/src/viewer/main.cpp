@@ -490,6 +490,54 @@ int quakeSelfTest() {
     return problems ? 1 : 0;
 }
 
+// VsColosseumResultMenu::Update (0xb5892c): the panel in 0.6333 s, each bonus line 0.2 s, a tap,
+// the bonuses drained over 30 updates (60 a second), a tap, the panel out
+int vsScoreSelfTest() {
+    if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
+    int problems = 0;
+    {
+        Viewer v;
+        auto check = [&](bool ok, const char* what) {
+            if (!ok) { ++problems; std::printf("vs score FAILED: %s\n", what); }
+        };
+        v.vs.screen = 6, v.vs.score = 794, v.vs.scoreAt = v.vs.stageAt = v.uiClock;
+        v.vs.scoreStage = 0, v.vs.scoreLines = 2, v.vs.lineKind[0] = 0, v.vs.lineKind[1] = 1, v.vs.lineBonus[0] = 63, v.vs.lineBonus[1] = 79;
+        auto run = [&](float seconds) {
+            for (float t = 0; t < seconds - 1e-4f; t += 1.0f / 60.0f) v.uiClock += 1.0f / 60.0f, v.stepVsScore(1.0f / 60.0f);
+        };
+        run(0.6f);
+        check(v.vs.scoreStage == 0, "the panel still coming in at 0.6 s");
+        run(0.05f);
+        check(v.vs.scoreStage == 1, "the first bonus line after the panel's 0.6333 s");
+        run(0.21f);
+        check(v.vs.scoreStage == 2, "the second line 0.2 s later");
+        run(0.21f);
+        check(v.vs.scoreStage == 4, "two lines: then a tap awaited");
+        run(2.0f);
+        check(v.vs.scoreStage == 4, "nothing drains without a tap");
+        v.tapVsScore();
+        check(v.vs.scoreStage == 5, "a tap: the drain");
+        run(0.25f);
+        check(v.vs.scoreDrain >= 14 && v.vs.scoreDrain <= 16, "half drained at 0.25 s (60 updates a second)");
+        run(0.27f);
+        check(v.vs.scoreStage == 6 && v.vs.scoreDrain == 30, "all drained after 30 updates");
+        v.tapVsScore();
+        check(v.vs.scoreStage == 7, "a second tap: the panel out");
+        Viewer w;
+        w.vs.screen = 6, w.vs.scoreLines = 0, w.vs.scoreStage = 0, w.vs.stageAt = w.uiClock;
+        for (int k = 0; k < 40; ++k) w.uiClock += 1.0f / 60.0f, w.stepVsScore(1.0f / 60.0f);
+        check(w.vs.scoreStage == 6, "no bonuses: no lines, straight to the closing tap");
+        Viewer d;
+        d.vs.screen = 6, d.vs.scoreLines = 1, d.vs.lineBonus[0] = 30, d.vs.scoreStage = 4;
+        d.tapVsScore(), d.tapVsScore();
+        d.uiClock += 1.0f / 60.0f, d.stepVsScore(1.0f / 60.0f);
+        check(d.vs.scoreStage == 6, "a tap while it drains: all of it at once");
+    }
+    SDL_Quit();
+    std::printf("vs score: %d problems\n", problems);
+    return problems ? 1 : 0;
+}
+
 int vistaPauseSelfTest() {
     const char* data = SDL_getenv("CR3_VITA_DATA");
     if (!data || !*data) data = SDL_getenv("CR3_DATA");
@@ -607,6 +655,7 @@ static cr3::SetupGame cr3SetupGame() {
 int main(int argc, char** argv) {
     if (argc>1 && std::strcmp(argv[1],"--selftest-vista-pause")==0) return vistaPauseSelfTest();
     if (argc > 1 && std::strcmp(argv[1], "--selftest-quake") == 0) return quakeSelfTest();
+    if (argc > 1 && std::strcmp(argv[1], "--selftest-vs-score") == 0) return vsScoreSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-save-slots")==0) return saveSlotSafetySelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-new-session")==0) return newSessionSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-field-restore")==0) return fieldRestoreSelfTest();

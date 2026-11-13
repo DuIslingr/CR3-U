@@ -567,6 +567,33 @@ changes made by two more (one in its own worktree), merged here.
 The season drop (monster drop kind 8: the VS row's `+0x9c` item while its `+0xa0` flag is set, rolled at `BeginVSTournament`)
 isn't in yet. The boot-param drop overrides (`+0x42` .. `+0x44`) are set only by the debug battle selector: nothing to do.
 
+### 25. Walkthrough Part 7 (the Modern Colosseum): a battle's score
+
+Checked against walkthrough Part 7 (`roh96Zm3saM`, 10:18 .. 10:30: "Score 794", "Bonus for MP used! 63",
+"Bonus for lifeline items! 79", then 845, then 936 with both at 0) and `VsColosseumResultMenu`
+(`Initialize` `0xb587c8`, `Update` `0xb5892c`, `SetViewNumbers` `0xb59690`, `Pose` `0xb59814`,
+`SetParamNumber` `0xb5a32c`, `TouchGestureTap` `0xb5a40c`).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The bonus lines | Only the bonuses above 0, packed into lines 1 .. 3 in order (MP used, lifeline items, wildcards: `clText_fr00` frame = the kind); each line (`clVsLine01` / `02` / `03`, its own figure) slides in over 0.2 s after the panel's 0 .. 0.6333 s, one after another | All three lines at once, zeros included, every line on `clVsLine01` | `vs.scoreLines` / `lineKind` / `lineBonus` from `vsBattleOver`; `stepVsScore` stages 0 .. 3 |
+| The drain | A tap: the bonuses drained into the score over 30 updates (60 a second - 0.5 s), `bt_609` repeated; a tap meanwhile ends it at once; then a tap: the panel out (0.6333 .. 0.8 s, `bt_608`), then on. `bt_607` as it opens | The final total at once; one tap went straight on; no sounds | `tapVsScore` / `stepVsScore` stages 4 .. 7; `--input vs:next` taps until it is out |
+| Its digits | `Pose` places the digit parts backwards: the panel's first `call_clVsNumL_fr` / `call_clVsNumS_fr` joint takes the units; leading zeros hidden; the panel posed at 0, 1/30 or 2/30 s for < 4, 4 .. 6, 7 digits | Through `cr3UiNumber` (the first joint the highest digit): every score and bonus drawn reversed (128 as "821") | `vsResultNumber` |
+
+Seen headless (VS tutorial tournament 1, battle 1): "Score 157" with "Bonus for wild cards! 31", a tap, 170 / 18,
+188 / 0, a tap, the panel out, battle 2. `viewer-vs-score` checks the stages' times, the drain and the taps.
+
+Not changed, for a later pass: `VsModeMenu::SetTotalScore` (`0xb672f0`) / `SetNowScore` (`0xb673bc`) write
+the footer's week total in **9** digits (CR3-U 10) and pose both footer panels by digit count (CR3-U doesn't),
+and `SetNowScore` drives the tournament's progress gauge ((prize - score) x 100 / prize frames); whether the
+footer's digits are placed backwards too (`VsModeMenu::Pose` `0xb60be4`) is not yet read. The battle's
+**Auto Battle** and **Mass Attack** buttons are not in CR3-U - in every battle, not only the colosseum's:
+walkthrough Part 4 (`SGcXGBiUwB4`, about 25:00) shows both over an ordinary field battle's Battle / Escape /
+Options. The player's auto battle runs on the monsters' `BtlAutomatic*` decisions
+(`ExecuteAutomaticToPlayer` beside `ExecuteAutomaticToEnemy`), so it belongs with the monster-AI audit.
+Also to check: Part 7's results show "You won the battle!" in the Information bar; CR3-U's bar was still empty
+4.6 s after battle 4's victory camera (its gene-card and level part not compared yet).
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
