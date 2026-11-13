@@ -300,8 +300,8 @@ function runStaffroll() {
               "beginVSTournament initializes seasonCount from vsseasons.scores[0] (not count)");
         db.endVSBattle(gs, 5000, 1, false);
         db.endVSTournament(gs, midYear);
-        check(gs.cr3Money == 3500 && db.vsRewards().gold == 2500 && gs.cr3Vs.seasonPoints == 1 && gs.cr3Vs.seasonLevel == 0,
-              "endVSTournament credits prize_gold to GameState::cr3Money and advances seasonPoints");
+        check(gs.cr3Money == 1000 && db.vsRewards().gold == 2500 && gs.cr3Vs.seasonPoints == 1 && gs.cr3Vs.seasonLevel == 0,
+              "endVSTournament shows prize_gold without crediting it (EarnVSTournamentReward: the result's EntryResult does) and advances seasonPoints");
         // Win 3 more 1-battle tournaments (points: 1->2 => level 1, count stays 2; then 0->1->2 => level 2 == count => seasonCount switches to scores[1]=10!).
         for (int run = 0; run < 3; ++run) {
             db.beginVSTournament(gs, 0, {}, midYear);
@@ -314,7 +314,7 @@ function runStaffroll() {
         db.beginVSTournament(gs, 0, {}, midYear);
         db.endVSBattle(gs, 5000, 1, false);
         db.endVSTournament(gs, midYear);
-        check(gs.cr3Money == 9999999, "gold additions clamp cleanly at GOLD_MAX (9999999)");
+        check(gs.cr3Money == 9999000, "endVSTournament leaves the money alone (the prize comes by the battle's result)");
 
         // Round 3 audited Cr3OfflineDb: receivePresent Oz-Coin fix & COIN_MAX clamp, getDailyItem partial-stack top-up,
         // and mergeGene setting story flag 34.

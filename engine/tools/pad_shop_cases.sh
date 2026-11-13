@@ -4,9 +4,15 @@ want shops && run sp-shop-cursor "3:right 3.5:east 4.2:south 5:down 5.5:east 6.2
     "shop: the cursor on 1|shop: the goods|shop: the cursor on 2|shop: VIP|shop: the cursor on 0|shop: the boxes" \
     -- --area t0101 --flag 27 --input "camp:field5"
 
-# LuckyBoxMenu: left/right over buy panels; up/down hands focus to its contents button.
-want shops && run sp-box-panels "3:east 3.5:east 4:right 4.5:right 5:left 5.5:up 6:east 6.5:right 7:south 7.5:down 8:south 8.5:south 10:quit" \
-    "shop: the boxes|shop: box buy panel 1|shop: box buy panel 2|shop: box buy panel 1|shop: box focus check|shop: box contents|shop: box contents page 2|shop: box focus buy" \
+# LuckyBoxMenu (its tutorial seen - flag 143): left/right over buy panels; up/down hands focus to its
+# check button - the first box (focus 0) a gene box: its list (GeneBoxListMenu), down scrolls, back shuts it
+want shops && run sp-box-panels "3:east 3.5:east 4:right 4.5:right 5:left 5.5:up 6:east 7:down 7.5:south 8.5:down 9:south 9.5:south 11:quit" \
+    "shop: the boxes|shop: box buy panel 1|shop: box buy panel 2|shop: box buy panel 1|shop: box focus check|shop: box contents (the gene box's list)|shop: the gene box's list - month|shop: the gene box's list at line 1|shop: the gene box's list closed|shop: box focus buy|shop: leaving the boxes|shop: back from the boxes" \
+    -- --area t0101 --flag 27 --flag 143 --input "camp:field5"
+
+# CreateLuckyBoxMenu: the first visit (flag 143 clear) - the TutorialMenu (AnnounceTutorialTxt 0x144), read through
+want shops && run sp-box-tutorial "3:east 3.5:east 4:east 4.5:east 5:east 5.5:east 6:east 6.5:east 7:east 7.5:east 8:east 8.5:east 9:east 10:quit" \
+    "(0 in focus)|shop: the boxes' tutorial|shop: the boxes' tutorial read" \
     -- --area t0101 --flag 27 --input "camp:field5"
 
 # MyPageNewTopMenu: the hidden Story button skipped; the initial daily present may show.

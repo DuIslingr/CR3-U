@@ -1753,8 +1753,9 @@ void Viewer::chooseCr3Camp(int id) {
             // script's DungeonExit, which asks and takes the party home)
             if (id == 108 || !cr3InDungeon()) audio.playSe(0x16d, false), openTownMove(true);
             else audio.playSe(0x16d, false), runAreaFunction("DungeonExit");
-        } else if (id >= 120 && id < 126) { // (the goods button - 125 the ride's)
-            useGoods(id - 120);
+        } else if (id >= 120 && id < 126) { // (the goods button - 124 the "!": Fld2GoodsButton::OnUpdate 5, Fld2TaskTouch +0xe1; 125 the ride's)
+            if (id == 124) talk();
+            else useGoods(id - 120);
         } else if (id == 130 || id == 131) { // (ToyCameraMenu: feGoodsToyBtn - the shutter -, feGoodsBack)
             toyCamPress(id == 130);
         } else if (id == 101) { // (feBtnSave: Fld2TabMenu::Save)
@@ -3571,9 +3572,17 @@ void Viewer::drawLevelUp(cr3::EventRuntime& ev, int w, int h) {
 // the item's icon by its category: gold 0xc2) and feGetDeco; the message at the panel's text
 // joint 00, size 32, dark (0.17, 0.18, 0.18)
 void Viewer::drawCr3GetItem(cr3::EventRuntime& ev, bool withText) {
-    const int w = screenW, h = screenH;
     if (ev.windowClosing(7)) return; // (feGetMenu's out: not drawn)
-    const float t = ev.windowAge(7);
+    std::string line;
+    if (withText && !ev.message().pages.empty())
+        for (const cr3::TextLine& l : ev.message().pages[size_t(std::min<int>(ev.page(), int(ev.message().pages.size()) - 1))].lines)
+            line += (line.empty() ? "" : " ") + l.text;
+    drawCr3GetItemPanel(ev.itemShown(), ev.windowAge(7), line);
+}
+
+// (the same panel for an item by its full id, -10 gold - the Lucky Box's GetItemWindow too)
+void Viewer::drawCr3GetItemPanel(int item, float t, const std::string& line) {
+    const int w = screenW, h = screenH;
     Mat4 camera = cr3::mat4Identity();
     camera[14] = -0.881f * 10;
     const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
@@ -3587,16 +3596,12 @@ void Viewer::drawCr3GetItem(cr3::EventRuntime& ev, bool withText) {
     if (!cr3UiCall(menu, "call_feGetPanel", x, y)) return;
     UiFig& panel = cr3UiPut("fegetpanel", "", 0, x, y, view);
     if (cr3UiCall(panel, "call_feGetName_fr", cx, cy)) cr3UiPut("fegetname_fr00", "", 0, cx, cy, view);
-    const int item = ev.itemShown();
     int icon = item == -10 ? 0xc2 : -1;
     cr3::MbeFile::Row r;
     if (item > 0 && cr3ItemRow(item, r)) icon = r.i(3);
     if (icon >= 0 && cr3UiCall(panel, "call_comListIcon_fr", cx, cy)) cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), icon), cx, cy, view);
     if (cr3UiCall(panel, "call_feGetDeco", cx, cy)) cr3UiPut("fegetdeco", "", 0, cx, cy, view);
-    if (!withText || ev.message().pages.empty()) return;
-    std::string line;
-    for (const cr3::TextLine& l : ev.message().pages[size_t(std::min<int>(ev.page(), int(ev.message().pages.size()) - 1))].lines)
-        line += (line.empty() ? "" : " ") + l.text;
+    if (line.empty()) return;
     for (const std::string& j : panel.joints)
         if (j.size() > 6 && j.compare(0, 2, "ty") == 0 && j[5] == '_' && j.compare(j.size() - 2, 2, "00") == 0 && uiJoint(panel, j, cx, cy)) { // (the file's "tyepM_L00")
             const bool left = j[6] == 'L', centred = j[6] == 'C';
@@ -3698,6 +3703,10 @@ auto Viewer::campStatusRows() -> std::vector<Cr3StatusRow> {
         Cr3StatusRow r;
         if (sl[0] == 0) r.name = cr3NameOf("command_name.mbe", "CommandName", sl[1]), r.help = cr3NameOf("command_help.mbe", "CommandHelp", sl[1]);
         else r.name = cr3NameOf("skill_name.mbe", "SkillName", sl[1]), r.help = cr3NameOf("skill_help.mbe", "SkillHelp", sl[1]);
+        // (StatusMain::SetStatusParameter 0xb40648, case 2: a command's icon its +0x08, a skill's skill_para +0x08)
+        cr3::MbeFile::Row row;
+        if (!cr3BattleTablesLoaded) cr3BattleTablesLoaded = cr3BattleTables.load(archive, nullptr);
+        if (sl[0] == 0 ? cr3BattleTables.command.find("Command", sl[1], "iii", row) : cr3BattleTables.skill.find("Skill", sl[1], "iii", row)) r.icon = row.i(2);
         out.push_back(r);
     }
     return out;

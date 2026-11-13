@@ -508,6 +508,65 @@ Six delegated read-only passes took the *Not settled* list apart (reports in `/t
 | OverLayMain (`Initialize` `0xaf2cd0`, `CreateInterface` `0x88c72c`) | One 14 x 14 quad at `(0, 0, 5)`, `(0, 0, 0, 0.7)`; windows created while it's on are its children, drawn over it | The same | Settled |
 | `SM_SkipVSTuto` (`0x814ad0`, request 0x97) | No shipped caller: debug only | - | Nothing to do |
 
+### 22. Round 19 (a player's report: the Spanish translation's video)
+
+A video of v0.5.0 on a 2.24:1 phone with the Spanish translation showed three things; two delegated passes traced
+them (`/tmp/cr3-opening-audit/round19-talk.md`, `round19-icons.md`).
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The vista band on a phone with a camera hole or rounded corners | The band (`comMsgVMenu`'s panel) runs to the display's edges, the picture above it | The panel kept to the safe area while the scene filled the frame: a black box over the picture, the scene beside and under it (`CR3_SAFE_INSETS=105,0,105,0` at 1280 x 572 shows it) | `Viewer::extendVistaBand`: where the panel reaches the safe area's side or bottom, black carries it on to the frame's, following the panel as it opens and closes; no insets, nothing drawn |
+| The battle lists' icons (`BtlStatus::OpenCommandList` `0x9b3be0` -> `BtlCommandListUI::Add` `0x9a13c4`; `BtlItemListUI::Open` `0x9a1970`; `comListItem::Initialize` `0xa56620`, `comListIcon::SetIconPattern` `0x880848`) | `comListIcon_fr00` at `call_comListIcon_fr00` for an icon of 0 or more: a command's `Command +0x08` (Rakshasa Lotus 7, the Electras 4, the Aquinas 5), an item's / gift's `+0x0c`; the camp's status gene tab the same (a skill's `Skill +0x08`) | An empty grey square on every row | `Cr3Command::icon`, `Cr3ListRow::icon`, drawn through `cr3UiIcon`; the camp's status gene tab too |
+| The talk mark (`Fld2BalloonManager::CheckBalloons` `0xa07810`, `Fld2Balloon` `0xa061a4`, `FieldGoodsMenu::SetExclamationPanel` `0xa69a0c`, `Fld2IsExclamationButton` `0x86d6a0`, `UpdateTouch` `0x87a05c`) | Something to check in reach (boxes, people, ladders, check objects): `feFlag_fr00` over it (its joint's y scale x 0.1 up; popped `1.1 sin(10 t)` for 0.2 s), and the "!" (goods panel 4, `fegoodsicon_fr00` at 1/3) slid into the goods button over 0.1333 s and focused. Only while the "!" is focused does a still tap anywhere - or the "!" itself, or the Vita's ○ - talk; □ does nothing on it | No cue; a tap anywhere talked to the nearest | `TalkMark` / `stepTalkMark` / `drawTalkBalloon` / `talk()`; the goods button draws the "!" (and slides the panel before it round the arc), its tap the icon's circle (`tapAreaCP00` / `AP00` on `fegoodsicon_fr00` - the panel has none), id 124; the Vita's R steps off and back onto it. The ride's icon is frame 8 (`0.26666668`), not 5 |
+
+Running was checked against `CalcPlayerMoveDir` `0x87704c` / `SM_Walk` `0x8737a0`: the drag over the screen's size
+x 0.01, walking from `0.0002`, running from `0.0005` - CR3-U's `0.02` / `0.05` of the screen, the same.
+
+### 23. Round 20 parity audit (monster AI; what a battle gives)
+
+Two delegated passes (`/tmp/cr3-opening-audit/round20-ai.md`, `round20-rewards.md`); the AI implemented by a third in its
+own worktree, merged here.
+
+**Monster AI.** CR3-U read MonsterCommand's per-entry `+0x24` as a weight; it is the entry's cost.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| MonsterCommand (`MbMonsterInfo` getters `0x913b3c` ..) | id, mode, element `+0x08`, card `+0x0c`, **actions a turn `+0x10`** (1; 2 in 50 rows; 3 for monster 1765), attack, Last Attack, Finest Arts, then `(command, cost, uses)` x 8 at `+0x20` (uses -1 unlimited), skills x 8 at `+0x80` | `(command, weight, -)` | As traced; a mode change (`VChangeMode`) refills the uses; a mode's element -1 keeps the monster's (`ChangeElement` `0x9ba600` ignores it) |
+| The pick (`phaseCalculate` `0x9d490c`, `ExecuteAI` `0x9c0d04`, `addCommandByAI`) | Monsters fastest first; none under kind 31; while actions are left: the side's think points by select type (`command_para +0xc8`: 0 attack .. 7 special; each turn + battle.mbe `OrderType[Coupling +0x3c]`, every third +50 to type 7, a use `clamp(p, 50, 250) - 50`), types within `Coupling +0x40` of the top tried in random order; within a type the entries with cost <= actions left and uses left, each scored `GenerateReal() x w / sum` (`+0xcc`), the highest taken - 15/10/10/5/5 gives 54.4/21.2/21.2/1.7/1.7 %; a command with no preferred target kept as a fallback; no repeat of a queued (source, target, command) | One weighted pick a turn over the cost column, target later, the attack command when none | As traced (`battle-target-tests`: monster 1408's 6000 seeded turns 54.8/21.5/20.3/1.8/1.7 %, 913's two actions in mode 2, 865's Augmented Core costing 2, use limits, think points) |
+| Targets (`getCommandTarget` `0x9bf740`, `IsSelected` `0x9b6cbc`) | Chosen at the pick: the command's kind, a provoker first (kind 52), not kind 32 / 72; ordered by `+0xd0` (0 random - 745 of 751 - 1 the highest HP, 2 .. 6 HP / rate / level); preferred: magic and skills not on a resistant target (skipped at `Coupling +0x48`, 0.3 in battle 1), heals at 90 % HP or less, cures where something can be removed, buffs / debuffs where an effect is missing, an element change not to that element | Picked at resolution | At the pick, kept while targetable (`Cr3Fighter::forcedBy` for the provoker) |
+| Scripts (`BattleCommand.Add(unit, n, cmd)` `0x9c20e4`, `AddEnemyOrderPoint`) | The script's command takes `n` actions; the AI picks for the rest; order points `+= n`, 0 .. 200 | The script's command replaced the turn; order points a stub | As traced |
+
+**What a battle gives.** The base EXP (`VAcquireExperience` `0x9c6b60`: `+0x3c + (L - 1) x short +0x44`, x the level-gap
+factor `clamp(1 + 0.02 (monsters' average level - top gene level), 0.5, 2)`), money (`+0x40 + (L - 1) x short +0x46`) and the
+genes' share (full for the front three standing, half otherwise) were already the original's. Battles give no character
+level, Gene Points or index entries.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Apples (items 121 .. 124: commands 521 .. 524, extraType 14 EXP / 15 money, constant 2 / 3; `BtlResult::AddUsedItem` `0x7df54c`, `GetExperience` `0x7df710`) | Each distinct one used multiplies, before the skill factor (121 + 122: x6; the same twice x2) | Ignored | `cr3UsedApples`, applied in `enterCr3Result` |
+| VIP (`vipbonus`, `0x8a080c`, the result menu's state 3) | With VIP days left: EXP x `exp_bonus`, money x `gold_bonus` (1.5 / 1.5), after the skill factor; the genes get the final number | Loaded, unused | Applied; `giveCr3GeneExp` takes the final EXP |
+| Drops (`BtlMonsterStatus::vDrop` `0x9c75dc`, `GetDropRateCorrection` `0x9b01e0`) | Rolled once as the wave is made; the largest skill-85 constant of any unit added to slot 0 only; a kind-0x83 effect on any unit takes slot 1; announced when the monster falls | Rolled at the knockout, the living party's sum added to both slots | `rollCr3Drops` at each wave, announced at the knockout; the fallen's alone into the bag |
+| The result's drop lines (`SetDropItemText` `0xb1ffe4`) | After the tally, each drop (16 at most) a line in the Information bar - `0xfb` "Obtained: {item}", `0xfc` with a full bag (not taken) - a tap each | Silent, clamped at 99 | `showCr3DropLine` into `btRsltInfoMenu`'s `typeM_L01`; `--input auto` a second each |
+
+Not in: steal gold (skill `0x74`: its amount's formula untraced), VS battles' EXP / money from the tournament row (`+0x1c` /
+`+0x98`), the gene level-up window and the replace-a-skill prompt when a gene's slots are full, the season drop (kind 8).
+
+### 24. Round 21 parity audit (after a battle: genes levelling; stolen gold; VS rewards; the Lucky Box)
+
+Three delegated passes (`/tmp/cr3-opening-audit/round21-genelv.md`, `round21-steal-vs.md`, `round21-luckybox.md`), the
+changes made by two more (one in its own worktree), merged here.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The result's genes (`BattleResultV2Menu` interface 0xb0, `Update` `0xb1eb24`) | The cards show the gene card (`card_default`, 4.75), the old level and bar first (frame `(1 - GetExpRate) x 100 / 30`), three digits with leading zeros dimmed, MAX (frames 10 .. 12) at the top; the EXP applied 1/3 s after card 0's in (0.5667 s): no level-up - `com_022`, the bars jump; a level-up - the cards out (0.6333 s), the windows, the cards back (new level), then the drops | The new values from the first frame, `com_018` at once | As traced (`applyCr3GeneExp`) |
+| `GeneLvUpMenu` (interface 0xb1, `Update` `0xb1ad44`) | One window per levelled gene (party order 0 .. 4): `btRsltUpPositon`, the gene card (7.0), `btRsltLvUpMenu` (3.3 s, `com_018`), told 0x135 "{genename} is now level {newlevel}!" (0x122 "... from {oldlevel} to {newlevel}!" for more than one); each new command / skill not in slots 0 .. 5 told 0x181 "The gene learned {skillname}!" with `btRsltSkillMenu` (`com_021`); the six shared slots full: 0x1cc, the window slid aside, the six and the new one in a list (the focused one's help in the Information bar), a row asked 0x1cd "{genename} will forget {csname}. Are you sure?"; the new row itself: not learnt. No stats shown | Learnt silently, skipped when full | `stepCr3GeneUp` / `drawCr3GeneUp`; `addGeneExp` queues the new rows (`Cr3Gene::hasOwn` - slots 0 .. 5 -, `freeOwnSlot`); `gene-level-up` case (No, then Yes on an old row) |
+| Steal gold (command 1647 "Money Collector": formula 21, `calculateStealGold` `0x7e20e8`; `calculateFluctuation` `0x7e122c`) | A physical hit's damage, no chain bonus, taken as `min(damage, the party's money)` at once - no HP damage - and carried by the thief (`BtlStatus +0x1e0`); AnnounceBattle 0x28 "{gold} ML stolen!" / 0x29 "{target} is flat out broke!"; back only if the thief falls: `int(prod(kind 0x74 constants / 100) x stolen)` (Mimics' skill 421 x2, the Fake Offertory Box's 422 x1) | An ordinary hit | As traced (`battle-target-tests`: a Mimic's 350 of 1000 ML, 701 back) |
+| VS rewards (`EntryResult` `0x9a42ec`, the tournament row `+0x1c` exp / `+0x98` prize_gold) | Once, after the final win: the EXP and money **set** to the row's, then the usual factors; each battle's drops kept; a loss gives nothing; the DB never credits the gold itself | `endVSTournament` added the prize gold | As traced (`vs.drops`, `vsShowResults` after the result); `event-reset-tests` updated |
+| The Lucky Box's menus (`CreateLuckyBoxMenu` `0x8914e8`, `UpdateBuyPanel` `0xad1684`; the draws - `DBEmu` `0x81c080` .. `0x81c69c` - already the original's) | Box 0 focused; the first visit's tutorial (flag 143, 0x144, picture 60); the header the focused box's help (LuckyBoxHelp, 0x209, 0x208); a panel greyed where the genes' room or the money falls short; the check button (Lucky: the sheet's collection; gene box: `cardlist.dat`'s list); the panel slid aside before 0x123; the opening (`ue004lbox02` / `04` / `05`, `com_030`, then `lbox01` and a flash), each prize's own window, the collection with the new marked; the gene-lab footer; won / total on each box; out over 10 frames and a second | The first Lucky Box focused, no tutorial or help, after-the-fact alerts, a text list of the prizes | As traced (`sp-box-panels`, `sp-box-tutorial`). Not in: the five-panel carousel's slide and swipe; the gene list as `StaffNameListMenu`'s own figure; the get-item window's own text (AnnounceField 0x11 used) |
+
+The season drop (monster drop kind 8: the VS row's `+0x9c` item while its `+0xa0` flag is set, rolled at `BeginVSTournament`)
+isn't in yet. The boot-param drop overrides (`+0x42` .. `+0x44`) are set only by the debug battle selector: nothing to do.
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -675,9 +734,9 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`45/45` cases, `0 problems`)**:
+- **Controller & UI integration suite (`47/47` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 45 headless controller cases. Round 18 added `footsteps` (t0101's `se08` steps, with
+  passes all 47 headless controller cases (`ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`). Round 18 added `footsteps` (t0101's `se08` steps, with
   `CR3_EVTANIM`), `ladder` (d0202: a fall onto the floor, the ladder from the foot, a rung, off at the
   top), `ranged-camera` (battle 22's ranged direction's global clips, seed 1), `camp-event-ask` (the
   event camp's Yes / No: No, the hard back's stall, Yes) and `camp-event-nogene` (the `0x307` alert);

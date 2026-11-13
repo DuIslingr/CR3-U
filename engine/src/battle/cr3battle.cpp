@@ -13,7 +13,7 @@ namespace {
 constexpr const char* kModel = "iippffiffii";      // id, -, name, sub, width, depth, camera size, scale, -, -, flags (bit 0: parts)
 constexpr const char* kCamera = "ifpppppppppp";    // size, the get-set's end, ten camera names
 constexpr const char* kMonster = "iip";            // id, model, texture variation
-constexpr const char* kCoupling = "i_ip_ip_ipiiii"; // id, three slots (count, the ids), the dead direction, -, -, flags
+constexpr const char* kCoupling = "i_ip_ip_ipiiiif"; // id, three slots (count, the ids), the dead direction, order type, tolerance, flags, element skip
 constexpr const char* kField = "ipffff";           // id, figure, ...
 constexpr const char* kBattle = "ff";              // the party's line (x 1/10), the monsters'
 constexpr const char* kChar = "ii";                // id, model
@@ -331,6 +331,7 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
         return false;
     }
     couplingFlags = cp.i(10);
+    orderType = cp.i(8), orderTolerance = cp.i(9), elementSkip = cp.f(11);
     // createParty: the party's first three (BtlBootParam), or solo Char 7 when IsBootCharacter (+0x44 bit 3)
     const std::vector<int> bootParty{7};
     const std::vector<int>& useParty = (couplingFlags & 8) ? bootParty : party;

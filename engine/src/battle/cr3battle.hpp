@@ -117,6 +117,10 @@ struct Cr3BattleUnit {
 struct Cr3Battle {
     int coupling = -1, fieldId = -1;
     int couplingFlags = 0;             // (mon_cop +0x44: bit 0 - a script of its own)
+    // (mon_cop +0x3c / +0x40 / +0x48: the enemy AI's order type - battle.mbe OrderType's row -, its
+    // think points' tie tolerance, its chance of not testing a target's element)
+    int orderType = 0, orderTolerance = 0;
+    float elementSkip = 0;
     // BtlScriptSystem::Initialize: battle_<coupling> where the coupling has its own, else battle_0000
     std::string script() const;
     std::string field;                 // battle_field.mbe's figure (d1251b)

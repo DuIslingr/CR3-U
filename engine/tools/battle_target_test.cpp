@@ -2,6 +2,7 @@
 #include "battle/cr3rules.hpp"
 #include "assets/mvgl.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -122,10 +123,23 @@ int main() {
         // Round 18: 765 a random-enemy command (target kind 6) of 10 one-hit actions, as 1604 Omni Missiles
         commands.rows.push_back({{0,765}, {1,0}, {4,6}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x10a}, {24,100}, {32,4}, {33,1}});
         commands.chunks.push_back({});
+        // Round 20 (the enemy AI): 900 an attack of select type 0 (+0xc8), select priority 10 (+0xcc); 901 the same of
+        // priority 0; 902 a buff of select type 5 on an ally (target kind 1) giving 305, no damage (formula 40: -1);
+        // none changes an element (+0x28 -1)
+        commands.rows.push_back({{0,900}, {1,0}, {4,3}, {5,1}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {10,uint32_t(-1)}, {32,4}, {33,1}, {35,0}, {36,10}});
+        commands.chunks.push_back({});
+        commands.rows.push_back({{0,901}, {1,0}, {4,3}, {5,1}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {10,uint32_t(-1)}, {32,4}, {33,1}, {35,0}, {36,0}});
+        commands.chunks.push_back({});
+        commands.rows.push_back({{0,902}, {1,3}, {4,1}, {5,0}, {6,bits(1)}, {7,bits(1)}, {8,0x100}, {10,uint32_t(-1)}, {13,1}, {32,0xc}, {33,40}, {35,5}, {36,10}});
+        commands.chunks.push_back({{14, {305}}});
+        // Round 21: 1647 Money Collector - CommandFomula 20 (here 21): damage formula 21 calculateStealGold, chain -1
+        commands.rows.push_back({{0,1647}, {1,0}, {4,3}, {5,140}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,4}, {33,21}});
+        commands.chunks.push_back({});
         Table formulas{"CommandFomula", "iiii", {
+            {{0,21},{2,21},{3,uint32_t(-1)}},
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
             {{0,8},{2,8}}, {{0,12},{2,12}}, {{0,13},{2,13}}, {{0,16},{2,16}}, {{0,17},{2,18}},
-            {{0,18},{2,6},{3,19}}, {{0,20},{2,20}}, {{0,24},{2,24}},
+            {{0,18},{2,6},{3,19}}, {{0,20},{2,20}}, {{0,24},{2,24}}, {{0,40},{2,uint32_t(-1)}},
         }};
         check(t.command.parse(tables({commands, formulas})), "parse synthetic commands");
         Table skills{"Skill", "iiiiiiiiiiiiiiiiiiiii", {
@@ -138,6 +152,7 @@ int main() {
             {{0,97}, {8,0}, {12,45}, {13,10}, {17,45}, {18,10}},   // +10% passive HP regen at endTurn (kind 45)
             {{0,98}, {8,0}, {12,70}, {13,1}, {17,70}, {18,1}},     // Break Reset on disadvantage (kind 70)
             {{0,99}, {8,0}, {12,80}, {13,200}, {17,80}, {18,200}}, // +200 cooperation chance (kind 80)
+            {{0,421}, {8,0}, {12,116}, {13,200}, {17,116}, {18,200}}, // the Mimics' gold release x2.0 (kind 0x74)
         }};
         Table statusEffects{"StatusEffect", "iiiiiiiiiiiiiiiiiiiiiii_ipiiiiiiii", {
             {{0,1}, {1,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}},
@@ -146,6 +161,7 @@ int main() {
             {{0,302}, {1,10}, {3,2}, {5,3}, {6,3}, {7,1}, {12,256}, {13,256}, {14,37}, {15,100}, {32,0x10}}, // group 10, prio 2, +100% ATK, CanCancel
             {{0,303}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}, {14,68}, {15,301}}, // status immunity to 301 (kind 68)
             {{0,304}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}, {14,82}, {15,300}}, // +300/256 evasion (CR3 kind 82)
+            {{0,305}, {1,uint32_t(-1)}, {5,9}, {6,9}, {12,256}, {13,256}, {14,36}, {15,120}}, // +20% attack for 9 turns (kind 36)
         }};
         check(t.skill.parse(tables({skills, statusEffects})), "parse synthetic skills and status effects");
         Table elements{"Element", "ifffffff", {
@@ -153,9 +169,29 @@ int main() {
             {{0,1},{1,bits(1)},{2,bits(0.5f)},{3,bits(1.5f)},{4,bits(1)},{5,bits(1)},{6,bits(1)},{7,bits(1)}},
             {{0,2},{1,bits(1)},{2,bits(1.5f)},{3,bits(0.5f)},{4,bits(1)},{5,bits(1)},{6,bits(1)},{7,bits(1)}},
         }};
-        check(t.battle.parse(tables({elements})), "parse synthetic element rates");
-        Table monsters{"Monster", "iipiiiiiiiiiiiiiiiiiii", {{{0,1},{4,1},{6,5000},{7,100},{8,0x00010014},{9,0x00010001}}}};
-        check(t.monster.parse(tables({monsters})), "parse synthetic fighters");
+        // (battle.mbe OrderType row 0 and ThinkPointAddition row 2, as the release's)
+        Table orderTypes{"OrderType", "iiiiiiiiiiii", {{{0,0},{1,60},{2,40},{3,40},{4,25},{5,10},{6,10},{7,10},{8,5},{9,51},{10,51},{11,51}}}};
+        Table thinkAdd{"ThinkPointAddition", "iiiiiiiii", {{{0,0},{5,30}}, {{0,1},{4,20},{5,50}}, {{0,2},{8,50}}}};
+        check(t.battle.parse(tables({elements, orderTypes, thinkAdd})), "parse synthetic element rates and think points");
+        // monster 2's modes (MonsterCommand: id, mode, element, card, actions a turn, attack, last attack, finest arts,
+        // (command, cost, uses) x 8): 0 - 900 twice at most, 901; 1 - the buff 902, 901; 2 - 901, two actions a turn;
+        // 3 - 901 alone
+        auto modeRow = [](int mode, int actions, std::vector<std::array<int, 3>> entries) {
+            std::map<int, uint32_t> row{{0,2}, {1,uint32_t(mode)}, {2,uint32_t(-1)}, {3,1}, {4,uint32_t(actions)}, {5,901}, {6,uint32_t(-1)}, {7,uint32_t(-1)}};
+            for (size_t k = 0; k < 8; ++k) {
+                const std::array<int, 3> e = k < entries.size() ? entries[k] : std::array<int, 3>{-1, 1, -1};
+                for (size_t c = 0; c < 3; ++c) row[int(8 + k * 3 + c)] = uint32_t(e[c]);
+            }
+            for (int k = 32; k < 40; ++k) row[k] = uint32_t(-1);
+            return row;
+        };
+        Table monsterCommands{"MonsterCommand", "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", {
+            modeRow(0, 1, {{900, 1, 2}, {901, 1, -1}}), modeRow(1, 1, {{902, 1, -1}, {901, 1, -1}}),
+            modeRow(2, 2, {{901, 1, -1}}), modeRow(3, 1, {{901, 1, -1}}),
+        }};
+        Table monsters{"Monster", "iipiiiiiiiiiiiiiiiiiii", {{{0,1},{4,1},{6,5000},{7,100},{8,0x00010014},{9,0x00010001}},
+                                                             {{0,2},{4,1},{6,5000},{7,100},{8,0x00010014},{9,0x00010001}}}};
+        check(t.monster.parse(tables({monsters, monsterCommands})), "parse synthetic fighters");
         { // Round 16: BtlUnit::PlayCamera / updateWhiteFade - model.mbe AnimDirection's camera (+0x08) and white-fade frame (+0x24)
             auto text = [](const char* str) {
                 std::vector<uint32_t> w((std::strlen(str) + 4) / 4, 0);
@@ -215,6 +251,7 @@ int main() {
             rules.fighters[3].speed = 50;  // Guard (-1) -> priority +2 from command 51
             rules.fighters.push_back(rules.fighters[0]);
             rules.fighters[4].player = false; rules.fighters[4].speed = 60; rules.fighters[4].attackCommand = 30;
+            rules.fighters[4].commands = {{30, 1, -1}}; // (its AI's one command - MonsterCommand's)
             const auto order = rules.turn({{0, 61, 4}, {1, 62, 4}, {2, 60, 4}, {3, -1, -1}});
             std::vector<int> sources;
             for (const auto& a : order) sources.push_back(a.source);
@@ -260,6 +297,36 @@ int main() {
             const auto normalHit = rules.turn({{0, 30, 2}, {1, -1, -1}})[1].targets[0].hits[0];
             const auto bootHit = bootRules.turn({{0, 30, 2}, {1, -1, -1}})[1].targets[0].hits[0];
             check(bootHit >= normalHit * 8, "bootCharacter multiplies player basic damage by ~10x");
+        }
+
+        // Round 21: Steal Gold (calculateStealGold 0x7e20e8) - the Mimic example: a physical 350 against 1000 ML -
+        // 350 taken at once, 650 left, no HP lost, the thief carrying 350; at victory 1 + int(2.0 x 350) = 701
+        {
+            cr3::Cr3BattleRules rules; check(rules.setup(t, battle, 1, 11), "setup steal battle");
+            for (size_t k = 0; k < 4; ++k) {
+                auto& f = rules.fighters[k];
+                f.player = k < 2; f.hp = f.maxHp = 5000; f.attack = 20; f.defence = 20; f.luck = 10; f.geneLevel = 0;
+                f.speed = 100 - int(k) * 10; f.attackCommand = 30; f.skills.clear();
+            }
+            rules.fighters[0].attack = 100, rules.fighters[0].skills = {421}; // (ratio 5 - its top - x power 140 x 0.5 = 350)
+            rules.gold = 1000, rules.monstersWait = true;
+            cr3::Cr3Hit stole;
+            for (const auto& a : rules.turn({{0, 1647, 2}, {1, -1, -1}}))
+                if (a.source == 0 && !a.targets.empty()) stole = a.targets[0];
+            check(stole.stolen == 350 && rules.gold == 650 && stole.hits == std::vector<int>{0} && rules.fighters[2].hp == 5000,
+                  "Steal Gold: min(350, 1000) taken, 650 left, no HP lost");
+            check(rules.fighters[0].stolenGold == 350, "Steal Gold: the thief carries what it took (AddGold)");
+            float k = 1;
+            for (int c : rules.skillConstants(rules.fighters[0], 0x74)) k *= float(c) / 100;
+            check(1 + int(k * float(rules.fighters[0].stolenGold)) == 701, "Steal Gold: VAcquireMoney gives back 1 + 2.0 x 350 = 701");
+            rules.gold = 200, rules.monstersWait = true;
+            for (const auto& a : rules.turn({{0, 1647, 2}, {1, -1, -1}}))
+                if (a.source == 0 && !a.targets.empty()) stole = a.targets[0];
+            check(stole.stolen == 200 && rules.gold == 0, "Steal Gold: no more than the party has");
+            rules.monstersWait = true;
+            for (const auto& a : rules.turn({{0, 1647, 2}, {1, -1, -1}}))
+                if (a.source == 0 && !a.targets.empty()) stole = a.targets[0];
+            check(stole.stolen == 0 && rules.gold == 0, "Steal Gold: the party broke - 0 (AnnounceBattle 0x29)");
         }
 
         // Round 2 audited formulas: mpCost double truncation & % current MP, hpCost % current HP + formula 13,
@@ -445,7 +512,7 @@ int main() {
             rules.fighters[0].mp = 25; // needs 20 MP for 720
             rules.fighters[0].speed = 10;
             rules.fighters[2].speed = 200; // faster monster drains 30 MP via scripted 1646
-            rules.scripted[2].push_back(1646);
+            rules.scripted[2].push_back({1, 1646});
             rules.fighters[1].hp = 0; // keep fighter 1 out so monster 2 targets fighter 0
             rules.fighters[3].hp = 0; // keep monster 3 out so only monster 2 & fighter 0 act
             const auto drainTurn = rules.turn({{0, 720, 2}});
@@ -483,7 +550,7 @@ int main() {
                 rules.scripted.clear(), rules.monstersWait = false;
             };
             reset();
-            rules.scripted[2].push_back(760), rules.scripted[3].push_back(760);
+            rules.scripted[2].push_back({1, 760}), rules.scripted[3].push_back({1, 760});
             auto acts = rules.turn({{0, 30, 2}});
             std::vector<std::array<int, 3>> seen; // (source, command, finisher)
             for (const auto& a : acts) seen.push_back({a.source, a.command, int(a.finisher)});
@@ -492,12 +559,12 @@ int main() {
                   "a comboing pair's last attacker's Last Attack comes before the other side's action, marked a finisher");
             reset();
             rules.gauge = -1000; // (the monsters' full advantage: Finest Arts first - none here, so the Last Attack)
-            rules.scripted[2].push_back(760), rules.scripted[3].push_back(760);
+            rules.scripted[2].push_back({1, 760}), rules.scripted[3].push_back({1, 760});
             acts = rules.turn({{0, 30, 2}});
             check(acts.size() == 4 && acts[2].finisher && acts[2].command == 761, "at full advantage without Finest Arts, still the Last Attack");
             reset();
             rules.fighters[3].hp = 0; // (one action alone: no finisher)
-            rules.scripted[2].push_back(760);
+            rules.scripted[2].push_back({1, 760});
             acts = rules.turn({{0, 30, 2}});
             bool any = false;
             for (const auto& a : acts) any |= a.finisher;
@@ -507,7 +574,7 @@ int main() {
             reset();
             rules.gauge = -1000, rules.gaugeStarted = true;
             rules.fighters[2].finestArts = 761, rules.fighters[3].finestArts = 761;
-            rules.scripted[2].push_back(760), rules.scripted[3].push_back(760);
+            rules.scripted[2].push_back({1, 760}), rules.scripted[3].push_back({1, 760});
             acts = rules.turn({{0, 30, 2}});
             check(acts.size() == 4 && acts[2].finisher && acts[2].command == 761 && acts[2].gaugeAfter == -500 && acts[1].gaugeAfter == -1000,
                   "a Finest Arts sets the break gauge to -500 for the monsters after its points");
@@ -515,7 +582,7 @@ int main() {
             reset();
             rules.fighters[1].hp = 5000;
             rules.monstersWait = false;
-            rules.scripted[2].push_back(765), rules.fighters[3].hp = 0;
+            rules.scripted[2].push_back({1, 765}), rules.fighters[3].hp = 0;
             acts = rules.turn({{0, -1, -1}, {1, -1, -1}});
             bool seen765 = false;
             for (const auto& a : acts) {
@@ -529,6 +596,134 @@ int main() {
                 check(who == std::vector<int>({0, 1}), "a random-enemy command spreads its actions over the living opponents, one entry each");
             }
             check(seen765, "the random-enemy command acts");
+        }
+        // Round 20: the enemy AI (BtlStatusList::addCommandByAI / Select / getCommandTarget, BtlOrderPoint)
+        {
+            cr3::Cr3Battle aiBattle;
+            for (int m : {1, 2}) { cr3::Cr3BattleUnit u; u.monster = m; aiBattle.units.push_back(u); }
+            cr3::Cr3BattleRules rules; check(rules.setup(t, aiBattle, 1, 2024), "setup AI battle");
+            check(rules.fighters.size() == 2 && rules.fighters[1].commands.size() == 2 && rules.fighters[1].commands[0].command == 900 &&
+                      rules.fighters[1].commands[0].cost == 1 && rules.fighters[1].commands[0].uses == 2 && rules.fighters[1].commands[1].uses == -1 &&
+                      rules.fighters[1].actionsPerTurn == 1 && rules.fighters[1].card == 1,
+                  "MonsterCommand's entries are (command, cost, uses), +0x10 the actions a turn, +0x0c the card");
+            rules.fighters[0].player = true;
+            auto heal = [&] { for (auto& f : rules.fighters) f.hp = f.maxHp = 100000; };
+            auto picks = [&](int turns) {
+                std::vector<int> out;
+                for (int n = 0; n < turns; ++n) {
+                    heal();
+                    for (const auto& a : rules.turn({{0, -1, -1}}))
+                        if (a.source == 1) out.push_back(a.command);
+                }
+                return out;
+            };
+            // uses: 900 (priority 10 against 901's 0, so always first while it may be used) twice, then 901; a mode
+            // change gives them back (VChangeMode -> initializeCommandSkill)
+            check(picks(4) == std::vector<int>({900, 900, 901, 901}), "a command of 2 uses stops after 2");
+            rules.changeMode(1, 0);
+            check(picks(1) == std::vector<int>({900}), "a mode change resets the uses");
+            // the think points: OrderType row 0 a turn, -50 from the type used (clamped to 50 first), +50 to type 7 every third turn
+            cr3::Cr3BattleRules points; check(points.setup(t, aiBattle, 1, 7), "setup think point battle");
+            points.fighters[0].player = true;
+            points.changeMode(1, 3);
+            auto pointTurn = [&] { for (auto& f : points.fighters) f.hp = f.maxHp = 100000; points.turn({{0, -1, -1}}); };
+            pointTurn();
+            check(points.enemyPoints == std::array<int, 8>({10, 40, 40, 25, 10, 10, 10, 5}), "turn 1: +OrderType, -50 to the type used");
+            pointTurn();
+            check(points.enemyPoints == std::array<int, 8>({20, 80, 80, 50, 20, 20, 20, 10}), "turn 2: +OrderType, -50 to the type used");
+            pointTurn();
+            check(points.enemyPoints == std::array<int, 8>({30, 120, 120, 75, 30, 30, 30, 65}), "turn 3: +50 to type 7");
+            points.addEnemyOrderPoint(7, 500), points.addEnemyOrderPoint(1, -500);
+            check(points.enemyPoints[7] == 200 && points.enemyPoints[1] == 0, "AddEnemyOrderPoint clamps to 0 .. 200");
+            // two actions a turn (+0x10 = 2): two picks, the second the same command on the same target (not preferred -
+            // BtlCommandList::Has - but the only one: the fallback)
+            points.changeMode(1, 2);
+            int acted = 0;
+            for (auto& f : points.fighters) f.hp = f.maxHp = 100000;
+            for (const auto& a : points.turn({{0, -1, -1}})) acted += a.source == 1;
+            check(acted == 2 && points.fighters[1].actionsPerTurn == 2, "a monster of 2 actions a turn acts twice");
+            // a buff (select type 5) only where its effect is missing: with type 5's points the most, 902 on itself
+            // first, then 901 while 305 lasts, and 902 again once it is gone
+            cr3::Cr3BattleRules buff; check(buff.setup(t, aiBattle, 1, 11), "setup buff battle");
+            buff.fighters[0].player = true;
+            buff.changeMode(1, 1);
+            buff.orderType = -1; // (no points a turn: type 5's 200 against 0 decides)
+            buff.enemyPoints = {0, 0, 0, 0, 0, 200, 0, 0};
+            auto buffTurn = [&] {
+                std::vector<int> out;
+                for (auto& f : buff.fighters) f.hp = f.maxHp = 100000;
+                for (const auto& a : buff.turn({{0, -1, -1}}))
+                    if (a.source == 1) out.push_back(a.command);
+                return out;
+            };
+            check(buffTurn() == std::vector<int>({902}) && buff.hasEffect(1, 305), "the buff is picked where its effect is missing");
+            check(buffTurn() == std::vector<int>({901}) && buffTurn() == std::vector<int>({901}), "the buff is not picked again while its effect is on");
+            buff.removeEffect(1, 305);
+            check(buffTurn() == std::vector<int>({902}), "the buff is picked again once its effect is gone");
+            // BattleCommand.Add(unit, 1, command): its one action spent - the AI picks nothing more
+            buff.scripted[1].push_back({1, 760});
+            check(buffTurn() == std::vector<int>({760}), "a script's command takes the turn's action");
+        }
+        // Round 20 against the release's tables (CR3_DATA): monster 913 mode 2's 2 actions, 865's Augmented Core
+        // costing 2, and battle 22's monster 1408 (weights 15 / 10 / 10 / 5 / 5: each U(0,1) x w / sum, the
+        // highest - 54.4 / 21.2 / 21.2 / 1.7 / 1.7 %)
+        if (const char* data = std::getenv("CR3_DATA"); data && *data) {
+            cr3::MvglArchive archive;
+            cr3::Cr3BattleTables real;
+            std::string err;
+            if (archive.open(data, &err) && real.load(archive, &err)) {
+                int character = -1;
+                if (const cr3::MbeFile::Table* ch = real.character.table("Char")) {
+                    cr3::MbeFile::Row r;
+                    for (size_t k = 0; k < ch->rows.size() && character <= 0; ++k)
+                        if (real.character.row(*ch, k, "i", r)) character = r.i(0);
+                }
+                auto battleOf = [&](int coupling, cr3::Cr3BattleRules& rules, uint32_t seed) {
+                    cr3::Cr3Battle b;
+                    check(b.setup(real, coupling, -1, {character}, seed, &err), "set up a release battle");
+                    check(rules.setup(real, b, 10, seed, &err), "set up a release battle's rules");
+                };
+                cr3::Cr3BattleRules r913;
+                battleOf(2612, r913, 5);
+                int m913 = -1;
+                for (size_t k = 0; k < r913.fighters.size(); ++k) if (r913.fighters[k].id == 913) m913 = int(k);
+                check(m913 >= 0 && r913.fighters[size_t(m913)].actionsPerTurn == 1, "monster 913 mode 0: one action a turn");
+                r913.changeMode(m913, 2);
+                check(r913.fighters[size_t(m913)].actionsPerTurn == 2, "monster 913 mode 2: two actions a turn (+0x10)");
+                cr3::Cr3Fighter f865;
+                {
+                    cr3::Cr3BattleRules r; battleOf(2612, r, 5);
+                    r.fighters[size_t(m913)].id = 865;
+                    r.changeMode(m913, 0);
+                    f865 = r.fighters[size_t(m913)];
+                }
+                check(f865.actionsPerTurn == 2 && f865.commands.size() == 3 && f865.commands[2].command == 267 && f865.commands[2].cost == 2 &&
+                          f865.commands[0].cost == 1 && f865.commands[1].cost == 1,
+                      "monster 865: two actions a turn, Augmented Core (267) costing 2");
+                cr3::Cr3BattleRules r22;
+                battleOf(22, r22, 12345);
+                int boss = -1;
+                for (size_t k = 0; k < r22.fighters.size(); ++k) if (r22.fighters[k].id == 1408) boss = int(k);
+                check(boss >= 0 && r22.orderTolerance == 0, "battle 22: monster 1408, tolerance 0");
+                std::map<int, int> count;
+                const int turns = 6000;
+                for (int n = 0; n < turns; ++n) {
+                    for (auto& f : r22.fighters) f.hp = f.maxHp = 1000000, f.mp = f.maxMp = 1000, f.effects.clear(), f.effectStacks.clear();
+                    r22.gauge = 0;
+                    std::vector<std::array<int, 3>> guard;
+                    for (size_t k = 0; k < r22.fighters.size(); ++k) if (r22.fighters[k].player) guard.push_back({int(k), -1, -1});
+                    for (const auto& a : r22.turn(guard))
+                        if (a.source == boss && !a.finisher) ++count[a.command];
+                }
+                const auto share = [&](int id) { return 100.0 * count[id] / turns; };
+                std::cout << "battle 22's 1408 over " << turns << " turns: White " << share(1608) << " % Red " << share(1611) << " % Blue " << share(1612)
+                          << " % Green " << share(1613) << " % Observing " << share(1501) << " %\n";
+                check(std::abs(share(1608) - 54.4) < 2.5 && std::abs(share(1611) - 21.2) < 2.0 && std::abs(share(1612) - 21.2) < 2.0 &&
+                          std::abs(share(1613) - 1.7) < 1.0 && std::abs(share(1501) - 1.7) < 1.0,
+                      "battle 22's 1408 picks by max(U x weight / sum): 54 / 21 / 21 / 2 / 2 %");
+            } else {
+                std::cout << "CR3_DATA: " << err << " - the release checks skipped\n";
+            }
         }
         std::cout << "battle target side: all checks passed\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }

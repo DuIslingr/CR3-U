@@ -600,6 +600,7 @@ struct Viewer {
     void draw(int fw, int fh);
     void fullFrameQuad(const cr3::Texture& t, const float* v, const float* rgba);
     void safeInsets(int fw, int fh, int& ix, int& iy) const;
+    void extendVistaBand();
     void placeScreen(int fw, int fh);
     void drawScene(int w, int h);
 
@@ -1777,8 +1778,15 @@ struct Viewer {
     // second, else none (a seasonal one - kind 8 - only in its event: none here). Announced
     // (vAnnounceDrop: AnnounceBattle 0x1d, its "{item.name}", com_013) and kept for the result
     // (VAcquireDrop - MbDropInfo::AddToSaveData: one of it)
-    std::map<int, int> cr3Drops; // (fighter: the item's full id)
+    std::map<int, int> cr3Drops; // (fighter: the item's full id - rolled as its wave is made)
+    std::set<int> cr3DropsAnnounced; // (the fallen whose drop was announced: theirs alone into the bag)
+    std::set<int> cr3UsedApples[2]; // (BtlResult::AddUsedItem 0x7df54c: the distinct EXP (extraType 14) / money (15) items used, their constants)
+    std::vector<int> cr3ResultDropLines;
+    std::string cr3ResultLine; // (the one shown in btRsltInfoMenu's typeM_L01)
+    float cr3ResultLineAt = 0; // (SetDropItemText: the result's drop lines - the items, 0 for a full bag's)
     void rollCr3Drop(int fi);
+    void rollCr3Drops();
+    bool showCr3DropLine();
     // the continue (BtlSysStateAction, after the defeat script, where the coupling allows it -
     // ContinueMenu: btCtnPositon, its OneHelpMenu - AnnounceMenuName 0xbe -, btCtnBtnMenu's two
     // contBtns at call_btCtnBtnPanel_001 / 002 - give up (background 8, icon and text 12), continue
@@ -1975,6 +1983,7 @@ struct Viewer {
         std::string name;
         int cost = 0, count = 0;
         bool usable = true;
+        int icon = -1; // (comListIcon_fr00's: a command's +0x08, an item's +0x0c - below 0 none)
     };
     std::vector<Cr3ListRow> cr3List;
     bool cr3ListItems = false;
@@ -2055,13 +2064,47 @@ struct Viewer {
     // fallen) half; its level from its EXP (MbGeneInfo::GetLevel), at its top the EXP held there; a
     // level up com_018 and EffectGeneUp. The cards: the gene's level, its bar the level's share
     // done (1 - CrxGene::GetExpRate)
+    // (BattleResultV2Menu, round 21: the cards first show the OLD level / bar - CreateBattleResultMenu
+    // 0x8a080c fills them before any EXP -; the EXP put in 1/3 s after card 0's btRsltCharaPanel_in -
+    // state 5; no level up: com_022 and the bars jump; one: the cards out, a GeneLvUpMenu window a
+    // levelled gene - party order -, the cards back with the new values - SetResultSecondSetteing)
     struct Cr3ResultCard {
-        int ch = 0, level = 0;
-        float progress = 0;
-        bool up = false; // (com_018 at the result)
+        int ch = 0, level = 0, oldLevel = 0, maxLevel = 999, gain = 0, gene = -1, master = 0;
+        float progress = 0, oldProgress = 0;
+        bool up = false;
+        std::vector<std::array<int, 2>> learnt; // (AddTemporaryExp's queue: (type, id) of the levels gained)
     };
     std::vector<Cr3ResultCard> cr3ResultCards;
     void giveCr3GeneExp();
+    // the result's phases (BattleResultV2Menu::Update's states): 0 the tally (0..5), 1 the cards out
+    // (6, 7), 2 a gene's window (8 .. 0xd), 3 the cards back (0xe), 4 the drops and done (0xf ..)
+    int cr3ResultPhase = 0;
+    float cr3ResultPhaseAt = 0;
+    bool cr3ResultApplied = false; // (the EXP put in: state 5)
+    bool cr3ResultNew = false;     // (the cards' new level / bar: state 5's bars, SetResultSecondSetteing)
+    // the GeneLvUpMenu window (interface 0xb1) over the levelled gene's card `card`: its steps -
+    // 0 btRsltUpPositon_in, 1 the level alert (0x135 / 0x122) with btRsltLvUpMenu, 2 a learnt one's
+    // alert (0x181) with btRsltSkillMenu, 3 the slots given (CommandSkillLoopSub2), 4 full - alert
+    // 0x1cc, 5 the window slid left, 6 the list (slots 0 .. 5 + the new one, id 10), 7 asked (0x1cd),
+    // 8 slid back, 9 btRsltUpPositon_out
+    struct Cr3GeneUp {
+        int card = -1, step = 0, entry = 0, focus = 0, askFocus = 0;
+        float at = 0, lvAt = -10, skillAt = -10;
+        bool alert = false; // (an AlertwindowMenu up - its tap closes it)
+        std::string text;
+        float alertAt = 0;
+    } cr3GeneUp;
+    void applyCr3GeneExp();
+    void stepCr3Result();
+    void openCr3GeneUp(int fromCard);
+    void stepCr3GeneUp();
+    void autoCr3Result();
+    void settleCr3GeneQueues(); // (the result left early - --input result: the rest given as they fit, the full ones not learnt)
+    void chooseCr3GeneRow(int row);
+    void answerCr3GeneAsk(bool yes);
+    bool cr3GeneUpKey(SDL_Keycode k);
+    std::string cr3SkillName(int type, int id, bool help = false);
+    void drawCr3GeneUp(int w, int h, const Mat4& view);
     // (BtlStatusList::AcquireRemuneration: the fallen monsters' alone - each wave's at its victory -;
     // VAcquireExperience: x (1 + (the monsters' average level - the party's highest gene level) x
     // 0.02), 0.5 .. 2, at least 1)
@@ -3122,6 +3165,7 @@ struct Viewer {
     } cr3Camp;
     static constexpr int kCampButtons[7] = {0, 1, 2, 5, 4, 3, 6};
     std::vector<Cr3GeneLabTap> cr3CampTaps;
+    std::vector<Cr3GeneLabTap> cr3GeneUpTaps; // (the replace list's rows - kTapRow + n -, its question's Yes / No)
     std::vector<Cr3GeneLabTap> cr3CtnTaps; // (the battle's continue: its buttons, its question's)
     bool cr3FieldIdle();
     std::vector<int> cr3PartyMembers() const;
@@ -3224,6 +3268,22 @@ struct Viewer {
     // tapped, used (Fld2GoodsButton::OnUpdate: 1 PutBomb). The others round the arc, the
     // feGoodsNext arrows, the names: not yet
     int goodsFocus = -1;
+    // The talk mark (Fld2BalloonManager::CheckBalloons 0xa07810 / Fld2GoodsButton::ShowExclamationButton 0xa07534): something
+    // to check in reach - a feFlag_fr00 balloon over it, and the "!" panel (FieldGoodsMenu's id 4) slid into the goods
+    // button over 0.1333 s, focused; while it's focused a tap anywhere on the field talks (Fld2IsExclamationButton)
+    struct TalkMark {
+        int state = 0;          // (0 none, 1 coming in, 2 up, -1 going out)
+        float t = 0, popT = 0;  // (the slide; the balloon's pop - Fld2Balloon::Update: 1.1 sin(10 t) for 0.2 s)
+        bool focused = true;    // (the "!" the goods button's focused panel - the Vita's R moves off it)
+        bool shown = false;     // (the balloon up)
+        cr3::Vec3 at{};         // (the balloon's point: the target's, 0.1 its joint's y scale above)
+    } talkMark;
+    Mat4 areaVP{};
+    bool areaVPSet = false;
+    void stepTalkMark(float dt);
+    void drawTalkBalloon(const Mat4& view);
+    bool talkFocused() const { return talkMark.state == 2 && talkMark.focused; }
+    void talk();
     std::set<int> shownGoods() const;
     int focusedGoods();
     bool goodsPad(bool cycle);
@@ -3431,6 +3491,7 @@ struct Viewer {
     void drawClearQuest(cr3::EventRuntime& ev, int w, int h);
     void drawLevelUp(cr3::EventRuntime& ev, int w, int h);
     void drawCr3GetItem(cr3::EventRuntime& ev, bool withText);
+    void drawCr3GetItemPanel(int item, float t, const std::string& line);
     void answerClearQuest();
     bool clearQuestShown();
     bool clearQuestClick(float fx, float fy);
@@ -3535,6 +3596,7 @@ struct Viewer {
         int help = -1;              // (the panel tapped: its name over it)
         bool scripted = false;      // (a script's - CollectListDisp: over the field, no fades, slid out)
         int addCategory = -1, addId = -1; // (CheckAddItem's: the entry just added - its get effect)
+        std::vector<std::pair<int, int>> added; // (AddCollectListGetItem's: more of them - category, id)
         int cgl = 0;                // (the prize's first showing: 0 none, 1 mpListCglMenu in, 2 its loop - a tap -, 3 out, 4 the gene's window, 5 done)
         float cglSince = 0, prizeAt = -1; // (prizeAt: when the prize's New mark came - after the window)
     } collectList;
@@ -3571,7 +3633,7 @@ struct Viewer {
     float collectShown() const;
     void stepCollectList(float dt);
     float uiAnimSeconds(const std::string& fig, const std::string& anim);
-    void openCollectList(int sheet, bool scripted = false, int addCategory = -1, int addId = -1);
+    void openCollectList(int sheet, bool scripted = false, int addCategory = -1, int addId = -1, bool openSe = true);
     void chooseCollectList(int id);
     void worldSheet(int k, int& total, int& won) const;
     // The dungeons' list (WorldSelectListMenu - Update 3: AddWorldSelectListItem for each open one;
@@ -3954,12 +4016,26 @@ struct Viewer {
         int boxFocus = 0, boxPanel = 0;
         int buttonFocus = 0, shopFocus = 0;
         bool boxCheckFocus = false;
-        std::vector<std::string> boxContents;
-        int boxContentsPage = 0;
+        std::vector<std::string> boxContents; // (the gene box's list - GeneBoxListMenu's lines)
+        int boxContentsPage = 0;              // (its first line in view)
+        // (LuckyBoxMain's states: 0 the carousel / buy mode, 1 a panel moving to the question (3),
+        // 2 the box opening (ue004lbox02 / 04 / 05), 3 ue004lbox01 and the flash, 4 a prize's window
+        // (OpenUI), 5 a collection (the drawn - or the contents, 9 .. 0xe), 6 into the contents
+        // (9 / 0xc), 7 the gene box's list (0xf .. 0x13), 8 leaving (0x15), 9 the panel back (6),
+        // 10 the gene box's list gone (its fade back)
+        int boxStage = 0;
+        float boxSince = 0;
+        int boxPrize = 0;        // (4: the prize shown - GetOpenedNumber's; -1 none drawn)
+        int boxOpenedKind = 0, boxOpenedSheet = -1; // (the box opened - -1 the check button's contents -; its sheet, OpenItemSheet's)
+        bool boxTutorial = false; // (the first visit's TutorialMenu - flag 143 - up)
         bool boxBuy = false;
         bool shopOnly = false;   // (the Sp Shop opened from the field's Shop button: back closes it)
         std::string told;        // (an alert over it)
         float toldSince = 0;
+        // (the tournament won: EndVSTournament sent, then the battle's result - EntryResult with the row's exp /
+        // prize_gold -, the results screen after it; the battles' drops - AcquireDrop, phaseColosseumContinue - kept)
+        bool result = false;
+        std::vector<int> drops;
     } vs;
     std::vector<Cr3GeneLabTap> vsTaps;
     std::string vsText(const char* file, int id);
@@ -4050,7 +4126,8 @@ struct Viewer {
     // (mpBoxBuyPanel: mpBoxBuyIcon_fr00 the amount - 1, 5, 10 frames 0 .. 2 -, mpBoxBuyUni_fr00 the
     // currency - 0 coins, 1 GP -, mpBoxBuyPriceNum_fr00 its digits at digit + 10 x currency). A panel
     // tapped: asked 0x123; yes - LuckyBoxMain 5: OpenLuckyBox / OpenGeneBox / OpenGPBox, flag 39 set
-    // (the Using Coins quest's), com_024, the header's coins again; what came out told
+    // (the Using Coins quest's), com_024, the header's coins again; the opening (ue004lbox*), each
+    // prize's window, a Lucky / GP box's collection with them new (LuckyBoxMain - spBoxPrize)
     struct SpBox {
         int kind = 0;         // 0 a gene box, 1 a Lucky Box, 2 the GP box
         int id = 0;           // (the gene box's _id; the Lucky Box's sheet index)
@@ -4066,6 +4143,12 @@ struct Viewer {
     void spBoxContentsPage();
     void inspectSpBox();
     void openSpBox();
+    std::string spBoxHelp(const SpBox& box);
+    bool spBoxBuyable(const SpBox& box, int k) const;
+    void stepSpBoxes(float dt);
+    void spBoxPrize();
+    void drawSpBoxOpening(const SpBox& box, int w, int h, const Mat4& view);
+    bool spBoxKey(SDL_Keycode key);
     void vsList(int mode);
     void vsDigits(const UiFig& panel, const std::string& prefix, const std::string& fig, long value, int places, const Mat4& view, int offset = 0);
 
@@ -4146,6 +4229,7 @@ struct Viewer {
     void vsNextBattle();
     bool vsMoreBattles() const;
     bool vsBattleOver(bool won);
+    void vsShowResults(); // (vsEnd's after EndVSTournament: the results screen)
     void vsEnd();
     void chooseVs(int id);
     void vsAnswered();

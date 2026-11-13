@@ -61,6 +61,19 @@ struct Cr3Gene {
     int uid = 0;               // (+0x5c: its database id - what a character wears; 0 not given yet - GameState::geneUid)
     Cr3Gene() = default;
     Cr3Gene(int m, int e = 0) : master(m), exp(e) {}
+    // InterfaceMain::CheckOverlappingSkill (0x8fc2e4): (type, id) in its own slots 0 .. 5 - the
+    // inherited 6 / 7 not looked at
+    bool hasOwn(int type, int id) const {
+        for (int k = 0; k < 6; ++k)
+            if (slots[k][0] == type && slots[k][1] == id) return true;
+        return false;
+    }
+    // CrxGene::IsFullCommandSkill (0x958c0c): no own slot 0 .. 5 free; -1 none, else the first free
+    int freeOwnSlot() const {
+        for (int k = 0; k < 6; ++k)
+            if (slots[k][1] == -1) return k;
+        return -1;
+    }
 };
 
 // the VS mode's part of the save (CrxGameData +0x28550 ..; the Vita's DBEmu keeps it at 0x81641b38 ..)
@@ -192,8 +205,11 @@ public:
     // into 6, else 7, where it has it not already
     void initGene(Cr3Gene& g, bool merged = false) const;
     // CrxGene::AddTemporaryExp: n EXP more, no further than its top level's; the commands and
-    // skills of the levels gained learnt (into a free own slot, else over 0 .. 5 in turn)
-    void addGeneExp(Cr3Gene& g, int n) const;
+    // skills of the levels gained learnt (into a free own slot; none free, not learnt). With
+    // `queued` (the battle result's - AddTemporaryExp 0x9585f8's list at +0x90): those rows'
+    // (type, id) - gene_command_skill's order, learn level in (old, new] - handed back instead,
+    // nothing learnt (AddTemporaryLearnedCommandSkill / the replace prompt later)
+    void addGeneExp(Cr3Gene& g, int n, std::vector<std::array<int, 2>>* queued = nullptr) const;
     void addGeneLevels(Cr3Gene& g, int levels) const; // (AddTemporaryExpByLevelUp)
 
     // DBEmu: the genes. PreviewMergeGene(gene): what merging it with each other gene held makes

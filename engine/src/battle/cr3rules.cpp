@@ -12,7 +12,7 @@ namespace {
 // the rows' layouts (assets/mbe.hpp)
 constexpr const char* kCharStats = "iiiiiiiii_ip_ipiiiiiiii"; // 7 the guest gene, 8 the attack command; 13 HP, 14 MP, 15 atk | def, 16 spd | luck, 17 .. 20 their growth
 constexpr const char* kMonsterStats = "iipiiiiiiiiiiiiiiiiiii";          // 4 level (+0x14), 5 element, 6 HP, 7 MP, 8 atk | def, 9 spd | luck, 10 .. 13 their growth
-constexpr const char* kMonsterCommand = "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"; // id, mode, -, -, -, the attack command, -, -, then (command, ratio, count) x 8, skills x 8 (+0x80)
+constexpr const char* kMonsterCommand = "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"; // id, mode, element, card, actions/turn, attack, last attack, finest arts, (command, cost, uses) x 8 (+0x20), skills x 8 (+0x80)
 constexpr const char* kWeapon = "iiiiiiiiiiiiiiiiiiiiiiiiiii";   // 14 the constant (+0x38), 15 hits, 17 consumption %, 18 / 19 lowered physical / magic, 20.. lowered element 0 ..
 constexpr const char* kArmor = "iiiiiiiiiiiii_piiiiiiiiiii_p";  // 15 physical (+0x44), 16 magic, 17 .. 23 element 0 .. 6
 constexpr const char* kAccessory = "iiiiiiiiiiiiiiiiii";         // 12 HP (+0x30), 13 MP, 14 attack, 15 defence, 16 speed, 17 luck
@@ -122,6 +122,20 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     bootCharacter = (b.couplingFlags & 8) != 0;
     reverseSpeed = false, reverseSpeedTurns = 0;
     usedSkills_.clear();
+    // the enemy AI (BtlOrderPoint: the points 0 to begin with; the coupling's order type, tolerance
+    // and element skip; battle.mbe OrderType / ThinkPointAddition)
+    enemyPoints = {}, turnNo = 0, scripted.clear();
+    orderType = b.orderType, orderTolerance = b.orderTolerance, elementSkip = b.elementSkip;
+    orderTypes_.clear();
+    if (const MbeFile::Table* ot = t.battle.table("OrderType"))
+        for (size_t row = 0; row < ot->rows.size(); ++row) {
+            MbeFile::Row o;
+            if (!t.battle.row(*ot, row, "iiiiiiiii", o) || o.i(0) < 0 || o.i(0) > 64) continue;
+            if (size_t(o.i(0)) >= orderTypes_.size()) orderTypes_.resize(size_t(o.i(0)) + 1);
+            for (size_t k = 0; k < 8; ++k) orderTypes_[size_t(o.i(0))][k] = o.i(1 + k); // (+0x04 + 4 x type)
+        }
+    if (MbeFile::Row tp; t.battle.find("ThinkPointAddition", 2, "iiiiiiiii", tp))
+        for (size_t k = 0; k < 8; ++k) thinkEvery3_[k] = tp.i(1 + k);
     MbeFile::Row bt;
     resistIds_.clear();
     if (const MbeFile::Table* tb = t.battle.table("Battle"); tb && t.battle.row(*tb, 0, kBattleBreak, bt)) {
@@ -152,17 +166,12 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
             f.maxHp = grown(r.i(6), r.i(10), f.level), f.maxMp = std::max(grown(r.i(7), r.i(11), f.level), 0);
             f.attack = grown(low16(r.i(8)), low16(r.i(12)), f.level), f.defence = grown(high16(r.i(8)), high16(r.i(12)), f.level);
             f.speed = grown(low16(r.i(9)), low16(r.i(13)), f.level), f.luck = grown(high16(r.i(9)), high16(r.i(13)), f.level);
-            // (MbMonsterInfo's mode 0: its MonsterCommand row)
+            // (MbMonsterInfo's mode 0: its MonsterCommand row - the element stays the Monster row's)
             if (const MbeFile::Table* mc = t.monster.table("MonsterCommand"))
                 for (size_t row = 0; row < mc->rows.size(); ++row) {
                     MbeFile::Row m;
                     if (!t.monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != u.monster || m.i(1) != 0) continue;
-                    f.attackCommand = m.i(5);
-                    f.lastAttack = m.i(6), f.finestArts = m.i(7); // (+0x18 / +0x1c: the finishers)
-                    for (size_t c = 0; c < 8; ++c)
-                        if (m.i(8 + c * 3) >= 0) f.commands.emplace_back(m.i(8 + c * 3), std::max(m.i(9 + c * 3), 0));
-                    for (size_t k = 32; k < 40; ++k)
-                        if (m.i(k) > 0) f.skills.push_back(m.i(k)); // (its skills: Gunner's and Axer's 304 - element 4 resistance -50)
+                    loadMode(f, m);
                     break;
                 }
         }
@@ -182,6 +191,7 @@ bool Cr3BattleRules::command(int id, Cr3Command& c) const {
     MbeFile::Row r;
     if (!tables_ || !tables_->command.find("Command", id, kCommand, r)) return false;
     c.id = id;
+    c.icon = r.i(2);
     c.power = r.i(5);
     c.multiplier = r.f(6);
     const int8_t hits = int8_t((uint32_t(r.i(8)) >> 8) & 0xff); // (+0x21)
@@ -212,6 +222,8 @@ bool Cr3BattleRules::command(int id, Cr3Command& c) const {
     c.mpCost = std::max(r.i(31), 0);
     c.element = r.i(9);
     c.extraType = r.i(38);
+    c.changeElement = r.i(10), c.elementC4 = r.i(34);
+    c.selectType = r.i(35), c.selectPriority = r.i(36), c.targetOrder = r.i(37);
     for (int k = 0; k < r.i(39) && k < 16; ++k) c.extraConstants.push_back(r.element(40, size_t(k)));
     MbeFile::Row f;
     if (tables_->command.find("CommandFomula", r.i(33), kFormula, f)) c.action = f.i(1), c.formula = f.i(2), c.chain = f.i(3);
@@ -758,47 +770,237 @@ void Cr3BattleRules::changeMode(int fi, int mode) {
     for (size_t row = 0; mc && row < mc->rows.size(); ++row) {
         MbeFile::Row m;
         if (!tables_->monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != f.id || m.i(1) != mode) continue;
-        f.attackCommand = m.i(5), f.element = m.i(2), f.mode = mode;
-        f.lastAttack = m.i(6), f.finestArts = m.i(7);
-        f.commands.clear(), f.skills.clear();
-        for (size_t c = 0; c < 8; ++c)
-            if (m.i(8 + c * 3) >= 0) f.commands.emplace_back(m.i(8 + c * 3), std::max(m.i(9 + c * 3), 0));
-        for (size_t k = 32; k < 40; ++k)
-            if (m.i(k) > 0) f.skills.push_back(m.i(k));
+        // (VChangeMode 0x009c6898: +0x1fc, the commands - their uses full again - and skills, the
+        // element - +0x08 - where not -1: BtlBasicStatus::ChangeElement 0x009ba600 keeps the one it has;
+        // the action count from the next turn's ResetRatio)
+        loadMode(f, m);
+        f.mode = mode;
+        if (m.i(2) != -1) f.element = m.i(2);
         return;
     }
 }
 
+void Cr3BattleRules::loadMode(Cr3Fighter& f, const MbeFile::Row& m) {
+    f.card = m.i(3);           // (+0x0c)
+    f.actionsPerTurn = m.i(4); // (+0x10: MbMonsterInfo::GetRatio 0x00913b5c)
+    f.attackCommand = m.i(5);
+    f.lastAttack = m.i(6), f.finestArts = m.i(7); // (+0x18 / +0x1c: the finishers)
+    f.commands.clear(), f.skills.clear();
+    for (size_t c = 0; c < 8; ++c)
+        if (m.i(8 + c * 3) >= 0) f.commands.push_back({m.i(8 + c * 3), m.i(9 + c * 3), m.i(10 + c * 3)});
+    for (size_t k = 32; k < 40; ++k)
+        if (m.i(k) > 0) f.skills.push_back(m.i(k)); // (its skills: Gunner's and Axer's 304 - element 4 resistance -50)
+}
+
+void Cr3BattleRules::addEnemyOrderPoint(int type, int points) {
+    if (type >= 0 && type < 8) enemyPoints[size_t(type)] = std::clamp(enemyPoints[size_t(type)] + points, 0, 200);
+}
+
+bool Cr3BattleRules::isSelected(int fi, int ti, const Cr3Command& c, int type) {
+    const Cr3Fighter& s = fighters[size_t(fi)];
+    const Cr3Fighter& t = fighters[size_t(ti)];
+    // (MP short - the command's cost with the status effects' percentage, where the MP is not below
+    // 0 - does not rule the command out, it is only not preferred; nor is a target already of the
+    // element it changes to, or a gene command under kind 47)
+    if ((s.mp >= 0 && s.mp < mpCost(s, c)) || t.element == c.changeElement || ((c.flags & 1) && hasKind(s, 47))) return false;
+    const auto has = [&](int e) { return (e == 1 && t.dead()) || hasEffect(ti, e); };
+    switch (type) {
+    case 1:
+    case 2: {
+        // (unless a random number falls under Coupling +0x48: a target that resists the element is
+        // not preferred - MbGetElementInfo(the target's element).NotStrong(the command's), the table's
+        // row the target's element, as the original reads it; an element-less command with +0xc4 1
+        // the actor's own under skill kind 75 with the gauge's advantage -, magic not one under kind 49)
+        if (random() < elementSkip) return true;
+        if (type == 2 && hasKind(t, 49)) return false;
+        int e = c.element;
+        if (e == 0 && c.elementC4 == 1 && advantage(s.player) && hasSkillKind(s, 75)) e = s.element;
+        MbeFile::Row er; // (MbElementInfo::NotStrong 0x009129c0: the rate 1 or more; no row - true)
+        if (!tables_ || !tables_->battle.find("Element", t.element, "ifffffff", er)) return true;
+        return e >= 0 && e < 7 && er.f(size_t(1 + e)) >= 1.0f;
+    }
+    case 3: return float(t.hp) <= float(t.maxHp) * 0.9f; // (a heal: BtlBasicStatus::IsLowHp 0x009ba720 - 90 % or less)
+    case 4: // (a cure: the target has one it removes - the original's loop counts the effects, +0x40, reading the removes, +0x58)
+        for (size_t k = 0; k < c.effects.size() && k < c.removes.size(); ++k)
+            if (has(c.removes[k])) return true;
+        return false;
+    case 5:
+    case 6: // (a buff / debuff: the target lacks one of its effects; none - never)
+        for (int e : c.effects)
+            if (!has(e)) return true;
+        return false;
+    default: return true;
+    }
+}
+
+int Cr3BattleRules::chooseTarget(int fi, int cmd, int type, bool* preferred) {
+    if (preferred) *preferred = false;
+    Cr3Command c;
+    if (fi < 0 || size_t(fi) >= fighters.size() || !command(cmd, c)) return -1;
+    const Cr3Fighter& s = fighters[size_t(fi)];
+    // (BtlStatusEffectUtility::CanUseSelectType 0x009b2190: kind 138 - no heals)
+    if ((type == 3 || type == 9) && hasKind(s, 138)) return -1;
+    // (BtlTargetList::Collect 0x009ca648 by the target kind: 0 itself, 1 / 2 its side, 3 / 4 / 6
+    // the other side - collectEnemy 0x009c9efc: provoked - kind 52 -, its provoker alone where it can
+    // be targeted -, 5 / 7 everyone, 8 / 9 either - its own for a heal or a revive -, 10 / 11 the
+    // player's, 12 / 13 its side's others; IsNonTarget / HasProhibitedTarget left out - targetable)
+    std::vector<int> list;
+    const bool ownSide = c.target == 1 || c.target == 2 || c.target == 12 || c.target == 13 ||
+                         ((c.target == 8 || c.target == 9) && (c.ally() || c.revives()));
+    if (c.target == 0) list.push_back(fi);
+    else if (!ownSide && (c.target == 3 || c.target == 4 || c.target == 6 || c.target == 8 || c.target == 9) && hasKind(s, 52) &&
+             s.forcedBy >= 0 && targetable(s.forcedBy, &c) && fighters[size_t(s.forcedBy)].player != s.player)
+        list.push_back(s.forcedBy);
+    else
+        for (size_t k = 0; k < fighters.size(); ++k) {
+            const bool side = c.target == 5 || c.target == 7 ? true
+                            : c.target == 10 || c.target == 11 ? fighters[k].player
+                            : ownSide ? fighters[k].player == s.player : fighters[k].player != s.player;
+            if (side && targetable(int(k), &c) && !((c.target == 7 || c.target == 12 || c.target == 13) && int(k) == fi)) list.push_back(int(k));
+        }
+    // (the order, +0xd0: shuffled, then sorted - taken from the back: 1 the highest HP first, 2 the
+    // lowest, 3 / 4 the HP rate's, 5 / 6 the level's; 7 as collected)
+    if (c.targetOrder != 7)
+        for (size_t i = 1; i < list.size(); ++i) std::swap(list[i], list[size_t(random() * float(i + 1)) % (i + 1)]);
+    const auto key = [&](int k) -> float {
+        const Cr3Fighter& f = fighters[size_t(k)];
+        switch (c.targetOrder) {
+        case 1: case 2: return float(f.hp);
+        case 3: case 4: return f.maxHp > 0 ? float(f.hp) / float(f.maxHp) : 0.0f;
+        case 5: case 6: return float(f.level);
+        default: return 0.0f;
+        }
+    };
+    if (c.targetOrder >= 1 && c.targetOrder <= 6) {
+        const bool higher = c.targetOrder % 2 == 1;
+        std::stable_sort(list.begin(), list.end(), [&](int a, int b) { return higher ? key(a) < key(b) : key(a) > key(b); });
+    }
+    for (size_t k = list.size(); k-- > 0;)
+        if (isSelected(fi, list[k], c, type)) {
+            if (preferred) *preferred = true;
+            return list[k];
+        }
+    return list.empty() ? -1 : list.front();
+}
+
+void Cr3BattleRules::addCommandByAI(int fi, std::vector<std::array<int, 4>>& raw, std::vector<std::array<int, 3>>& queued) {
+    Cr3Fighter& f = fighters[size_t(fi)];
+    struct Pick {
+        int target = -1, command = -1, type = -1, cost = 1, entry = 0;
+        bool notFound = true;
+    } pick;
+    // (BtlSelectTypeList::Sort 0x0096e884: the 8 types by their points, ascending; those within the
+    // coupling's tolerance of the most taken as the most, ties in random order; tried from the most)
+    std::vector<std::pair<int, int>> types; // (type, points)
+    for (int k = 0; k < 8; ++k) types.emplace_back(k, enemyPoints[size_t(k)]);
+    std::stable_sort(types.begin(), types.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    const int most = types.back().second;
+    for (auto& [type, pts] : types)
+        if (most - pts <= orderTolerance) pts = most;
+    for (size_t i = 1; i < types.size(); ++i) std::swap(types[i], types[size_t(random() * float(i + 1)) % (i + 1)]);
+    std::stable_sort(types.begin(), types.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    for (; !types.empty(); types.pop_back()) {
+        const int type = types.back().first;
+        // (BtlStatusList::Select 0x009bf514: its entries of the type it can pay for and has uses of -
+        // BtlPriorityCommandIdList::Collect -, each scored random x its +0xcc / their sum and tried from
+        // the highest - sortBySelectPriority 0x009c8244 -; the first with a target the fallback, the
+        // first with a preferred one not already queued - BtlCommandList::Has 0x007e5cc8 - the pick)
+        struct Kept {
+            int entry, command;
+            float score;
+        };
+        std::vector<Kept> kept;
+        int total = 0;
+        for (size_t i = 0; i < f.commands.size(); ++i) {
+            const Cr3MonsterCommand& e = f.commands[i];
+            Cr3Command c;
+            if (e.cost <= f.actionsLeft && (e.uses == -1 || e.uses > 0) && command(e.command, c) && c.selectType == type)
+                kept.push_back({int(i), e.command, float(c.selectPriority)}), total += c.selectPriority;
+        }
+        for (Kept& k : kept) k.score = total > 0 ? random() * (k.score / float(total)) : 0.0f; // (CrxRandom::GenerateReal)
+        for (size_t i = 1; i < kept.size(); ++i) std::swap(kept[i], kept[size_t(random() * float(i + 1)) % (i + 1)]);
+        std::stable_sort(kept.begin(), kept.end(), [](const Kept& a, const Kept& b) { return a.score > b.score; });
+        bool first = true;
+        for (const Kept& k : kept) {
+            bool preferred = false;
+            const int t = chooseTarget(fi, k.command, type, &preferred);
+            if (t < 0) continue;
+            const Pick record{t, k.command, type, f.commands[size_t(k.entry)].cost, k.entry, true};
+            if (first) pick = record;
+            const bool repeat = std::any_of(queued.begin(), queued.end(), [&](const std::array<int, 3>& q) { return q[0] == fi && q[1] == t && q[2] == k.command; });
+            if (repeat) pick.notFound = true;
+            else if (preferred) {
+                pick = record, pick.notFound = false;
+                break;
+            }
+            first = false;
+        }
+        if (!pick.notFound) break;
+    }
+    // (BtlOrderPoint::Consume 0x0096eee4: the type used - clamped to 50 .. 250 - loses 50)
+    if (pick.type >= 0) enemyPoints[size_t(pick.type)] = std::clamp(enemyPoints[size_t(pick.type)], 50, 250) - 50;
+    // (nothing valid: command -1 - what the command manager makes of it is unknown; nothing queued)
+    if (pick.command >= 0) {
+        Cr3Command c;
+        // (an everyone command's target only picked its preference - the side it hits is every side)
+        raw.push_back({fi, pick.command, command(pick.command, c) && c.target == 5 ? -1 : pick.target, 0});
+        queued.push_back({fi, pick.target, pick.command});
+    }
+    f.actionsLeft = std::max(f.actionsLeft - std::max(pick.cost, 1), 0); // (a cost below 1 - none in the tables - taken as 1)
+    // (VDecreaseCount: the entry's uses, where limited - entry 0's with nothing picked, as the original)
+    if (size_t(pick.entry) < f.commands.size() && f.commands[size_t(pick.entry)].uses > 0) --f.commands[size_t(pick.entry)].uses;
+}
+
 std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>>& choices) {
+    // BtlSysStateSelect::phaseStart 0x009d35d4: each unit's actions this turn (ResetRatio - a
+    // monster's mode's +0x10, a character's 1; the party's first strike none for the monsters -
+    // ClearRatioToEnemy), the turn's number, the think points (StepOrderPoint: OrderType's row of
+    // the coupling's order type, every third turn ThinkPointAddition's row 2 - +50 to type 7)
+    const bool wait = monstersWait;
+    monstersWait = false;
+    for (Cr3Fighter& f : fighters) f.actionsLeft = f.player ? 1 : wait ? 0 : std::max(f.actionsPerTurn, 0);
+    ++turnNo;
+    if (orderType >= 0 && size_t(orderType) < orderTypes_.size())
+        for (size_t k = 0; k < 8; ++k) addEnemyOrderPoint(int(k), orderTypes_[size_t(orderType)][k]);
+    if (turnNo % 3 == 0)
+        for (size_t k = 0; k < 8; ++k) addEnemyOrderPoint(int(k), thinkEvery3_[k]);
+    // (phaseCalculate 0x009d490c: the queued mode changes - this turn's picks the new mode's)
     for (const auto& [fi, mode] : modeRequests) changeMode(fi, mode);
     modeRequests.clear();
     std::vector<Cr3Action> out;
     // BtlCommandManager::AddCommandBySelected + ExecuteAIForEnemy + BtlCommandList::Sort:
     // buckets 0 (normal, sorted), 2 (priority -8, sorted), and 5 (priority -9, unsorted)
     std::vector<std::array<int, 4>> raw; // (fighter, command, target, 1: a skill's added command)
+    std::vector<std::array<int, 3>> queued; // (source, target, command: BtlCommandList::Has's)
     for (const auto& c : choices)
-        if (c[0] >= 0 && size_t(c[0]) < fighters.size() && fighters[size_t(c[0])].player) raw.push_back({c[0], c[1], c[2], 0});
-    const bool wait = monstersWait;
-    monstersWait = false;
-    for (size_t k = 0; k < fighters.size() && !wait; ++k) {
-        const Cr3Fighter& f = fighters[k];
-        if (f.player || f.dead()) continue;
-        if (const auto sc = scripted.find(int(k)); sc != scripted.end() && !sc->second.empty()) { // (its script's, in its own's place)
-            for (int id : sc->second) raw.push_back({int(k), id, -1, 0});
-            continue;
+        if (c[0] >= 0 && size_t(c[0]) < fighters.size() && fighters[size_t(c[0])].player)
+            raw.push_back({c[0], c[1], c[2], 0}), queued.push_back({c[0], c[2], c[1]});
+    if (!wait) {
+        // (the scripts' BattleCommand.Add: its actions off the turn's, its target getCommandTarget's
+        // with no select type)
+        for (const auto& [k, list] : scripted) {
+            if (k < 0 || size_t(k) >= fighters.size() || fighters[size_t(k)].player || fighters[size_t(k)].dead()) continue;
+            for (const auto& [n, id] : list) {
+                Cr3Fighter& f = fighters[size_t(k)];
+                f.actionsLeft = std::max(f.actionsLeft - n, 0);
+                Cr3Command c;
+                const int t = chooseTarget(k, id, -1);
+                raw.push_back({k, id, command(id, c) && c.target == 5 ? -1 : t, 0});
+                queued.push_back({k, t, id});
+            }
         }
-        int cmd = attackCommandOf(int(k));
-        int total = 0;
-        for (const auto& [id, ratio] : f.commands) total += ratio;
-        if (total > 0) {
-            int pick = int(random() * float(total));
-            for (const auto& [id, ratio] : f.commands)
-                if ((pick -= ratio) < 0) {
-                    cmd = id;
-                    break;
-                }
+        // (BtlStatusList::CollectAIForEnemy 0x009c0bcc - BtlTargetList::CollectNonPlayer: the
+        // monsters by speed, the fastest first, ties at random - then ExecuteAIForEnemy 0x009c0de8 each:
+        // none under kind 31 - IsNoAction - or with no actions left; else a pick while actions remain)
+        std::vector<int> ai;
+        for (size_t k = 0; k < fighters.size(); ++k)
+            if (!fighters[k].player && !fighters[k].dead()) ai.push_back(int(k));
+        for (size_t i = 1; i < ai.size(); ++i) std::swap(ai[i], ai[size_t(random() * float(i + 1)) % (i + 1)]);
+        std::stable_sort(ai.begin(), ai.end(), [&](int a, int b) { return speedOf(fighters[size_t(a)]) > speedOf(fighters[size_t(b)]); });
+        for (int k : ai) {
+            if (hasKind(fighters[size_t(k)], 31)) continue;
+            while (fighters[size_t(k)].actionsLeft > 0) addCommandByAI(k, raw, queued);
         }
-        raw.push_back({int(k), cmd, -1, 0});
     }
     scripted.clear();
     auto cmdPriorityAndCost = [&](int fi, int cmdId) -> std::pair<int, int> {
@@ -1136,6 +1338,20 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                         t.mp = std::max(t.mp - m, 0);
                         continue;
                     }
+                    if (c.damage == 21) { // (calculateStealGold: the physical damage - CommandFomula 20, chain -1 -
+                        // the stolen, min(it, the party's money), no HP lost; the thief carries it - AddGold)
+                        const int raw = partyUnhurt && t.player ? 0 : hitDamage(u, t, c, critUnit, downUnit, rate);
+                        if (raw <= 0) { // (blocked to 0: nothing stolen, no announcement)
+                            hit.hits.push_back(0), hit.mpHits.push_back(0), hit.flags.push_back(0), hit.colors.push_back(elemColor);
+                            continue;
+                        }
+                        const int st = std::clamp(raw, 0, std::max(gold, 0));
+                        gold -= st, fighters[size_t(src)].stolenGold += st;
+                        hit.stolen = std::max(hit.stolen, 0) + st;
+                        hit.hits.push_back(0), hit.mpHits.push_back(0), hit.flags.push_back(uint8_t(downUnit ? 2 : 0)), hit.colors.push_back(elemColor);
+                        if (downUnit) t.comboChance = true, ++t.combo;
+                        continue;
+                    }
                     int rawDmg = 0;
                     if (c.damage == 8) { // (calculatePercentDamage: % of current HP less skill kind 35 @ 0x009af9cc)
                         const int pct = std::max(c.power - skillConstant(t, 35), 0);
@@ -1183,7 +1399,14 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             if (landed && !t.dead()) {
                 statusTurnBoost_ = skillConstant(s, 84);
                 for (int e : c.effects)
-                    if (effectLands(s, t, c, e)) giveEffect(ti, e), hit.effectsGiven.push_back(e);
+                    if (effectLands(s, t, c, e)) {
+                        giveEffect(ti, e), hit.effectsGiven.push_back(e);
+                        // (a kind 52 effect - a provoke: BtlStatusEffect::GetForceTarget - its giver)
+                        MbeFile::Row er;
+                        if (tables_ && tables_->skill.find("StatusEffect", e, kStatusEffect, er))
+                            for (size_t q = 0; q < 4; ++q)
+                                if (er.i(14 + q * 2) == 52) t.forcedBy = src;
+                    }
                 statusTurnBoost_ = 0;
             }
             hit.hpAfter = t.hp, hit.mpAfter = t.mp, hit.killed = t.dead();

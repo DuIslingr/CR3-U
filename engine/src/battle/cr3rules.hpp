@@ -7,8 +7,10 @@
 // (command_para Command, MbCommandInfo): its power (+0x14), hits (+0x21; below 0 the unit's own),
 // its damage formula (+0xc0 -> CommandFomula: 1 physical, 2 magic), its spread (+0xa8, a
 // percentage either way: calculateHpFluctuation), its multiplier (+0x18); its motion
-// (direction.mbe CommandDirection +8, an AnimCommon type). A monster picks among its mode's
-// commands (MonsterCommand: eight (command, ratio, count)) by ratio.
+// (direction.mbe CommandDirection +8, an AnimCommon type). A monster's commands (MonsterCommand:
+// eight (command, action cost, uses)) are picked by the enemy AI (BtlStatusList::ExecuteAIForEnemy):
+// its side's think points by select type (command +0xc8), the command's select priority (+0xcc)
+// and a preferred target (BtlStatus::IsSelected) - Cr3BattleRules::turn.
 //
 // A character's equipment (CrxCharacter::initialize): a guest's - char_para +0x0c bit 0 - from its
 // row, +0x10 its weapon (item_para Weapon: +0x38 the constant, +0x3c the hits, +0x44 the MP
@@ -60,6 +62,7 @@ namespace cr3 {
 
 struct Cr3Command {
     int id = -1;
+    int icon = -1; // (+0x08: its list icon - icon_panel_NN's frame, BtlCommandListUI::Add 0x9a13c4)
     int power = 0, hits = 1, formula = 1, spread = 0;
     bool hitsOwn = false; // (+0x21 below 0: the unit's own)
     int repeat = 1;       // (+0x20: its attacks, each of its hits - Rakshasa Lotus 3 x the weapon's 1)
@@ -100,8 +103,23 @@ struct Cr3Command {
     int element = 0;    // (+0x24: its attack element - the Element table's row)
     int extraType = 0;  // (+0xd4: MbCommandInfo::GetExtraType - 1/2 random subcommand, 13 force break, 18 status power)
     std::vector<int> extraConstants; // (+0xd8 / +0xe0: MbCommandInfo::GetExtraConstantByIndex)
+    // the enemy AI's (BtlStatusList::Select / getCommandTarget / BtlStatus::IsSelected)
+    int selectType = 0;     // (+0xc8: 0 attack, 1 physical skill, 2 magic, 3 heal, 4 cure, 5 buff, 6 debuff, 7 special)
+    int selectPriority = 0; // (+0xcc: its weight - BtlPriorityCommandIdList::sortBySelectPriority)
+    int targetOrder = 0;    // (+0xd0: BtlTargetList::Collect's order - 0 shuffled, 1 / 2 higher / lower HP, 3 / 4 HP rate,
+                            //  5 / 6 level, 7 as collected)
+    int changeElement = -1; // (+0x28: the element it changes the target to - a target already of it is not preferred)
+    int elementC4 = 0;      // (+0xc4: 1 - an element-less one takes the actor's own under skill kind 75)
     int motion = -1;    // (an AnimCommon type: 10 bi01, 15 bs01, ...; -1 none)
     int direction = -1; // (CommandDirection +4: its kind)
+};
+
+// a monster's mode's command (MonsterCommand +0x20 + 12k: MbParamCommandSetting - the ids of -1
+// skipped; rebuilt, uses full, by every VChangeMode)
+struct Cr3MonsterCommand {
+    int command = -1;
+    int cost = 1;  // (+4: the actions it takes of the turn's - BtlStatus +0x1dc)
+    int uses = -1; // (+8: -1 unlimited; BtlMonsterStatus::VDecreaseCount 0x009c6ec4 - one less a use)
 };
 
 struct Cr3Fighter {
@@ -124,7 +142,11 @@ struct Cr3Fighter {
     std::vector<int> geneCommands;              // (a character's gene's: a guest's GuestGene row)
     int geneMaster = -1;                        // (the equipped gene's master ID for the battle card)
     int geneLevel = 0;                          // (VGetGeneLevel: the "Level" step's - a character's gene's, a monster's level)
-    std::vector<std::pair<int, int>> commands; // (a monster's: command, ratio)
+    std::vector<Cr3MonsterCommand> commands;   // (a monster's mode's)
+    int actionsPerTurn = 1; // (vGetResetRatio: a monster's MonsterCommand +0x10 - MbMonsterInfo::GetRatio -, a character's 1)
+    int actionsLeft = 0;    // (BtlStatus +0x1dc: this turn's - BtlStatusList::ResetRatio 0x009c1c50 at the turn's start)
+    int card = -1;          // (a monster's MonsterCommand +0x0c: BtlMonsterStatus::VGetEquipedGeneId 0x009c73e0)
+    int forcedBy = -1;      // (the unit whose status effect of kind 52 - a provoke - it bears: GetForceTarget's)
     // its status effects (BtlStatusEffectList: skill_para StatusEffect ids, the turns left - -1
     // until removed) and per-effect accumulation count (col 7 maxAccumulation)
     std::vector<std::pair<int, int>> effects;
@@ -137,6 +159,7 @@ struct Cr3Fighter {
     // a monster's finishers (MbMonsterInfo::GetLastAttackCommandId / GetFinestArtsCommandId 0x00913b98 /
     // 0x00913ba8: its mode's MonsterCommand row +0x18 / +0x1c; -1 none)
     int lastAttack = -1, finestArts = -1;
+    int stolenGold = 0; // (BtlStatus +0x1e0 - AddGold 0x9b63b0: what its Steal Gold hits took from the party)
     bool dead() const { return hp <= 0; }
 };
 
@@ -150,6 +173,9 @@ struct Cr3Hit {
     std::vector<int> effectsGiven; // the status effects it gave (StatusEffect ids)
     int hpAfter = 0, mpAfter = 0;
     bool killed = false;
+    // (calculateStealGold 0x7e20e8 - formula 21, command 1647: BtlDamage +0x72 / +0x1c) -1 not a
+    // steal; 0 the party broke (AnnounceBattle 0x29); else the money taken (0x28)
+    int stolen = -1;
 };
 struct Cr3Action {
     int source = -1, target = -1, command = -1; // (fighters' indices - the first target; command -1: a guard, -2: unable to act)
@@ -235,9 +261,31 @@ public:
     bool reverseSpeed = false;  // (BtlFieldEffectList effect 0: reverse turn speed sort for 5 turns)
     int reverseSpeedTurns = 0;
     bool partyUnhurt = false; // (a test aid - --input guard:party: hits on the party do no damage)
-    // (Battle_Monster_NNNN's BattleCommand.Add - BtlStatusList::AddCommand: a command for a monster
-    // this turn, in place of its own pick), by fighter; the next turn() takes them
-    std::map<int, std::vector<int>> scripted;
+    // the party's money (DAT_014c6e74, live: a Steal Gold hit takes from it at once -
+    // BtlStatus::TakeDamageToCalculation 0x9b41c4); the viewer's game.cr3Money in and out
+    int gold = 0;
+    // (Battle_Monster_NNNN's BattleCommand.Add(unit, actions, command) - BtlStatusList::AddCommand
+    // 0x009c20e4: a command for a monster this turn - its actions taken off the turn's, its target
+    // getCommandTarget's with no select type; the AI still picks for any actions left), by fighter:
+    // (actions, command); the next turn() takes them
+    std::map<int, std::vector<std::pair<int, int>>> scripted;
+    // the enemy AI's think points (BtlOrderPoint, BtlStatusList +0xe0: 8 select types, 0 .. 200 -
+    // StepOrderPoint 0x009c0920 each turn's start adds battle.mbe OrderType's row of the coupling's
+    // order type, every third turn ThinkPointAddition's row 2; Consume takes 50 from the type used)
+    std::array<int, 8> enemyPoints{};
+    int turnNo = 0;         // (BtlResult +0: phaseStart's ++)
+    int orderType = 0;      // (mon_cop Coupling +0x3c)
+    int orderTolerance = 0; // (Coupling +0x40: BtlSelectTypeList::Sort's tie band)
+    float elementSkip = 0;  // (Coupling +0x48: IsSelected's chance of not testing the element)
+    // BattleStatus.AddEnemyOrderPoint(type, n) (0x009c2658 -> BtlOrderPoint 0x0096eeb8)
+    void addEnemyOrderPoint(int type, int points);
+    // BtlStatusList::getCommandTarget 0x009bf740: the fighter's target for the command - BtlTargetList::
+    // Collect by its target kind (an actor provoked: its provoker alone), ordered by +0xd0, the first
+    // from the back IsSelected prefers (preferred: true), else the front; -1 none (or kind 138 against
+    // select types 3 / 9). selectType -1: a script's (BattleCommand.Add - IsSelected's default)
+    int chooseTarget(int fighter, int command, int selectType, bool* preferred = nullptr);
+    // BtlStatus::IsSelected 0x009b6cbc: whether the AI prefers the target for the command
+    bool isSelected(int fighter, int target, const Cr3Command& c, int selectType);
     // (BtlStatus::IsNonTarget: a kind 32 status effect; BtlStatusEffectList::HasProhibitedTarget: a
     // kind 72 one - held, hidden - but for a command that takes it away, plus required/forbidden effects)
     bool targetable(int fighter, const Cr3Command* by = nullptr) const;
@@ -297,6 +345,13 @@ private:
     float coopNow_ = 1;                          // (the action's: calculateBasicDamage's x scale)
     int statusTurnBoost_ = 0;                    // (skill kind 84: GetStatusEffectContinueTurn added on giveEffect)
     int livingTarget(bool player, int preferred, const Cr3Command* by = nullptr);
+    std::vector<std::array<int, 8>> orderTypes_;  // (battle.mbe OrderType: each order type's points a turn, by select type)
+    std::array<int, 8> thinkEvery3_{0, 0, 0, 0, 0, 0, 0, 50}; // (ThinkPointAddition row 2: every third turn's)
+    void loadMode(Cr3Fighter& f, const MbeFile::Row& m); // (a MonsterCommand row: initializeCommandSkill 0x009c6960)
+    // BtlStatusList::addCommandByAI 0x009c0df4: one pick for the monster - appended to raw (fighter,
+    // command, target, 0) and queued (source, target, command: BtlCommandList::Has's), its actions,
+    // uses and think points spent
+    void addCommandByAI(int fighter, std::vector<std::array<int, 4>>& raw, std::vector<std::array<int, 3>>& queued);
 };
 
 } // namespace cr3

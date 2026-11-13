@@ -99,7 +99,7 @@ unset CR3_EVTANIM
 ladder_pad=""
 for i in $(seq 2 40); do ladder_pad="$ladder_pad $((i / 2)).$((i % 2 * 5)):east"; done
 want field && run ladder "$ladder_pad 24:ly=1 26:ly=0 30:quit" \
-    "falling from|landed at|ladder ldr_01 from the foot (floors 2.00 .. 5.00)|off ladder ldr_01 at the top" \
+    "falling from|landed at|field: the talk mark up (ldr_01)|ladder ldr_01 from the foot (floors 2.00 .. 5.00)|field: the talk mark down|off ladder ldr_01 at the top" \
     -- --area d0202 --player j001 --input "put:-19/3.2/-13.4/3.14159 wait:1 check"
 want lunch && run lunch-balloons "0.1:until=the_balloons,_at_frame 0.5:up 1:down 1.5:east 4:quit" \
     "lunch: the balloons, at frame|lunch: the cursor on|lunch: the cursor on|lunch: s001_t02_00301_" \

@@ -926,14 +926,17 @@ void Cr3OfflineDb::initGene(Cr3Gene& g, bool merged) const {
     inheritSkill(g, old, merged ? 2 : 7);
 }
 
-void Cr3OfflineDb::addGeneExp(Cr3Gene& g, int n) const {
+void Cr3OfflineDb::addGeneExp(Cr3Gene& g, int n, std::vector<std::array<int, 2>>* queued) const {
     const GeneInfo* i = geneInfo(g.master);
     if (!i) return;
     const int before = geneLevel(g);
     g.exp += n;
     int after = geneLevel(g);
     if (after >= i->maxLevel) after = i->maxLevel, g.exp = geneExp(g.master, after);
-    if (after > before) learn(g, *i, before, after, false);
+    if (after <= before) return;
+    if (!queued) return learn(g, *i, before, after, false);
+    for (size_t k = 0; k < i->learns.size() && k < 16; ++k) // (GetCommandSkillParam rows 0 .. 15)
+        if (i->learns[k][0] > before && i->learns[k][0] <= after) queued->push_back({i->learns[k][1], i->learns[k][2]});
 }
 
 void Cr3OfflineDb::addGeneLevels(Cr3Gene& g, int levels) const {
@@ -1318,8 +1321,7 @@ int Cr3OfflineDb::endVSTournament(GameState& s, std::time_t now) {
             vs.rewarded = true;
             vsRewards_.won = true;
             s.cr3GP += constant("OBTAIN_GP_VS_END_TOURNAMENT", 1), vsRewards_.gp = constant("OBTAIN_GP_VS_END_TOURNAMENT", 1);
-            addGold(s, t.prizeGold);
-            vsRewards_.gold = t.prizeGold;
+            vsRewards_.gold = t.prizeGold; // (shown alone: the money comes by the battle's result - EntryResult's prize_gold)
             if (t.prizeCategory == 6) { // (one of vsprizes' items, at random)
                 if (const BsonValue* pz = table("vsprizes"))
                     for (const BsonValue& r : pz->items)

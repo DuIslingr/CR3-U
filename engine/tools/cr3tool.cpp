@@ -1514,7 +1514,7 @@ int cr3Battle(const char* path, int coupling, int fieldId, const char* partyArg,
             for (int sk : f.skills) std::printf(" %d", sk);
             std::printf("\n");
             std::vector<int> listed = f.geneCommands;
-            for (const auto& [mc, ratio] : f.commands) listed.push_back(mc);
+            for (const auto& mc : f.commands) listed.push_back(mc.command);
             for (int g : listed) {
                 cr3::Cr3Command gc;
                 rules.command(g, gc);

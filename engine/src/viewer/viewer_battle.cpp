@@ -338,8 +338,10 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
         // turn; SetId / SetIdAndTarget - commands of no unit's, played after the defeat's or the
         // turn's end script: playCr3ScriptCommands)
         vm.setNative("BattleCommand", "Add", [this](cr3::NativeCall& c) {
-            if (c.integer(0, -1) >= 0) cr3Rules.scripted[c.integer(0)].push_back(c.integer(2));
+            if (c.integer(0, -1) >= 0) cr3Rules.scripted[c.integer(0)].push_back({c.integer(1, 1), c.integer(2)});
         });
+        // (BattleStatus.AddEnemyOrderPoint(type, n) 0x009c2658: the monsters' think points of a select type)
+        vm.setNative("BattleStatus", "AddEnemyOrderPoint", [this](cr3::NativeCall& c) { cr3Rules.addEnemyOrderPoint(c.integer(0, -1), c.integer(1)); });
         vm.setNative("BattleCoupling", "SetId", [this](cr3::NativeCall& c) { cr3NextCoupling = c.integer(0, -1); });
         vm.setNative("BattleCommand", "SetId", [this](cr3::NativeCall& c) { cr3ScriptCommands.push_back({c.integer(0), -1}); });
         vm.setNative("BattleCommand", "SetIdAndTarget", [this](cr3::NativeCall& c) { cr3ScriptCommands.push_back({c.integer(0), c.integer(1, -1)}); });
@@ -555,32 +557,49 @@ void Viewer::announceCr3Effects(const cr3::Cr3Action& a) {
     SDL_Log("battle %.2f s: status effects on %zu - line %d", cr3BattleClock, got.size(), id);
 }
 
+// BtlMonsterStatus::vDrop (0x9c75dc): each monster's drop rolled once, as its wave is made - two slots {kind, id, rate}
+// (Monster +0x70 / +0x7c), one roll of 256 against slot 0's rate plus the drop bonus (BtlStatusList::GetDropRateCorrection
+// 0x9b01e0: the largest skill-85 constant of any unit, then), then slot 1's; a status effect of kind 0x83 on any unit
+// takes slot 1 outright. Kind 8 (a VS season's) not in. Announced only when the monster falls
+void Viewer::rollCr3Drops() {
+    int dropBoost = 0;
+    bool rare = false;
+    for (const cr3::Cr3Fighter& f : cr3Rules.fighters) {
+        if (f.dead()) continue;
+        for (int c : cr3Rules.skillConstants(f, 85)) dropBoost = std::max(dropBoost, c);
+        rare |= cr3Rules.hasKind(f, 0x83);
+    }
+    for (size_t fi = 0; fi < cr3Rules.fighters.size(); ++fi) {
+        const cr3::Cr3Fighter& f = cr3Rules.fighters[fi];
+        if (f.player || cr3Drops.count(int(fi))) continue;
+        cr3Drops[int(fi)] = 0;
+        cr3::MbeFile::Row r;
+        if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r)) continue;
+        const int kind0 = r.i(27), kind1 = r.i(30);
+        int pick = -1;
+        if (rare && kind1 > 0) pick = 1;
+        else {
+            const int c0 = kind0 > 0 && r.i(29) > 0 ? std::max(r.i(29) + dropBoost, 0) : 0;
+            const int c1 = kind1 > 0 && r.i(32) > 0 ? r.i(32) : 0;
+            const int roll = int(SDL_rand(256));
+            pick = roll < c0 ? 0 : roll < c0 + c1 ? 1 : -1;
+        }
+        if (pick < 0) continue;
+        const int kind = pick ? kind1 : kind0, id = pick ? r.i(31) : r.i(28);
+        if (kind < 1 || kind > 7 || id <= 0) continue;
+        cr3Drops[int(fi)] = (kind - 1) * 100000 + id;
+    }
+}
+
 void Viewer::rollCr3Drop(int fi) {
-    const cr3::Cr3Fighter& f = cr3Rules.fighters[size_t(fi)];
-    if (f.player || cr3Drops.count(fi)) return;
-    cr3Drops[fi] = 0;
-    cr3::MbeFile::Row r;
-    if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r)) return;
-    const int kind0 = r.i(27), kind1 = r.i(30);
-    if (kind0 == 8) return;
-    int dropBoost = 0; // (BtlStatusList::GetDropRateCorrection @ 0x009b01e0: living party skill 85)
-    for (const cr3::Cr3Fighter& pf : cr3Rules.fighters)
-        if (pf.player && !pf.dead())
-            for (int c : cr3Rules.skillConstants(pf, 85)) dropBoost += c;
-    const int c0 = kind0 > 0 && r.i(29) > 0 ? std::max(r.i(29) + dropBoost, 0) : 0;
-    const int c1 = kind1 > 0 && kind1 != 8 && r.i(32) > 0 ? std::max(r.i(32) + dropBoost, 0) : 0;
-    const int roll = int(SDL_rand(256));
-    const int pick = roll < c0 ? 0 : roll < c0 + c1 ? 1 : -1;
-    if (pick < 0) return;
-    const int kind = pick ? kind1 : kind0, id = pick ? r.i(31) : r.i(28);
-    if (kind < 1 || kind > 7 || id <= 0) return;
-    const int full = (kind - 1) * 100000 + id;
-    cr3Drops[fi] = full;
+    const auto it = cr3Drops.find(fi);
+    if (it == cr3Drops.end() || it->second <= 0 || cr3DropsAnnounced.count(fi)) return;
+    cr3DropsAnnounced.insert(fi);
     std::string text = announceText("AnnounceBattle", 0x1d);
-    if (const size_t at = text.find("{item.name}"); at != std::string::npos) text.replace(at, 11, cr3ItemText(full, false));
+    if (const size_t at = text.find("{item.name}"); at != std::string::npos) text.replace(at, 11, cr3ItemText(it->second, false));
     setCr3Announce(text, 1.0f);
     audio.playSe("com_013", false);
-    SDL_Log("battle %.2f s: fighter %d drops item %d", cr3BattleClock, fi, full);
+    SDL_Log("battle %.2f s: fighter %d drops item %d", cr3BattleClock, fi, it->second);
 }
 
 float Viewer::cr3GameOverLength() {
@@ -806,6 +825,19 @@ void Viewer::rollCr3StartMode() {
 
 // the announcement (BattleAnnouncementMenu: a OneHelpMenu - btHelpMenu at btHelpPosition's call,
 // white text; ReOpen fading in over a sixth of a second, Close out over as long)
+// (BtlResultMenu state 0xf, SetDropItemText 0xb1ffe4: each drop a line of its own after the tally - MnlCmp 0xfb, the
+// item got, or 0xfc, the bag full -, a tap for the next; false: none left)
+bool Viewer::showCr3DropLine() {
+    if (cr3ResultDropLines.empty()) return false;
+    const int line = cr3ResultDropLines.front();
+    cr3ResultDropLines.erase(cr3ResultDropLines.begin());
+    std::string text = menuAnnounce(line > 0 ? 0xfb : 0xfc);
+    if (const size_t at = text.find("%s"); at != std::string::npos) text.replace(at, 2, cr3ItemText(std::abs(line), false));
+    cr3ResultLine = text, cr3ResultLineAt = cr3BattleClock;
+    SDL_Log("battle: result - %s", text.c_str());
+    return true;
+}
+
 void Viewer::drawCr3Announce(const Mat4& view, int w, int h) {
     const float t = cr3BattleClock - cr3Announce.at;
     const float a = std::clamp(std::min(t, cr3Announce.seconds - t) * 6.0f, 0.0f, 1.0f);
@@ -882,6 +914,7 @@ void Viewer::reinforceCr3Battle(int coupling) {
     const char* fixedSeed = SDL_getenv("CR3_BATTLE_SEED");
     const uint32_t seed = fixedSeed ? uint32_t(std::strtoul(fixedSeed, nullptr, 10)) + uint32_t(coupling) : uint32_t(SDL_GetTicks()) | 1u;
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
+    cr3Rules.gold = game.cr3Money; // (the party's money: a Steal Gold's to take from)
     if (gaugeArg != 0) cr3Rules.gauge = std::clamp(gaugeArg * 250, -1000, 1000), cr3Rules.gaugeStarted = true, SDL_Log("battle: the break gauge at %d (test)", cr3Rules.gauge); // (--gauge -4 .. 4: tests)
     for (size_t k = 0, p = 0; k < cr3Rules.fighters.size() && p < party.size(); ++k)
         if (cr3Rules.fighters[k].player) {
@@ -897,7 +930,8 @@ void Viewer::reinforceCr3Battle(int coupling) {
         const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
         if (!f.player) SDL_Log("battle %d: fighter %zu - monster %d, level %d, HP %d", coupling, k, f.id, f.level, f.maxHp);
     }
-    cr3Drops.clear(), cr3Choices.clear(), cr3Actions.clear(), cr3Popups.clear();
+    cr3Drops.clear(), cr3DropsAnnounced.clear(), cr3Choices.clear(), cr3Actions.clear(), cr3Popups.clear();
+    rollCr3Drops();
     SDL_Log("battle %d: the next wave - battle %d, %zu units", cr3Battle.coupling, coupling, cr3Battle.units.size());
     playCr3Camera(cr3Battle.cameras[1], 1.0f, false, {0, 0, 0}, 0, 0);
     cr3BattleStage = Cr3BattleStage::Action; // (phaseCallTurnEndEvent: the new script's turn's end, then the next turn)
@@ -908,6 +942,7 @@ void Viewer::reinforceCr3Battle(int coupling) {
 
 bool Viewer::startCr3Battle(int coupling, int fieldId) {
     cr3BattleLost = false, cr3Escaped = false, cr3ScriptCommands.clear(), cr3NextCoupling = -1, cr3WaveExp = cr3WaveMoney = 0, cr3WaveDrops.clear(), cr3VictoryIn = false, cr3VictorUnit = -1, cr3VictoryDuration = 2.5f, cr3Drops.clear(), cr3Ctn = Cr3Continue(), cr3GameOverAt = -1; // (BtlSystem::Init: s_ResultParam -1)
+    cr3UsedApples[0].clear(), cr3UsedApples[1].clear(), cr3ResultDropLines.clear(), cr3ResultLine.clear();
     clearCr3Effects();
     cr3Held.clear(), cr3StartCommand = {-1, -1}, cr3BattleUiClosed = false; // (the scripts' holds, opening command, UI)
     cr3FieldLoop = true, cr3FieldEnd = -1, cr3FieldTime = cr3FieldDrawnAt = 0;
@@ -948,6 +983,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     cr3Rules.partyMpLeft = game.cr3Mp; // (the MP the last battle left)
     cr3Rules.lastAttackLevel = game.cr3LastAttackLevel, cr3Rules.finestArtsLevel = game.cr3FinestArtsLevel; // (the finishers' tiers: CrxCharacterData +0x14 / +0x18)
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
+    cr3Rules.gold = game.cr3Money; // (the party's money: a Steal Gold's to take from)
     if (gaugeArg != 0) cr3Rules.gauge = std::clamp(gaugeArg * 250, -1000, 1000), cr3Rules.gaugeStarted = true, SDL_Log("battle: the break gauge at %d (test)", cr3Rules.gauge); // (--gauge -4 .. 4: tests)
     for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
         const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
@@ -980,6 +1016,8 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
         for (int e : cr3FieldEffects) cr3Rules.giveEffect(int(k), e, true);
     }
     if (!cr3FieldEffects.empty()) SDL_Log("battle %d: %zu field status effects", coupling, cr3FieldEffects.size());
+    cr3DropsAnnounced.clear();
+    rollCr3Drops(); // (the first wave's drops, as it's made)
     playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0); // (PlayBattleIn)
     cr3BattleMode = true;
     // (BtlSystem::Init: the colosseum's commentators in a VS battle - BtlBootParam +0x34 -; phaseStart's
@@ -1162,8 +1200,11 @@ void Viewer::updateCr3Battle(float dt) {
                 inputScript.front() == "guard" || inputScript.front().compare(0, 4, "gene") == 0 ||
                 inputScript.front().compare(0, 4, "item") == 0 || (inputScript.front().size() > 1 && inputScript.front()[0] == 't' && std::isdigit(static_cast<unsigned char>(inputScript.front()[1])))))
             inputScript.pop_front();
-        if (!inputScript.empty() && inputScript.front() == "result" && cr3BattleClock - cr3StageStart > 1.5f) inputScript.pop_front(), endCr3Battle();
-        else if (autoBattle && cr3BattleClock - cr3StageStart > 1.5f) endCr3Battle(); // (--input auto: the result taken)
+        stepCr3Result();
+        if (!inputScript.empty() && inputScript.front() == "result" && cr3BattleClock - cr3StageStart > 1.5f)
+            inputScript.pop_front(), settleCr3GeneQueues(), endCr3Battle();
+        else if (autoBattle && cr3BattleClock - cr3StageStart > 1.5f && (inputScript.empty() || inputScript.front() != "result:hold"))
+            autoCr3Result(); // (--input auto: the windows stepped through, each drop's line a second; result:hold - left to the keys / a controller)
     } else if (cr3BattleStage == Cr3BattleStage::Lost) {
         if (!scripted && cr3ForcedEnd == 3) { // (a story's loss: its defeat script's event, then Battle.ForceEnd - over, not lost)
             cr3ForcedEnd = -1, cr3BattleLost = false;
@@ -1643,7 +1684,7 @@ void Viewer::openCr3List(bool items, bool keepCategory) {
             cr3::Cr3Command c;
             if (!cr3Rules.command(id, c)) continue;
             Cr3ListRow row;
-            row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = cr3Rules.mpCost(f, c);
+            row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = cr3Rules.mpCost(f, c), row.icon = c.icon;
             const int hCost = cr3Rules.hpCost(f, c);
             row.usable = row.cost <= f.mp && (hCost == 0 || hCost < f.hp) && cr3CommandHasTarget(c);
             cr3List.push_back(row);
@@ -1652,7 +1693,7 @@ void Viewer::openCr3List(bool items, bool keepCategory) {
             cr3::Cr3Command c;
             if (!cr3Rules.command(id, c) || c.type < 1 || c.type > 4) continue;
             Cr3ListRow row;
-            row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = cr3Rules.mpCost(f, c);
+            row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = cr3Rules.mpCost(f, c), row.icon = c.icon;
             const int hCost = cr3Rules.hpCost(f, c);
             row.usable = c.usable() && row.cost <= f.mp && (hCost == 0 || hCost < f.hp) && cr3CommandHasTarget(c);
             cr3List.push_back(row);
@@ -1668,7 +1709,7 @@ void Viewer::openCr3List(bool items, bool keepCategory) {
             const int command = r.i(cr3ItemCategory == 0 ? 12 : 15);
             if (command < 0) continue;
             Cr3ListRow row;
-            row.item = id, row.command = command, row.count = n, row.name = cr3ItemText(id, false);
+            row.item = id, row.command = command, row.count = n, row.name = cr3ItemText(id, false), row.icon = r.i(3);
             cr3::Cr3Command c;
             row.usable = cr3Rules.command(row.command, c) && c.usable() && cr3CommandHasTarget(c);
             cr3List.push_back(row);
@@ -2142,6 +2183,8 @@ void Viewer::startCr3Action() {
         if (cr3Actions[cr3ActionAt].finisher) SDL_Log("battle: a finisher - command %d (addLastAttack)", cr3Actions[cr3ActionAt].command);
     }
     const cr3::Cr3Fighter& s = cr3Rules.fighters[size_t(a.source)];
+    if (cr3::Cr3Command ac; s.player && cr3Rules.command(a.command, ac) && (ac.extraType == 14 || ac.extraType == 15)) // (an Apple's: AddUsedItem, each once)
+        if (cr3UsedApples[ac.extraType - 14].insert(a.command).second) SDL_Log("battle: %s x%d used (command %d)", ac.extraType == 14 ? "EXP" : "money", ac.extraConstants.empty() ? 1 : ac.extraConstants[0], a.command);
     if (a.command == kCr3ReleaseDirection || a.command == kCr3WaitDieDirection) {
         // (a script's inserted direction: BtlReleaseDirection::vPlay 0x009984d8 - the holder's
         // AnimCommon 0x13 -, BtlWaitDieDirection::vPlay 0x0098f4e8 - the timing of its motion playing, its
@@ -2295,6 +2338,14 @@ void Viewer::stepCr3Action() {
                 ++cr3ComboHits[size_t(th.target)];
                 cr3ComboDamage[size_t(th.target)] += d;
                 if (cr3ComboSince < 0) cr3ComboSince = cr3BattleClock;
+            }
+            if (th.stolen >= 0 && h == 0) { // (BtlStatus::TakeDamageToDirection 0x9b42a0: a Steal Gold hit - OpenStealGold, 1 s)
+                std::string text = announceText("AnnounceBattle", th.stolen >= 1 ? 0x28 : 0x29);
+                if (const size_t at = text.find("{gold}"); at != std::string::npos) text.replace(at, 6, std::to_string(th.stolen));
+                if (const size_t at = text.find("{target}"); at != std::string::npos) text.replace(at, 8, cr3FighterName(cr3Rules.fighters[size_t(th.target)]));
+                setCr3Announce(text, 1.0f);
+                game.cr3Money = std::max(cr3Rules.gold, 0); // (taken at the calculation - TakeDamageToCalculation 0x9b41c4)
+                SDL_Log("battle: %d money stolen (%d left)", th.stolen, game.cr3Money);
             }
             const cr3::Vec3 dp = unitPoint(tu, "DummyDP01", 1.2f);
             const int color = h < th.colors.size() ? int(th.colors[h]) : (d < 0 ? 3 : 0);
@@ -2478,9 +2529,12 @@ bool Viewer::playCr3ScriptCommands() {
     return true;
 }
 
+// the cards' values (BattleResultV2Menu, CreateBattleResultMenu 0x8a080c: before any EXP - the gene's
+// level, its bar 1 - CrxGene::GetExpRate) and what each gene is to get (state 5: the first three
+// slots' standing ones the whole, the rest and the fallen half); nothing given yet
 void Viewer::giveCr3GeneExp() {
     cr3ResultCards.clear();
-    bool anyUp = false;
+    cr3ResultPhase = 0, cr3ResultPhaseAt = cr3BattleClock, cr3ResultApplied = cr3ResultNew = false, cr3GeneUp = Cr3GeneUp();
     for (int slot = 0; slot < 5; ++slot) {
         const int ch = game.cr3Party[slot];
         if (ch <= 0) continue;
@@ -2489,35 +2543,268 @@ void Viewer::giveCr3GeneExp() {
         bool standing = false;
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
             if (f.player && f.id == ch) standing = !f.dead();
-        const int gain = slot < 3 && standing ? cr3ResultExp : cr3ResultExp / 2;
         Cr3ResultCard card;
-        card.ch = ch;
+        card.ch = ch, card.gain = slot < 3 && standing ? cr3ResultExp : cr3ResultExp / 2;
         const int gi = game.wornGene(ch);
         const cr3::Cr3OfflineDb::GeneInfo* info = gi >= 0 && game.cr3Db ? game.cr3Db->geneInfo(game.cr3Genes[size_t(gi)].master) : nullptr;
         if (info) {
-            cr3::Cr3Fighter oldStats;
-            const bool hadStats = cr3CharaStats(ch, oldStats);
-            cr3::Cr3Gene& g = game.cr3Genes[size_t(gi)];
-            const int before = game.cr3Db->geneLevel(g);
-            game.cr3Db->addGeneExp(g, gain); // (held at its top; its new commands and skills learnt - SaveCommandSkill)
-            card.level = game.cr3Db->geneLevel(g);
+            const cr3::Cr3Gene& g = game.cr3Genes[size_t(gi)];
+            card.gene = gi, card.master = g.master, card.maxLevel = info->maxLevel;
+            card.oldLevel = card.level = game.cr3Db->geneLevel(g);
             const int at = game.cr3Db->geneExp(g.master, card.level), next = game.cr3Db->geneExp(g.master, card.level + 1);
-            card.progress = card.level >= info->maxLevel || next <= at ? 0.0f : float(g.exp - at) / float(next - at);
-            card.up = card.level > before;
-            if (card.up && hadStats && game.cr3Mp.count(ch)) { // (CrxCharacter::RecoverBonusMP @ 0x008f61b8)
-                cr3::Cr3Fighter newStats;
-                if (cr3CharaStats(ch, newStats) && newStats.maxMp > oldStats.maxMp) {
-                    const int nextMp = game.cr3Mp[ch] + (newStats.maxMp - oldStats.maxMp);
-                    if (nextMp >= newStats.maxMp) game.cr3Mp.erase(ch);
-                    else game.cr3Mp[ch] = nextMp;
-                }
-            }
-            anyUp |= card.up;
-            SDL_Log("battle %d: character %d's gene %d +%d EXP - level %d%s", cr3Battle.coupling, ch, g.master, gain, card.level, card.up ? " (up)" : "");
+            card.oldProgress = card.progress = card.level >= info->maxLevel || next <= at ? 0.0f : float(g.exp - at) / float(next - at);
         }
         cr3ResultCards.push_back(card);
     }
-    if (anyUp) audio.playSe("com_018", false);
+}
+
+// state 5 (BattleResultV2Menu::Update): each gene's AddTemporaryExp + SaveExp - its new commands and
+// skills queued, not learnt (the windows' CommandSkillLoopSub2 gives them their slots) -; no level
+// up anywhere: com_022, the bars jump (SetLevelPer), on to the drops; else the cards out (state 6)
+void Viewer::applyCr3GeneExp() {
+    cr3ResultApplied = true;
+    bool anyUp = false;
+    for (Cr3ResultCard& card : cr3ResultCards) {
+        if (card.gene < 0 || size_t(card.gene) >= game.cr3Genes.size() || !game.cr3Db) continue;
+        cr3::Cr3Fighter oldStats;
+        const bool hadStats = cr3CharaStats(card.ch, oldStats);
+        cr3::Cr3Gene& g = game.cr3Genes[size_t(card.gene)];
+        game.cr3Db->addGeneExp(g, card.gain, &card.learnt); // (held at its top)
+        card.level = game.cr3Db->geneLevel(g);
+        const int at = game.cr3Db->geneExp(g.master, card.level), next = game.cr3Db->geneExp(g.master, card.level + 1);
+        card.progress = card.level >= card.maxLevel || next <= at ? 0.0f : float(g.exp - at) / float(next - at);
+        card.up = card.level > card.oldLevel;
+        if (card.up && hadStats && game.cr3Mp.count(card.ch)) { // (CrxCharacter::RecoverBonusMP @ 0x008f61b8)
+            cr3::Cr3Fighter newStats;
+            if (cr3CharaStats(card.ch, newStats) && newStats.maxMp > oldStats.maxMp) {
+                const int nextMp = game.cr3Mp[card.ch] + (newStats.maxMp - oldStats.maxMp);
+                if (nextMp >= newStats.maxMp) game.cr3Mp.erase(card.ch);
+                else game.cr3Mp[card.ch] = nextMp;
+            }
+        }
+        anyUp |= card.up;
+        SDL_Log("battle %d: character %d's gene %d +%d EXP - level %d%s", cr3Battle.coupling, card.ch, g.master, card.gain, card.level,
+                card.up ? " (up)" : "");
+    }
+    cr3ResultPhaseAt = cr3BattleClock;
+    if (!anyUp) {
+        audio.playSe("com_022", false);
+        cr3ResultNew = true, cr3ResultPhase = 4;
+        SDL_Log("battle: result - the EXP in, no level up");
+    } else {
+        cr3ResultPhase = 1; // (state 6: btRsltCharaPanel_out, btRsltCharaMenu_out, the menus faded out)
+        SDL_Log("battle: result - the EXP in, the cards out");
+    }
+}
+
+// a command's or skill's name (or help): MbCommandInfo / MbSkillInfo's
+std::string Viewer::cr3SkillName(int type, int id, bool help) {
+    if (type == 1) return help ? cr3NameOf("skill_help.mbe", "SkillHelp", id) : cr3NameOf("skill_name.mbe", "SkillName", id);
+    return help ? cr3NameOf("command_help.mbe", "CommandHelp", id) : cr3NameOf("command_name.mbe", "CommandName", id);
+}
+
+// the result's states past the tally: 5 the EXP 1/3 s after card 0's btRsltCharaPanel_in (0.5667 s),
+// 7 the cards' out (0.6333 s), 8 .. 0xd the windows, 0xe the cards' in again (0.5667 s)
+void Viewer::stepCr3Result() {
+    const float since = cr3BattleClock - cr3ResultPhaseAt;
+    if (cr3ResultPhase == 0 && !cr3ResultApplied && cr3BattleClock - cr3StageStart >= 0.5667f + 1.0f / 3) applyCr3GeneExp();
+    else if (cr3ResultPhase == 1 && since >= 0.6333f) openCr3GeneUp(0);
+    else if (cr3ResultPhase == 2) stepCr3GeneUp();
+    else if (cr3ResultPhase == 3 && since >= 0.5667f) {
+        cr3ResultPhase = 4, cr3ResultPhaseAt = cr3BattleClock; // (state 0xe -> 0xf: the drops)
+        SDL_Log("battle: result - the cards back");
+    }
+}
+
+// state 8: the next levelled gene from card `fromCard` - CreateGeneLevelUpMenu, SetGeneGeneLevelUpMenu
+// (its card); none left: SetResultSecondSetteing (every card its new level and bar), the cards in
+void Viewer::openCr3GeneUp(int fromCard) {
+    for (int k = std::max(fromCard, 0); k < int(cr3ResultCards.size()); ++k)
+        if (cr3ResultCards[size_t(k)].up) {
+            cr3GeneUp = Cr3GeneUp();
+            cr3GeneUp.card = k, cr3GeneUp.at = cr3BattleClock;
+            cr3ResultPhase = 2, cr3ResultPhaseAt = cr3BattleClock;
+            SDL_Log("battle: gene level up - card %d (gene %d, level %d to %d, %zu learnt)", k, cr3ResultCards[size_t(k)].master,
+                    cr3ResultCards[size_t(k)].oldLevel, cr3ResultCards[size_t(k)].level, cr3ResultCards[size_t(k)].learnt.size());
+            return;
+        }
+    cr3GeneUp = Cr3GeneUp();
+    cr3ResultNew = true, cr3ResultPhase = 3, cr3ResultPhaseAt = cr3BattleClock;
+    SDL_Log("battle: result - the cards in again");
+}
+
+// GeneLvUpMenu (0xb1a740) driven by BattleResultV2Menu states 9 .. 0xd
+void Viewer::stepCr3GeneUp() {
+    Cr3GeneUp& u = cr3GeneUp;
+    if (u.card < 0 || size_t(u.card) >= cr3ResultCards.size()) return openCr3GeneUp(0);
+    Cr3ResultCard& card = cr3ResultCards[size_t(u.card)];
+    if (card.gene < 0 || size_t(card.gene) >= game.cr3Genes.size()) return openCr3GeneUp(u.card + 1);
+    cr3::Cr3Gene& g = game.cr3Genes[size_t(card.gene)];
+    const float s = cr3BattleClock - u.at;
+    const std::string geneName = cr3NameOf("gene_name.mbe", "GeneName", g.master);
+    auto put = [](std::string text, const char* key, const std::string& value) {
+        if (const size_t at = text.find(key); at != std::string::npos) text.replace(at, std::strlen(key), value);
+        return text;
+    };
+    auto alert = [&](int id, std::string text) { // (CreateAlertWindwoMenu(false), Cr3UtilNPrint's lines)
+        u.alert = true, u.text = std::move(text), u.alertAt = cr3BattleClock;
+        SDL_Log("battle: gene alert %#x - %s", id, u.text.c_str());
+    };
+    const size_t n = card.learnt.size();
+    switch (u.step) {
+    case 0: // (state 9: the window's in-animation over - IsAnimeEnd)
+        if (s < 0.1667f) break;
+        {
+            const int gained = card.level - card.oldLevel;
+            std::string text = put(menuAnnounce(gained < 2 ? 0x135 : 0x122), "{genename}", geneName);
+            text = put(put(text, "{oldlevel}", std::to_string(card.oldLevel)), "{newlevel}", std::to_string(card.level));
+            alert(gained < 2 ? 0x135 : 0x122, text);
+        }
+        u.lvAt = cr3BattleClock, u.step = 1, u.at = cr3BattleClock; // (StartLevelUpGeneLevelUpMenu: btRsltLvUpMenu's 3.3 s, com_018)
+        audio.playSe("com_018", false);
+        break;
+    case 1: // (state 10: its animation over and the alert tapped away)
+        if (!u.alert && cr3BattleClock - u.lvAt >= 3.3f) u.step = 2, u.entry = 0, u.at = cr3BattleClock;
+        break;
+    case 2: // (CommandSkillLoopSub: each new one not already in slots 0 .. 5 - 0x181, StartCommandSkillUp: btRsltSkillMenu, com_021)
+        if (u.alert || cr3BattleClock - u.skillAt < 3.3f) break;
+        while (size_t(u.entry) < n && g.hasOwn(card.learnt[size_t(u.entry)][0], card.learnt[size_t(u.entry)][1])) ++u.entry;
+        if (size_t(u.entry) < n) {
+            const auto& e = card.learnt[size_t(u.entry)];
+            alert(0x181, put(menuAnnounce(0x181), "{skillname}", cr3SkillName(e[0], e[1])));
+            u.skillAt = cr3BattleClock, ++u.entry;
+            audio.playSe("com_021", false);
+        } else u.step = 3, u.entry = 0, u.at = cr3BattleClock;
+        break;
+    case 3: // (state 0xb, CommandSkillLoopSub2: a free own slot - AddTemporaryLearnedCommandSkill -, else the replace prompt)
+        while (size_t(u.entry) < n) {
+            const auto& e = card.learnt[size_t(u.entry)];
+            if (g.hasOwn(e[0], e[1])) {
+                ++u.entry;
+                continue;
+            }
+            const int slot = g.freeOwnSlot();
+            if (slot < 0) { // (SelectCommandSkill: GeneLvUpMenu states 1 .. 9)
+                alert(0x1cc, menuAnnounce(0x1cc));
+                u.step = 4, u.at = cr3BattleClock;
+                return;
+            }
+            g.slots[slot][0] = e[0], g.slots[slot][1] = e[1];
+            SDL_Log("battle: gene %d learnt %d:%d into slot %d", g.master, e[0], e[1], slot);
+            ++u.entry;
+        }
+        u.step = 9, u.at = cr3BattleClock; // (SaveExp, SaveCommandSkill, OutDeleteGeneLevelUpMenu)
+        SDL_Log("battle: gene %d's window out", g.master);
+        break;
+    case 4: // (the 0x1cc alert tapped: state 3's slide)
+        if (!u.alert) u.step = 5, u.at = cr3BattleClock;
+        break;
+    case 5: // (btRsltUpPositon x -0.5, y -0.1 an update, 5 updates - SetCommmandSkillListSub)
+        if (s >= 5.0f / 30) {
+            u.step = 6, u.focus = 0, u.at = cr3BattleClock;
+            SDL_Log("battle: gene %d - the replace list", g.master);
+        }
+        break;
+    case 8: // (slid back: x +0.5 to 0)
+        if (s >= 5.0f / 30) u.step = 3, u.at = cr3BattleClock;
+        break;
+    case 9: // (btRsltUpPositon_out over - CheckAlive false; state 0xc: the next gene)
+        if (s >= 0.1667f) openCr3GeneUp(u.card + 1);
+        break;
+    default: break; // (6 / 7: the list and its question wait on a choice)
+    }
+}
+
+// the replace list's row (BuildCommmandSkillList: slots 0 .. 5, the new one 10th - id 10) tapped:
+// the list out, SetBasicYNChoiceWindow 0x1cd ({genename} will forget {csname})
+void Viewer::chooseCr3GeneRow(int row) {
+    Cr3GeneUp& u = cr3GeneUp;
+    if (cr3ResultPhase != 2 || u.step != 6 || row < 0 || row > 6) return;
+    u.focus = row, u.step = 7, u.askFocus = 0, u.at = cr3BattleClock;
+    SDL_Log("battle: gene replace row %d - asked", row);
+}
+
+// the question's answer: No (com_004) the list again; Yes (com_003) - an old row forgotten, the new
+// one into its slot (DeleteTemporaryCommandSkillId, AddTemporaryLearnedCommandSkill); the new row
+// itself - not learnt (EndSelectCommandSkill 2); then the window slid back
+void Viewer::answerCr3GeneAsk(bool yes) {
+    Cr3GeneUp& u = cr3GeneUp;
+    if (cr3ResultPhase != 2 || u.step != 7 || u.card < 0 || size_t(u.card) >= cr3ResultCards.size()) return;
+    Cr3ResultCard& card = cr3ResultCards[size_t(u.card)];
+    if (!yes) {
+        audio.playSe("com_004", false);
+        u.step = 6, u.at = cr3BattleClock;
+        SDL_Log("battle: gene replace - no");
+        return;
+    }
+    audio.playSe("com_003", false);
+    if (card.gene >= 0 && size_t(card.gene) < game.cr3Genes.size() && size_t(u.entry) < card.learnt.size()) {
+        cr3::Cr3Gene& g = game.cr3Genes[size_t(card.gene)];
+        const auto& e = card.learnt[size_t(u.entry)];
+        if (u.focus < 6) {
+            SDL_Log("battle: gene %d forgot %d:%d for %d:%d (slot %d)", g.master, g.slots[u.focus][0], g.slots[u.focus][1], e[0], e[1], u.focus);
+            g.slots[u.focus][0] = e[0], g.slots[u.focus][1] = e[1];
+        } else SDL_Log("battle: gene %d - %d:%d not learnt", g.master, e[0], e[1]);
+    }
+    ++u.entry;
+    u.step = 8, u.at = cr3BattleClock;
+}
+
+// the pad / keys over the window: the list's ↑ / ↓ (stopping at its ends), ○ its row; the question's
+// arrows between Yes and No, ○ the one under the cursor, × No. No back on the list (state 4: no
+// GetTapListBackID)
+bool Viewer::cr3GeneUpKey(SDL_Keycode k) {
+    Cr3GeneUp& u = cr3GeneUp;
+    if (cr3ResultPhase != 2 || (u.step != 6 && u.step != 7) || cr3BattleClock - u.at < 0.2f) return false;
+    const bool enter = k == SDLK_RETURN || k == SDLK_KP_ENTER;
+    if (u.step == 6) {
+        if (k == SDLK_UP || k == SDLK_DOWN) {
+            const int to = std::clamp(u.focus + (k == SDLK_UP ? -1 : 1), 0, 6);
+            if (to != u.focus) u.focus = to, audio.playSe("com_002", false), SDL_Log("battle: gene replace cursor %d", to);
+        } else if (enter) chooseCr3GeneRow(u.focus);
+    } else {
+        if (k == SDLK_UP || k == SDLK_DOWN || k == SDLK_LEFT || k == SDLK_RIGHT) u.askFocus ^= 1, audio.playSe("com_002", false);
+        else if (enter) answerCr3GeneAsk(u.askFocus == 0);
+        else if (k == SDLK_BACKSPACE || k == SDLK_ESCAPE) answerCr3GeneAsk(false);
+    }
+    return true;
+}
+
+// --input auto over the result: each alert tapped a second on (after its animation's 3.3 s), the
+// replace list's new row chosen (not learnt) and Yes; then the drops' lines a second each
+void Viewer::autoCr3Result() {
+    if (cr3ResultPhase == 4) {
+        const bool lineUp = !cr3ResultLine.empty() && cr3BattleClock - cr3ResultLineAt < 1.0f;
+        if (!lineUp && !showCr3DropLine()) endCr3Battle();
+        return;
+    }
+    if (cr3ResultPhase != 2) return;
+    Cr3GeneUp& u = cr3GeneUp;
+    if (u.alert && cr3BattleClock - u.alertAt > 1.0f) cr3BattleTap();
+    else if (u.step == 6 && cr3BattleClock - u.at > 0.6f) chooseCr3GeneRow(6);
+    else if (u.step == 7 && cr3BattleClock - u.at > 0.6f) answerCr3GeneAsk(true);
+}
+
+// the result ended before its windows (--input result): the EXP in, the rest given as they fit,
+// a full gene's new ones not learnt
+void Viewer::settleCr3GeneQueues() {
+    if (!cr3ResultApplied) applyCr3GeneExp();
+    for (size_t k = 0; k < cr3ResultCards.size(); ++k) {
+        Cr3ResultCard& card = cr3ResultCards[k];
+        if (card.gene < 0 || size_t(card.gene) >= game.cr3Genes.size()) continue;
+        cr3::Cr3Gene& g = game.cr3Genes[size_t(card.gene)];
+        size_t from = 0;
+        if (cr3ResultPhase == 2 && int(k) == cr3GeneUp.card && cr3GeneUp.step >= 3) from = size_t(cr3GeneUp.entry);
+        else if (cr3ResultPhase >= 3 || (cr3ResultPhase == 2 && int(k) < cr3GeneUp.card)) from = card.learnt.size();
+        for (size_t e = from; e < card.learnt.size(); ++e) {
+            const int type = card.learnt[e][0], id = card.learnt[e][1], slot = g.freeOwnSlot();
+            if (g.hasOwn(type, id) || slot < 0) continue;
+            g.slots[slot][0] = type, g.slots[slot][1] = id;
+        }
+        card.learnt.clear();
+    }
+    cr3GeneUp = Cr3GeneUp();
+    cr3ResultNew = true, cr3ResultPhase = 4;
 }
 
 void Viewer::acquireCr3Remuneration() {
@@ -2532,15 +2819,30 @@ void Viewer::acquireCr3Remuneration() {
         if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiii", r)) continue;
         const int exp = r.i(14) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) & 0xffff));
         if (exp >= 1) cr3WaveExp += std::max(int(gap * float(exp)), 1);
-        cr3WaveMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16)); // (+ a steal skill's - kind 0x74 -: not in)
+        cr3WaveMoney += r.i(15) + (f.level - 1) * int(int16_t(uint32_t(r.i(16)) >> 16));
+        // (BtlMonsterStatus::VAcquireMoney 0x9c6c0c: a thief - skill kind 0x74 - gives back what it stole x
+        // its constants / 100 - GetGoldRelase 0x9b0be4)
+        if (const std::vector<int> back = cr3Rules.skillConstants(f, 0x74); !back.empty() && f.stolenGold > 0) {
+            float k = 1;
+            for (int c : back) k *= float(c) / 100;
+            cr3WaveMoney += int(k * float(f.stolenGold));
+        }
     }
     for (const auto& [fi, item] : cr3Drops)
-        if (item > 0) cr3WaveDrops.push_back(item);
-    cr3Drops.clear();
+        if (item > 0 && cr3DropsAnnounced.count(fi)) cr3WaveDrops.push_back(item);
+    cr3Drops.clear(), cr3DropsAnnounced.clear();
 }
 
 void Viewer::enterCr3Result() {
     acquireCr3Remuneration();
+    if (vs.result && game.cr3Db && vs.chosen >= 0 && size_t(vs.chosen) < game.cr3Db->vsTournaments().size()) {
+        // (EntryResult 0x9a42ec, GameMain +0x24b: the tournament row's exp / prize_gold assigned - every battle's
+        // monsters' not counted -; the chain after it as any result's; all its battles' drops)
+        const cr3::Cr3OfflineDb::VsTournament& tt = game.cr3Db->vsTournaments()[size_t(vs.chosen)];
+        cr3WaveExp = tt.exp, cr3WaveMoney = tt.prizeGold;
+        cr3WaveDrops.insert(cr3WaveDrops.begin(), vs.drops.begin(), vs.drops.end());
+        vs.drops.clear();
+    }
     cr3ResultExp = cr3WaveExp, cr3ResultMoney = cr3WaveMoney;
     // (BtlInterfaceSystem::EntryResult: x (1 + every unit's skills' kind 0x6c constants / 100) - the
     // money's 0x6d)
@@ -2551,13 +2853,30 @@ void Viewer::enterCr3Result() {
     }
     // (BtlResult::GetExperience: (+4 - the monsters', what scripts added) x its factor - +0x28, the
     // scripts' SetExperienceFactor; the potions' and items' not in -; the money's likewise)
-    cr3ResultExp = (cr3ResultExp + cr3ResultAdd[0]) * cr3ResultFactor[0], cr3ResultMoney = (cr3ResultMoney + cr3ResultAdd[1]) * cr3ResultFactor[1];
+    // (BtlResult::GetExperience 0x7df710: x the Apples used - each distinct one's constant, EXP extraType 14 / money 15 -
+    // x the scripts' factor; then EntryResult 0x9a42ec's skill factor; then, VIP, the result screen's vipbonus
+    // exp_bonus / gold_bonus - 0x8a080c, BtlResultMenu state 3)
+    int apples[2] = {1, 1};
+    for (int k = 0; k < 2; ++k)
+        for (int cmd : cr3UsedApples[k])
+            if (cr3::Cr3Command ac; cr3Rules.command(cmd, ac) && !ac.extraConstants.empty() && ac.extraConstants[0] > 0) apples[k] *= ac.extraConstants[0];
+    cr3ResultExp = (cr3ResultExp + cr3ResultAdd[0]) * apples[0] * cr3ResultFactor[0], cr3ResultMoney = (cr3ResultMoney + cr3ResultAdd[1]) * apples[1] * cr3ResultFactor[1];
     cr3ResultExp = int(expBy * float(cr3ResultExp)), cr3ResultMoney = int(moneyBy * float(cr3ResultMoney));
+    if (game.cr3VipDays >= 1 && game.cr3Db) {
+        const cr3::Cr3OfflineDb::Month& m = game.cr3Db->month();
+        cr3ResultExp = int(float(cr3ResultExp) * m.expBonus), cr3ResultMoney = int(float(cr3ResultMoney) * m.goldBonus);
+        SDL_Log("battle: VIP x%.2f EXP, x%.2f money", double(m.expBonus), double(m.goldBonus));
+    }
     const int64_t goldMax = game.cr3Db ? game.cr3Db->constant("GOLD_MAX", 9999999) : 9999999;
     game.cr3Money = int(std::clamp<int64_t>(int64_t(game.cr3Money) + cr3ResultMoney, 0, goldMax));
     giveCr3GeneExp();
-    for (int item : cr3WaveDrops) // (VAcquireDrop: the drops into the bag)
-        game.cr3Items[item] = std::clamp(game.cr3Items[item] + 1, 0, 99), SDL_Log("battle %d: item %d into the bag", cr3Battle.coupling, item);
+    cr3ResultDropLines.clear();
+    for (int item : cr3WaveDrops) { // (VAcquireDrop / SetDropItemText 0xb1ffe4: one line each, up to 16 - 0xfb got, 0xfc the bag full)
+        const bool full = 99 - game.cr3Items[item] < 1;
+        if (cr3ResultDropLines.size() < 16) cr3ResultDropLines.push_back(full ? -item : item);
+        if (!full) game.cr3Items[item] += 1;
+        SDL_Log("battle %d: item %d %s", cr3Battle.coupling, item, full ? "not taken - the bag full" : "into the bag");
+    }
     if (game.next.battleMusicAfter >= 0) audio.stopBgm(30); // (phaseResult: FadeBgm, a second at 30 updates/s)
     cr3BattleStage = Cr3BattleStage::Result, cr3StageStart = cr3BattleClock;
     SDL_Log("battle %d: result - %d EXP, %d money", cr3Battle.coupling, cr3ResultExp, cr3ResultMoney);
@@ -2566,6 +2885,7 @@ void Viewer::enterCr3Result() {
 // the keys: up / down the focus, Return chooses, Backspace back from the targets
 bool Viewer::cr3BattleKey(SDL_Keycode k) {
     if (cr3ContinueKey(k)) return true;
+    if (cr3BattleStage == Cr3BattleStage::Result && cr3GeneUpKey(k)) return true;
     if (cr3BattleEvents && cr3BattleEvents->running()) return false;
     const bool enter = k == SDLK_RETURN || k == SDLK_KP_ENTER;
     if (enter && (cr3BattleStage == Cr3BattleStage::Won || cr3BattleStage == Cr3BattleStage::Result)) return cr3BattleTap(), true;
@@ -2624,6 +2944,22 @@ bool Viewer::cr3BattleKey(SDL_Keycode k) {
 
 // a click (fx, fy: the screen's fractions) on a button
 bool Viewer::cr3BattleClick(float fx, float fy) {
+    if (cr3BattleStage == Cr3BattleStage::Result && cr3ResultPhase == 2 && (cr3GeneUp.step == 6 || cr3GeneUp.step == 7)) {
+        // (the replace list's rows - another's tap its focus, the focused one's it chosen -, its question's Yes / No)
+        if (cr3BattleClock - cr3GeneUp.at < 0.2f) return true;
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (auto it = cr3GeneUpTaps.rbegin(); it != cr3GeneUpTaps.rend(); ++it) {
+            if (ux < std::min(it->x0, it->x1) || ux > std::max(it->x0, it->x1) || uy < std::min(it->y0, it->y1) || uy > std::max(it->y0, it->y1)) continue;
+            if (it->id == kTapYes || it->id == kTapNo) answerCr3GeneAsk(it->id == kTapYes);
+            else if (it->id >= kTapRow && it->id < kTapRow + 7) {
+                if (it->id - kTapRow == cr3GeneUp.focus) chooseCr3GeneRow(cr3GeneUp.focus);
+                else cr3GeneUp.focus = it->id - kTapRow, audio.playSe("com_002", false);
+            }
+            break;
+        }
+        return true;
+    }
     if (cr3Ctn.stage != 0) { // (the continue's buttons, its question's)
         const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
         const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
@@ -2674,10 +3010,14 @@ std::array<float, 3> Viewer::cameraPoint(size_t k) {
 void Viewer::cr3BattleTap() {
     if (cr3BattleEvents && cr3BattleEvents->running()) return cr3BattleEvents->touch(); // (its window's page)
     if (cr3BattleStage == Cr3BattleStage::Result) {
-        if (cr3BattleClock - cr3StageStart < 1.5f) {
+        // (TouchGestureTap: the tally completed; a window's alert closed - CheckTapAlertWindowMenu -; the
+        // cards' moves and the window's own parts take none; then the drops' lines, at the last the end)
+        if (cr3ResultPhase == 0 && cr3BattleClock - cr3StageStart < 1.5f) {
             cr3StageStart = cr3BattleClock - 1.5f;
             SDL_Log("battle: result tally completed");
-        } else endCr3Battle();
+        } else if (cr3ResultPhase == 2) {
+            if (cr3GeneUp.alert && cr3BattleClock - cr3GeneUp.alertAt > 0.1f) cr3GeneUp.alert = false, SDL_Log("battle: gene alert closed");
+        } else if (cr3ResultPhase == 4 && !showCr3DropLine()) endCr3Battle();
         return;
     }
     if (cr3BattleStage == Cr3BattleStage::Won && cr3VictoryIn) {
@@ -2694,6 +3034,12 @@ void Viewer::cr3BattleTap() {
 }
 
 void Viewer::endCr3Battle() {
+    if (vs.result) { // (VS: the won tournament's result dismissed - on to its results)
+        vs.result = false;
+        endCr3Battle();
+        vsShowResults();
+        return;
+    }
     if (activeAceId > 0) { // (Fld2TaskEncount::AceCouplingLevelUp @ 0x00867d88)
         if (!cr3BattleLost && !cr3Escaped)
             for (AreaEncounters::Ace& a : areaEnc.aces)
@@ -2855,7 +3201,12 @@ void Viewer::drawCr3Result(int w, int h) {
     const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
     cr3::SceneLighting none;
     dev->setLighting(none);
-    const float t = cr3BattleClock - cr3StageStart;
+    const float t = cr3BattleClock - cr3StageStart, since = cr3BattleClock - cr3ResultPhaseAt;
+    bool levelled = false;
+    for (const Cr3ResultCard& rc : cr3ResultCards) levelled |= rc.up;
+    // (state 6: the info / point menus faded out over 0.2 s; state 0xb's end: back in as long)
+    const float menuAlpha = cr3ResultPhase == 1 ? std::max(1.0f - since / 0.2f, 0.0f) : cr3ResultPhase == 2 ? 0.0f
+                          : cr3ResultPhase == 3 ? std::min(since / 0.2f, 1.0f) : 1.0f;
     UiFig& pos = cr3UiPut("btrsltposition", "btrsltposition_in", t, 0, 0, view);
     float x, y;
     if (cr3UiCall(pos, "call_btRsltBgMenu", x, y, w, h)) cr3UiPut("btrsltbgmenu", "", 0, x, y, view);
@@ -2864,11 +3215,33 @@ void Viewer::drawCr3Result(int w, int h) {
     dev->clearDepth();
     if (cr3UiCall(pos, "call_btRsltTitleTMenu", x, y, w, h)) cr3UiPut("btrslttitletmenu", "btrslttitletmenu_in", t, x, y, view);
     if (cr3UiCall(pos, "call_btRsltTitleBMenu", x, y, w, h)) cr3UiPut("btrslttitlebmenu", "btrslttitlebmenu_in", t, x, y, view);
-    if (cr3UiCall(pos, "call_btRsltInfoMenu", x, y, w, h)) cr3UiPut("btrsltinfomenu", "btrsltinfomenu_in", t, x, y, view);
-    if (cr3UiCall(pos, "call_btRsltPointMenu", x, y, w, h)) {
+    // (the replace list's focused row's help - GeneLvUpMenu's own btRsltPosition / btRsltInfoMenu, msg 0xd)
+    std::string infoLine = cr3ResultLine;
+    float infoAlpha = menuAlpha;
+    if (cr3ResultPhase == 2 && cr3GeneUp.step == 6 && cr3GeneUp.card >= 0 && size_t(cr3GeneUp.card) < cr3ResultCards.size()) {
+        const Cr3ResultCard& rc = cr3ResultCards[size_t(cr3GeneUp.card)];
+        if (cr3GeneUp.focus == 6 && size_t(cr3GeneUp.entry) < rc.learnt.size())
+            infoLine = cr3SkillName(rc.learnt[size_t(cr3GeneUp.entry)][0], rc.learnt[size_t(cr3GeneUp.entry)][1], true);
+        else if (rc.gene >= 0 && size_t(rc.gene) < game.cr3Genes.size() && cr3GeneUp.focus < 6) {
+            const cr3::Cr3Gene& g = game.cr3Genes[size_t(rc.gene)];
+            infoLine = cr3SkillName(g.slots[cr3GeneUp.focus][0], g.slots[cr3GeneUp.focus][1], true);
+        }
+        infoAlpha = 1;
+    }
+    if (infoAlpha > 0 && cr3UiCall(pos, "call_btRsltInfoMenu", x, y, w, h)) { // (its typeM_L01: SetDropItemText's line)
+        UiFig& info = cr3UiPut("btrsltinfomenu", "btrsltinfomenu_in", t, x, y, view, infoAlpha);
+        float tx, ty;
+        const bool infoText = cr3UiCall(info, "typeM_L01", tx, ty);
+        if (!infoLine.empty() && infoText) {
+            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+            const size_t br = infoLine.find("\\n"); // (a help's break: the first line here)
+            drawUiText(infoLine.substr(0, br), 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, infoAlpha);
+        }
+    }
+    if (menuAlpha > 0 && cr3UiCall(pos, "call_btRsltPointMenu", x, y, w, h)) {
         // (two btRsltPointPanel_numNN - N its digits - the EXP's and the money's, a
         // btRsltPointNum_fr00 frame a digit)
-        UiFig& pm = cr3UiPut("btrsltpointmenu", "btrsltpointmenu_in", t, x, y, view);
+        UiFig& pm = cr3UiPut("btrsltpointmenu", "btrsltpointmenu_in", t, x, y, view, menuAlpha);
         for (int k = 0; k < 2; ++k) {
             float px, py;
             if (!cr3UiCall(pm, "call_btRsltPointPanel_num00_00" + std::to_string(k + 1), px, py)) continue;
@@ -2877,42 +3250,122 @@ void Viewer::drawCr3Result(int w, int h) {
             const int n = std::min(int(digits.size()), 5);
             char lay[32];
             std::snprintf(lay, sizeof lay, "btrsltpointpanel_num%02d", n);
-            UiFig& panel = cr3UiPut(lay, "", 0, px, py, view);
+            UiFig& panel = cr3UiPut(lay, "", 0, px, py, view, menuAlpha);
             for (int d = 0; d < n; ++d) {
                 float dx, dy;
                 const std::string joint = n == 1 ? std::string("call_btRsltPointNum_fr00") : "call_btRsltPointNum_fr00_00" + std::to_string(d + 1);
-                if (cr3UiCall(panel, joint, dx, dy)) cr3UiPut("btrsltpointnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
+                if (cr3UiCall(panel, joint, dx, dy)) cr3UiPut("btrsltpointnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view, menuAlpha);
             }
         }
     }
-    if (cr3UiCall(pos, "call_btRsltCharaMenu", x, y, w, h)) {
-        UiFig& cm = cr3UiPut("btrsltcharamenu", "btrsltcharamenu_in", t, x, y, view);
+    // the cards: btRsltCharaPanel_in (fading in from 1/6 s), out (SetOutMove: btRsltCharaPanel_out,
+    // fading out from 0.2667 s) while the windows are up, in again after (SetInMove)
+    const bool out = cr3ResultPhase == 1;
+    const float cardT = cr3ResultPhase == 1 || cr3ResultPhase == 3 ? since : cr3ResultPhase == 4 && levelled ? 10.0f : t;
+    const float cardAlpha = out ? std::clamp(1.0f - (cardT - 0.2667f) * 6, 0.0f, 1.0f) : std::clamp((cardT - 1.0f / 6) * 6, 0.0f, 1.0f);
+    if (cr3ResultPhase != 2 && cr3UiCall(pos, "call_btRsltCharaMenu", x, y, w, h)) {
+        UiFig& cm = cr3UiPut("btrsltcharamenu", out ? "btrsltcharamenu_out" : "btrsltcharamenu_in", cardT, x, y, view);
         int slot = 0;
         for (const Cr3ResultCard& rc : cr3ResultCards) {
             float px, py;
             if (!cr3UiCall(cm, "call_btRsltCharaPanel_00" + std::to_string(++slot), px, py)) continue;
-            UiFig& card = cr3UiPut("btrsltcharapanel", "btrsltcharapanel_in", t, px, py, view);
+            UiFig& card = cr3UiPut("btrsltcharapanel", out ? "btrsltcharapanel_out" : "btrsltcharapanel_in", cardT, px, py, view);
             float cx, cy;
+            // (SetCardModel: the worn gene's card - card_default at call_GeneCard, 4.75 x)
+            if (rc.master > 0 && cr3UiCall(card, "call_GeneCard", cx, cy)) drawCr3Card(rc.master, cx, cy, 1.0f, 4.75f, view, cardAlpha);
             dev->clearDepth(); // (over the card's shadow)
+            const int level = cr3ResultNew ? rc.level : rc.oldLevel;
+            const bool top = level >= rc.maxLevel; // (SetNumber: MAX - its bar full, SetLevelPer then ignored)
             // (SetCharaCardData: the icon's frame the character's - 1, the bar its share done x 100 / 30 s)
             if (cr3UiCall(card, "call_btRsltCharaIcon_fr00", cx, cy)) cr3UiPut("btrsltcharaicon_fr00", "", float(rc.ch - 1) / 30, cx, cy, view);
-            if (cr3UiCall(card, "call_btRsltLv_per", cx, cy)) cr3UiPut("btrsltlv_per", "", rc.progress * 100 / 30, cx, cy, view);
-            // (a level up: EffectGeneUp's btRsltCharaCard and the gene's card, at the panel's
-            // call_btRsltCharaCard / call_btRsltUpEffe - joints the panel doesn't have: not drawn)
-            const cr3::Cr3Fighter f = [&] { cr3::Cr3Fighter x; x.level = rc.level; return x; }();
-            // the level: btRsltLvPanel_num00's three places, btRsltLvNum_fr00 frame a digit
-            // (leading places blank)
+            if (cr3UiCall(card, "call_btRsltLv_per", cx, cy))
+                cr3UiPut("btrsltlv_per", "", top ? 100.0f / 30 : (cr3ResultNew ? rc.progress : rc.oldProgress) * 100 / 30, cx, cy, view);
+            // the level (SetNumber 0xb185f8): btRsltLvPanel_num00's three places, btRsltLvNum_fr00 a
+            // digit's frame - the leading places "0" at +0x110 0.5 (dimmed); at its top MAX - frames 10, 11, 12
             if (cr3UiCall(card, "call_btRsltLvPanel_num00", cx, cy)) {
                 UiFig& lv = cr3UiPut("btrsltlvpanel_num00", "", 0, cx, cy, view);
-                const std::string digits = std::to_string(std::clamp(f.level, 0, 999));
-                for (size_t d = 0; d < digits.size(); ++d) {
+                const int n = std::clamp(level, 0, 999), lead = n < 10 ? 2 : n < 100 ? 1 : 0;
+                const int digits[3] = {n / 100, n / 10 % 10, n % 10};
+                for (int d = 0; d < 3; ++d) {
                     float dx, dy;
-                    if (cr3UiCall(lv, "call_btRsltLvNum_fr00_00" + std::to_string(3 - digits.size() + d + 1), dx, dy))
-                        cr3UiPut("btrsltlvnum_fr00", "", float(digits[d] - '0') / 30, dx, dy, view);
+                    if (!cr3UiCall(lv, "call_btRsltLvNum_fr00_00" + std::to_string(d + 1), dx, dy)) continue;
+                    cr3UiAlphaSet = !top && d < lead; // (its materials' alpha outright - PartsBase::SetAlpha)
+                    cr3UiPut("btrsltlvnum_fr00", "", float(top ? 10 + d : digits[d]) / 30, dx, dy, view, cr3UiAlphaSet ? 0.5f : 1.0f);
+                    cr3UiAlphaSet = false;
                 }
             }
         }
     }
+    if (cr3ResultPhase == 2) drawCr3GeneUp(w, h, view);
+}
+
+// GeneLvUpMenu (Initialize 0xb1a950): btRsltUpPositon (_in / _out 0.1667 s, fading in over 0.2 s), the
+// gene's card at its call_GeneCard (7 x), btRsltLvUpMenu / btRsltSkillMenu at their fit joints (parked
+// at their ends until started - 3.3 s each); the alert (AlertwindowMenu: comMsgSMenu); the replace
+// list (comListMenu, ReOpenListMenu 0x1b - no back) with the window slid left, its question (0x1cd)
+void Viewer::drawCr3GeneUp(int w, int h, const Mat4& view) {
+    cr3GeneUpTaps.clear();
+    const Cr3GeneUp& u = cr3GeneUp;
+    if (u.card < 0 || size_t(u.card) >= cr3ResultCards.size()) return;
+    const Cr3ResultCard& rc = cr3ResultCards[size_t(u.card)];
+    const float s = cr3BattleClock - u.at, now = cr3BattleClock;
+    // (state 3: x -0.5, y -0.1 an update to -2.5 / -0.5; back the same)
+    const float slid = u.step == 5 ? std::min(s * 30, 5.0f) : u.step == 6 || u.step == 7 ? 5.0f : u.step == 8 ? std::max(5.0f - s * 30, 0.0f) : 0.0f;
+    const bool closing = u.step == 9;
+    const float inT = u.step == 0 ? s : 1.0f;
+    const float alpha = closing ? std::max(1.0f - s / 0.1667f, 0.0f) : std::min(inT / 0.2f, 1.0f);
+    dev->clearDepth();
+    UiFig& up = cr3UiPut("btrsltuppositon", closing ? "btrsltuppositon_out" : "btrsltuppositon_in", closing ? s : inT, -0.5f * slid, -0.1f * slid, view, alpha);
+    float x, y;
+    if (cr3UiCall(up, "call_GeneCard", x, y)) drawCr3Card(rc.master, x, y, 1.0f, 7.0f, view, alpha);
+    dev->clearDepth();
+    if (cr3UiCall(up, "call_btRsltLvUpMenu", x, y, w, h)) cr3UiPut("btrsltlvupmenu", "btrsltlvupmenu", std::min(now - u.lvAt, 3.3f), x, y, view, alpha);
+    if (cr3UiCall(up, "call_btRsltSkillMenu", x, y, w, h)) cr3UiPut("btrsltskillmenu", "btrsltskillmenu", std::min(now - u.skillAt, 3.3f), x, y, view, alpha);
+    if (u.alert) drawCr3Told(u.text, now - u.alertAt, kTapAlert, w, h, view, &cr3GeneUpTaps);
+    if ((u.step != 6 && u.step != 7) || rc.gene < 0 || size_t(rc.gene) >= game.cr3Genes.size()) return;
+    const cr3::Cr3Gene& g = game.cr3Genes[size_t(rc.gene)];
+    // (BuildCommmandSkillList: slots 0 .. 5 - id the slot -, the new one id 10)
+    struct Row { std::string name; int icon = -1; };
+    std::vector<Row> rows;
+    auto iconOf = [&](int type, int id) {
+        cr3::MbeFile::Row row; // (StatusMain::SetStatusParameter's: a command's +0x08, a skill's skill_para +0x08)
+        if (!cr3TablesReady()) return -1;
+        return (type == 0 ? cr3BattleTables.command.find("Command", id, "iii", row) : cr3BattleTables.skill.find("Skill", id, "iii", row)) ? row.i(2) : -1;
+    };
+    for (int k = 0; k < 6; ++k) rows.push_back({cr3SkillName(g.slots[k][0], g.slots[k][1]), iconOf(g.slots[k][0], g.slots[k][1])});
+    if (size_t(u.entry) < rc.learnt.size())
+        rows.push_back({cr3SkillName(rc.learnt[size_t(u.entry)][0], rc.learnt[size_t(u.entry)][1]), iconOf(rc.learnt[size_t(u.entry)][0], rc.learnt[size_t(u.entry)][1])});
+    const int focus = std::clamp(u.focus, 0, int(rows.size()) - 1), listN = int(rows.size());
+    if (u.step == 6) {
+        UiFig& pos = cr3UiPut("comlistposition", "comlistposition_io", s, 0, 0, view);
+        float lx, ly;
+        if (cr3UiCall(pos, "call_comListMenu", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+            if (cr3UiCall(menu, "call_comListPanel", lx, ly)) drawCr3ListEnds(lx, ly, listN, focus, view);
+            if (cr3UiCall(menu, "call_comListPanel", lx, ly))
+                for (int k = std::max(focus - 2, 0); k < listN && k <= focus + 2; ++k) {
+                    const Row& row = rows[size_t(k)];
+                    Cr3FocusRow focusRow(*this, k == focus);
+                    UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, focus), cr3ListRowY(ly, k, focus - 2, focus), view);
+                    float cx, cy;
+                    if (k == focus && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                    if (row.icon >= 0 && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
+                        cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), row.icon), cx, cy, view);
+                    if (cr3UiCall(panel, "typeM_L01", cx, cy)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        const float ks = cr3UiFocus ? 1.1f : 1.0f;
+                        drawUiText(row.name, 26 * ks, (cx + 0.075f * ks) / 10, (cy - 0.15f * ks) / 10, w, h, true, cr3UiFocus ? 1.0f : 0.3f);
+                    }
+                    float ax, ay, bx, by;
+                    if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3GeneUpTaps.push_back({ax, ay, bx, by, kTapRow + k});
+                }
+        }
+        return;
+    }
+    std::string text = menuAnnounce(0x1cd); // ({genename} will forget {csname}.\nAre you sure?)
+    if (const size_t at = text.find("{genename}"); at != std::string::npos) text.replace(at, 10, cr3NameOf("gene_name.mbe", "GeneName", g.master));
+    if (const size_t at = text.find("{csname}"); at != std::string::npos) text.replace(at, 8, rows[size_t(focus)].name);
+    drawCr3Asked(text, s, u.askFocus, true, kTapYes, kTapNo, w, h, view, &cr3GeneUpTaps);
 }
 
 float Viewer::cr3SpellCardDuration(size_t count) {
@@ -3266,6 +3719,9 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                     UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, cr3Focus), ry, view, alpha);
                     float cx, cy;
                     if (int(k) == cr3Focus && row.usable && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                    // (comListItem::Initialize 0xa56620: comListIcon_fr00 only for an icon of 0 or more - SetIconPattern 0x880848)
+                    if (row.icon >= 0 && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
+                        cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), row.icon), cx, cy, view, alpha);
                     const int number = row.item ? row.count : row.cost;
                     if (cr3UiCall(panel, row.item ? "call_comListNumI_num00" : "call_comListNumM_num00", cx, cy)) {
                         UiFig& num = cr3UiPut(row.item ? "comlistnumi_num00" : "comlistnumm_num00", "", 0, cx, cy, view, alpha);

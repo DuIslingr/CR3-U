@@ -2446,7 +2446,9 @@ void Viewer::drawCr3CollectList(int w, int h, const Mat4& view) {
                 drawUiText(text, 22, tx / 10, (ty - 0.11f) / 10, w, h, false, 1.0f);
             }
         }
-        const bool added = !prize && cl.addId >= 0 && sheet.entries[k].item == cl.addId && (cl.addCategory == 1) == sheet.entries[k].gene;
+        bool added = !prize && cl.addId >= 0 && sheet.entries[k].item == cl.addId && (cl.addCategory == 1) == sheet.entries[k].gene;
+        for (const auto& [category, id] : cl.added) // (AddCollectListGetItem's)
+            added = added || (!prize && sheet.entries[k].item == id && (category == 1) == sheet.entries[k].gene);
         if (added || (prize && cl.prizeAt >= 0)) { // (SetPanelData's third / ShinePanel: mpListGetEffe, its own animation, at the panel)
             cr3UiPut("mplistgeteffe", "", since, px, py, view, 1);
         }
@@ -2737,7 +2739,7 @@ float Viewer::uiAnimSeconds(const std::string& fig, const std::string& anim) {
     return u.fig.animLoaded ? u.fig.anim.duration() : 0.0f;
 }
 
-void Viewer::openCollectList(int sheet, bool scripted, int addCategory, int addId) {
+void Viewer::openCollectList(int sheet, bool scripted, int addCategory, int addId, bool openSe) {
     Cr3CollectList& cl = collectList;
     cl = Cr3CollectList();
     cl.open = true, cl.sheet = sheet;
@@ -2749,7 +2751,7 @@ void Viewer::openCollectList(int sheet, bool scripted, int addCategory, int addI
             for (size_t k = 0; k < it->second.mark.size(); ++k) it->second.mark[k] = false; // (Update 3: +0x34 cleared)
         }
     }
-    if (std::find(cl.fresh.begin(), cl.fresh.end(), true) != cl.fresh.end()) audio.playSe("com_026", false);
+    if (openSe && std::find(cl.fresh.begin(), cl.fresh.end(), true) != cl.fresh.end()) audio.playSe("com_026", false); // (SetCollectListMainOpenSE)
     SDL_Log("collection: sheet %d", sheet);
 }
 
@@ -4634,6 +4636,7 @@ void Viewer::vsEnter() {
 }
 
 void Viewer::stepVsScript(float dt) {
+    stepSpBoxes(dt); // (the Sp Shop's boxes: LuckyBoxMain's timed states)
     // (VsModeMain 0x11 / 0xd: back from the camp - on the top - or the gene lab: VS_Top)
     if (vsCampOpened && cr3Camp.stage == 0) {
         vsCampOpened = false;
@@ -4857,11 +4860,30 @@ void Viewer::drawSpShop(int w, int h, const Mat4& view) {
         drawCr3Header(t, 0xc, std::string(), w, h, view);
         return;
     }
-    // the boxes
+    // the boxes (LuckyBoxMenu - 0x00acde1c): under them the shop's backdrop (SShopBG - at half while the
+    // gene box's list is up: ChangeSShopBGDiffuse(0.5))
     const std::vector<SpBox> boxes = spBoxes();
     if (boxes.empty()) return;
     vs.boxFocus = std::clamp(vs.boxFocus, 0, int(boxes.size()) - 1);
     const SpBox& box = boxes[size_t(vs.boxFocus)];
+    const int stage = vs.boxStage;
+    {
+        UiFig& sp = cr3UiPut("sshoppositon", "", 0, 0, 0, view);
+        if (stage == 7) cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 0.5f;
+        if (cr3UiCall(sp, "call_SshopBg", x, y)) cr3UiPut("sshopbg", "", 0, x, y, view);
+        cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+        dev->clearDepth();
+    }
+    if (stage == 7 || stage == 10) { // (GeneBoxListMenu - a StaffNameListMenu: the lines scrolled)
+        if (stage == 7) {
+            const int top = vs.boxContentsPage;
+            for (int k = 0; k < 15 && top + k < int(vs.boxContents.size()); ++k)
+                drawUiText(vs.boxContents[size_t(top + k)], 24, -0.42f, (2.45f - 0.33f * float(k)) / 10, w, h, true, 1);
+        }
+        return;
+    }
+    const bool contents = stage == 5 && vs.boxOpenedKind < 0; // (the check button's collection: over the boxes - Preservation2)
+    if (stage >= 2 && stage <= 5 && !contents) return drawSpBoxOpening(box, w, h, view); // (the bg, the buy panels and the check button hidden)
     auto boxPicture = [&](const std::string& fig, const std::string& material, const std::string& image) {
         UiFig& u = uiFig(fig);
         cr3UiMaterial(u, material, image);
@@ -4874,11 +4896,13 @@ void Viewer::drawSpShop(int w, int h, const Mat4& view) {
     if (cr3UiCall(bgPos, "call_mpBoxBgMenu", x, y, w, h)) {
         UiFig& bg = cr3UiPut("mpboxbgmenu", "", t, x, y, view);
         if (cr3UiCall(bg, "call_mpBoxBg_id00", cx, cy)) boxPicture("mpboxbg_id00", "mat_boxBg_d02", box.background), cr3UiPut("mpboxbg_id00", "", 0, cx, cy, view);
-        if (cr3UiCall(bg, "call_mpBoxName_id00", cx, cy)) boxPicture("mpboxname_id00", "mat_cltList_d02", box.texture), cr3UiPut("mpboxname_id00", "", 0, cx, cy, view);
+        // (the name plate: faded out over 0.2 s once a buy panel is chosen)
+        const float plate = stage == 1 ? 1 - std::min(vs.boxSince / 0.2f, 1.0f) : stage == 9 ? std::min(vs.boxSince / 0.2f, 1.0f) : 1;
+        if (cr3UiCall(bg, "call_mpBoxName_id00", cx, cy)) boxPicture("mpboxname_id00", "mat_cltList_d02", box.texture), cr3UiPut("mpboxname_id00", "", 0, cx, cy, view, plate);
     }
     dev->clearDepth();
     UiFig& pos = cr3UiPut("mpboxpositon", "", t, 0, 0, view); // (its own animation: the carousel in)
-    if ((!vs.boxBuy || vitaButtons()) && cr3UiCall(pos, "ragdoll_call_mpBoxMenu", x, y, w, h)) {
+    if ((!vs.boxBuy || vitaButtons()) && stage != 1 && stage != 9 && cr3UiCall(pos, "ragdoll_call_mpBoxMenu", x, y, w, h)) {
         UiFig& menu = cr3UiPut("mpboxmenu", "", t, x, y, view);
         const int n = int(boxes.size());
         for (int k = 0; k < 3; ++k) { // (the one before, the one in focus - 1.35 x -, the one after)
@@ -4890,6 +4914,20 @@ void Viewer::drawSpShop(int w, int h, const Mat4& view) {
             UiFig& p = cr3UiPut("mpboximagepanel", "", 0, cx, cy, view);
             float ix, iy;
             if (cr3UiCall(p, "call_mpBoxImage_id", ix, iy)) cr3UiPut("mpboximage_id00", "", 0, ix, iy, view);
+            // (BoxPanel::SetComplateNumber(GetCountSize, GetItemsSize): a Lucky Box's won of its
+            // entries on mpListCollected - L the won, S the entries, tens hidden under 10 -, all won
+            // mpListComplete; nothing for no entries - the gene and GP boxes)
+            int total = 0, won = 0;
+            if (boxes[size_t(b)].kind == 1) worldSheet(boxes[size_t(b)].id, total, won);
+            if (total > 0 && won < total && cr3UiCall(p, "call_mpListCollected", ix, iy)) {
+                UiFig& col = cr3UiPut("mplistcollected", "mplistcollected_loop", uiClock, ix, iy, view, 1, true);
+                float nx, ny;
+                if (won > 9 && cr3UiCall(col, "call_mpListColNumL_fr00_001", nx, ny)) cr3UiPut("mplistcolnuml_fr00", "", float(won / 10 % 10) / 30, nx, ny, view);
+                if (cr3UiCall(col, "call_mpListColNumL_fr00_002", nx, ny)) cr3UiPut("mplistcolnuml_fr00", "", float(won % 10) / 30, nx, ny, view);
+                if (total > 9 && cr3UiCall(col, "call_mpListColNumS_fr00_001", nx, ny)) cr3UiPut("mplistcolnums_fr00", "", float(total / 10 % 10) / 30, nx, ny, view);
+                if (cr3UiCall(col, "call_mpListColNumS_fr00_002", nx, ny)) cr3UiPut("mplistcolnums_fr00", "", float(total % 10) / 30, nx, ny, view);
+            } else if (total > 0 && won >= total && cr3UiCall(p, "call_mpListComplete", ix, iy))
+                cr3UiPut("mplistcomplete", "", 0, ix, iy, view);
             cr3UiScale = 1;
             spTap(p, cx, cy, k == 1 ? 1.6f : 1.1f, k == 1 ? 1.6f : 1.1f, 1100 + k);
         }
@@ -4906,131 +4944,390 @@ void Viewer::drawSpShop(int w, int h, const Mat4& view) {
         }
     }
     if (!vs.boxBuy && cr3UiCall(pos, "ragdoll_call_mpBoxArrowMenu", x, y, w, h)) cr3UiPut("mpboxarrowmenu", "", uiClock, x, y, view, 1, true);
-    if (vs.boxBuy) {
-        UiFig& buyPos = cr3UiPut("mpboxbuypositon", "", t, 0, 0, view);
-        if (cr3UiCall(buyPos, "ragdoll_call_mpBoxBuyMenu", x, y, w, h)) {
-            UiFig& menu = cr3UiPut("mpboxbuymenu", "", t, x, y, view);
-            for (int k = 0; k < 3; ++k) {
-                if (box.amount[k] <= 0 || !cr3UiCallNth(menu, "call_mpBoxBuyPanel", k, cx, cy)) continue;
-                boxPicture("mpboxbuyimage_id00", "mat_cltList_d02", box.texture);
-                if (vitaButtons() && !vs.boxCheckFocus && k == vs.boxPanel) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
-                UiFig& panel = cr3UiPut("mpboxbuypanel", "", 0, cx, cy, view, k == vs.boxPanel ? 1.0f : 0.8f);
-                cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
-                float px, py, qx, qy;
-                // (BoxBuyPanel::Pose: the panel's Icon - the amount, 1 / 5 / 10 frames 0 .. 2 -, Size -
-                // the box's picture on its call_mpBoxBuyImage_id -, Num - the currency's
-                // mpBoxBuyUni and the price's four mpBoxBuyPriceNum digits -, Tap)
-                const int icon = box.amount[k] == 1 ? 0 : box.amount[k] == 5 ? 1 : box.amount[k] == 10 ? 2 : -1;
-                if (icon >= 0 && cr3UiCall(panel, "call_mpBoxBuyIcon_fr", px, py)) cr3UiPut("mpboxbuyicon_fr00", "", float(icon) / 30, px, py, view);
-                if (cr3UiCall(panel, "call_mpBoxBuySize_fr", px, py)) {
-                    UiFig& size = cr3UiPut("mpboxbuysize_fr00", "", float(k) / 30, px, py, view);
-                    if (cr3UiCall(size, "call_mpBoxBuyImage_id", qx, qy)) {
-                        cr3UiPut("mpboxbuyimage_id00", "", 0, qx, qy, view);
-                    }
-                }
-                if (cr3UiCall(panel, "call_mpBoxBuyNum_num", px, py)) {
-                    UiFig& num = cr3UiPut("mpboxbuynum_num00", "", 0, px, py, view);
-                    if (cr3UiCall(num, "call_mpBoxBuyUni_fr", qx, qy)) cr3UiPut("mpboxbuyuni_fr00", "", float(box.currency) / 30, qx, qy, view);
-                    // (SetPriceNumber: four digits, leading zeros left out, at digit + 10 x the currency)
-                    const int price = std::min(box.price[k], 9999);
-                    bool shown = false;
-                    for (int d = 0, div = 1000; d < 4; ++d, div /= 10) {
-                        const int digit = price / div % 10;
-                        if (digit > 0 || d == 3) shown = true;
-                        if (shown && cr3UiCallNth(num, "call_mpBoxBuyPriceNum_fr", d, qx, qy)) cr3UiPut("mpboxbuypricenum_fr00", "", float(digit + 10 * box.currency) / 30, qx, qy, view);
-                    }
-                }
-                // (mpBoxBuyTap: hidden - BoxBuyPanel::Initialize; a press's highlight)
-                spTap(panel, cx, cy, 1.6f, 0.6f, 1110 + k);
+    UiFig& buyPos = cr3UiPut("mpboxbuypositon", "", t, 0, 0, view);
+    if (vs.boxBuy && cr3UiCall(buyPos, "ragdoll_call_mpBoxBuyMenu", x, y, w, h)) {
+        UiFig& menu = cr3UiPut("mpboxbuymenu", "", t, x, y, view);
+        // (SetMoveBuy / SetMoveBack: 0.1333 s, then the chosen panel to the menu's panelPositon over
+        // 0.3 s, the others faded out over 0.3 s - back the same reversed)
+        const bool moving = stage == 1 || stage == 9 || vs.ask == 4;
+        const float go = stage == 9 ? 1 - std::clamp(vs.boxSince / 0.3f, 0.0f, 1.0f) : stage == 1 ? std::clamp((vs.boxSince - 0.1333f) / 0.3f, 0.0f, 1.0f) : 1;
+        const float others = stage == 9 ? std::clamp((vs.boxSince - 0.1333f) / 0.3f, 0.0f, 1.0f) : 1 - std::clamp(vs.boxSince / 0.3f, 0.0f, 1.0f);
+        float px0 = 0, py0 = 0;
+        const bool target = cr3UiCall(menu, "panelPositon", px0, py0);
+        for (int k = 0; k < 3; ++k) {
+            if (box.amount[k] <= 0 || !cr3UiCallNth(menu, "call_mpBoxBuyPanel", k, cx, cy)) continue;
+            float alpha = 1;
+            if (moving && k != vs.boxPanel) {
+                alpha = others;
+                if (alpha <= 0) continue;
             }
-        }
-        if (vitaButtons() && box.kind != 2 && cr3UiCall(buyPos, "ragdoll_call_mpBoxChkBtnMenu", x, y, w, h)) {
-            if (vs.boxCheckFocus) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
-            UiFig& check = cr3UiPut("mpboxchkbtnmenu", "", float(box.kind == 0 ? 2 : 1) / 30, x, y, view);
-            spTap(check, x, y, 1.4f, 0.4f, 1120);
+            if (moving && k == vs.boxPanel && target) cx += (px0 - cx) * go, cy += (py0 - cy) * go;
+            const bool buyable = spBoxBuyable(box, k);
+            boxPicture("mpboxbuyimage_id00", "mat_cltList_d02", box.texture);
+            // (UpdateBuyPanel: Disabled - diffuse 0.5, not tapped)
+            if (!buyable) cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 0.5f;
+            else if (vitaButtons() && !vs.boxCheckFocus && k == vs.boxPanel && !moving) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
+            UiFig& panel = cr3UiPut("mpboxbuypanel", "", 0, cx, cy, view, alpha);
+            float px, py, qx, qy;
+            // (BoxBuyPanel::Pose: the panel's Icon - the amount, 1 / 5 / 10 frames 0 .. 2 -, Size -
+            // the box's picture on its call_mpBoxBuyImage_id -, Num - the currency's
+            // mpBoxBuyUni and the price's four mpBoxBuyPriceNum digits -, Tap)
+            const int icon = box.amount[k] == 1 ? 0 : box.amount[k] == 5 ? 1 : box.amount[k] == 10 ? 2 : -1;
+            if (icon >= 0 && cr3UiCall(panel, "call_mpBoxBuyIcon_fr", px, py)) cr3UiPut("mpboxbuyicon_fr00", "", float(icon) / 30, px, py, view, alpha);
+            if (cr3UiCall(panel, "call_mpBoxBuySize_fr", px, py)) {
+                UiFig& size = cr3UiPut("mpboxbuysize_fr00", "", float(k) / 30, px, py, view, alpha);
+                if (cr3UiCall(size, "call_mpBoxBuyImage_id", qx, qy)) cr3UiPut("mpboxbuyimage_id00", "", 0, qx, qy, view, alpha);
+            }
+            if (cr3UiCall(panel, "call_mpBoxBuyNum_num", px, py)) {
+                UiFig& num = cr3UiPut("mpboxbuynum_num00", "", 0, px, py, view, alpha);
+                if (cr3UiCall(num, "call_mpBoxBuyUni_fr", qx, qy)) cr3UiPut("mpboxbuyuni_fr00", "", float(box.currency) / 30, qx, qy, view, alpha);
+                // (SetPriceNumber: four digits, leading zeros left out, at digit + 10 x the currency)
+                const int price = std::min(box.price[k], 9999);
+                bool shown = false;
+                for (int d = 0, div = 1000; d < 4; ++d, div /= 10) {
+                    const int digit = price / div % 10;
+                    if (digit > 0 || d == 3) shown = true;
+                    if (shown && cr3UiCallNth(num, "call_mpBoxBuyPriceNum_fr", d, qx, qy)) cr3UiPut("mpboxbuypricenum_fr00", "", float(digit + 10 * box.currency) / 30, qx, qy, view, alpha);
+                }
+            }
             cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+            // (mpBoxBuyTap: hidden - BoxBuyPanel::Initialize; a press's highlight)
+            if (buyable && !moving) spTap(panel, cx, cy, 1.6f, 0.6f, 1110 + k);
         }
     }
-    drawCr3Header(t, 0xb, std::string(), w, h, view);
+    // the check button (mpBoxChkBtnMenu - BoxReturnToStatusQuo 0x00acee78): a Lucky Box's frame 1 (2
+    // pressed - its collection), a gene box's 0 (its list); none for the GP box; up in the carousel
+    // and in buy mode, gone while a panel moves or a box opens
+    if (box.kind != 2 && (stage == 0 || stage == 6 || stage == 8) && !vs.ask && cr3UiCall(buyPos, "ragdoll_call_mpBoxChkBtnMenu", x, y, w, h)) {
+        if (vitaButtons() && vs.boxCheckFocus) cr3UiTint[0] = 0.5f, cr3UiTint[1] = 1, cr3UiTint[2] = 1.5f;
+        const int frame = box.kind == 0 ? 0 : stage == 6 ? 2 : 1;
+        UiFig& check = cr3UiPut("mpboxchkbtnmenu", "", float(frame) / 30, x, y, view);
+        if (stage == 0) spTap(check, x, y, 1.4f, 0.4f, 1120);
+        cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+    }
+    // (the header: hidden while a panel moves and the box opens; its sentence the box's help -
+    // SetBgAndBox 0x00acf194: SetHeaderSentence(GetHelp); leaving: the shop's title 9)
+    if (stage == 8) drawCr3Header(t, 9, menuAnnounce(0x275), w, h, view);
+    else if (stage == 0 || stage == 6) drawCr3Header(t, 0xb, spBoxHelp(box), w, h, view);
+    if (contents) vsTaps.clear(), dev->clearDepth(), drawSpBoxOpening(box, w, h, view); // (the boxes' taps not under it)
 }
 
+// (LuckyBoxMain::Update's opening - LuckyBoxMenu case 7 -> 0xd): ue004lbox02 (z -3), ue004lbox04 (z -4,
+// its "box" the box's texture and mask) and ue004lbox05 (z -5), none looped; once 02's 2.0 s are
+// over 02 and 04 gone, ue004lbox01 (z -9) looped, Cr3FadeIn2(1, 10, 100, 0) - a white flash -; then
+// the prizes' windows, then the collection; 01 and 05 gone after it
+void Viewer::drawSpBoxOpening(const SpBox& box, int w, int h, const Mat4& view) {
+    const int stage = vs.boxStage;
+    const float t = stage == 2 ? vs.boxSince : 2.0f + vs.boxSince;
+    if (vs.boxOpenedKind >= 0) { // (not for the check button's collection)
+        if (stage >= 3) cr3UiPut("ue004lbox01", "", vs.boxSince, 0, 0, view, 1, true);
+        cr3UiPut("ue004lbox05", "", t, 0, 0, view);
+    }
+    if (stage == 2) {
+        UiFig& u = uiFig("ue004lbox04");
+        cr3::Texture* tex = texture(box.texture);
+        cr3::Texture* a = texture(box.texture + "A", false);
+        for (ViewMesh& vm : u.fig.meshes) // (its "box" material: cltList_def in the file)
+            if (vm.baseMaterial.diffuse() == "cltList_def" && tex) vm.texture = tex, vm.extraMap = a;
+        cr3UiPut("ue004lbox04", "", t, 0, 0, view);
+        cr3UiPut("ue004lbox02", "", t, 0, 0, view);
+    }
+    if (stage == 3 && white.id && vs.boxSince < 10.0f / 30) { // (the flash: white, 10 frames)
+        static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+        const float rgba[4] = {1, 1, 1, 1 - vs.boxSince * 3};
+        fullFrameQuad(white, kScreen, rgba);
+    }
+    dev->clearDepth();
+    if (stage == 4) { // (GetItemWindow - SetGetItemLuckyBox: an item drawn; a tap the next)
+        const cr3::Cr3ItemSheet::Prize* p = vs.boxOpenedKind != 0 && game.cr3Db ? game.cr3Db->openedPrize(size_t(vs.boxPrize)) : nullptr;
+        if (p && !p->gene) {
+            std::string line = announceText("AnnounceField", 0x11);
+            if (const size_t at = line.find("{item.name}"); at != std::string::npos) line.replace(at, 11, cr3ItemText(p->item, false));
+            drawCr3GetItemPanel(p->item, vs.boxSince, line);
+            vsTaps.push_back({-6, -4, 6, 4, 1130});
+        }
+    }
+    if (stage == 5 && collectList.open && !collectList.scripted) {
+        std::vector<Cr3GeneLabTap> keep;
+        keep.swap(cr3CampTaps);
+        drawCr3CollectList(w, h, view);
+        for (const Cr3GeneLabTap& tap : cr3CampTaps) vsTaps.push_back({tap.x0, tap.y0, tap.x1, tap.y1, tap.id});
+        cr3CampTaps.swap(keep);
+    }
+}
+
+// (LuckyBox / GeneBox / GpBox::GetHelp): a Lucky Box's item_help.mbe LuckyBoxHelp row by its sheet's
+// id ("d02"), a gene box's MnlCmp 0x209, the GP box's 0x208
+std::string Viewer::spBoxHelp(const SpBox& box) {
+    if (box.kind == 0) return menuAnnounce(0x209);
+    if (box.kind == 2) return menuAnnounce(0x208);
+    if (!game.cr3Db || box.id < 0 || size_t(box.id) >= game.cr3Db->itemSheets().size()) return {};
+    static cr3::MbeFile help;
+    static int readIn = -1;
+    if (readIn != textGeneration) help = cr3::MbeFile(), readIn = textGeneration;
+    if (!help.table("LuckyBoxHelp")) {
+        std::vector<uint8_t> d;
+        if (archive.read("data\\item_help.mbe", d)) help.parse(d);
+    }
+    const cr3::MbeFile::Table* table = help.table("LuckyBoxHelp");
+    if (!table) return {};
+    const std::string& sheet = game.cr3Db->itemSheets()[size_t(box.id)].id;
+    cr3::MbeFile::Row r;
+    for (size_t k = 0; k < table->rows.size(); ++k)
+        if (help.row(*table, k, "ppp", r) && r.s(0) == sheet) return optionLanguage == 0 || r.s(2).empty() ? r.s(1) : r.s(2);
+    return {};
+}
+
+// (LuckyBoxMenu::UpdateBuyPanel 0x00ad1684): a panel Disabled when the free of the 50 held gene slots
+// (GetFreeGeneCount - the stock not counted) are fewer than its amount, or the coins / GP its price
+bool Viewer::spBoxBuyable(const SpBox& box, int k) const {
+    if (k < 0 || k > 2 || box.amount[k] <= 0) return false;
+    const int capacity = game.cr3Db ? game.cr3Db->constant("GENE_CAPACITY", 50) : 50;
+    if (capacity - geneLabHeld() < box.amount[k]) return false;
+    return (box.currency == 1 ? game.cr3GP : game.cr3Coins) >= box.price[k];
+}
+
+// (InterfaceMain::CreateLuckyBoxMenu 0x008914e8: LuckyBoxMain; flag 143 clear - set it, the TutorialMenu
+// with AnnounceTutorialTxt 0x144 and picture 60. LuckyBoxMenu's focus +0xd4: 0, the first box)
 void Viewer::openSpBoxes() {
     vs.screen = 11, vs.since = 0, vs.boxBuy = false, vs.boxPanel = 0, vs.boxCheckFocus = false;
+    vs.boxStage = 0, vs.boxSince = 0, vs.boxFocus = 0;
     const std::vector<SpBox> boxes = spBoxes();
-    vs.boxFocus = 0;
-    for (size_t k = 0; k < boxes.size(); ++k) // (the first Lucky Box in focus where there is one)
-        if (boxes[k].kind == 1) {
-            vs.boxFocus = int(k);
-            break;
-        }
     SDL_Log("shop: the boxes - %zu (%d in focus)", boxes.size(), vs.boxFocus);
+    if (!game.flag(143)) {
+        game.setFlag(143, true);
+        if (!vsEvents) {
+            vsEvents = std::make_unique<cr3::EventRuntime>(archive, game);
+            vsEvents->language = optionLanguage, vsEvents->autoPage = pageSeconds, vsEvents->askYesNo = true;
+            vsEvents->extraNatives = [this](cr3::ScriptVM& vm) { bindCr3FieldUiNatives(vm, false), bindVsNatives(vm); };
+        }
+        vsEvents->openTutorialMenu(0x144, 60);
+        vs.boxTutorial = vsEvents->tutorialMenuOpen();
+        SDL_Log("shop: the boxes' tutorial");
+    }
 }
 
-// LuckyBoxMain 4 / 5: yes - the box opened, its price paid, flag 39 set; what came out told
+// a tutorial page on (a tap, confirm): read through - EndTutorialMenu
+static void spBoxTutorialTap(cr3::EventRuntime& ev, bool& open) {
+    ev.advance(true);
+    if (ev.tutorialMenuRead()) ev.closeTutorialMenu(), open = false, SDL_Log("shop: the boxes' tutorial read");
+}
+
+// (the contents: the gene box's list - GeneBoxListMenu::SetGeneBoxListText 0x00ad443c: cardlist.dat's
+// entry month + 1, of box _id month - 5 (past May) else month + 7 - not the focused box -, each gene's
+// "{listnum}" MnlCmp 0x318 " {rarety} Lvl {level} {name}", rarety 0x242 + its rarity, level three
+// digits from its EXP)
 void Viewer::spBoxContentsPage() {
-    // comMsgSMenu has three text lines: the page number and two contents.
-    const int pages = std::max((int(vs.boxContents.size()) + 1) / 2, 1);
-    vs.boxContentsPage = std::clamp(vs.boxContentsPage, 0, pages - 1);
-    vs.told = "(" + std::to_string(vs.boxContentsPage + 1) + "/" + std::to_string(pages) + ")";
-    for (int k = vs.boxContentsPage * 2; k < int(vs.boxContents.size()) && k < vs.boxContentsPage * 2 + 2; ++k) vs.told += "\\n" + vs.boxContents[size_t(k)];
-    vs.toldSince = 0;
-    SDL_Log("shop: box contents page %d of %d", vs.boxContentsPage + 1, pages);
+    vs.boxContents.clear(), vs.boxContentsPage = 0;
+    std::time_t now = std::time(nullptr);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    const int month = local.tm_mon + 1, id = month > 5 ? month - 5 : month + 7;
+    std::string text = announceText("cardlist", month + 1);
+    if (const auto* table = game.cr3Db ? game.cr3Db->table("geneboxes") : nullptr)
+        for (const auto& row : table->items) {
+            if (row.integer("_id") != id) continue;
+            if (const auto* baskets = row.get("baskets"))
+                for (const auto& basket : baskets->items)
+                    if (const auto* items = basket.get("items"))
+                        for (const auto& item : items->items) {
+                            const cr3::Cr3Gene g(item.integer("masterId"), item.integer("exp"));
+                            const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(g.master);
+                            std::string line = menuAnnounce(0x318);
+                            char level[8];
+                            std::snprintf(level, sizeof level, "%03d", game.cr3Db->geneLevel(g));
+                            for (const auto& [key, with] : {std::pair<std::string, std::string>{"{rarety}", menuAnnounce(0x242 + (gi ? gi->grade : 0))},
+                                                            {"{level}", level}, {"{name}", cr3NameOf("gene_name.mbe", "GeneName", g.master)}})
+                                if (const size_t at = line.find(key); at != std::string::npos) line.replace(at, key.size(), with);
+                            const std::string key = "{" + std::to_string(item.integer("listnum")) + "}";
+                            if (const size_t at = text.find(key); at != std::string::npos) text.replace(at, key.size(), line);
+                        }
+        }
+    for (size_t at = 0; at <= text.size();) { // (its lines: "\n")
+        size_t end = text.find("\\n", at);
+        if (end == std::string::npos) end = text.size();
+        vs.boxContents.push_back(text.substr(at, end - at));
+        at = end + 2;
+    }
+    SDL_Log("shop: the gene box's list - month %d, box %d, %zu lines", month, id, vs.boxContents.size());
 }
 
+// the check button (LuckyBoxMain 1 / 2: tap 100 .. 149 - a Lucky Box's collection, 9 / 0xc; 150 .. - the
+// gene box's list, 0xf / 0x12): half a second's fade first
 void Viewer::inspectSpBox() {
     const auto boxes = spBoxes();
     if (vs.boxFocus < 0 || vs.boxFocus >= int(boxes.size()) || !game.cr3Db) return;
     const SpBox& box = boxes[size_t(vs.boxFocus)];
-    vs.boxContents.clear(), vs.boxContentsPage = 0;
-    if (box.kind == 1 && box.id >= 0 && box.id < int(game.cr3Db->itemSheets().size())) {
-        for (const auto& p : game.cr3Db->itemSheets()[size_t(box.id)].entries)
-            vs.boxContents.push_back(p.gene ? cr3NameOf("gene_name.mbe", "GeneName", p.item) : cr3ItemText(p.item, false));
-    } else if (box.kind == 0) {
-        if (const auto* table = game.cr3Db->table("geneboxes"))
-            for (const auto& row : table->items) {
-                if (row.integer("_id") != box.id) continue;
-                if (const auto* baskets = row.get("baskets"))
-                    for (const auto& basket : baskets->items)
-                        if (const auto* items = basket.get("items"))
-                            for (const auto& item : items->items) {
-                                const std::string name = cr3NameOf("gene_name.mbe", "GeneName", item.integer("masterId"));
-                                if (std::find(vs.boxContents.begin(), vs.boxContents.end(), name) == vs.boxContents.end()) vs.boxContents.push_back(name);
-                            }
-            }
-    }
-    if (!vs.boxContents.empty()) spBoxContentsPage();
-    SDL_Log("shop: box contents (%zu)", vs.boxContents.size());
+    if (box.kind == 2) return;
+    vs.boxStage = box.kind == 1 ? 6 : 7, vs.boxSince = 0, vs.boxContents.clear(), vs.boxOpenedKind = -1;
+    if (areaEvents) areaEvents->menuFade(true, 5);
+    SDL_Log("shop: box contents (%s)", box.kind == 1 ? "its collection" : "the gene box's list");
 }
 
+// LuckyBoxMain 4 / 5: yes - InterfaceMain::OpenLuckyBox (the request; its result not looked at), the
+// header's coins, flag 39, com_024 - then the opening (com_030)
 void Viewer::openSpBox() {
     const std::vector<SpBox> boxes = spBoxes();
     if (vs.boxFocus >= int(boxes.size())) return;
     const SpBox& box = boxes[size_t(vs.boxFocus)];
     const int k = std::clamp(vs.boxPanel, 0, 2), n = std::max(box.amount[k], 1), price = box.price[k];
     int r = -1;
-    std::vector<std::string> got;
-    if (box.kind == 0) {
-        r = game.cr3Db->openGeneBox(game, box.id, n, price);
-        if (r == cr3::kDbOk)
-            for (const cr3::Cr3Gene& g : game.cr3Db->lastGenes()) got.push_back(cr3NameOf("gene_name.mbe", "GeneName", g.master));
-    } else {
-        r = box.kind == 1 ? game.cr3Db->openLuckyBox(game, game.cr3Db->itemSheets()[size_t(box.id)].id, n, price) : game.cr3Db->openGPBox(game, n, price);
-        if (r == cr3::kDbOk)
-            for (size_t i = 0; i < game.cr3Db->opened().size(); ++i)
-                if (const cr3::Cr3ItemSheet::Prize* p = game.cr3Db->openedPrize(i))
-                    got.push_back(p->gene ? cr3NameOf("gene_name.mbe", "GeneName", p->item) : cr3ItemText(p->item, false));
+    if (box.kind == 0) r = game.cr3Db->openGeneBox(game, box.id, n, price);
+    else r = box.kind == 1 ? game.cr3Db->openLuckyBox(game, game.cr3Db->itemSheets()[size_t(box.id)].id, n, price) : game.cr3Db->openGPBox(game, n, price);
+    vs.boxOpenedKind = box.kind, vs.boxOpenedSheet = -1, vs.boxPrize = 0;
+    const size_t out = r != cr3::kDbOk ? 0 : box.kind == 0 ? game.cr3Db->lastGenes().size() : game.cr3Db->opened().size();
+    if (r == cr3::kDbOk && box.kind != 0) {
+        const auto& sheets = game.cr3Db->itemSheets();
+        for (size_t s = 0; s < sheets.size(); ++s)
+            if (sheets[s].id == game.cr3Db->openedSheet()) vs.boxOpenedSheet = int(s);
     }
-    SDL_Log("shop: box %d (kind %d) x%d for %d -> %d, %zu out", box.id, box.kind, n, price, r, got.size());
-    if (r != cr3::kDbOk) {
-        vs.told = menuAnnounce(r == cr3::kDbNoGP ? 0xff : 0x100), vs.toldSince = 0; // (not enough GP / coins)
-        return;
+    vs.boxPrize = r == cr3::kDbOk ? 0 : -1;
+    SDL_Log("shop: box %d (kind %d) x%d for %d -> %d, %zu out", box.id, box.kind, n, price, r, out);
+    for (size_t i = 0; i < out; ++i) {
+        if (box.kind == 0) SDL_Log("shop: out of the box: %s", cr3NameOf("gene_name.mbe", "GeneName", game.cr3Db->lastGenes()[i].master).c_str());
+        else if (const cr3::Cr3ItemSheet::Prize* p = game.cr3Db->openedPrize(i))
+            SDL_Log("shop: out of the box: %s", (p->gene ? cr3NameOf("gene_name.mbe", "GeneName", p->item) : cr3ItemText(p->item, false)).c_str());
     }
     game.setFlag(39, true); // (LuckyBoxMain 5: Cr3FlagWork::set(0x27))
     audio.playSe("com_024", false);
-    std::string text;
-    for (const std::string& g : got) text += (text.empty() ? "" : "\n") + g;
-    vs.told = text.empty() ? menuAnnounce(0xfb) : text, vs.toldSince = 0;
-    for (const std::string& g : got) SDL_Log("shop: out of the box: %s", g.c_str());
+    audio.playSe("com_030", false); // (CreateEffectLuckyBoxMenu)
+    vs.boxStage = 2, vs.boxSince = 0;
+}
+
+// the next prize's window (box->OpenUI(i)): a gene box's gene card (SetGetGene - SetGeneParameter_Card),
+// a Lucky / GP box's gene (SetGetGeneColosseum) or item (SetGetItemLuckyBox - GetItemWindow); all
+// shown - the Lucky / GP box's collection (OpenItemSheet: CreateCollectListMainIndex with the first,
+// AddCollectListGetItem the rest), the gene box's none
+void Viewer::spBoxPrize() {
+    const size_t out = vs.boxPrize < 0 || !game.cr3Db ? 0 : vs.boxOpenedKind == 0 ? game.cr3Db->lastGenes().size() : game.cr3Db->opened().size();
+    cr3::EventRuntime* ev = areaEvents.get();
+    vs.boxSince = 0;
+    if (size_t(vs.boxPrize) < out && vs.boxPrize >= 0) {
+        vs.boxStage = 4;
+        if (vs.boxOpenedKind == 0) {
+            const cr3::Cr3Gene& g = game.cr3Db->lastGenes()[size_t(vs.boxPrize)];
+            if (ev) ev->openGeneGet(g.master, game.cr3Db->geneLevel(g), false, true);
+        } else if (const cr3::Cr3ItemSheet::Prize* p = game.cr3Db->openedPrize(size_t(vs.boxPrize)); p && p->gene && ev)
+            ev->openGeneGet(p->item, 1, false, true);
+        SDL_Log("shop: the box's prize %d of %zu", vs.boxPrize + 1, out);
+        return;
+    }
+    if (vs.boxOpenedKind != 0 && vs.boxOpenedSheet >= 0 && out > 0) {
+        const cr3::Cr3ItemSheet::Prize* first = game.cr3Db->openedPrize(0);
+        openCollectList(vs.boxOpenedSheet, false, first && first->gene ? 1 : 0, first ? first->item : -1);
+        for (size_t i = 1; i < out; ++i)
+            if (const cr3::Cr3ItemSheet::Prize* p = game.cr3Db->openedPrize(i)) collectList.added.push_back({p->gene ? 1 : 0, p->item});
+        vs.boxStage = 5;
+        return;
+    }
+    vs.boxStage = 0; // (LuckyBoxMenu 7: SetMoveBack, the footer, the header - buy mode)
+    SDL_Log("shop: the box opened");
+}
+
+void Viewer::stepSpBoxes(float dt) {
+    if (vs.screen != 11) return;
+    vs.boxSince += dt;
+    if (vs.boxTutorial && (!vsEvents || !vsEvents->tutorialMenuOpen())) vs.boxTutorial = false;
+    if (vs.boxTutorial) { // (its typing)
+        vsEventClock = std::min(vsEventClock + dt, 0.25f);
+        for (; vsEventClock >= cr3::EventRuntime::kTick; vsEventClock -= cr3::EventRuntime::kTick) vsEvents->tick();
+    }
+    cr3::EventRuntime* ev = areaEvents.get();
+    Cr3CollectList& cl = collectList;
+    switch (vs.boxStage) {
+    case 1: // (LuckyBoxMain 3: the panel there - asked 0x123)
+        if (vs.boxSince >= 0.4333f && !vs.ask) vs.ask = 4; // (its time: boxSince past the move)
+        break;
+    case 9: // (6 -> 8: the panel back - buy mode)
+        if (vs.boxSince >= 0.4333f) vs.boxStage = 0, vs.boxSince = 0;
+        break;
+    case 2:
+        if (vs.boxSince >= 2.0f) vs.boxStage = 3, vs.boxSince = 0;
+        break;
+    case 3:
+        if (vs.boxSince >= 10.0f / 30) spBoxPrize();
+        break;
+    case 4: // (IsEndUI: the gene's window closed; an item's tapped - 1130)
+        if (vs.boxOpenedKind == 0 || (game.cr3Db && game.cr3Db->openedPrize(size_t(vs.boxPrize)) && game.cr3Db->openedPrize(size_t(vs.boxPrize))->gene))
+            if (!ev || !ev->geneGet().open) ++vs.boxPrize, spBoxPrize();
+        break;
+    case 6: // (9 -> 0xa: half a second, the fade back, the collection - its open SE off)
+        if (vs.boxSince >= 0.5f) {
+            const auto boxes = spBoxes();
+            if (vs.boxFocus < int(boxes.size())) openCollectList(boxes[size_t(vs.boxFocus)].id, false, -1, -1, false);
+            if (ev) ev->menuFade(false, 5);
+            vs.boxStage = 5, vs.boxSince = 0;
+        }
+        break;
+    case 5: // (0xb / 0xe: CheckEndMainCollectList - Cr3FadeIn(0, 5), the boxes again)
+        if (!cl.open) vs.boxStage = 0, vs.boxSince = 0;
+        else {
+            stepCollectList(dt);
+            if (!inputScript.empty() && inputScript.front() == "collect:close" && cl.phase == 0 && cl.since > 1.0f) inputScript.pop_front(), chooseCollectList(-1);
+            if (cl.phase == 1 && (cl.closing += dt) >= 0.5f) {
+                cl.open = false;
+                if (ev) ev->menuFade(false, 5);
+                vs.boxStage = 0, vs.boxSince = 0;
+                SDL_Log("shop: the collection closed");
+            }
+        }
+        break;
+    case 7: // (0xf -> 0x10: half a second, CreateGeneBoxListMenu)
+        if (vs.boxContents.empty() && vs.boxSince >= 0.5f) {
+            spBoxContentsPage();
+            if (ev) ev->menuFade(false, 5);
+        }
+        break;
+    case 10: // (0x11: the list gone - FadeIn(0, 5), the SShopBG at 1.0)
+        if (vs.boxSince >= 0.5f) {
+            if (ev) ev->menuFade(false, 5);
+            vs.boxStage = 0, vs.boxSince = 0;
+        }
+        break;
+    case 8: // (0x15: a second - the header, footer and menu ended; the shop's top)
+        if (vs.boxSince >= 1.0f) {
+            if (ev) ev->menuFade(false, 10);
+            vs.screen = 10, vs.since = 0, vs.boxStage = 0;
+            SDL_Log("shop: back from the boxes");
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+// the boxes' keys beyond the carousel's (the tutorial, a prize's window, a collection, the gene list)
+bool Viewer::spBoxKey(SDL_Keycode key) {
+    const bool enter = key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE;
+    const bool back = key == SDLK_ESCAPE || key == SDLK_BACKSPACE;
+    if (vs.boxTutorial && vsEvents) {
+        if (enter || back) spBoxTutorialTap(*vsEvents, vs.boxTutorial);
+        return true;
+    }
+    switch (vs.boxStage) {
+    case 0:
+        return false;
+    case 4:
+        if (enter || back) chooseVs(1130);
+        return true;
+    case 5:
+        if (enter || back) chooseCollectList(collectList.cgl >= 1 && collectList.cgl <= 4 ? 0 : -1);
+        return true;
+    case 7:
+        if (key == SDLK_UP || key == SDLK_DOWN) {
+            const int last = std::max(int(vs.boxContents.size()) - 15, 0);
+            const int was = vs.boxContentsPage;
+            vs.boxContentsPage = std::clamp(vs.boxContentsPage + (key == SDLK_DOWN ? 1 : -1), 0, last);
+            if (was != vs.boxContentsPage) SDL_Log("shop: the gene box's list at line %d", vs.boxContentsPage);
+        } else if (back || enter) chooseVs(-1);
+        return true;
+    default:
+        return true;
+    }
 }
 
 void Viewer::vsList(int mode) {
@@ -5559,13 +5856,46 @@ void Viewer::drawVs(int w, int h) {
     if (vs.screen >= 10 && vs.screen <= 12) {
         drawSpShop(w, h, view);
         UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
-        if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+        // (the boxes' footer - GeneSynthesisFutter 0xa0, no tabs: comFtrMixMenu's genes held of 50 and
+        // the stock of its room, each comListNum_fr00 digit 0.19 apart, leading zeros hidden; gone
+        // while a panel moves, a box opens or the contents are up)
+        const bool boxFooter = vs.screen == 11 && (vs.boxStage == 0 || vs.boxStage == 8);
+        if (boxFooter && cr3UiCall(foot, "call_comFtrMixMenu", x, y, w, h)) {
+            UiFig& mix = cr3UiPut("comftrmixmenu", "", 0, x, y, view);
+            const int held = geneLabHeld();
+            auto number = [&](const UiFig& panel, const std::string& joint, int value, int places) {
+                float nx, ny;
+                if (!cr3UiCall(panel, joint, nx, ny)) return;
+                int most = 1;
+                for (int k = 0; k < places; ++k) most *= 10;
+                value = std::clamp(value, 0, most - 1);
+                bool shown = false;
+                for (int k = 0; k < places; ++k, nx += 0.19f) {
+                    most /= 10;
+                    const int d = value / most % 10;
+                    if (d > 0 || k == places - 1) shown = true;
+                    if (shown) cr3UiPut("comlistnum_fr00", "", float(d) / 30, nx, ny, view);
+                }
+            };
+            if (cr3UiCall(mix, "call_comFtrMixGenesPanel", cx, cy)) {
+                UiFig& genes = cr3UiPut("comftrmixgenespanel", "", 0, cx, cy, view);
+                number(genes, "call_comListNum_fr00_001", held, 2);
+                number(genes, "call_comListNum_fr00_002", game.cr3Db ? game.cr3Db->constant("GENE_CAPACITY", 50) : 50, 2);
+            }
+            if (cr3UiCall(mix, "call_comFtrMixBoxPanel", cx, cy)) {
+                UiFig& stock = cr3UiPut("comftrmixboxpanel", "", 0, cx, cy, view);
+                number(stock, "call_comListNum_fr00_001", int(game.cr3Genes.size()) - held, 3);
+                number(stock, "call_comListNum_fr00_002", game.cr3GeneStock, 3);
+            }
+        }
+        const bool back = vs.screen != 11 || boxFooter || vs.boxStage == 7;
+        if (back && cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
             UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
             float ax, ay, ex, ey;
             if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
             if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) vsTaps.push_back({ax, ay, ex, ey, -1});
         }
-        if (vs.ask) drawCr3Asked(menuAnnounce(vs.ask == 5 ? 0x316 : 0x123), vs.since, 0, true, 600, 601, w, h, view, &vsTaps);
+        if (vs.ask) drawCr3Asked(menuAnnounce(vs.ask == 5 ? 0x316 : 0x123), vs.ask == 4 ? vs.boxSince - 0.4333f : vs.since, 0, true, 600, 601, w, h, view, &vsTaps);
         if (!vs.told.empty()) drawCr3Told(vs.told, vs.toldSince, 602, w, h, view, &vsTaps);
         return;
     }
@@ -5864,12 +6194,20 @@ bool Viewer::vsBattleOver(bool won) {
     }
     if (vs.screen != 6) return false;
     ++vs.battle;
+    // (phaseColosseumContinue 0x9d0b48 / phaseEndVSTournament 0x9d1888: BtlStatusList::AcquireDrop - this battle's drops kept)
+    acquireCr3Remuneration();
+    vs.drops.insert(vs.drops.end(), cr3WaveDrops.begin(), cr3WaveDrops.end());
+    cr3WaveDrops.clear();
     if (vsMoreBattles()) {
         cr3BattleMode = false, cr3BattleEvents.reset(); // (on to the next: no field between)
         vsNextBattle();
     } else {
-        endCr3Battle();
-        vsEnd();
+        // (WinRating 0x9d0890: DBSystem::Request(EndVSTournament) first; then phaseVictoryOut's EntryResult -
+        // the result screen -, the results after it: endCr3Battle's vsShowResults)
+        vs.endScore = game.cr3Vs.score;
+        game.cr3Db->endVSTournament(game, std::time(nullptr));
+        vs.screen = 5, vs.result = true;
+        enterCr3Result();
     }
     return true;
 }
@@ -5877,6 +6215,10 @@ bool Viewer::vsBattleOver(bool won) {
 void Viewer::vsEnd() {
     vs.endScore = game.cr3Vs.score;
     game.cr3Db->endVSTournament(game, std::time(nullptr));
+    vsShowResults();
+}
+
+void Viewer::vsShowResults() {
     const auto& rw = game.cr3Db->vsRewards();
     SDL_Log("vs: tournament over - won %d, GP +%d, item %d, week %d", int(rw.won), rw.gp, rw.item, game.cr3Vs.weekScore);
     game.cr3Db->getVSTournaments(game, std::time(nullptr));
@@ -5885,21 +6227,43 @@ void Viewer::vsEnd() {
 }
 
 void Viewer::chooseVs(int id) {
+    if (vs.screen == 11 && vs.boxTutorial && vsEvents) return spBoxTutorialTap(*vsEvents, vs.boxTutorial);
     if (!vs.told.empty()) {
-        if (id == 602 || id == -1) vs.told.clear(), vs.boxContents.clear();
+        if (id == 602 || id == -1) vs.told.clear();
         return;
     }
     if (vs.ask) {
         if (id == 601 || id == -1) {
             if (vs.ask == 5) vs.screen = 10, vs.since = 0; // (SShopMenu 8: no - the card away)
+            if (vs.ask == 4) vs.boxStage = 9, vs.boxSince = 0; // (LuckyBoxMain 4 -> 6: the panel back)
             vs.ask = 0, audio.playSe("com_004", false);
         }
         else if (id == 600) vsAnswered();
         return;
     }
+    if (vs.screen == 11 && vs.boxStage != 0) { // (the boxes past the carousel / buy mode)
+        if (vs.boxStage == 5) return chooseCollectList(id);
+        if (vs.boxStage == 4 && (id == 1130 || id == 602)) { // (the item's window tapped - 602: --input vs:told's, the gene's too)
+            if (areaEvents && areaEvents->geneGet().open) return (void)geneGetTap();
+            return (void)(++vs.boxPrize), spBoxPrize();
+        }
+        if (vs.boxStage == 7 && id == -1 && !vs.boxContents.empty()) { // (0x10 / 0x13: back - DeleteGeneBoxListMenu)
+            audio.playSe("com_004", false);
+            if (areaEvents) areaEvents->menuFade(true, 5);
+            vs.boxStage = 10, vs.boxSince = 0;
+            SDL_Log("shop: the gene box's list closed");
+        }
+        return;
+    }
     if (id == -1) {
         audio.playSe("com_004", false);
         if (vs.screen == 11 && vs.boxBuy) return (void)(vs.boxBuy = false, vs.since = 0);
+        if (vs.screen == 11) { // (LuckyBoxMain 1: back - FadeOut(0, 10), the header's title 9, a second)
+            if (areaEvents) areaEvents->menuFade(true, 10);
+            vs.boxStage = 8, vs.boxSince = 0;
+            SDL_Log("shop: leaving the boxes");
+            return;
+        }
         vs.screen = vs.screen == 4 ? 3 : vs.screen == 3 ? 2 : vs.screen == 2 ? 1 : vs.screen == 8 ? (vs.shopOnly ? 10 : 1) : vs.screen == 11 || vs.screen == 12 ? 10 : 0, vs.since = 0;
         if (vs.screen == 0) SDL_Log("vs: closed");
         return;
@@ -5911,6 +6275,10 @@ void Viewer::chooseVs(int id) {
         return;
     }
     if ((vs.screen == 1 || vs.screen == 2) && (id == 12 || id == 13) && !game.flag(33)) return; // (not up before the tutorial's end)
+    if (vs.screen == 11 && id >= 1110 && id < 1113) { // (a Disabled panel: not tapped - UpdateBuyPanel)
+        const auto boxes = spBoxes();
+        if (!vs.boxBuy || vs.boxFocus >= int(boxes.size()) || !spBoxBuyable(boxes[size_t(vs.boxFocus)], id - 1110)) return (void)SDL_Log("shop: box buy panel %d disabled", id - 1110);
+    }
     audio.playSe("com_003", false);
     if (vs.screen == 10 && id == 1000) openSpBoxes();
     else if (vs.screen == 10 && id == 1001) vs.screen = 8, vs.since = 0, vs.row = 0, SDL_Log("shop: the goods");
@@ -5919,9 +6287,10 @@ void Viewer::chooseVs(int id) {
         const int n = std::max(int(spBoxes().size()), 1);
         if (id == 1101) vs.boxBuy = true, vs.boxPanel = 0, vs.boxCheckFocus = false, vs.since = 0;
         else vs.boxFocus = ((vs.boxFocus + (id == 1100 ? -1 : 1)) % n + n) % n;
-    } else if (vs.screen == 11 && vs.boxBuy && id >= 1110 && id < 1113) {
-        vs.boxPanel = id - 1110, vs.ask = 4, vs.since = 0; // (LuckyBoxMain 3: asked 0x123)
-    } else if (vs.screen == 11 && vs.boxBuy && id == 1120) {
+    } else if (vs.screen == 11 && vs.boxBuy && id >= 1110 && id < 1113) { // (LuckyBoxMain 2: SetMoveBuy, the footer and header gone)
+        vs.boxPanel = id - 1110, vs.boxStage = 1, vs.boxSince = 0, vs.boxCheckFocus = false;
+        SDL_Log("shop: box buy panel %d chosen", vs.boxPanel);
+    } else if (vs.screen == 11 && id == 1120) {
         inspectSpBox();
     } else if (vs.screen == 1 && id == 1) {
         vs.screen = 2, vs.since = 0, vs.buttonFocus = 0;
@@ -6009,7 +6378,7 @@ void Viewer::vsAnswered() {
         SDL_Log("vs: tournament %d begun -> %d", game.cr3Db->vsTournaments()[size_t(vs.chosen)].id, r);
         if (r != cr3::kDbOk) return;
         game.cr3Db->pickWildcard();
-        vs.battle = 0, vs.lost = false;
+        vs.battle = 0, vs.lost = false, vs.result = false, vs.drops.clear(); // (AcquireDrop: the tournament's drops from its first battle)
         std::fill(std::begin(vs.wildChosen), std::end(vs.wildChosen), -1);
         // (VSMain 7 .. 9: BeginVSTournament, then vs.nut's VS_BattleIn - its vista's VsBattleIn the battles)
         game.vsSelected = vs.chosen, vsPendingTournament = -1;
@@ -6031,6 +6400,7 @@ bool Viewer::vsClick(float fx, float fy) {
     }
     if (vs.screen == 0 || vs.screen == 5) return false;
     if (vs.screen == 6) return vsBattleOver(true), true;
+    if (vs.screen == 11 && vs.boxTutorial) return chooseVs(0), true; // (the boxes' tutorial: a page on)
     const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
     const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
     for (auto it = vsTaps.rbegin(); it != vsTaps.rend(); ++it)
@@ -6038,6 +6408,7 @@ bool Viewer::vsClick(float fx, float fy) {
             chooseVs(it->id);
             return true;
         }
+    if (vs.screen == 11 && vs.boxStage == 5) chooseCollectList(0); // (the collection: a tap elsewhere)
     return true;
 }
 
@@ -6066,11 +6437,9 @@ bool Viewer::vsKey(SDL_Keycode key) {
     }
     if (vs.screen == 0 || vs.screen == 5) return false;
     const bool enter = key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE;
+    if (vs.screen == 11 && vs.boxTutorial) return spBoxKey(key);
     if (!vs.told.empty()) {
-        if (!vs.boxContents.empty() && (key == SDLK_LEFT || key == SDLK_UP || key == SDLK_RIGHT || key == SDLK_DOWN)) {
-            vs.boxContentsPage += key == SDLK_RIGHT || key == SDLK_DOWN ? 1 : -1;
-            spBoxContentsPage();
-        } else if (enter || key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(602);
+        if (enter || key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseVs(602);
         return true;
     }
     if (vs.ask) {
@@ -6099,9 +6468,10 @@ bool Viewer::vsKey(SDL_Keycode key) {
         return true;
     }
     if (vs.screen == 11) {
+        if (spBoxKey(key)) return true;
         if (!vs.boxBuy && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseVs(key == SDLK_LEFT ? 1100 : 1102);
-        else if (!vs.boxBuy && enter) chooseVs(1101);
-        else if (vs.boxBuy && vitaButtons() && (key == SDLK_UP || key == SDLK_DOWN)) {
+        else if (!vs.boxBuy && enter) chooseVs(vs.boxCheckFocus ? 1120 : 1101);
+        else if (vitaButtons() && (key == SDLK_UP || key == SDLK_DOWN)) {
             const auto boxes = spBoxes();
             if (vs.boxFocus < int(boxes.size()) && boxes[size_t(vs.boxFocus)].kind != 2) {
                 vs.boxCheckFocus = !vs.boxCheckFocus;

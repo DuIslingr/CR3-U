@@ -1504,7 +1504,10 @@ row (CommandFomula: action, damage, chain - BtlCalculator's table: 1 physical, 2
 chain bonuses, 5 an HP heal, ...); its direction (direction.mbe CommandDirection: +4 the kind, +8
 the motion - an AnimCommon type: 10 bi01, 15 bs01). The prologue hero's gene commands: Rakshasa
 Lotus, Augmented Electra, Augmented Aquinas, Augmented Healing (All) - 40 / 18 / 36 / 24. A
-monster picks among its mode-0 MonsterCommand row's eight (command, ratio, count) by ratio; its
+monster's MonsterCommand row (one a mode): +0x08 element, +0x0c card (a gene), +0x10 actions a
+turn, +0x14 attack, +0x18 Last Attack, +0x1c Finest Arts, eight (command, action cost, uses - -1
+unlimited) at +0x20, picked by the enemy AI (BtlStatusList::addCommandByAI: think points by the
+command's select type +0xc8, its weight +0xcc, a preferred target - BtlStatus::IsSelected); its
 skills are the row's eight ids at +0x80 (Gunner's, Axer's and Heterocera's 304: element 4
 resistance -50).
 

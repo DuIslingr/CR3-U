@@ -177,13 +177,7 @@ void Viewer::tap() {
     if (cr3BattleMode) return cr3BattleTap();
     if (areaMode && !eventMode && areaEvents) { // (CR3's field: the script's page, else a check object's function)
         if (areaEvents->running()) areaEvents->touch();
-        else if (areaClimb.on || areaFall.on) {}
-        else if (areaLadderNear >= 0 && !toyCam.on) startAreaClimb(areaLadderNear, areaLadderNearEnd); // (CheckGimmick_Ladder -> SetStateLadder)
-        else if (areaCheckNear >= 0 && !toyCam.on) {
-            const AreaGimmick& g = areaGimmicks[size_t(areaCheckNear)];
-            if (g.box >= 0) game.cr3OpenBox = g.box; // (Fld2Box::ExecOpen: Fld2TBoxList::SetOpenBox)
-            runAreaFunction(g.function);
-        }
+        else if (talkFocused() && !toyCam.on) talk(); // (UpdateTouch's still release: +0x11a - only with the "!" focused)
         return;
     }
     if (cr3Title.stage) {
@@ -3558,6 +3552,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         else if (want.compare(0, 4, "item") == 0) chooseVs(700 + std::atoi(want.c_str() + 4)); // (the goods' row n: focused, then asked)
         else if (want == "boxprev" || want == "boxpick" || want == "boxnext") chooseVs(want == "boxprev" ? 1100 : want == "boxpick" ? 1101 : 1102);
         else if (want.compare(0, 3, "buy") == 0) chooseVs(1110 + std::atoi(want.c_str() + 3));
+        else if (want == "boxcheck") chooseVs(1120); // (the box's check button: its contents)
         else if (want == "yes" || want == "no") chooseVs(want == "yes" ? 600 : 601);
         else if (want == "told") chooseVs(602);
         else if (want == "results") chooseVs(301);
@@ -3820,6 +3815,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
             if (across <= 1.5f && across < bestCheckDist && std::fabs(p[1] - areaWalker->radius - m.m[7]) < 1.0f)
                 bestCheckDist = across, areaCheckNear = -1, areaLadderNear = int(k), areaLadderNearEnd = end;
         }
+    stepTalkMark(dt);
     // (--input encount:force - the field's Battle button in a dungeon -: tests)
     if (!scripted && !inputScript.empty() && inputScript.front() == "encount:force") {
         inputScript.pop_front();
@@ -3900,6 +3896,7 @@ void Viewer::drawArea(int w, int h) {
         world = cr3::mat4FromMat34(area2D.cam);
         cw = area2D.cam;
     }
+    areaVP = vp, areaVPSet = !area2D.on; // (the balloon's projection - Cr3UtilSetBalloonPos; SetBalloonPos does nothing under the ortho camera)
     cr3::SceneLighting l = lighting;
     l.camera[0] = e[0], l.camera[1] = e[1], l.camera[2] = e[2];
     l.time = time;
@@ -4539,6 +4536,7 @@ void Viewer::drawCr3FieldButtons(int w, int h, const Mat4& view) {
         if (open) tapOf(u, 110);
     }
     if (dungeon && game.minimapEnable) drawCr3Minimap(w, h, view);
+    drawTalkBalloon(view);
     drawCr3Goods(w, h, view);
 }
 
@@ -4666,6 +4664,21 @@ int Viewer::focusedGoods() {
 
 bool Viewer::goodsPad(bool cycle) {
     if (!vitaButtons() || !areaMode || !cr3FieldIdle() || cr3Camp.stage != 0) return false;
+    // (FieldGoodsMenu param 0xb, the Vita's: with the "!" focused ○ talks and □ does nothing; R moves on round them, the
+    // "!" after the panel it came in after)
+    if (talkMark.state == 2) {
+        if (!cycle) return talkMark.focused ? true : (useGoods(focusedGoods()), true);
+        if (talkMark.focused) {
+            if (focusedGoods() >= 0) talkMark.focused = false;
+            SDL_Log("field: goods cursor %d", focusedGoods());
+            return true;
+        }
+        const std::set<int> shown = shownGoods();
+        auto it = shown.find(focusedGoods());
+        if (it == shown.end() || ++it == shown.end()) talkMark.focused = true, SDL_Log("field: goods cursor ! (talk)");
+        else goodsFocus = *it, SDL_Log("field: goods cursor %d", goodsFocus);
+        return true;
+    }
     const int goods = focusedGoods();
     if (goods < 0) return false;
     if (cycle) {
@@ -4681,19 +4694,94 @@ bool Viewer::goodsPad(bool cycle) {
     return true;
 }
 
+// (Fld2NPC::Check 0xa016e0 / Fld2TaskPlayer::CheckGimmickItems 0x879380 / CheckGimmick_Ladder 0x8792fc: the balloon's target)
+void Viewer::talk() {
+    if (areaClimb.on || areaFall.on || toyCam.on || !talkFocused()) return;
+    if (areaLadderNear >= 0) return startAreaClimb(areaLadderNear, areaLadderNearEnd);
+    if (areaCheckNear < 0) return;
+    const AreaGimmick& g = areaGimmicks[size_t(areaCheckNear)];
+    if (g.box >= 0) game.cr3OpenBox = g.box; // (Fld2Box::ExecOpen: Fld2TBoxList::SetOpenBox)
+    runAreaFunction(g.function);
+}
+
+void Viewer::stepTalkMark(float dt) {
+    TalkMark& m = talkMark;
+    const bool want = (areaCheckNear >= 0 || areaLadderNear >= 0) && !toyCam.on && !areaHeld && !areaClimb.on && !areaFall.on;
+    if (want) { // (the balloon's point - GetGimmickBalloonPosition 0x9fa20c: a ladder's end itself)
+        if (areaLadderNear >= 0) {
+            const AreaLadder& l = areaLadders[size_t(areaLadderNear)];
+            const cr3::Mat34& j = areaLadderNearEnd == 0 ? l.ups : l.dws;
+            m.at = {j.m[3], j.m[7], j.m[11]};
+        } else {
+            const cr3::Mat34& w = areaGimmicks[size_t(areaCheckNear)].world;
+            m.at = {w.m[3], w.m[7] + 0.1f * std::sqrt(w.m[1] * w.m[1] + w.m[5] * w.m[5] + w.m[9] * w.m[9]), w.m[11]};
+        }
+        if (!m.shown) m.shown = true, m.popT = 0; // (Fld2Balloon::Show: from away only - moving to another target doesn't pop it again)
+    } else m.shown = false;
+    m.popT += dt;
+    if (want && (m.state == 0 || m.state == -1)) {
+        m.state = 1, m.t = 0, m.focused = true;
+        SDL_Log("field: the talk mark up (%s)", areaLadderNear >= 0 ? areaLadders[size_t(areaLadderNear)].name.c_str() : areaGimmicks[size_t(areaCheckNear)].function.c_str());
+    } else if (!want && (m.state == 1 || m.state == 2)) m.state = -1, m.t = 0, SDL_Log("field: the talk mark down");
+    m.t += dt;
+    if (m.state == 1 && m.t >= 0.1333f) m.state = 2;
+    else if (m.state == -1 && m.t >= 0.1333f) m.state = 0;
+}
+
+// FieldGoodsMenu (Pose 0xa68000): the focused panel at the arc's middle (call_feGoodsPanel_03 - fegoodsmenu's _01 .. _05 down
+// from the corner), its icon (fegoodsicon_fr00: goods i at i / 30, the "!" at 1/3, the ride at 0.2667); a tap on the icon's
+// circle (tapAreaCP00 / AP00 - the panel has none). The "!" (SetExclamationPanel 0xa69a0c): over 0.1333 s it comes in from
+// 0.4 up and left at alpha t while the panel before goes on _03 -> _04 -> _05; out, the other way
 void Viewer::drawCr3Goods(int w, int h, const Mat4& view) {
-    if (shownGoods().empty()) return;
-    float x, y, px, py, ix, iy;
+    const bool talkUp = talkMark.state != 0;
+    if (shownGoods().empty() && !talkUp) return;
+    float x, y, p3x, p3y, ix, iy;
     UiFig& pos = cr3UiPut("fegoodsposition", "", 0, 0, 0, view);
     if (!cr3UiCall(pos, "call_feGoodsMenu", x, y, w, h)) return;
     UiFig& menu = cr3UiPut("fegoodsmenu", "", 0, x, y, view);
     const int goods = focusedGoods();
-    if (!cr3UiCall(menu, "call_feGoodsPanel_03", px, py)) return; // (the arc's middle - _01 .. _05 down from the corner)
-    UiFig& panel = cr3UiPut("fegoodspanel", "fegoodspanel_in", 1.0f, px, py, view);
-    if (cr3UiCall(panel, "call_feGoodsIcon_fr00", ix, iy)) cr3UiPut("fegoodsicon_fr00", "", float(goods) / 30, ix, iy, view);
-    float ax, ay, ex, ey;
-    if (cr3UiCall(panel, "tapAreaCP00", ax, ay) && cr3UiCall(panel, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 120 + goods));
-    else cr3CampTaps.push_back({px - 0.5f, py - 0.5f, px + 0.5f, py + 0.5f, 120 + goods});
+    if (!cr3UiCall(menu, "call_feGoodsPanel_03", p3x, p3y)) return;
+    float p4x = p3x, p4y = p3y, p5x = p3x, p5y = p3y;
+    cr3UiCall(menu, "call_feGoodsPanel_04", p4x, p4y), cr3UiCall(menu, "call_feGoodsPanel_05", p5x, p5y);
+    auto iconTime = [](int id) { return id == 4 ? 1.0f / 3 : id == 5 ? 0.26666668f : float(id) / 30; };
+    auto drawPanel = [&](int id, float px, float py, float alpha, bool tappable) {
+        UiFig& panel = cr3UiPut("fegoodspanel", "fegoodspanel_in", 1.0f, px, py, view, alpha);
+        if (!cr3UiCall(panel, "call_feGoodsIcon_fr00", ix, iy)) return;
+        UiFig& icon = cr3UiPut("fegoodsicon_fr00", "", iconTime(id), ix, iy, view, alpha);
+        if (!tappable) return;
+        float ax, ay, ex, ey;
+        if (cr3UiCall(icon, "tapAreaCP00", ax, ay) && cr3UiCall(icon, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 120 + id));
+        else cr3CampTaps.push_back({px - 0.5f, py - 0.5f, px + 0.5f, py + 0.5f, 120 + id});
+    };
+    if (!talkUp) return drawPanel(goods, p3x, p3y, 1, true);
+    const float k = std::clamp(talkMark.t / 0.1333f, 0.0f, 1.0f);
+    const float a = talkMark.state == 1 ? k : talkMark.state == -1 ? 1 - k : 1; // (the "!"'s share)
+    if (goods >= 0 && (a < 1 || !talkMark.focused)) { // (the panel before: on round the arc as the "!" comes in)
+        float gx = p3x, gy = p3y;
+        if (talkMark.focused) {
+            if (a <= 0.5f) gx = p3x + (p4x - p3x) * a * 2, gy = p3y + (p4y - p3y) * a * 2;
+            else gx = p4x + (p5x - p4x) * (a * 2 - 1), gy = p4y + (p5y - p4y) * (a * 2 - 1);
+        }
+        drawPanel(goods, gx, gy, 1, talkMark.state == 2 && !talkMark.focused);
+    }
+    if (talkMark.focused || talkMark.state != 2)
+        drawPanel(4, p3x - 0.4f * (1 - a), p3y + 0.4f * (1 - a), a, talkMark.state == 2 && talkMark.focused);
+}
+
+// the balloon over the target (Fld2Balloon: feFlag_fr00 at frame 0, the interface camera; popped 1.1 sin(10 t) for 0.2 s)
+void Viewer::drawTalkBalloon(const Mat4& view) {
+    if (!talkMark.shown || !areaVPSet || talkMark.state == 0) return;
+    const float* v = areaVP.data();
+    const cr3::Vec3& q = talkMark.at;
+    const float cw = v[3] * q[0] + v[7] * q[1] + v[11] * q[2] + v[15];
+    if (cw <= 0) return;
+    const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+    const float x = (v[0] * q[0] + v[4] * q[1] + v[8] * q[2] + v[12]) / cw * float(frameW) / 2 / k;
+    const float y = (v[1] * q[0] + v[5] * q[1] + v[9] * q[2] + v[13]) / cw * float(frameH) / 2 / k;
+    const float keep = cr3UiScale;
+    cr3UiScale = talkMark.popT < 0.2f ? 1.1f * std::sin(10 * talkMark.popT) : 1.0f;
+    cr3UiPut("feflag_fr00", "", 0, x, y, view);
+    cr3UiScale = keep;
 }
 
 void Viewer::useGoods(int goods) {

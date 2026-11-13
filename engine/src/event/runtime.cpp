@@ -440,14 +440,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("LunchEvent", "SetBalloonFinish", [balloon](NativeCall& c) {
         if (LunchBalloon* b = balloon(c.string(0))) b->frame = 2;
     });
-    vm.setNative("InterfaceWindow", "CreateTutorialMenuNum", [this](NativeCall& c) {
-        if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
-        parsed_ = parseMessage(filterMessage(tutorialTexts_.message(c.integer(0), language)));
-        messageWindow_ = TutorialMenu, message_ = parsed_.pages.empty() ? 0 : c.integer(0);
-        page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
-        tutorialMenuOpen_ = message_ > 0, tutorialMenuPicture_ = 0;
-        if (message_ > 0) ++messagesSet_;
-    });
+    vm.setNative("InterfaceWindow", "CreateTutorialMenuNum", [this](NativeCall& c) { openTutorialMenu(c.integer(0), 0); });
     vm.setNative("InterfaceWindow", "SetContentTutorialMenuNum", [this](NativeCall& c) {
         if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
         parsed_ = parseMessage(filterMessage(tutorialTexts_.message(c.integer(0), language)));
@@ -463,10 +456,7 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     vm.setNative("Cr3System", "GetDungeonLevel", [this](NativeCall& c) { c.result(dungeonLevel); });
     vm.setNative("InterfaceWindow", "SetPictureTutorialMenu", [this](NativeCall& c) { tutorialMenuPicture_ = c.integer(0); });
     vm.setNative("InterfaceWindow", "EndCheckTutorialMenu", [this](NativeCall& c) { c.result(!(message_ > 0 && !ended_ && messageWindow_ == TutorialMenu)); });
-    vm.setNative("InterfaceWindow", "EndTutorialMenu", [this](NativeCall&) {
-        tutorialMenuOpen_ = false;
-        if (messageWindow_ == TutorialMenu) message_ = 0;
-    });
+    vm.setNative("InterfaceWindow", "EndTutorialMenu", [this](NativeCall&) { closeTutorialMenu(); });
     vm.setNative("InterfaceWindow", "CheckAliveTutorialMenu", [this](NativeCall& c) { c.result(tutorialMenuOpen_); });
     vm.setNative("Cr3FieldTutorial", "Create", [this](NativeCall&) { tutorialPicture_ = TutorialPicture(); });
     vm.setNative("Cr3FieldTutorial", "Delete", [this](NativeCall&) { tutorialPicture_ = TutorialPicture(); });
@@ -1378,6 +1368,20 @@ void EventRuntime::shopClerk(bool shown) {
     Portrait p{true, false, 0, kClerkFace, 1};
     p.shop = true;
     cutIns_[2] = p;
+}
+
+void EventRuntime::openTutorialMenu(int text, int picture) {
+    if (tutorialTexts_.count() == 0) loadText("AnnounceTutorialTxt", tutorialTexts_);
+    parsed_ = parseMessage(filterMessage(tutorialTexts_.message(text, language)));
+    messageWindow_ = TutorialMenu, message_ = parsed_.pages.empty() ? 0 : text;
+    page_ = 0, pageTime_ = 0, revealed_ = 0, stop_ = 0, stopTime_ = 0, tapWait_ = 0, ended_ = false;
+    tutorialMenuOpen_ = message_ > 0, tutorialMenuPicture_ = picture;
+    if (message_ > 0) ++messagesSet_;
+}
+
+void EventRuntime::closeTutorialMenu() { // (EndTutorialMenu)
+    tutorialMenuOpen_ = false;
+    if (messageWindow_ == TutorialMenu) message_ = 0;
 }
 
 void EventRuntime::openGeneGet(int gene, int level, bool isNew, bool se) {

@@ -520,7 +520,7 @@ void Viewer::stepEvent() {
                     vs.chosen = k;
                     game.cr3Db->pickWildcard();
                 }
-                vs.battle = 0, vs.lost = false;
+                vs.battle = 0, vs.lost = false, vs.result = false, vs.drops.clear(); // (AcquireDrop: the tournament's drops from its first battle)
                 std::fill(std::begin(vs.wildChosen), std::end(vs.wildChosen), -1);
                 vsPendingTournament = -1;
                 SDL_Log("vs: the reserved tournament %d's battles", game.cr3Db->vsTournaments()[size_t(k)].id);
@@ -1066,6 +1066,44 @@ std::string Viewer::slotJoint(const WindowLayout& wl, size_t slot) {
     for (const std::string& j : wl.joints)
         if (j.size() == 9 && j.compare(0, 4, "type") == 0 && j.compare(7, 2, wl.slots[slot]) == 0) return j;
     return {};
+}
+
+// The vista band (comMsgVMenu's panel) keeps to the UI's screen - the safe area - while the scene fills the
+// frame: on a phone with a camera hole or rounded corners the band stopped short of the sides and the bottom,
+// a black box over the picture (the original's band runs to the display's edges, the picture above it). Where
+// the panel reaches the screen's edge, black carries it on to the frame's
+void Viewer::extendVistaBand() {
+    if (!white.id || vistaWindow.fig.meshes.empty() || frameW <= 0 || frameH <= 0) return;
+    if (screenX <= frameX && screenY <= frameY && screenW >= frameW && screenH >= frameH) return; // (no insets)
+    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+    for (const ViewMesh& vm : vistaWindow.fig.meshes) {
+        if (vm.hidden) continue;
+        for (size_t o = 0; o + 12 <= vm.vertices.size(); o += cr3::kVertexStride) {
+            float v[2];
+            std::memcpy(v, &vm.vertices[o], 8);
+            x0 = std::min(x0, v[0]), x1 = std::max(x1, v[0]), y0 = std::min(y0, v[1]), y1 = std::max(y1, v[1]);
+        }
+    }
+    if (x0 > x1 || y0 > y1) return;
+    const float unit = vistaWindow.uiUnit > 0 ? vistaWindow.uiUnit : 10.0f;
+    const float k = std::min(float(screenW) / (0.96f * unit), float(screenH) / (0.64f * unit)); // (uiProjection's pixels a unit)
+    const float cx = float(screenX - frameX) + float(screenW) * 0.5f, cy = float(screenY - frameY) + float(screenH) * 0.5f;
+    const float l = cx + x0 * k, r = cx + x1 * k, b = cy + y0 * k, t = cy + y1 * k; // (frame pixels, y up)
+    const float sl = float(screenX - frameX), sr = sl + float(screenW), sb = float(screenY - frameY);
+    const float fw = float(frameW), fh = float(frameH);
+    const float alpha = std::clamp(vistaWindow.fig.tint[3], 0.0f, 1.0f);
+    auto fill = [&](float px0, float py0, float px1, float py1) {
+        if (px1 <= px0 || py1 <= py0) return;
+        const float a = px0 / fw * 2 - 1, c = px1 / fw * 2 - 1, d = py0 / fh * 2 - 1, e = py1 / fh * 2 - 1;
+        const float q[24] = {a, d, 0, 0, c, d, 1, 0, c, e, 1, 1, a, d, 0, 0, c, e, 1, 1, a, e, 0, 1};
+        const float rgba[4] = {0, 0, 0, alpha};
+        fullFrameQuad(white, q, rgba);
+    };
+    const bool toLeft = l <= sl + 2, toRight = r >= sr - 2, toBottom = b <= sb + 2;
+    const float top = std::min(t, fh);
+    if (toLeft) fill(0, toBottom ? 0 : b, l + 1, top);
+    if (toRight) fill(r - 1, toBottom ? 0 : b, fw, top);
+    if (toBottom) fill(toLeft ? 0 : l, 0, toRight ? fw : r, b + 1);
 }
 
 void Viewer::drawWindow(WindowLayout& wl, bool showsMessage, int w, int h) {
@@ -3726,6 +3764,7 @@ void Viewer::drawEventUi() {
     const bool onVista = message && ev->messageWindow() == cr3::EventRuntime::Vista;
     if (ev->windowOpen(cr3::EventRuntime::Vista)) {
         drawWindow(vistaWindow, onVista, screenW, screenH);
+        extendVistaBand();
         // (CR3: the page cursor once the page is typed, fading in)
         const bool typed = onVista && ev->awaitingTap() && !ev->windowClosing(cr3::EventRuntime::Vista);
         if (!typed) vistaTypedFrame = -1;

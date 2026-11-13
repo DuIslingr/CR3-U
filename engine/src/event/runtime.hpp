@@ -105,6 +105,11 @@ public:
     // SetPictureTutorialMenu(id) - tuto_ss<(id - 1) / 8 + 1>, frame (id - 1) % 8 -;
     // EndCheckTutorialMenu true once read, EndTutorialMenu closes it)
     bool tutorialMenuOpen() const { return tutorialMenuOpen_; }
+    // the same from the game's own code (InterfaceMain::CreateLuckyBoxMenu's: CreateInterface(0xce),
+    // its text and picture set); read - EndCheckTutorialMenu's true -, then closed by closeTutorialMenu
+    void openTutorialMenu(int text, int picture);
+    bool tutorialMenuRead() const { return !(message_ > 0 && !ended_ && messageWindow_ == TutorialMenu); }
+    void closeTutorialMenu();
     // CR3's map name (EvtIntroduction.SetDungeonNum(n) / SetDungeonLevel(lv): MapNameMenu - the
     // dungeon's name, frame n, and "World Lv" (lv - 1) x 10 + 1 -> lv x 10; in over 0.967 s, 2 s
     // held, out to 1.333 s; GetVisible while it shows). -1: none
