@@ -63,14 +63,15 @@ packs). Later starts reuse them. A progress window shows while they unpack.
 
 ### Your copy
 
-You can also copy your game into the **game folder** yourself; the port finds it on the next start.
+You can also copy your game into the **game folder** yourself; the port finds it when it starts (or when you choose
+*Look again* on its "Could not find your copy" box).
 The game folder is the folder holding `cr3view` (or `cr3view.exe`, `cr3view.app`, the AppImage). On
 Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over USB.
 
 ```
 <game folder>/
 ├── android/      the 1.1.3 .apks - or its base.apk with the asset packs' CRDB{bgm,voice,se,mov}.android.mvgl
-├── ios/          the 1.2.2 .ipa (unpacked there on the next start) - or its ChaosRings3_FINAL_ENG.app (or Payload/... as unzipped)
+├── ios/          the 1.2.2 .ipa (unpacked there when found) - or its ChaosRings3_FINAL_ENG.app (or Payload/... as unzipped)
 ├── vita/         PCSG00500/ (or PCSG00457/) as installed - or a NoNpDrm dump as dumped
 ├── translation/  optional: en/ and es/, the fan translations (over a Vita copy)
 ├── movies/       optional: story movies your release lacks (the iPad's lacks c04..c11)
@@ -85,14 +86,15 @@ Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over
 - A release can sit one or two folders down, as it was unpacked; folder names below `ios/`,
   `android/` and `vita/` don't matter.
 - A still-encrypted Vita dump in `vita/` (its `app/`, and `addcont/` for the Prequel Trilogy) is
-  decrypted on the next start, on a phone too, once there is room for the decrypted copy. Delete
+  decrypted when it is found, on a phone too, once there is room for the decrypted copy. Delete
   the dump afterwards.
 - The release downloads already contain these folders, each with a `README.txt` saying what goes
   in it.
 - Older layouts still work: `ipad/`, `PCSG00500/`, `PCSG00457/`, `ChaosRings3_FINAL_ENG.app/`,
   `Payload/` or `data/` straight in the game folder.
 
-If nothing is found, the port says where it looked. Every layout, the command-line tools and the
+If nothing is found, the port says where it looked, with *Look again* to search once more after you
+copy something in. Every layout, the command-line tools and the
 environment variables: [docs/GAME_FILES.md](docs/GAME_FILES.md).
 
 ### Fan translations
@@ -101,7 +103,7 @@ Over an **unpatched** Vita copy, the [Chaos Rings III Translation Project](https
 English and Joseas's Spanish (with its own font for á, ñ, ¿, ¡) are each a language of their own,
 both at once too. Put each one's rePatch folder, or the archive it comes in, into
 `translation/en/` or `translation/es/` (an archive dropped straight into `translation/` is unpacked
-into the right one on the next start). **Options > Other > Language** switches between Japanese
+into the right one when the port starts). **Options > Other > Language** switches between Japanese
 and the translations while you play, and the choice is kept. A Vita copy with a translation already
 patched into it shows that translation as it is. `--patch <rePatch folder>` gives one from
 elsewhere.

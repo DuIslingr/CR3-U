@@ -936,21 +936,36 @@ int main(int argc, char** argv) {
         if (cr3::setupScripted()) return data.empty() ? 1 : 0; // (a test's: the setup alone)
     }
 #endif
-    if (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
+    while (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
 #ifdef SDL_PLATFORM_ANDROID
         if (!searched.empty()) // (the folders made, to be seen over USB)
             for (const char* f : {"ios", "android", "vita"}) SDL_CreateDirectory((searched.front() + f).c_str());
 #endif
-        std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the folder here:\n";
+        std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the folder here, then choose Look again:\n";
         msg += searched.empty() ? std::string("(no folder)") : searched.front();
-        msg += "\n\n  ios/      the iOS release's .ipa (unpacked on the next start), or its ChaosRings3_FINAL_ENG.app"
+        msg += "\n\n  ios/      the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app"
                "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
                "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump's folder"
-               "\n            (decrypted here on the next start)\n\nAlso looked in:";
+               "\n            (decrypted when it is found)\n\nAlso looked in:";
         for (size_t k = 1; k < searched.size(); ++k) msg += "\n" + searched[k];
         msg += "\n\nThe README's \"Your copy\" has the details.";
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", msg.c_str(), nullptr);
-        return 2;
+        const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Look again"},
+                                                    {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Quit"}};
+        const SDL_MessageBoxData box{SDL_MESSAGEBOX_ERROR, nullptr, "Chaos Rings III", msg.c_str(), 2, buttons, nullptr};
+        int choice = 0;
+        if (!SDL_ShowMessageBox(&box, &choice) || choice != 1) return 2;
+        // (Look again: what was put in meanwhile decrypted / unpacked and found - no restart)
+        searched = dataPlaces();
+        for (const std::string& place : searched) {
+            cr3::SetupResult got;
+            if (cr3::installDroppedVita(cr3SetupGame(), place, got)) break;
+        }
+#if !defined(SDL_PLATFORM_IOS)
+        for (const std::string& place : searched)
+            if (cr3::installDroppedIpa(cr3SetupGame(), place)) break;
+#endif
+        data = cr3::resolveArchive(cr3::defaultArchive(searched));
+        SDL_Log("look again: the game %s", data.empty() ? "still not found" : data.c_str());
     }
     if (data.empty()) {
         std::fprintf(stderr, "cr3view --data <archive> [--model name] [--anim name] [--time s] [--size WxH] [--yaw deg] "

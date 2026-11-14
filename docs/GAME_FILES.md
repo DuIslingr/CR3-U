@@ -19,7 +19,7 @@ folder you start it from - as `vita/`, `android/` or `ios/` ([Where the port loo
 
 | Your copy | `<your copy>` |
 |---|---|
-| iPhone / iPad 1.2.2 | the unpacked `.ipa` (or its `Payload/ChaosRings3_FINAL_ENG.app`) |
+| iPhone / iPad 1.2.2 | the `.ipa` (unpacked when found) or its `Payload/ChaosRings3_FINAL_ENG.app` |
 | Android 1.1.3 (`com.square_enix.chaosrings3gp`) | the `.apk` / `.apks`, or a folder with the APK unpacked; the asset packs (`CRDB{bgm,voice,se,mov}.android.mvgl`) anywhere under it. An `.apks` that holds them compressed (a repacked one) has them unpacked once into `assetpacks/` beside it: about 1.3 GB; one that holds its APKs themselves compressed (as some tools pack them - APKPure's `.xapk` too) has those unpacked once into `unpacked/` beside it: about 2.3 GB more |
 | PS Vita PCSG00500 / PCSG00457 | the installed (decrypted) title's folder, or its `CR3/resources` |
 | + a fan translation | `cr3tool --patch <its rePatch folder> ...` over an unpatched Vita copy (`cr3view`: `translation/` in the game folder): the Translation Project's English, or Joseas's Spanish (`CR3_ES`, with its own font for á, ñ, ¿, ¡); either one patched into the Vita copy itself is read as it is too |
@@ -87,8 +87,10 @@ A release's folder may hold the release itself or have it one or two folders dow
 (`ios/Payload/....app`, `vita/PCSG00xxx/`), so a copy can be dropped in as it was unpacked or
 installed; the names of the folders below `ios/`, `android/` and `vita/` don't matter. A Vita copy
 is the installed, decrypted title - or a NoNpDrm dump's folder as it was dumped, still encrypted (its
-`app/`, and `addcont/` beside it for the Prequel Trilogy's add-on): the next start decrypts it into
-`vita/` (on a phone too; it needs the space for the decrypted copy), and the dump can be deleted then.
+`app/`, and `addcont/` beside it for the Prequel Trilogy's add-on): the start that finds it - or the
+"Could not find your copy" box's *Look again* - decrypts it into `vita/` (on a phone too; it needs the
+space for the decrypted copy), and the dump can be deleted then. An `.ipa` dropped into `ios/` is
+unpacked there the same way, once (`ios/.unpacked` lists those done).
 A dump packed in an archive (.zip, .rar, .7z, .vpk) is chosen in the first start's setup instead - a
 phone's too, which shows when there's no copy yet and picks files (folders are copied in over USB).
 The release downloads come with these folders made, each with a `README.txt` saying what
