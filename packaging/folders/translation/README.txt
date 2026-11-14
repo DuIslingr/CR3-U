@@ -3,5 +3,4 @@ Chaos Rings III (CR3-U): fan translations go here (optional) - each its rePatch 
 .zip, .7z), unpacked on the next start into en/ or es/: the Chaos Rings III Translation Project's
 English, Joseas's Spanish (CR3_ES, with its own font), or both. Each is laid over an unpatched
 Vita copy (vita/) as a language - "English (fan translation)", "Spanish (fan translation)" - the
-Japanese staying; the in-game Options' Language switches between them. On an iPhone or
-iPad the archive isn't unpacked: put the rePatch folder in. The README's "Your copy".
+Japanese staying; the in-game Options' Language switches between them. The README's "Your copy".

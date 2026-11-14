@@ -2,6 +2,7 @@
 #define NOMINMAX // (archive.h brings <windows.h>: its min / max macros would take std::min)
 #endif
 #include "viewer/setup.hpp"
+#include "platform/dialogs.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -80,6 +81,19 @@ bool phone() {
 #else
     static const bool on = SDL_getenv("CRU_SETUP_PHONE") != nullptr;
     return on;
+#endif
+}
+// An iPhone or iPad: not a phone() - its document picker (platform/ios_picker.mm) opens folders too,
+// read in place with their whole tree, and its files are paths: the desktop's flow (a Vita dump's folder,
+// Vita3K's, the fan translation's chosen, not copied in first) -, but its game folder is the app's
+// Documents, which the Files app copies into: found with Look again, as a phone's over USB. A file the
+// picker opens is that file alone (its security scope), not the unpacked .app around it: the .app
+// itself is chosen, or copied into ios/
+bool ios() {
+#ifdef SDL_PLATFORM_IOS
+    return true;
+#else
+    return false;
 #endif
 }
 
@@ -235,13 +249,13 @@ std::vector<std::string> pickFiles(const SetupGame& g, const SDL_DialogFileFilte
         filters = kAny, n = 1;
     }
     Answer a;
-    SDL_ShowOpenFileDialog(answered, &a, nullptr, filters, n, nullptr, many);
+    crShowOpenFileDialog(answered, &a, nullptr, filters, n, nullptr, many);
     return localize(g, waitFor(a));
 }
 std::string pickFolder() {
     if (script().on) return answer("a folder");
     Answer a;
-    SDL_ShowOpenFolderDialog(answered, &a, nullptr, nullptr, false);
+    crShowOpenFolderDialog(answered, &a, nullptr, nullptr, false);
     const std::vector<std::string> p = waitFor(a);
     return p.empty() ? std::string() : p.front();
 }
@@ -1000,6 +1014,17 @@ bool findVitaInstall(const std::string& picked, const SetupGame& g, VitaInstall&
     return false;
 }
 
+// A Vita dump's archive's entries this game's: those under its title id - the trilogy's PCSG00457 and
+// its add-on, not the other games' (the setup's pick, one copied into vita/)
+std::function<bool(const std::string&)> vitaParts(const SetupGame& g) {
+    return [id = std::string(g.vitaId), addon = std::string(g.trilogyAddon), trilogy = *g.trilogyDir != 0](const std::string& n) {
+        const std::string s = "/" + n + "/";
+        if (s.find("/" + id + "/") != std::string::npos) return true;
+        if (!trilogy || s.find("/PCSG00457/") == std::string::npos) return false;
+        return s.find("/addcont/") == std::string::npos || (!addon.empty() && s.find("/" + addon + "/") != std::string::npos);
+    };
+}
+
 // The Vita release found (`in`) installed into <r>vita/<id>/ - the trilogy's PCSG00457/: a dump's
 // decrypted, else copied (the trilogy's own files and this game's folder, not the other games'), the
 // trilogy's add-on (this game's data) merged into this game's folder, its program decrypted beside it
@@ -1173,6 +1198,10 @@ bool runSetup(const SetupGame& g, const std::string& folder, const std::string& 
             text += "  iOS - the .ipa (an unpacked .app: copy it into ios/ over USB)\n" + androidLine +
                     "  Vita - a NoNpDrm dump: packed (.zip, .rar, .vpk), or its folder copied in over USB\n\n"
                     "What is copied into its folder over USB is found with Look again.\n\n";
+        else if (ios())
+            text += "  iOS - the .ipa (or its unpacked .app)\n" + androidLine +
+                    "  Vita - a NoNpDrm dump: its folder, or packed (.zip, .rar, .7z, .vpk); or Vita3K's ux0\n\n"
+                    "What is copied into its folder in the Files app (On My iPhone > Chaos Rings III) is found with Look again.\n\n";
         else
             text += "  iOS - the .ipa (or a file in its unpacked .app)\n" + androidLine +
                     "  Vita - Vita3K's folder with the game installed (or the game's " + std::string(g.vitaId) + " folder)\n\n";
@@ -1188,7 +1217,7 @@ bool runSetup(const SetupGame& g, const std::string& folder, const std::string& 
         }
         std::vector<std::pair<int, const char*>> buttons = {{1, "iOS (.ipa)..."}, {2, obb ? "Android (APK + OBB)..." : "Android (.apks)..."}, {3, phone() ? "Vita..." : "Vita / Vita3K..."}};
         if (any) buttons.push_back({4, "Start"});
-        else if (phone()) buttons.push_back({5, "Look again"}); // (copied in over USB meanwhile: found as on any start)
+        else if (phone() || ios()) buttons.push_back({5, "Look again"}); // (copied in over USB - the Files app - meanwhile: found as on any start)
         buttons.push_back({0, "Quit"});
         const int choice = ask(g, text, buttons, SDL_MESSAGEBOX_INFORMATION);
         if (choice <= 0) return false;
@@ -1202,6 +1231,10 @@ bool runSetup(const SetupGame& g, const std::string& folder, const std::string& 
                 tell(g, "That isn't an .ipa. Choose the .ipa - or copy the unpacked .app into " + roots[0] + "ios/ over USB, then Look again.");
                 continue;
             }
+            if (ios() && !endsWith(f, ".ipa") && !endsWith(f, ".zip") && !isDir(f)) { // (a file in an .app: that file alone can be read)
+                tell(g, "That isn't an .ipa. Choose the .ipa or the unpacked .app itself - or copy the .app into ios/ in the Files app, then Look again.");
+                continue;
+            }
             std::string app, why;
             bool ok;
             if (endsWith(f, ".ipa") || endsWith(f, ".zip")) {
@@ -1212,9 +1245,9 @@ bool runSetup(const SetupGame& g, const std::string& folder, const std::string& 
                     return isDir(r + "ios") && why.find("can't be") == std::string::npos ? -1 : 0; // (a broken .ipa: the same anywhere)
                 });
             } else {
-                std::string dir = parentOf(f);
+                std::string dir = isDir(f) ? withSlash(f) : parentOf(f); // (the .app itself - iOS's picker opens it as one -, or a file in it)
                 while (!dir.empty() && !endsWith(dir.substr(0, dir.size() - 1), ".app")) dir = parentOf(dir);
-                if (dir.empty()) dir = parentOf(f);
+                if (dir.empty()) dir = isDir(f) ? withSlash(f) : parentOf(f);
                 if (!g.iosOk(dir)) {
                     tell(g, "No " + std::string(g.title) + " data in " + dir);
                     continue;
@@ -1327,14 +1360,7 @@ bool runSetup(const SetupGame& g, const std::string& folder, const std::string& 
                 static const SDL_DialogFileFilter kDump[] = {{"A Vita dump (.rar, .7z, .zip, .vpk)", "rar;7z;zip;vpk"}, {"Any file", "*"}};
                 const std::vector<std::string> files = pickFiles(g, kDump, 2, false);
                 if (files.empty()) continue;
-                // (this game's parts alone: those under its title id - the trilogy's PCSG00457 and its add-on, not the other games')
-                const std::string id = g.vitaId, addon = g.trilogyAddon;
-                auto want = [&](const std::string& n) {
-                    const std::string s = "/" + n + "/";
-                    if (s.find("/" + id + "/") != std::string::npos) return true;
-                    if (!*g.trilogyDir || s.find("/PCSG00457/") == std::string::npos) return false;
-                    return s.find("/addcont/") == std::string::npos || (!addon.empty() && s.find("/" + addon + "/") != std::string::npos);
-                };
+                const std::function<bool(const std::string&)> want = vitaParts(g); // (this game's parts alone)
                 Progress bar(g.title, "Unpacking " + baseName(files.front()) + " ...");
                 std::string why;
                 const bool ok = inGameFolder(roots, [&](const std::string& r) {
@@ -1474,30 +1500,102 @@ bool runSetup(const SetupGame& g, const std::string& folder, const std::string& 
     }
 }
 
+namespace {
+// A dump's archive copied into vita/ (.zip, .rar, .7z, .vpk - an iPhone's Files app, a phone's USB, a
+// desktop's file manager): the first not yet unpacked - vita/.unpacked lists those done (name and size) -
+// unpacked into vita/.unpack/, this game's parts alone, a progress window over it; that folder ("" none).
+// `archive` its name
+std::string unpackDroppedVitaArchive(const SetupGame& g, const std::string& v, std::string& archive) {
+    if (!kArchives) return {};
+    std::string list;
+    if (std::FILE* f = std::fopen((v + ".unpacked").c_str(), "rb")) {
+        char buf[4096];
+        for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) list.append(buf, n);
+        std::fclose(f);
+    }
+    int count = 0;
+    std::string pick, line;
+    char** names = SDL_GlobDirectory(v.c_str(), "*", 0, &count);
+    for (int k = 0; names && k < count && pick.empty(); ++k) {
+        const std::string n = names[k], p = v + n;
+        if (n.empty() || n[0] == '.' || isDir(p)) continue;
+        if (!(endsWith(n, ".zip") || endsWith(n, ".rar") || endsWith(n, ".7z") || endsWith(n, ".vpk"))) continue;
+        line = n + " " + std::to_string(fileBytes(p)) + "\n";
+        if (list.find(line) == std::string::npos) pick = p;
+    }
+    SDL_free(names);
+    if (pick.empty()) return {};
+    if (std::FILE* f = std::fopen((v + ".unpacked").c_str(), "ab")) std::fputs(line.c_str(), f), std::fclose(f); // (once, whatever comes of it)
+    const std::string u = v + ".unpack/";
+    if (isDir(u)) removeTree(u);
+    if (!SDL_CreateDirectory(u.c_str())) return {};
+    archive = baseName(pick);
+    SDL_Log("setup: a Vita dump's archive %s in %s, unpacking it", archive.c_str(), v.c_str());
+    std::string why;
+    bool ok;
+    {
+        Progress bar(g.title, "Unpacking " + archive + " ...");
+        ok = unpackArchive(pick, u, vitaParts(g), &why, [&](double x) { bar.show(x); });
+    }
+    if (!ok) {
+        SDL_Log("setup: %s can't be unpacked: %s", archive.c_str(), why.c_str());
+        removeTree(u);
+        return {};
+    }
+    return u;
+}
+} // namespace
+
 bool installDroppedVita(const SetupGame& g, const std::string& folder, SetupResult& out, bool quiet) {
     const std::string v = withSlash(folder) + "vita/";
     if (!isDir(v)) return false;
     VitaInstall in;
-    if (!findVitaInstall(v, g, in)) return false; // (none; the trilogy without this game's add-on: the message where no copy is found)
-    if (!encryptedVita(in.root) && (in.addon.empty() || !encryptedVita(in.addon))) return false; // (installed, or put there decrypted: read as it is)
+    std::string unpacked, archive; // (a dump's archive copied in: unpacked first, gone after)
+    if (!findVitaInstall(v, g, in)) { // (none; the trilogy without this game's add-on: the message where no copy is found)
+        const bool video = SDL_InitSubSystem(SDL_INIT_VIDEO); // (the progress window)
+        unpacked = unpackDroppedVitaArchive(g, v, archive);
+        if (video) SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        if (unpacked.empty()) return false;
+        if (!findVitaInstall(unpacked, g, in)) {
+            note(g, in.trilogy ? std::string("The Prequel Trilogy keeps ") + g.title + "'s data in its add-on (addcont/PCSG00457/" + g.trilogyAddon + "), and " +
+                                     archive + " doesn't hold it - pack the dump's addcont folder in too."
+                               : archive + " holds no " + g.title + " (" + g.vitaId + ") as the port reads it.",
+                 quiet);
+            removeTree(unpacked);
+            return false;
+        }
+    }
+    struct Gone { // (the unpacked archive's folder: removed however this ends)
+        std::string dir;
+        ~Gone() {
+            if (!dir.empty() && isDir(dir)) removeTree(dir);
+        }
+    } gone{unpacked};
+    const bool encrypted = encryptedVita(in.root) || (!in.addon.empty() && encryptedVita(in.addon));
+    if (!encrypted && unpacked.empty()) return false; // (installed, or put there decrypted: read as it is)
+    // (an archive of the game decrypted already - Vita3K's ux0/app/<id> packed -: copied in, as the setup's pick is)
     const bool video = SDL_InitSubSystem(SDL_INIT_VIDEO); // (the progress window, the messages)
-    SDL_Log("setup: a Vita dump in %s, decrypting it into %s", in.root.c_str(), v.c_str());
+    SDL_Log("setup: a Vita dump in %s, %s it into %s", in.root.c_str(), encrypted ? "decrypting" : "copying", v.c_str());
     std::string dest, why;
     bool notGame = false;
     const int got = installVita(g, in, withSlash(folder), dest, why, notGame);
     auto say = [&](const std::string& text) { note(g, text, quiet); };
+    const std::string from = archive.empty() ? in.root : archive; // (what was copied in, as the messages name it)
     if (got > 0) {
         out.vita = dest;
-        if (withSlash(in.root) != withSlash(v + (in.trilogy ? "PCSG00457" : g.vitaId)))
+        if (!archive.empty())
+            say(std::string("The Vita release is unpacked") + (encrypted ? " and decrypted" : "") + " into " + v + (in.trilogy ? "PCSG00457" : g.vitaId) +
+                "/.\n\n" + archive + " isn't needed any more - delete it to get the space back.");
+        else if (withSlash(in.root) != withSlash(v + (in.trilogy ? "PCSG00457" : g.vitaId)))
             say(std::string("The Vita release is decrypted into ") + v + (in.trilogy ? "PCSG00457" : g.vitaId) + "/.\n\nThe dump you copied in (" + in.root +
                 (in.addon.empty() ? std::string() : " and " + in.addon) + ") isn't needed any more - delete it to get the space back.");
     } else if (notGame && !why.empty()) {
-        say(std::string("The Vita dump in ") + in.root + " can't be decrypted: " + why);
+        say(std::string("The Vita dump in ") + from + " can't be " + (encrypted ? "decrypted: " : "copied: ") + why);
     } else if (notGame && in.trilogy && in.addon.empty()) {
         say(std::string("The Prequel Trilogy keeps ") + g.title + "'s data in its add-on (addcont/PCSG00457/" + g.trilogyAddon + "), and it isn't beside " +
-            in.root + " - copy the dump's addcont folder in too, beside its app folder.");
+            from + " - copy the dump's addcont folder in too, beside its app folder.");
     } else if (notGame) {
-        say(in.root + " isn't " + g.title + "'s Vita release as the port reads it.");
+        say(from + " isn't " + g.title + "'s Vita release as the port reads it.");
     } else {
         say(std::string("The Vita dump can't be decrypted into ") + v + " - it can't be written there.");
     }

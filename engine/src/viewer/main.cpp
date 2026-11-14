@@ -948,24 +948,21 @@ int main(int argc, char** argv) {
             cr3::SetupResult got;
             if (cr3::installDroppedVita(cr3SetupGame(), place, got, !capture.empty())) break;
         }
-#if !defined(SDL_PLATFORM_IOS)
-        for (const std::string& place : searched) // (an .ipa copied into ios/ by hand: its .app unpacked there, as the setup would)
+        for (const std::string& place : searched) // (an .ipa copied into ios/ by hand - an iPhone's in the Files app -: its .app unpacked there, as the setup would)
             if (cr3::installDroppedIpa(cr3SetupGame(), place, !capture.empty())) break;
-#endif
         data = cr3::defaultArchive(searched);
         if (data.empty()) data = storedSetting("data="); // (an older setup's: an Android or Vita copy where it lay)
     }
     data = cr3::resolveArchive(data); // (a folder: the OBB or the CRDB.*.mvgl in it, a Vita copy's PCSG00498 ...)
-#if !defined(SDL_PLATFORM_IOS)
-    if (data.empty() && (argc <= 1 || cr3::setupScripted()) && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp - a phone's too)
-        SDL_Init(SDL_INIT_VIDEO); // (its message boxes and the system's dialogs)
+    if (data.empty() && (argc <= 1 || cr3::setupScripted()) && !std::getenv("CR3_DATA")) { // the first start without a copy: where is it? (viewer/setup.hpp - a phone's too, an iPhone's)
+        SDL_Init(SDL_INIT_VIDEO); // (its message boxes and the system's dialogs - iOS: its document picker, platform/ios_picker.mm)
         const cr3::SetupGame setup = cr3SetupGame();
         std::string profile;
-#ifdef SDL_PLATFORM_ANDROID
-        if (!searched.empty()) // (the folders made, to be seen over USB)
-            for (const char* f : {"ios", "android", "vita"}) SDL_CreateDirectory((searched.front() + f).c_str());
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+        if (!searched.empty()) // (the folders made, to be seen over USB - an iPhone's in the Files app; its game folder, Documents, always its own: no other)
+            for (const char* f : {"ios", "android", "vita", "translation"}) SDL_CreateDirectory((searched.front() + f).c_str());
 #else
-        if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = pref, SDL_free(pref); // (a phone's game folder is always its own: no other)
+        if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = pref, SDL_free(pref); // (the profile folder: where the game folder can't be written)
 #endif
         cr3::SetupResult got;
         if (!cr3::runSetup(setup, searched.empty() ? profile : searched.front(), profile, got)) return 0;
@@ -981,30 +978,27 @@ int main(int argc, char** argv) {
                 got.patch.c_str(), data.c_str());
         if (cr3::setupScripted()) return data.empty() ? 1 : 0; // (a test's: the setup alone)
     }
-#endif
-#ifdef SDL_PLATFORM_IOS
-    if (data.empty() && argc <= 1) SDL_Init(SDL_INIT_VIDEO); // (the box below: the setup, which inits it elsewhere, isn't iOS's)
-#endif
     while (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
         if (!searched.empty()) // (the folders made, to be seen over USB - iOS: in the Files app)
-            for (const char* f : {"ios", "android", "vita"}) SDL_CreateDirectory((searched.front() + f).c_str());
+            for (const char* f : {"ios", "android", "vita", "translation"}) SDL_CreateDirectory((searched.front() + f).c_str());
 #endif
 #ifdef SDL_PLATFORM_IOS
-        // (the game folder: the app's Documents - no .ipa unpacked here, no Vita dump decrypted - nor archives opened)
+        // (the game folder: the app's Documents - an .ipa unpacked there, a Vita dump or its archive decrypted, as anywhere)
         std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the app's folder - in the Files app, "
                           "On My iPhone (or iPad) > Chaos Rings III; or in Finder with the device connected, its Files - then choose Look again:\n"
-                          "\n  ios/      the iOS release's ChaosRings3_FINAL_ENG.app (its .ipa unzipped - an .ipa is a .zip)"
+                          "\n  ios/      the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app"
                           "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
-                          "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), decrypted"
+                          "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump - its folder,"
+                          "\n            or packed as .zip, .rar, .7z or .vpk (unpacked and decrypted when it is found)"
                           "\n\nThe README's \"Your copy\" has the details.";
 #else
         std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the folder here, then choose Look again:\n";
         msg += searched.empty() ? std::string("(no folder)") : searched.front();
         msg += "\n\n  ios/      the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app"
                "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
-               "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump's folder"
-               "\n            (decrypted when it is found)\n\nAlso looked in:";
+               "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump - its folder,"
+               "\n            or packed as .zip, .rar, .7z or .vpk (unpacked and decrypted when it is found)\n\nAlso looked in:";
         for (size_t k = 1; k < searched.size(); ++k) msg += "\n" + searched[k];
         msg += "\n\nThe README's \"Your copy\" has the details.";
 #endif
@@ -1019,10 +1013,8 @@ int main(int argc, char** argv) {
             cr3::SetupResult got;
             if (cr3::installDroppedVita(cr3SetupGame(), place, got)) break;
         }
-#if !defined(SDL_PLATFORM_IOS)
         for (const std::string& place : searched)
             if (cr3::installDroppedIpa(cr3SetupGame(), place)) break;
-#endif
         data = cr3::resolveArchive(cr3::defaultArchive(searched));
         SDL_Log("look again: the game %s", data.empty() ? "still not found" : data.c_str());
     }

@@ -45,8 +45,9 @@ folder's if that one can't be written), the same layout as putting them there by
   `.rar`, `.7z`, `.zip` or `.vpk` - is decrypted as Vita3K's install does, this game's parts alone.
 
 One copy is the game: the first given starts it. Nothing is read where it was chosen, so the folder it came from can go
-afterwards. (Windows, Linux and macOS; on Android, copy the files over USB as below; iOS has no setup
-window - copy them in with the Files app or Finder.)
+afterwards. (Every system: on Android the picker takes files alone - folders are copied in over USB, as
+below -; on an iPhone or iPad the system's document picker takes files or a folder, read where they are -
+the Files app's, iCloud Drive's, a USB drive's.)
 
 Or, as before, nothing given on the command line: put your copy in the **game folder** and start
 the program - it finds it by itself. The game folder is:
@@ -57,7 +58,7 @@ the program - it finds it by itself. The game folder is:
 | Linux AppImage | the folder holding the `.AppImage` |
 | macOS | the folder holding `cr3view.app` (its `Contents/Resources/` works too) |
 | Android | `Android/data/local.preservation.chaosrings3/files/` on the shared storage (copy your files there over USB) |
-| iPhone / iPad | the app's Documents: in the Files app *On My iPhone* (or *iPad*) *> Chaos Rings III*, or in Finder's *Files* tab with the device connected (Info.plist's `UIFileSharingEnabled`); `ios/`, `android/` and `vita/` are made there by the "Could not find your copy" box |
+| iPhone / iPad | the app's Documents: in the Files app *On My iPhone* (or *iPad*) *> Chaos Rings III*, or in Finder's *Files* tab with the device connected (Info.plist's `UIFileSharingEnabled`); `ios/`, `android/`, `vita/` and `translation/` are made there on the first start |
 
 (then the working directory too). In it, a folder for each release you have - any one is enough:
 
@@ -96,16 +97,15 @@ is the installed, decrypted title - or a NoNpDrm dump's folder as it was dumped,
 "Could not find your copy" box's *Look again* - decrypts it into `vita/` (on a phone too; it needs the
 space for the decrypted copy), and the dump can be deleted then. An `.ipa` dropped into `ios/` is
 unpacked there the same way, once (`ios/.unpacked` lists those done).
-A dump packed in an archive (.zip, .rar, .7z, .vpk) is chosen in the first start's setup instead - a
-phone's too, which shows when there's no copy yet and picks files (folders are copied in over USB).
+A dump packed in an archive (.zip, .rar, .7z, .vpk) is chosen in the first start's setup - or copied
+into `vita/`, where the next start unpacks it (this game's parts alone, once: `vita/.unpacked` lists
+those done) and installs it as a dump folder copied in; the archive can be deleted then.
 The release downloads come with these folders made, each with a `README.txt` saying what
 goes in it.
 
-On an iPhone or iPad the copy has to be in the app's folder ready to read: the iOS build has no setup
-window, doesn't unpack an `.ipa` (an `.ipa` is a `.zip`: unzip it - on a computer, or renamed to `.zip`
-and tapped in the Files app - and copy in its `Payload/ChaosRings3_FINAL_ENG.app`), can't decrypt a Vita dump (copy
-in the installed, decrypted `PCSG00500`) and can't open archives (a fan translation goes into
-`translation/` as its folder). The Android `.apks` works as it is.
+An iPhone or iPad does all of this as a desktop does: the first start's setup (its document picker),
+an `.ipa` copied into `ios/` unpacked, a Vita dump - its folder or its archive - in `vita/` decrypted, a
+fan translation's archive in `translation/` unpacked.
 
 CR3-U plays one release at a time: with several, **the first of `vita/`, `android/`, `ios/`** (the
 same order as the other ports take one alone); `--data` picks another. `translation/` is used only

@@ -3,9 +3,9 @@ Trilogy's PCSG00457, or what is in it. The fan translation's rePatch folder goes
 translation/ beside this folder, not here.
 Or a NoNpDrm dump's folder as it was dumped, still encrypted (its app/, and addcont/ beside it for the
 Prequel Trilogy's add-on): the next start decrypts it into a folder here - it needs the space for the
-decrypted copy -, then the dump can be deleted. A dump packed in a .zip, .rar, .7z or .vpk: choose it
-in the setup the first start shows instead (it unpacks it). On an iPhone or iPad only the installed,
-decrypted folder works: the iOS build neither decrypts nor unpacks a dump.
+decrypted copy -, then the dump can be deleted. A dump packed in a .zip, .rar, .7z or .vpk: put it here
+too (the next start unpacks it - once, vita/.unpacked lists those done - and installs it), or choose
+it in the setup the first start shows. The same on a phone, an iPhone or iPad.
 
 One release is played: with several, the first of vita/, android/, ios/.
 The README's "Your copy".

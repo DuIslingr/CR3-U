@@ -54,7 +54,7 @@ Vita copy the setup also asks for a fan translation (optional).
 | macOS 11+ | Right-click `cr3view.app` and choose *Open* (it isn't signed). |
 | Linux | `chmod +x` the AppImage and run it, or use the `.tar.gz`. |
 | Android 7+ | Install the APK and start it. The first start offers the same setup: pick your `.apks` (or APK and asset packs), the `.ipa` or a Vita archive. Folders can't be picked on Android; copy them over USB instead (below). |
-| iPhone / iPad, iOS 15+ | The `CR3-U-ios-unsigned.ipa` isn't signed: sideload it with AltStore, Sideloadly or the like (they sign it with your Apple ID). There is no setup window: put your game files into the app's folder yourself (below), then choose *Look again*. It runs at the display's rate (120 Hz on ProMotion screens; Options > Graphics > Frame Rate) and keeps the menus clear of the notch. |
+| iPhone / iPad, iOS 15+ | The `CR3-U-ios-unsigned.ipa` isn't signed: sideload it with AltStore, Sideloadly or the like (they sign it with your Apple ID). The first start offers the same setup, with the system's document picker (Files, iCloud Drive, a USB drive ...): pick the `.ipa` (or its unpacked `.app`), your `.apks` (or APK and asset packs), or a Vita folder or archive. Or copy your files into the app's folder in the Files app (below) and choose *Look again*. It runs at the display's rate (120 Hz on ProMotion screens; Options > Graphics > Frame Rate) and keeps the menus clear of the notch. |
 
 **Android `.apks` files:** a repacked `.apks` that holds its asset packs compressed has them
 unpacked once on the first start, into `assetpacks/` beside it (about **1.3 GB** of free space; that
@@ -69,16 +69,16 @@ You can also copy your game into the **game folder** yourself; the port finds it
 The game folder is the folder holding `cr3view` (or `cr3view.exe`, `cr3view.app`, the AppImage). On
 Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over USB. On an iPhone or
 iPad it is the app's own folder: in the Files app *On My iPhone* (or *iPad*) *> Chaos Rings III*, or in
-Finder's *Files* tab with the device connected. There the copy has to be ready to read: the unpacked
-`.app` (an `.ipa` is a `.zip`: unzip it - on a computer, or renamed to `.zip` and tapped in the Files
-app - and copy its `Payload` folder into `ios/`), the Android `.apks`, or a decrypted Vita folder. The iOS build doesn't unpack an
-`.ipa`, decrypt a Vita dump or open archives (a fan translation goes in as its folder).
+Finder's *Files* tab with the device connected (`ios/`, `android/`, `vita/` and `translation/` are made
+there on the first start). It works there as on any system: an `.ipa` copied into `ios/` is unpacked,
+a Vita dump or its archive copied into `vita/` is unpacked and decrypted, and a fan translation's archive
+in `translation/` is unpacked when the app starts.
 
 ```
 <game folder>/
 ├── android/      the 1.1.3 .apks - or its base.apk with the asset packs' CRDB{bgm,voice,se,mov}.android.mvgl
 ├── ios/          the 1.2.2 .ipa (unpacked there when found) - or its ChaosRings3_FINAL_ENG.app (or Payload/... as unzipped)
-├── vita/         PCSG00500/ (or PCSG00457/) as installed - or a NoNpDrm dump as dumped
+├── vita/         PCSG00500/ (or PCSG00457/) as installed - or a NoNpDrm dump as dumped, or its archive
 ├── translation/  optional: en/ and es/, the fan translations (over a Vita copy)
 ├── movies/       optional: story movies your release lacks (the iPad's lacks c04..c11)
 ├── artwork/      optional: card archives for Original Card Art
@@ -93,7 +93,8 @@ app - and copy its `Payload` folder into `ios/`), the Android `.apks`, or a decr
   `android/` and `vita/` don't matter.
 - A still-encrypted Vita dump in `vita/` (its `app/`, and `addcont/` for the Prequel Trilogy) is
   decrypted when it is found, on a phone too, once there is room for the decrypted copy. Delete
-  the dump afterwards.
+  the dump afterwards. A dump packed as `.zip`, `.rar`, `.7z` or `.vpk` in `vita/` is unpacked
+  first (once: `vita/.unpacked` lists those done), then the archive can go too.
 - The release downloads already contain these folders, each with a `README.txt` saying what goes
   in it.
 - Older layouts still work: `ipad/`, `PCSG00500/`, `PCSG00457/`, `ChaosRings3_FINAL_ENG.app/`,
