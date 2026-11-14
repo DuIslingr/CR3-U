@@ -675,8 +675,8 @@ struct Viewer {
     // --play: the game's flow - the field's entry, then what it reserved (GameState::next):
     // another area (SetPopPoint), a battle, a vista event (FldMain::BranchAfterEvent); after a
     // vista, its battle, another vista, else the field again (VistaMain::BranchAfterVista: evt200
-    // after SetComeFromVistaToField); after a battle the field (evt100). Battles aren't in yet:
-    // one is taken as won.
+    // after SetComeFromVistaToField); after a battle the field (evt100). A battle that fails to
+    // start is taken as won.
     bool playMode = false;
     std::string returnMap;
     float returnPlayer[3] = {0, 0, 0}, returnHeading = 0;
@@ -1770,8 +1770,8 @@ struct Viewer {
     void drawCr3Glass();
 
     // BtlSystem::Init's start mode: the party's first strike (1) when rand() % 100 is under the boot
-    // param's chance, else the enemy's surprise attack (2) under its own (the skills' corrections -
-    // GetFirstStrikeChanceCorrection / GetSurppriseAttackChanceCorrection - not in yet); then
+    // param's chance, else the enemy's surprise attack (2) under its own (+ the skills' corrections -
+    // GetFirstStrikeChanceCorrection / GetSurppriseAttackChanceCorrection: kinds 0x5e / 0x5f); then
     // BtlSysStateStart::phaseStart: the break gauge +-500 and the announcement (AnnounceBattle 1 -
     // 2 a party of one - the leader's name for its {source}; 3 the surprise) for 2.5 s. CR3_START_MODE sets it:
     // tests
@@ -1977,7 +1977,7 @@ struct Viewer {
     std::vector<Cr3Tap> cr3Taps; // (the menu's buttons as last drawn, UI units)
     Mat4 cr3BattleVP = cr3::mat4Identity();
     // the command buttons (BtlInterfaceSystem::EntryCommandSelect: 6 Attack, 7 Gene, 8 Item, 9
-    // Guard - comBtn's name, icon frames; Gene and Item not in yet)
+    // Guard - comBtn's name, icon frames)
     static constexpr int kCr3Buttons[4] = {6, 7, 8, 9};
     void cr3CountRecords();
     void setCr3Motion(size_t k, const std::string& suffix, bool loop, bool hold = false);
@@ -1990,7 +1990,7 @@ struct Viewer {
     // that lands, at the target; and with +0x59 bit 0 set the critical's (4) and the element's
     // (element + 4) too. Its effect.mbe Effect row: the figure and its sound (+0x10). A random size
     // with +0x58 bit 7 ((rand - 0.5) x 2 x +0x68 + 1). Each a figure of its own animation, played
-    // once (the .sprk particles and the random turn - bit 3 - not in)
+    // once (a .sprk's particles: Cr3Fx::spark; the random turn - bit 3 - not in)
     struct Cr3ProjectilePath {
         cr3::Vec3 from{}, via{}, to{};
         float speed = 0, acceleration = 0;
@@ -3937,8 +3937,8 @@ struct Viewer {
     // its OK (CheckOkButtonPermit: not the quest set off on already, nor a current one, its goods held)
     // asks 0x124 with its title, yes setting off (Cr3FadeOut 5 frames, a second: the global work's 24
     // the quest, CheckQuestReturn 2). Explore asks 0x125; yes - SelectFreeSpacePort, the town's
-    // quest_cancel - leads to the world select (0x22: WorldSelectMenu - not yet in: back to the town,
-    // as Back). Back: Cr3FadeOut 5 frames, a second, CheckQuestReturn 1
+    // quest_cancel - leads to the world select (0x22: WorldSelectMenu, openWorldSelect). Back: Cr3FadeOut 5
+    // frames, a second, CheckQuestReturn 1
     struct Cr3SpacePortMenu {
         int screen = 0;       // 0 the buttons, 1 the quests (a detail: campQuests.detail), 2 set off?, 3 explore?, 4 told, 5 leaving, 6 shuffle?
         float since = 0;      // (the screen's)
@@ -4350,7 +4350,7 @@ struct Viewer {
     // Its top (SShopMenu: SshopPositon's call_SshopBg / call_SshopBox / call_SshopItem /
     // call_SshopVipPanel - the VIP days, SshopVipCount and SshopVipNum's digits, or SshopVipDefault;
     // the header's sentence 0x275): the Box (+0x70 1 - SShopMenu 0x11, 0x12: CreateLuckyBoxMenu),
-    // the Item (2 - 0xc: the goods - CR3-U's PiuComMenu list) and the VIP panel (3 - not in).
+    // the Item (2 - 0xc: the goods - CR3-U's PiuComMenu list) and the VIP panel (3 - below).
     // The boxes (LuckyBoxMenu, interface 0x44; LuckyBoxMain 0x7a's header title 0xb): the gene boxes
     // on offer (GeneBox: cltList_gene_01, boxBg_gene_01; GENEBOX_PRICES / _AMOUNTS in coins), a Lucky
     // Box for each item sheet won from (any entry's +0x30 count above 0 - LuckyBox: cltList_<sheet>,

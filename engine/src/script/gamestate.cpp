@@ -110,8 +110,8 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         if (db) db->receiveTicket(state);
     });
     // quests: utils::SelectQuest(n) - DBSelectQuestTask(n): FindQuests, then the quest board's
-    // choice (no board yet: none chosen, -100) -, GetSelectedQuest, StartQuest (CrxGameActivities'
-    // record: begun), CompleteQuest (ended - one more done), GetQuestState
+    // choice (its own menu not in, and no event calls it: none chosen, -100) -, GetSelectedQuest,
+    // StartQuest (CrxGameActivities' record: begun), CompleteQuest (ended - one more done), GetQuestState
     vm.setNative("Cr3System", "SelectQuest", [&state, &db](NativeCall&) {
         if (db) db->findQuests(state, std::time(nullptr));
         state.cr3Quests.selected = -100;

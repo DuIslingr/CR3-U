@@ -725,7 +725,7 @@ bool Viewer::tapCr3Analyze() {
 // BtlMonsterStatus::vDrop (0x9c75dc): each monster's drop rolled once, as its wave is made - two slots {kind, id, rate}
 // (Monster +0x70 / +0x7c), one roll of 256 against slot 0's rate plus the drop bonus (BtlStatusList::GetDropRateCorrection
 // 0x9b01e0: the largest skill-85 constant of any unit, then), then slot 1's; a status effect of kind 0x83 on any unit
-// takes slot 1 outright. Kind 8 (a VS season's) not in. Announced only when the monster falls
+// takes slot 1 outright. Kind 8 (a VS season's) below. Announced only when the monster falls
 void Viewer::rollCr3Drops() {
     int dropBoost = 0;
     bool rare = false;
@@ -889,7 +889,7 @@ void Viewer::chooseCr3Continue(int id) {
         cr3Ctn.stage = 1, cr3Ctn.since = cr3BattleClock;
     } else if (stage == 4 && id == kCtnOk) {
         cr3Ctn.stage = 1, cr3Ctn.since = cr3BattleClock;
-    } else if (stage == 2 && id == kCtnYes) { // (given up: the defeat - BtlGameOverUI isn't in; on as lost)
+    } else if (stage == 2 && id == kCtnYes) { // (given up: the defeat - BtlGameOverUI, drawCr3GameOver; on as lost)
         audio.playSe("com_003", false);
         cr3Ctn.stage = 0, cr3Ctn.decided = true;
         SDL_Log("battle %d: given up", cr3Battle.coupling);
@@ -1247,7 +1247,7 @@ void Viewer::updateCr3Battle(float dt) {
         chooseVsWildCard(k);
     }
     // BtlSysStateStart::phaseBattleIn: the battle-in camera over (or a tap) - PlayGetSet, its
-    // end held; then (the battle's start script, the announcements: not yet) the first
+    // end held; then the battle's start script (Battle_Start_Base) and the start's announcement, the first
     // command's camera on the party's first
     if (cr3BattleStage == Cr3BattleStage::In && ((camT >= cr3Cam.end && !cr3Glass.running()) || cr3BattleInSkipped)) { // (and the glass: CheckGlassEffect)
         cr3BattleStage = Cr3BattleStage::GetSet;
@@ -3696,7 +3696,7 @@ void Viewer::enterCr3Result() {
         for (int c : cr3Rules.skillConstants(f, 0x6d)) moneyBy += float(c) / 100;
     }
     // (BtlResult::GetExperience: (+4 - the monsters', what scripts added) x its factor - +0x28, the
-    // scripts' SetExperienceFactor; the potions' and items' not in -; the money's likewise)
+    // scripts' SetExperienceFactor; the Apples' below -; the money's likewise)
     // (BtlResult::GetExperience 0x7df710: x the Apples used - each distinct one's constant, EXP extraType 14 / money 15 -
     // x the scripts' factor; then EntryResult 0x9a42ec's skill factor; then, VIP, the result screen's vipbonus
     // exp_bonus / gold_bonus - 0x8a080c, BtlResultMenu state 3)
@@ -4566,7 +4566,7 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                 float px, py;
                 if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(first + b), px, py)) continue;
                 const int id = asking ? 10 + b : getSet ? kGetSet[b] : kCr3Buttons[b];
-                // (Escape where forbidden; Options: not in yet; a command its status effects
+                // (Escape where forbidden; a command its status effects
                 // forbid - BtlStatus::OpenMenuInterface: comBtn::SelectableSet(false), its parts'
                 // diffuse (0.549, 0.549, 0.655))
                 const bool off = asking ? false : getSet ? (b == 1 && !cr3EscapeAllowed()) : !cr3Rules.menuEnabled(cr3Chooser, b);

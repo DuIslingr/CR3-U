@@ -3612,7 +3612,7 @@ void Viewer::runStep(const cr3::SpecialStep& st) {
     case kSpecialSetSkipEnable: // (ActionSpecialSetSkipEnable: its "enable")
         scene.skippable = st.i[0] != 0;
         break;
-    case kSpecialDarwin3Standby: // (BtlMap::LoadSpecialMap: d1154b, not yet drawn)
+    case kSpecialDarwin3Standby: // (BtlMap::LoadSpecialMap: d1154b, drawn in BtlMap's place)
         if (specialMap.meshes.empty()) {
             std::string err;
             const float keep = time;

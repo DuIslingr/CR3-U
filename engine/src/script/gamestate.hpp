@@ -169,7 +169,7 @@ struct GameState {
     std::map<int, int> cr3AceLevels;
     // a character's Last Attack / Finest Arts tier (Cr3System.SetLastAttackLevel / SetFinestArtsLevel:
     // CrxCharacterData +0x14 / +0x18, by the scripts' character number) - saved; the battles' finishers
-    // that read them (BtlCommandManager::addLastAttack) are not in CR3-U yet
+    // read them (BtlCommandManager::addLastAttack: Cr3BattleRules::lastAttackLevel / finestArtsLevel)
     std::map<int, int> cr3LastAttackLevel, cr3FinestArtsLevel;
     // the battle transition's glass shatter pattern (Cr3System.SetGlassEffectPattern - GameMain::SetGlassEffect, 0..5) - not saved
     int glassPattern = 1;

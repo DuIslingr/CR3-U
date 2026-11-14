@@ -169,7 +169,7 @@ only a pop point or a map jump changes it), whatever map the vista used: quest 7
 in e0007f but the field it returns to is d1008, whose evt000 then announces the quest.
 
 The save files (TitleMenuMain 3, CreateSaveFileMenu - SaveFileMenu, after every tap - the port has
-no news or mode select there yet): twelve files in four pages of three over the reel - `ttlDataPositon` on its `_in`; at
+no news there: an online page): twelve files in four pages of three over the reel - `ttlDataPositon` on its `_in`; at
 `call_ttlDataFile` `ttlDataSave01`..`03` (frame 1 the one picked, `ttlDataOk` on it - frame 1 a
 copy's source, 2 where to -; 0 a file, 2 none, its own art "NEW GAME"), their `ttlDataTxt` ("File
 %02d" 0x312 at `typeM_L01`, 0x2c7 at L02, the play time `%4d:%02d` at R03, the hero's name at C04,
@@ -1118,7 +1118,7 @@ A dungeon's town button
 (Fld2Main::SM_TownJump) runs the area script's `DungeonExit`. The detail's "{item_cnt}" is the
 goods held (GetQuestDeliveryOfGoodsNumber - GetShopItemHaveStock). Itemizing gift 600022 sets flag
 28 (DBSystem::SM_ItemizeGift: Explorer Training's step). The tutorial quests (rank 6: Explorer
-Training, Basic Combat - the Colosseum -, Using Coins - the Sp Shop's Lucky Box, not in yet) are
+Training, Basic Combat - the Colosseum -, Using Coins - the Sp Shop's Lucky Box) are
 among the Sub Quests. Explorer Training (56, d0212): three boxes (kbox_03 .. 05 - flags 1402 ..
 1404, a weapon, armour and accessory), then all three worn by the hero (evt001 on the camp's
 closing: 1405, and the area entered again), a box again with Tom Sawyer (1406) worn (1407), a box
@@ -1597,11 +1597,11 @@ call_btBonus_fr on frame kind - 1, btBonusBg_fr00 at call_btBonusBg_fr - frame 1
 kinds 1, 3, 6 raised 1.2): 1 MISSED! (the damage's +0x6b), 3 blocked (+0x6e, SE bt_093), 4 (+0x6d),
 5 CRITICAL! (+0x6c), after its number.
 
-CR3-U has the base, element, resistances (skills without conditions, equipment), level, command
-multiplier, spread, criticals, downs and combos, misses, status effects (their numbers, turns,
-menu, no action, HP a turn), the delay of the downed, the break gauge and heals; not yet the
-status effects' triggers and end timings (+0x20 / +0x24: those of a moment, counters), their
-stacks and icons, conditional skills, evasion, items' effects, Team Play.
+CR3-U has the base, element, resistances (skills, equipment), level, command multiplier, spread,
+criticals, downs and combos, misses, status effects (their numbers, turns, menu, no action, HP a
+turn, triggers and end timings, stacks and icons), the delay of the downed, the break gauge, heals,
+conditional skills, evasion, items' effects and Team Play; not yet "Damage Multi", "Target Skill"
+or the skill conditions 9 .. 14, 16, 26, 27 (untraced: never true).
 Against the reference (part 1): the hero's
 first hit 352 at Even (CR3-U: 400 / 170 x 90 x 0.5 x 3.5 = 371, spread 352 - 389), a later one
 576 at Player (x 1.5: 528 - 584); Gunner's four 34 and Axer's 40 (32 - 36 and 38 - 42: the
@@ -1655,8 +1655,8 @@ the EXP's and the money's, btRsltPointNum_fr00 digits -, btRsltInfoMenu, btRsltC
 btRsltCharaPanel a member - its shadow, call_GeneCard, btRsltCharaIcon_fr00, btRsltLv_per and
 btRsltLvPanel_num00's three btRsltLvNum_fr00 places. The background and the position's own meshes
 stand at z 0.03 .. 0.05, in front of the menus' 0 .. 0.02, so the parts are drawn in order over it
-- with depth tested they vanish. CR3-U draws all but the gene card and the level bar's progress;
-no reference shows a result screen yet).
+- with depth tested they vanish. CR3-U draws them all; walkthrough
+Part 7 shows a result).
 
 The cameras of an action (BtlCameraSystem::PlayPlayerMelee: the target's size's attack_PC riding
 (target x, 0, 0) unturned, turned 0.2 of the way toward its actor target; PlayEnemyMelee: the
@@ -1666,9 +1666,8 @@ attacker's size's attack_<size> at the target's front (x, 0, Battle +0 / 10), 0.
 (or a click on a button), Backspace back from the targets; `--input attack,t0,guard,...` chooses
 for captures. `cr3tool cr3battle <release> <coupling> <field> [party]` prints its set-up and
 simulates it; `--input battle,escape,attack,gene<n>,item<n>,t<n>,guard,result` chooses for
-captures. Not in yet: Options (CR3's options screen), Emperor Mode and other specials, the gauge's
-play, the result screen's gene card and EXP, drops, a lost battle's game over, the approach /
-return of melee attacks, effects (eff### figures), voices, the list's icons and scrolling.
+captures. Not in yet: the hit effects' random turn (CommandDirection +0x58 bit 3) and the Sparks'
+forces, trails and other emitter shapes.
 
 ### The result's EXP (CR3)
 
@@ -1677,7 +1676,7 @@ EXP + (level - 1) x its growth, x (1 + (the monsters' average level - the party'
 level) x 0.02) held to 0.5 .. 2, at least 1 (VAcquireExperience) -, + what the battle's script added
 (Battle.AddExperience), x its factor (SetExperienceFactor); then x (1 + every unit's
 skill kind 0x6c constants / 100) - GetExprienceCorrection, skill 201's 10 -, the money likewise by
-0x6d - 202 -; the potions' and items' factors - BtlResult::GetExperienceFactor - not in CR3-U)
+0x6d - 202 -; the Apples' factors - BtlResult::GetExperienceFactor -: `cr3UsedApples`)
 goes into
 the genes (BattleResultMenu::Update - CrxGene::AddTemporaryExp, SaveExp): each party member's worn
 gene, in party order - the first three slots' standing members the whole of it, the rest and the
@@ -1699,8 +1698,8 @@ SetExperienceFactor / SetMoneyFactor (+0x28 / +0x2c, multiplied), ForceVictory /
 script's ForceEnd ends a story's lost battle as over, not lost), HasAdvantageToPlayer / ToEnemy and
 GetBreakPoint (the gauge as shown), AddBreakPoint, GetFiledId, AddFieldStatusEffect (battle_0000's
 boot: fields 23 / 24 effect 45, 25 / 26 effect 46 - BtlSysStateStart::phaseStart gives them every
-unit for good, but one with a skill of kind 0x6a). Not in: SetFieldVisualEffect (the battle's
-effects aren't drawn), StopAuto (no auto battle), OpenUI / CloseUI, AddFieldObject. Battle 9 grants 100 EXP and 200 ML
+unit for good, but one with a skill of kind 0x6a). SetFieldVisualEffect, StopAuto, OpenUI /
+CloseUI and AddFieldObject are bound too. Battle 9 grants 100 EXP and 200 ML
 and forces the win after turn 5; the ace battles (503, 506, 509, 515) triple EXP and money when
 all three fall; battle 3's defeat plays its event and ends.
 
@@ -1710,8 +1709,8 @@ AllEndEffectToCalculation(0xb), the command manager cleared, each added with sou
 calculated - instead of the defeat, and the battle goes on; after the turn-end script likewise.
 Every battle's Battle_Defeat_Base with flag 5053 (chapter 1's stretch from d02's s101_d02_00101_set
 to t01's s102_t01_00101_set) queues 72 - target 11, the party's side, power 100, taking KO (status
-effect 1) away: the party back whole, with the voice j005_338. CR3-U applies the command itself
-(KO gone, HP its power's percentage of the max; its direction isn't played).
+effect 1) away: the party back whole, with the voice j005_338. CR3-U plays them so, with their
+directions (KO gone, HP its power's percentage of the max).
 
 BattleCoupling.SetId(id) in a victory script brings the next wave: at the victory event's end
 (phaseVictoryEvent - its state 4) AcquireRemuneration takes the fallen monsters' EXP and money, then
@@ -1925,8 +1924,8 @@ then closed. What CR3-U shows of them:
   `AnnounceBattle` 0x1d, its "{item.name}"; com_013) and, at the result, one of it in the bag
   (VAcquireDrop, MbDropInfo::AddToSaveData). The frogs: item 234 at 39 / 256, item 3 at 6.
 
-Not yet: the assists' (OpenAssist), Analyze's HP (OpenHpAndMaxHp), the field effects' (AddById),
-stolen gold; the drop-rate bonuses (BtlDropParam).
+The assists' (OpenAssist), Analyze's HP (OpenHpAndMaxHp), the field effects' (AddById), stolen
+gold and the drop-rate bonuses (skill 85, kind 0x83) are in too.
 
 The target kinds (Command +0x10, MbTargetType - BtlStatusList::collectDamageTarget*): 0 self, 1 a
 party member (the actor's side), 2 all of them, 3 an enemy, 4 all enemies, 5 everyone, 6 a random
@@ -2033,7 +2032,8 @@ The rest of DBEmu (libcrx 0x71b350 .. ; the Vita's Sync2 at 0x8107a1b0 reads cle
   into ten slots, 4's up to 10 from slot 0, 3's up to 6 from 4, 2's up to 3 from 7, 1's up to 10
   from 9 downward, the later over the earlier, once a day; then 5 / 6's up to 10. Begin / End /
   SetQuest; EarnQuestRewards (`questprizes`: item, gold, genebox, luckybox, else a gene; taken
-  already 0x3f9). utils::SelectQuest is a menu (DBSelectQuestTask) the port has not yet: none chosen.
+  already 0x3f9). utils::SelectQuest is a menu (DBSelectQuestTask) the port has not yet: none chosen (no event
+  calls it).
 - Tickets: GotTicket (today's had), ReceiveTicket (item 118, once a day; 0x3ef).
 - Sync2(event): an event's gifts - the tutorials' genes, quest56's, s100_t01_00702's two gold keys,
   s272_t01_00401's pairs of gifts, c140's, t02_kbox_03's item 59.

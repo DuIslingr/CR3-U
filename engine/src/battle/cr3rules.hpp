@@ -38,7 +38,7 @@
 // effects (skill_para StatusEffect) scale the stats and the damage, stop a unit acting, forbid
 // commands and change HP each turn; a downed unit's command waits. The break gauge, the status
 // effects' kinds and the misses: docs/FORMATS.md "Battles (CR3)". Not in yet: the rarer
-// multipliers (Damage Multi, Team Play, Target Skill). Cover (skill kind 118) in turn(). The command change
+// multipliers (Damage Multi, Target Skill); Team Play is coopNow_. Cover (skill kind 118) in turn(). The command change
 // (status kind 120): Cr3BattleRules::commandChange. The status effects' triggers and end timings (BtlStatusEffect::Trigger /
 // End): Cr3BattleRules::triggerEffects / endEffects; a skill's fixed damage (kind 91) and blocks (3 / 6
 // / an element's, 89 piercing) in turn(); the assists - calculateAssist - after a turn's commands.

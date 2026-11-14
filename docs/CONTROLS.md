@@ -147,6 +147,16 @@ Options → Graphics → Swap ○ and ×. Directions below also accept the left 
 | My Page | Up/Down wrap over visible buttons; right stick scrolls the log. Presents use Left/Right between OK and Cancel. | MyPageNewTopMenu `0x811fb75c`, PresentGet `0x8121a866` |
 | World select | ○ opens List with cyan focus. | WorldSelectMenu `0x8127e8e0` |
 | VS menus | Directions navigate six positions and their native highlight frames; × returns one screen. In tournament lists, △ selects and Left leaves. Detail L/R selects adjacent tournaments. | VsModeMenu `0x81272806`, VsModeListMenu `0x8126adba`, TournamentDitailMenu `0x81266bb2` |
+| Battle tabs | Up from Battle lights Auto Battle, then Mass Attack; Down goes back; ○ starts it (its first-time tutorial paged with ○). × stops it: the turn in course plays out, then the get-set. | comBtnMenu `0x8112bdc4`, phaseGetSetSelect `0x9d3cbc` (Android) |
+| Gene level-up | ○ through each levelled gene's windows; with six slots full, Up/Down over the replace list (stopping at the ends), ○ asks, × No back to the list, ○ Yes. | GeneLvUpMenu `0xb1ad44` (Android) |
+| Mode select | Down and ○ press Main, which asks: ○ on No back to the buttons, Down and ○ Yes into the story. | ModeSelectMenu (TitleMenuMain 4 / 0xe .. 0x18) |
+| Quest Clear | ○ its OK; closes over 1/6 s and the script goes on. | QuestDitailMenu 0x7e |
+| Credits | R to the Other tab, Down to Credits / Copyright Notice, ○ opens; Down a line; × back to the options. | StaffNameListMenu |
+| Options footer | Down past the rows to the footer's back; Left over the panels (Download passed over); ○ Title Screen asks 0x1a3, Left and ○ Yes. | OptionFooterMenu |
+| Gene skills | In the camp's gene list R shows the gene's skills in the cards' place (the unlearned dimmed); Up/Down its rows. | GeneSkillListMenu |
+| Gems | Walking into a gem takes it; at 99 the Continue Gem's exchange is told, ○ its OK. | Fld2Jem |
+| Toy camera | The right stick tilts the look (45 degrees a second at full); ○ the shutter on the focused target, ○ through the photo; × leaves. | Fld2TaskCamera::ChangeToyCamera `0x9ebd2c` (Android) |
+| Ride | ○ answers its Yes / No; the left stick rides; □ uses the focused goods (VehicleOut), ○ Yes gets off. | Fld2TaskPlayer::SetStateRide `0x00878858` (Android) |
 
 Two audit interpretations were corrected against the callers. The battle target
 button changes target side; it is not an enemy-information screen. The Gene Change
@@ -158,9 +168,9 @@ level descending, level ascending, rarity descending, rarity ascending. Non-UID 
 use master ID ascending (`GeneSortStatusListUp 0x8115cfe8`, comparators
 `0x814281e8` through `0x8142c278`).
 
-The port reuses its existing gene status/card UI for inspection and its skill grid/help
-for Skill focus; the Vita's separate GeneStatus/GeneSkillList window layouts are not
-reconstructed here. Lucky Box contents use the port's paged system window. These
+The port reuses its existing gene status/card UI for inspection; the camp's gene list
+shows GeneSkillList's skills in the cards' place (round 27). The Vita's separate GeneStatus
+window layout is not reconstructed here. Lucky Box contents use the port's paged system window. These
 controls are usable from the pad; those layouts are not pixel-identical to the Vita.
 
 ### Verification
@@ -180,8 +190,7 @@ selected side using synthetic tables, including default and fixed-side commands.
 `event-reset` checks tutorial boundaries and cleared pause state. `viewer-vista-pause` checks reveal-before-pause, frozen scene time, resume after timeout/window close, and the native visibility setter. Physical
 controller/device validation is not claimed; captures inspect the desktop renderer.
 
-Validated November 8, 2026 on Linux, RelWithDebInfo: all 30 virtual-controller
-scenarios passed against the local Vita copy. After the final pause and held-confirm
-cleanup, all 24 component/regression CTests passed, including graphics recovery and
-the new Vista pause test. The normal `engine/build/cr3view` is rebuilt and up to date.
+Validated November 8, 2026 on Linux, RelWithDebInfo, and re-run through round 28: all 73
+virtual-controller cases passed against the local Vita copy, and all 26 component/regression
+CTests passed, including graphics recovery and the Vista pause test. The normal `engine/build/cr3view` is rebuilt and up to date.
 No game data or captures are included in these changes.
