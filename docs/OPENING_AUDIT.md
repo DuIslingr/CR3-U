@@ -676,6 +676,21 @@ the only unbound natives any script calls were `Cr3System.Reboot` and `Cr3TabMen
 
 The minimap's goal markers (`fieldgoal.mbe`, `CheckGoalGimmick`) are a cut feature: no caller, "feMapGoal" in no build.
 
+### 31. Round 27 parity audit (the gene skills, the Options footer, VIP)
+
+A delegated pass (`/tmp/cr3-opening-audit/round27-next.md`), implemented by another under memory caps.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Enabled skills (`BtlSkill::Trigger`, `TriggerSkillToCalculation` `0x9b3488`) | A skill fires at its trigger when its battle / turn / command uses are all left, its condition holds and its chance rolls; then it is on, a use spent, off at its end timing; per-turn uses back at the turn's end, per-command at each command; every check reads the skills that are on. After the triggers, each on skill's kind 60 gives / 61 removes its status (one accumulation more if already held, its turns not refreshed); trigger 0 at the start | Each skill always on (`r.i(8) == 0` alone), so skills 1, 2, 3, 6, 8, 9, 133, 441 never fired and 452 / 454 never toggled | As traced (`battle-target-tests`: Critical x2, Critical First Attack, Afterthought Guard, Narrow Escape, Emergency Guard) |
+| Skill conditions and kinds | Condition 4 the unit's own normal attack; 2, 5, 15, 21, 23, 24 / 25 (the hour), 29 (the HP change); kind 69 a critical's damage x2 at the end of `calculateBasicDamage`; the highest kind 53 the minimum HP | Not read | As traced; conditions 9 .. 14, 16, 26, 27 untraced |
+| Triggers 5 / 6 | 5 on each target before its HP changes (heals after); 6 when a gauge crosses (`addBreak`), every living unit, then end timing 5 | Never | As traced (5 per target, not all targets first); skills 126 / 132 / 134 fire |
+| End timing 9 (`playCommand`) | After triggers 10 and 11 | Before them | After (Afterthought Guard ends as it fires) |
+| The Space Port's backdrop (`spBgPositon`) | `combg02menu` at `call_spBgMenu_fit0` behind the clerk | None | As traced |
+| The camp's gene list (Parameters / Skills) | The footer's toggle and sort; Skills mode the gene's eight commands and skills, the unlearned dimmed with "Learn at Level {level}", the gene's card; the Vita's L / R switch | Parameters only | As traced (`camp-gene-skills`; the card's scale guessed) |
+| The field Options footer (mpMe) | Five panels: Download, Title Screen (0x1a3, Yes back to the title), Manual (the tutorial list), App Intro, Achievements (online) | None | As traced (`options-footer`); Download, App Intro and Achievements inert |
+| VIP on the battle result (`BattleResultV2Menu`) | The VIP banners, two "x n.n" panels, the base totals for 2.067 s then the multiplied ones with a 1/3 s pulse; the money digits at frames +10 (every result) | Plain banners, totals multiplied silently | As traced (`battle-vip-result`, `--vip-days n` a test aid); the panel's slide-in not played |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -843,9 +858,9 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`67/67` cases, `0 problems`)**:
+- **Controller & UI integration suite (`70/70` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 67 headless controller cases (round 26 added `gem-pickup`, `gem-exchange`, `door`, `reboot`, `mode-select`, `options-credits`, `quest-clear`; round 25 added `special-support`, `target-icons`, `battle-opening`; round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
+  passes all 70 headless controller cases (round 27 added `camp-gene-skills`, `options-footer`, `battle-vip-result`; round 26 added `gem-pickup`, `gem-exchange`, `door`, `reboot`, `mode-select`, `options-credits`, `quest-clear`; round 25 added `special-support`, `target-icons`, `battle-opening`; round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
   `CR3_EVTANIM`), `ladder` (d0202: a fall onto the floor, the ladder from the foot, a rung, off at the
   top), `ranged-camera` (battle 22's ranged direction's global clips, seed 1), `camp-event-ask` (the
   event camp's Yes / No: No, the hard back's stall, Yes) and `camp-event-nogene` (the `0x307` alert);

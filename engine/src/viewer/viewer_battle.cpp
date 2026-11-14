@@ -3253,7 +3253,7 @@ std::string Viewer::cr3SkillName(int type, int id, bool help) {
 // 7 the cards' out (0.6333 s), 8 .. 0xd the windows, 0xe the cards' in again (0.5667 s)
 void Viewer::stepCr3Result() {
     const float since = cr3BattleClock - cr3ResultPhaseAt;
-    if (cr3ResultPhase == 0 && !cr3ResultApplied && cr3BattleClock - cr3StageStart >= 0.5667f + 1.0f / 3) applyCr3GeneExp();
+    if (cr3ResultPhase == 0 && !cr3ResultApplied && cr3BattleClock - cr3StageStart >= cr3ResultLead() + 0.5667f + 1.0f / 3) applyCr3GeneExp();
     else if (cr3ResultPhase == 1 && since >= 0.6333f) openCr3GeneUp(0);
     else if (cr3ResultPhase == 2) stepCr3GeneUp();
     else if (cr3ResultPhase == 3 && since >= 0.5667f) {
@@ -3513,8 +3513,12 @@ void Viewer::enterCr3Result() {
             if (cr3::Cr3Command ac; cr3Rules.command(cmd, ac) && !ac.extraConstants.empty() && ac.extraConstants[0] > 0) apples[k] *= ac.extraConstants[0];
     cr3ResultExp = (cr3ResultExp + cr3ResultAdd[0]) * apples[0] * cr3ResultFactor[0], cr3ResultMoney = (cr3ResultMoney + cr3ResultAdd[1]) * apples[1] * cr3ResultFactor[1];
     cr3ResultExp = int(expBy * float(cr3ResultExp)), cr3ResultMoney = int(moneyBy * float(cr3ResultMoney));
-    if (game.cr3VipDays >= 1 && game.cr3Db) {
+    cr3ResultVip = game.cr3VipDays >= 1 && game.cr3Db;
+    cr3ResultBase[0] = cr3ResultExp, cr3ResultBase[1] = cr3ResultMoney;
+    if (cr3ResultVip) {
         const cr3::Cr3OfflineDb::Month& m = game.cr3Db->month();
+        cr3ResultVipBy[0] = m.expBonus, cr3ResultVipBy[1] = m.goldBonus;
+        SDL_Log("battle: result - VIP: the base %d EXP, %d money first", cr3ResultBase[0], cr3ResultBase[1]);
         cr3ResultExp = int(float(cr3ResultExp) * m.expBonus), cr3ResultMoney = int(float(cr3ResultMoney) * m.goldBonus);
         SDL_Log("battle: VIP x%.2f EXP, x%.2f money", double(m.expBonus), double(m.goldBonus));
     }
@@ -3719,8 +3723,8 @@ void Viewer::cr3BattleTap() {
     if (cr3BattleStage == Cr3BattleStage::Result) {
         // (TouchGestureTap: the tally completed; a window's alert closed - CheckTapAlertWindowMenu -; the
         // cards' moves and the window's own parts take none; then the drops' lines, at the last the end)
-        if (cr3ResultPhase == 0 && cr3BattleClock - cr3StageStart < 1.5f) {
-            cr3StageStart = cr3BattleClock - 1.5f;
+        if (cr3ResultPhase == 0 && cr3BattleClock - cr3StageStart < cr3ResultLead() + 1.5f) {
+            cr3StageStart = cr3BattleClock - cr3ResultLead() - 1.5f; // (VIP's: its multiply passed over too)
             SDL_Log("battle: result tally completed");
         } else if (cr3ResultPhase == 2) {
             if (cr3GeneUp.alert && cr3BattleClock - cr3GeneUp.alertAt > 0.1f) cr3GeneUp.alert = false, SDL_Log("battle: gene alert closed");
@@ -3920,8 +3924,15 @@ void Viewer::drawCr3Result(int w, int h) {
     // (the background - the position's own meshes too - stands at z 0.03 .. 0.05, in front of the
     // menus' 0 .. 0.02: the parts are drawn in order, over it)
     dev->clearDepth();
-    if (cr3UiCall(pos, "call_btRsltTitleTMenu", x, y, w, h)) cr3UiPut("btrslttitletmenu", "btrslttitletmenu_in", t, x, y, view);
-    if (cr3UiCall(pos, "call_btRsltTitleBMenu", x, y, w, h)) cr3UiPut("btrslttitlebmenu", "btrslttitlebmenu_in", t, x, y, view);
+    // (SetParamNumber case 4: with VIP the plain banners - +0x18 / +0x20 - deleted, btRsltTitleVipTMenu / VipBMenu - +0x28 / +0x30 -
+    // at their own joints; without, the VIP ones and the panels)
+    if (cr3ResultVip) {
+        if (cr3UiCall(pos, "call_btRsltTitleVipTMenu", x, y, w, h)) cr3UiPut("btrslttitleviptmenu", "btrslttitleviptmenu_in", t, x, y, view);
+        if (cr3UiCall(pos, "call_btRsltTitleVipBMenu", x, y, w, h)) cr3UiPut("btrslttitlevipbmenu", "btrslttitlevipbmenu_in", t, x, y, view);
+    } else {
+        if (cr3UiCall(pos, "call_btRsltTitleTMenu", x, y, w, h)) cr3UiPut("btrslttitletmenu", "btrslttitletmenu_in", t, x, y, view);
+        if (cr3UiCall(pos, "call_btRsltTitleBMenu", x, y, w, h)) cr3UiPut("btrslttitlebmenu", "btrslttitlebmenu_in", t, x, y, view);
+    }
     // (the replace list's focused row's help - GeneLvUpMenu's own btRsltPosition / btRsltInfoMenu, msg 0xd)
     std::string infoLine = cr3ResultLine;
     float infoAlpha = menuAlpha;
@@ -3949,19 +3960,60 @@ void Viewer::drawCr3Result(int w, int h) {
         // (two btRsltPointPanel_numNN - N its digits - the EXP's and the money's, a
         // btRsltPointNum_fr00 frame a digit)
         UiFig& pm = cr3UiPut("btrsltpointmenu", "btrsltpointmenu_in", t, x, y, view, menuAlpha);
+        // (VIP - Update 0xb23e1c: state 0 holds the base totals with the factors' panels for kCr3VipWait, then the panels fade out
+        // over 0.133 s while the multiplied digits - SetRsltPointMenuVip 0xb24fb0 - fade in; state 1 pulses them 1/3 s: diffuse 1 + p,
+        // scale 1 + p / 2, each slid by p (its x - GetVipCorrectionXPosition 0xb255e8: the EXP row's digits' middle) / 2, p 1 -> 0)
+        const bool vipBase = cr3ResultVip && t < kCr3VipWait;
+        const float vipT = t - kCr3VipWait, pulse = cr3ResultVip && vipT >= 0 && vipT < 1.0f / 3 ? 1.0f - vipT * 3 : 0.0f;
+        float correctX = 0;
         for (int k = 0; k < 2; ++k) {
             float px, py;
             if (!cr3UiCall(pm, "call_btRsltPointPanel_num00_00" + std::to_string(k + 1), px, py)) continue;
-            const int total = std::max(k ? cr3ResultMoney : cr3ResultExp, 0);
-            const std::string digits = std::to_string(int(float(total) * std::clamp(t / 1.5f, 0.0f, 1.0f)));
-            const int n = std::min(int(digits.size()), 5);
+            const int total = std::max(vipBase ? cr3ResultBase[k] : k ? cr3ResultMoney : cr3ResultExp, 0);
+            const float shown = cr3ResultVip ? 1.0f : std::clamp(t / 1.5f, 0.0f, 1.0f); // (CR3-U's count up; VIP's the totals as they stand)
+            const std::string digits = std::to_string(int(float(total) * shown));
+            const int n = std::min(int(digits.size()), 6);
             char lay[32];
             std::snprintf(lay, sizeof lay, "btrsltpointpanel_num%02d", n);
-            UiFig& panel = cr3UiPut(lay, "", 0, px, py, view, menuAlpha);
+            const float digitAlpha = menuAlpha * (cr3ResultVip && !vipBase ? std::min(vipT / 0.1333f, 1.0f) : 1.0f);
+            UiFig& panel = cr3UiPut(lay, "", 0, px, py, view, digitAlpha);
+            float dxs[6] = {}, dys[6] = {};
+            int placed = 0;
             for (int d = 0; d < n; ++d) {
-                float dx, dy;
                 const std::string joint = n == 1 ? std::string("call_btRsltPointNum_fr00") : "call_btRsltPointNum_fr00_00" + std::to_string(d + 1);
-                if (cr3UiCall(panel, joint, dx, dy)) cr3UiPut("btrsltpointnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view, menuAlpha);
+                if (cr3UiCall(panel, joint, dxs[placed], dys[placed])) ++placed;
+            }
+            if (k == 0 && placed > 0) { // (the correction: the EXP row's middle)
+                for (int d = 0; d < placed; ++d) correctX += dxs[d];
+                correctX /= float(placed);
+            }
+            for (int d = 0; d < placed; ++d) {
+                // (SetRsltPointMenu / SetRsltPointMenuVip: the money's digits at frames + 10)
+                const float frame = float(digits[size_t(d)] - '0' + (k ? 10 : 0)) / 30;
+                if (pulse > 0) {
+                    const float keep = cr3UiScale;
+                    cr3UiScale = 1 + pulse * 0.5f;
+                    cr3UiTintMaterial = "mat_bt_results_01", cr3UiMaterialTint[0] = cr3UiMaterialTint[1] = cr3UiMaterialTint[2] = 1 + pulse;
+                    cr3UiPut("btrsltpointnum_fr00", "", frame, dxs[d] + pulse * (dxs[d] - correctX) * 0.5f, dys[d], view, digitAlpha);
+                    cr3UiTintMaterial.clear(), cr3UiScale = keep;
+                } else cr3UiPut("btrsltpointnum_fr00", "", frame, dxs[d], dys[d], view, digitAlpha);
+            }
+            // (btRsltVipPanel - _in - at btRsltPointMenu's call_btRsltVipPanel_00n - Pose 0xb25cc4's shift by the digits shown, x 0.16,
+            // looks for that joint in the num panel, which has none -: "x", the factor's whole, ".", its tenths - SetRsltVipMenu 0xb27990,
+            // 9.9 at most -, comNum01_fr00 digits - the panel's own, btRsltVipPanel's ctor 0xb1a09c - at its joints _002 / _001 (_003 the
+            // tens: none))
+            const float panelAlpha = menuAlpha * (vipBase ? 1.0f : std::max(1.0f - vipT / 0.1333f, 0.0f));
+            float vx, vy;
+            if (cr3ResultVip && panelAlpha > 0 && cr3UiCall(pm, "call_btRsltVipPanel_00" + std::to_string(k + 1), vx, vy)) {
+                // (its _in as a relative animator not reproduced: the panel at rest)
+                UiFig& vp = cr3UiPut("btrsltvippanel", "", 0, vx, vy, view, panelAlpha);
+                const float by = std::min(cr3ResultVipBy[k], 9.9f);
+                const int part[2] = {int(by), int(by * 10.0f + 0.5f) % 10};
+                dev->clearDepth(); // (over the panel's own meshes)
+                for (int q = 0; q < 2; ++q) {
+                    float nx, ny;
+                    if (cr3UiCall(vp, "call_comNum01_fr00_00" + std::to_string(2 - q), nx, ny)) cr3UiPut("comnum01_fr00", "", float(part[q]) / 30, nx, ny, view, panelAlpha);
+                }
             }
         }
     }

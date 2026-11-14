@@ -178,6 +178,12 @@ int main() {
         row({{0,72}, {1,7}, {4,11}, {5,100}, {8,int(0xffff0100)}, {15,1}, {25,uint32_t(-9)}, {32,0x404}, {33,17}}, {{16, {1}}});
         row({{0,74}, {1,7}, {4,11}, {8,int(0xffff0100)}, {13,1}, {32,0x40c}, {33,40}}, {{14, {88}}});
         row({{0,1512}, {1,7}, {4,0}, {8,int(0xffff0100)}, {25,uint32_t(-8)}, {32,4}, {33,40}});
+        // Round 27: 1108 an always-critical physical one (+0xbc 0x34), 1111 a lethal physical one (power 30000), 1525 Braveheart
+        // (status effect 109's kind 97 command: here giving its caster 88)
+        row({{0,1108}, {1,0}, {4,3}, {5,10}, {8,0x101}, {32,0x34}, {33,1}, {34,1}});
+        row({{0,1111}, {1,1}, {4,3}, {5,30000}, {8,0x101}, {32,4}, {33,1}, {34,1}});
+        row({{0,1112}, {1,0}, {4,3}, {5,10}, {8,0x101}, {32,0x14}, {33,1}, {34,1}}); // (1112: one that can be critical)
+        row({{0,1525}, {1,4}, {4,0}, {8,0x100}, {13,1}, {32,0xc}, {33,40}}, {{14, {88}}});
         Table formulas{"CommandFomula", "iiii", {
             {{0,21},{2,21},{3,uint32_t(-1)}},
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
@@ -199,16 +205,32 @@ int main() {
             {{0,421}, {8,0}, {12,116}, {13,200}, {17,116}, {18,200}}, // the Mimics' gold release x2.0 (kind 0x74)
             // Round 23: 479 the Eggons' fixed damage (trigger 4 - +0x1c -, chance 256, kind 91 -1); 329 a physical block
             // (kind 3, no trigger); 107 a pierce (kind 89); 143 field-effect immunity (kind 0x6a)
-            {{0,479}, {7,4}, {8,0}, {10,6}, {11,256}, {12,91}, {13,uint32_t(-1)}, {16,256}, {17,91}, {18,uint32_t(-1)}},
+            {{0,479}, {7,4}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,0}, {10,6}, {11,256}, {12,91}, {13,uint32_t(-1)}, {16,256}, {17,91}, {18,uint32_t(-1)}},
             {{0,329}, {8,0}, {11,256}, {12,3}, {13,0}, {16,256}, {17,3}, {18,0}},
             {{0,107}, {8,0}, {11,256}, {12,89}, {13,0}, {16,256}, {17,89}, {18,0}},
             {{0,143}, {8,0}, {11,256}, {12,106}, {13,0}, {16,256}, {17,106}, {18,0}},
             // Round 25 (TriggerSkillToCalculation): 600 trigger 4 - kind 60 gives 3; 601 a Catalyst (trigger 1, end 1: kind 100
             // -> command 81, kind 60 -> 4); 602 as 426 (trigger 7, condition 3 at 0 % - KO'd by a hit -: kind 60 -> 34)
-            {{0,600}, {7,4}, {8,0}, {10,6}, {11,256}, {12,60}, {13,3}, {16,256}, {17,60}, {18,3}},
-            {{0,601}, {7,1}, {8,0}, {10,1}, {11,256}, {12,100}, {13,81}, {14,60}, {15,4}, {16,256}, {17,100}, {18,81}, {19,60}, {20,4}},
-            {{0,602}, {7,7}, {8,3}, {9,0}, {10,6}, {11,256}, {12,60}, {13,34}, {16,256}, {17,60}, {18,34}},
+            {{0,600}, {7,4}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,0}, {10,6}, {11,256}, {12,60}, {13,3}, {16,256}, {17,60}, {18,3}},
+            {{0,601}, {7,1}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,0}, {10,1}, {11,256}, {12,100}, {13,81}, {14,60}, {15,4}, {16,256}, {17,100}, {18,81}, {19,60}, {20,4}},
+            {{0,602}, {7,7}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,3}, {9,0}, {10,6}, {11,256}, {12,60}, {13,34}, {16,256}, {17,60}, {18,34}},
             {{0,603}, {8,0}, {11,256}, {12,118}, {13,1100}, {16,256}, {17,118}, {18,1100}}, // (as 435: Cover of command 1100)
+            // Round 27, as the release's rows (4 / 5 / 6 the uses a battle / turn / command, 7 trigger, 8 condition, 9 its constant,
+            // 10 end timing, 11 / 16 chance): 1 Critical x2 (trigger 3, condition 4 - the unit's attack -, end 9: kind 69 x200);
+            // 2 Critical First Attack (the same, once a battle: kind 139); 127 Afterthought Guard (trigger 10, condition 4, end 9:
+            // kind 60 -> 2; chance 256 here, 77 in the release); 134 Narrow Escape (trigger 5, condition 29 at 100 %, end 6, once a
+            // battle and a command: kind 53 1, kind 60 -> 109); 126 Emergency Guard (trigger 6, end 5: kind 60 -> 2, nothing with
+            // the advantage); 452 as the Death Mask's (no trigger: kind 61 -> 88, with the advantage kind 60 -> 88); 604 no trigger,
+            // kind 60 -> 301 (two accumulations at most); 113 as the release's (trigger 12, condition 24 - day -, end 11: kind 45 10)
+            {{0,1}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,3}, {8,4}, {10,9}, {11,256}, {12,69}, {13,200}, {16,256}, {17,69}, {18,200}},
+            {{0,2}, {4,1}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,3}, {8,4}, {10,9}, {11,256}, {12,139}, {16,256}, {17,139}},
+            {{0,127}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,10}, {8,4}, {10,9}, {11,256}, {12,60}, {13,2}, {16,256}, {17,60}, {18,2}},
+            {{0,134}, {4,1}, {5,uint32_t(-1)}, {6,1}, {7,5}, {8,29}, {9,100}, {10,6}, {11,256}, {12,53}, {13,1}, {14,60}, {15,109},
+             {16,256}, {17,53}, {18,1}, {19,60}, {20,109}},
+            {{0,126}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,6}, {8,0}, {10,5}, {11,256}, {12,60}, {13,2}, {16,256}},
+            {{0,452}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {11,256}, {12,61}, {13,88}, {16,256}, {17,60}, {18,88}},
+            {{0,604}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {11,256}, {12,60}, {13,301}, {16,256}, {17,60}, {18,301}},
+            {{0,113}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,12}, {8,24}, {10,11}, {11,256}, {12,45}, {13,10}, {16,256}, {17,45}, {18,10}},
         }};
         Table statusEffects{"StatusEffect", "iiiiiiiiiiiiiiiiiiiiiii_ipiiiiiiii", {
             {{0,1}, {1,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}},
@@ -244,6 +266,10 @@ int main() {
             {{0,500}, {1,uint32_t(-1)}, {4,5}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,7}, {12,256}, {13,256}},
             {{0,501}, {1,uint32_t(-1)}, {4,5}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,8}, {12,256}, {13,256}},
             {{0,502}, {1,uint32_t(-1)}, {4,5}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,9}, {12,256}, {13,256}},
+            // Round 27: 2 Guard (1 turn: kind 34 x50); 109 Narrow Escape's (1 use, 1 turn, trigger 8 at HP 1 or under - condition
+            // 22 -, end 7: kind 97 -> 1525 Braveheart)
+            {{0,2}, {1,uint32_t(-1)}, {5,1}, {6,1}, {12,256}, {13,256}, {14,34}, {15,50}},
+            {{0,109}, {1,26}, {4,1}, {5,1}, {6,1}, {8,8}, {9,22}, {10,1}, {11,7}, {12,256}, {13,256}, {14,97}, {15,1525}},
         }};
         check(t.skill.parse(tables({skills, statusEffects})), "parse synthetic skills and status effects");
         Table elements{"Element", "ifffffff", {
@@ -1142,6 +1168,97 @@ int main() {
                 acts = r.turn({{0, 1101, 2}});
                 a = actionOf(acts, 0, 1101);
                 check(a && a->targets[0].target == 2 && a->targets[0].coveredFrom < 0 && r.fighters[3].hp == 5000, "Cover: another command not covered");
+            }
+            // Round 27, the skills' enabled state (BtlSkill +0x14): Critical x2 (1) - enabled at trigger 3 by the unit's own attack
+            // (condition 4) alone, its kind 69 doubling a critical, ended at end timing 9
+            {
+                const auto critHit = [&](int attackCommand, int skill) {
+                    cr3::Cr3BattleRules r; fresh(r, 57);
+                    r.fighters[0].attackCommand = attackCommand, r.fighters[0].skills = {skill};
+                    const auto acts = r.turn({{0, 1108, 2}});
+                    const cr3::Cr3Action* a = actionOf(acts, 0, 1108);
+                    check(a && (a->targets[0].flags[0] & 1) && !r.fighters[0].skillsOn.count(skill), "an always-critical hit, its skill ended at 9");
+                    return a->targets[0].hits[0];
+                };
+                check(critHit(1108, 603) == 8, "a critical: x (1 + 0.5 + 0.1)");
+                check(critHit(1108, 1) == 16, "Critical x2 (kind 69 200) on the unit's own attack: the critical doubled");
+                check(critHit(1100, 1) == 8, "Critical x2: another command than the unit's attack - condition 4 fails, no double");
+            }
+            // Critical First Attack (2): the first attack critical, its use a battle spent - never enabled again
+            {
+                cr3::Cr3BattleRules r; fresh(r, 58);
+                r.fighters[0].skills = {2}, r.fighters[0].attackCommand = 1112;
+                auto acts = r.turn({{0, 1112, 2}});
+                const cr3::Cr3Action* a = actionOf(acts, 0, 1112);
+                check(a && (a->targets[0].flags[0] & 1) && r.fighters[0].skillUses[2][0] == 0, "Critical First Attack: kind 139 - critical, its use spent");
+                r.monstersWait = true;
+                (void)r.turn({{0, 1112, 2}});
+                check(r.fighters[0].skillUses[2][0] == 0 && !r.fighters[0].skillsOn.count(2), "Critical First Attack: no uses left - not enabled again");
+            }
+            // Afterthought Guard (127: trigger 10, condition 4): Guard after the unit's own attack, not after another command
+            {
+                cr3::Cr3BattleRules r; fresh(r, 59);
+                r.fighters[0].skills = {127};
+                (void)r.turn({{0, 1101, 2}});
+                check(!r.hasEffect(0, 2), "Afterthought Guard: no guard after a command not the unit's attack");
+                r.monstersWait = true;
+                (void)r.turn({{0, 1100, 2}});
+                check(r.hasEffect(0, 2) && !r.fighters[0].skillsOn.count(127), "Afterthought Guard: Guard after its attack, the skill ended at 9 - after trigger 10");
+            }
+            // Narrow Escape (134: trigger 5 - before the HP change, the total -15000 -, condition 29 at full HP): kind 53 holds it at 1,
+            // 109 then casts Braveheart (1525) at trigger 8; end 6 ends it; once a battle - the next lethal hit kills
+            {
+                cr3::Cr3BattleRules r; fresh(r, 60);
+                r.fighters[2].skills = {134};
+                auto acts = r.turn({{0, 1111, 2}});
+                check(r.fighters[2].hp == 1 && actionOf(acts, 2, 1525) && r.hasEffect(2, 88), "Narrow Escape: lethal damage at full HP - left at 1, Braveheart cast");
+                check(!r.fighters[2].skillsOn.count(134) && r.fighters[2].skillUses[134][0] == 0, "Narrow Escape: ended at 6, its use a battle spent");
+                r.fighters[2].hp = 5000, r.monstersWait = true;
+                (void)r.turn({{0, 1111, 2}});
+                check(r.fighters[2].dead(), "Narrow Escape: once a battle - the next lethal hit kills");
+                cr3::Cr3BattleRules n; fresh(n, 60);
+                n.fighters[2].skills = {134}, n.fighters[2].hp = 4999;
+                (void)n.turn({{0, 1111, 2}});
+                check(n.fighters[2].dead() && n.fighters[2].skillUses[134][0] == 1, "Narrow Escape: not at full HP - condition 29 fails");
+            }
+            // Emergency Guard (126: trigger 6, the gauge crossing 0, every unit, end 5 straight after): Guard for the side that lost
+            // the advantage alone (the other's pair empty)
+            {
+                cr3::Cr3BattleRules r; fresh(r, 61);
+                for (auto& f : r.fighters) f.skills = {126};
+                r.gauge = 300, r.gaugeStarted = true;
+                check(!r.addBreak(100) && !r.hasEffect(0, 2), "no crossing: no trigger 6");
+                check(r.addBreak(-700), "the gauge crossing 0: a break");
+                check(r.hasEffect(0, 2) && r.hasEffect(1, 2) && !r.hasEffect(2, 2) && !r.hasEffect(3, 2) && r.gauge == -800,
+                      "Emergency Guard: the party - its advantage lost - guards, the monsters not");
+                check(r.fighters[0].skillsOn.empty() && r.fighters[2].skillsOn.empty(), "Emergency Guard: ended at 5");
+            }
+            // a no-trigger skill's kinds 60 / 61 at every trigger with the advantage as it stands (452: the Death Mask's); a held
+            // effect given again one accumulation more, its turns not refreshed (604 -> 301)
+            {
+                cr3::Cr3BattleRules r; fresh(r, 62);
+                r.fighters[2].skills = {452}, r.fighters[3].skills = {604};
+                r.giveEffect(2, 88), (void)r.triggerSkills(2, 0);
+                check(!r.hasEffect(2, 88), "452 without the advantage: kind 61 takes 88 away");
+                r.gauge = -500, r.gaugeStarted = true, (void)r.triggerSkills(2, 12);
+                check(r.hasEffect(2, 88), "452 with the advantage: kind 60 gives 88");
+                (void)r.triggerSkills(3, 0);
+                for (auto& [id, turns] : r.fighters[3].effects) if (id == 301) turns = 2;
+                (void)r.triggerSkills(3, 12), (void)r.triggerSkills(3, 12);
+                int turns = 0;
+                for (const auto& [id, n] : r.fighters[3].effects) if (id == 301) turns = n;
+                check(r.fighters[3].effectStacks[301] == 2 && turns == 2, "a held effect re-given: an accumulation more (at most 2), its turns kept");
+            }
+            // condition 24 / 25 (113: the device clock's day): trigger 12 enables it by day alone; end 11 ends it
+            {
+                cr3::Cr3BattleRules r; fresh(r, 63);
+                r.fighters[0].skills = {113};
+                r.localHour = 22, (void)r.triggerSkills(0, 12);
+                check(!r.skillOn(r.fighters[0], 113), "condition 24 at 22:00: not day - not enabled");
+                r.localHour = 9, (void)r.triggerSkills(0, 12);
+                check(r.skillOn(r.fighters[0], 113) && r.skillConstant(r.fighters[0], 45) == 10, "condition 24 at 09:00: enabled, its kind 45 read");
+                r.endEffects(0, 11);
+                check(!r.skillOn(r.fighters[0], 113), "end timing 11 ends it");
             }
             // triggers 7 / 8 / 9 once a target: 500 / 501 / 502 each one use a trigger
             {

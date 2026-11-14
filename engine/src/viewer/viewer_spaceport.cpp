@@ -3813,9 +3813,9 @@ bool Viewer::spacePortOkOn(const cr3::Cr3OfflineDb::Quest& q) const {
     return cq.category == 2 || questReady(q);
 }
 
-void Viewer::drawCr3SpacePort(cr3::EventRuntime& ev, int w, int h) {
+void Viewer::drawCr3SpacePort(cr3::EventRuntime& ev, int w, int h, bool front) {
     const cr3::EventRuntime::SpacePort& sp = ev.spacePort();
-    spacePortTaps.clear();
+    if (front) spacePortTaps.clear();
     if (!sp.open || sp.talk) return;
     Cr3SpacePortMenu& m = spacePortMenu;
     Mat4 camera = cr3::mat4Identity();
@@ -3824,6 +3824,13 @@ void Viewer::drawCr3SpacePort(cr3::EventRuntime& ev, int w, int h) {
     cr3::SceneLighting none;
     dev->setLighting(none);
     dev->clearDepth();
+    if (!front) { // (SpacePortMain::Initialize 0xb373ec: spBgPositon and comBg02Menu - its bg, mat_bg_01, untextured: a navy veil at
+        // half alpha over the field -, Pose 0xb38478 at call_spBgMenu_fit0, fitted; behind the clerk's cut-in)
+        float x, y;
+        UiFig& bg = cr3UiPut("spbgpositon", "", 0, 0, 0, view);
+        if (cr3UiCall(bg, "call_spBgMenu", x, y, w, h)) cr3UiPut("combg02menu", "", 0, x, y, view);
+        return;
+    }
     std::vector<Cr3GeneLabTap> keep;
     keep.swap(cr3CampTaps); // (the screen's taps gathered as the camp's, then its own)
     if (m.screen == 1 || m.screen == 6) {

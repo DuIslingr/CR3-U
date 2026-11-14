@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <tuple>
 
 namespace cr3 {
@@ -29,6 +30,9 @@ constexpr const char* kDirection = "iii"; // command, kind, motion
 int16_t low16(int32_t v) { return int16_t(uint32_t(v) & 0xffff); }
 int16_t high16(int32_t v) { return int16_t(uint32_t(v) >> 16); }
 int grown(int base, int growth, int level) { return base + (level - 1) * growth / 100; }
+// (BtlSkill::IsEnable 0x9c6558: a skill of no trigger and no condition - BtlStatus::Initialize's trigger 0 enables it, its
+// uses all -1, its end timing 0 never called - or one its trigger enabled, until its end timing)
+bool enabledRow(const Cr3Fighter& f, int id, const MbeFile::Row& r) { return (r.i(7) == 0 && r.i(8) == 0) || f.skillsOn.count(id) > 0; }
 
 } // namespace
 
@@ -177,6 +181,9 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
         if (error) *error = "no fighters";
         return false;
     }
+    // (BtlStatus::Initialize 0x9b32fc: TriggerSkillToCalculation with trigger 0 once - the skills of no trigger enabled,
+    // their kind 60 status effects given and kind 61 taken away from the start: 451's 77, 454's 79, 491's 139)
+    for (size_t k = 0; k < fighters.size(); ++k) (void)triggerSkills(int(k), 0);
     return true;
 }
 
@@ -264,7 +271,7 @@ int Cr3BattleRules::skillConstant(const Cr3Fighter& f, int kind) const {
     const int base = advantage(f.player) ? 17 : 12;
     MbeFile::Row r;
     for (int id : f.skills)
-        if (tables_->skill.find("Skill", id, kSkill, r) && r.i(8) == 0) { // (only those without a condition)
+        if (tables_->skill.find("Skill", id, kSkill, r) && enabledRow(f, id, r)) { // (the enabled ones alone)
             if (r.i(base) == kind) sum += r.i(base + 1);
             if (r.i(base + 2) == kind) sum += r.i(base + 3);
         }
@@ -277,11 +284,29 @@ std::vector<int> Cr3BattleRules::skillConstants(const Cr3Fighter& f, int kind) c
     MbeFile::Row r;
     if (tables_)
         for (int id : f.skills)
-            if (tables_->skill.find("Skill", id, kSkill, r) && r.i(8) == 0) {
+            if (tables_->skill.find("Skill", id, kSkill, r) && enabledRow(f, id, r)) {
                 if (r.i(base) == kind) out.push_back(r.i(base + 1));
                 if (r.i(base + 2) == kind) out.push_back(r.i(base + 3));
             }
     return out;
+}
+
+bool Cr3BattleRules::skillOn(const Cr3Fighter& f, int skill) const {
+    MbeFile::Row r;
+    return tables_ && std::find(f.skills.begin(), f.skills.end(), skill) != f.skills.end() && tables_->skill.find("Skill", skill, kSkill, r) &&
+           enabledRow(f, skill, r);
+}
+
+int Cr3BattleRules::skillMost(const Cr3Fighter& f, int kind) const {
+    int most = 0;
+    for (int c : skillConstants(f, kind)) most = std::max(most, c);
+    return most;
+}
+
+std::array<int, 3>& Cr3BattleRules::skillUsesOf(Cr3Fighter& f, int skill, const MbeFile::Row& r) {
+    const auto at = f.skillUses.find(skill);
+    if (at != f.skillUses.end()) return at->second;
+    return f.skillUses[skill] = {r.i(4), r.i(5), r.i(6)}; // (BtlSkill::Initialize 0x9c604c)
 }
 
 int Cr3BattleRules::skillKindMax(int skill, int kind) const {
@@ -309,7 +334,7 @@ std::vector<int> Cr3BattleRules::skillCommands(int fighter) const {
     const Cr3Fighter& f = fighters[size_t(fighter)];
     MbeFile::Row r;
     for (int id : f.skills)
-        if (tables_ && tables_->skill.find("Skill", id, kSkill, r) && r.i(8) == 0)
+        if (tables_ && tables_->skill.find("Skill", id, kSkill, r) && enabledRow(f, id, r))
             for (const auto& [kind, value] : skillEffects(id, advantage(f.player)))
                 if (kind == 127) out.push_back(value);
     return out;
@@ -417,7 +442,7 @@ bool Cr3BattleRules::hasEffect(int fi, int id) const {
     return false;
 }
 
-void Cr3BattleRules::giveEffect(int fi, int id, bool lasting) {
+void Cr3BattleRules::giveEffect(int fi, int id, bool lasting, bool stackOnly) {
     // BtlStatusEffectList::Add + CanCancel (0x009b874c): group slot (col 1), priority (col 3),
     // turns (cols 5..6 + skill 84 continue boost), maxAccumulation (col 7), CanCancel (col 32 bit 0x10).
     if (!tables_ || fi < 0 || size_t(fi) >= fighters.size()) return;
@@ -425,6 +450,11 @@ void Cr3BattleRules::giveEffect(int fi, int id, bool lasting) {
     const bool full = tables_->skill.find("StatusEffect", id, kStatusEffectFull, r);
     if (!full && !tables_->skill.find("StatusEffect", id, kStatusEffect, r)) return;
     const int group = r.i(1), priority = r.i(3), maxAcc = std::max(r.i(7), 1), flags = full ? r.i(32) : 0;
+    if (stackOnly && hasEffect(fi, id)) { // (AddAccumulation alone: no turns drawn, none refreshed)
+        int& stacks = fighters[size_t(fi)].effectStacks[id];
+        stacks = std::min(std::max(stacks, 1) + 1, maxAcc);
+        return;
+    }
     int turns = r.i(5);
     if (!lasting && turns >= 0 && r.i(6) > turns) turns += int(random() * float(r.i(6) - turns + 1)); // (a field's: no roll - -1 below)
     if (!lasting && turns >= 0) turns += statusTurnBoost_;
@@ -513,7 +543,7 @@ bool Cr3BattleRules::hasSkillKind(const Cr3Fighter& f, int kind) const {
     const bool adv = advantage(f.player);
     MbeFile::Row r;
     for (int id : f.skills)
-        if (tables_->skill.find("Skill", id, kSkill, r) && r.i(8) == 0)
+        if (tables_->skill.find("Skill", id, kSkill, r) && enabledRow(f, id, r))
             for (const auto& [k, v] : skillEffects(id, adv))
                 if (k == kind) return true;
     return false;
@@ -620,6 +650,11 @@ std::vector<std::pair<int, int>> Cr3BattleRules::endTurn() {
             out.emplace_back(int(k), change);
         }
         endEffects(int(k), 11);
+        // (BtlStatus::UpdateStatusEffectToCalculation, the turn's end: BtlSkill::ResetCountPerTurn 0x9c6078 - each skill's
+        // uses a turn its row's again)
+        MbeFile::Row sr;
+        for (auto& [id, uses] : f.skillUses)
+            if (tables_ && tables_->skill.find("Skill", id, kSkill, sr)) uses[1] = sr.i(5);
         // (BtlStatusEffect::Update 0x9c7cb4: a turn off each, gone at 0; -1 stays)
         for (auto& [id, turns] : f.effects)
             if (turns > 0 && --turns == 0) f.effectStacks.erase(id), f.effectUses.erase(id), f.effectsDormant.erase(id);
@@ -638,6 +673,15 @@ bool Cr3BattleRules::addBreak(int points) {
     bool broke = false;
     if (gauge > 0 && gauge + points < 1) gauge = std::clamp(gauge - 500, -1000, 1000), broke = true;
     else if (gauge < 0 && gauge + points >= 0) gauge = std::clamp(gauge + 500, -1000, 1000), broke = true;
+    // (the step added, the observers notified, then the points: BtlCommandManager::VUpdate(BtlBreakPoint const&) 0x7db17c -
+    // +0x31 set - AllTriggerSkillToCalculation with trigger 6, attack kind 0, command -1 on every unit, then
+    // AllEndEffectToCalculation(5); the advantage already the new side's - Emergency Guard 126 guards the side that lost
+    // it, its advantage pair empty. The fallen left out: whether the status list's walk takes them unsettled)
+    if (broke) {
+        for (size_t k = 0; k < fighters.size(); ++k)
+            if (!fighters[k].dead()) (void)triggerSkills(int(k), 6);
+        for (size_t k = 0; k < fighters.size(); ++k) endEffects(int(k), 5);
+    }
     gauge = std::clamp(gauge + points, -1000, 1000);
     return broke;
 }
@@ -652,7 +696,7 @@ void Cr3BattleRules::rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, c
         if (!forceCrit && tables_) {
             MbeFile::Row sr;
             for (int id : s.skills)
-                if (tables_->skill.find("Skill", id, kSkill, sr) && sr.i(8) == 0)
+                if (tables_->skill.find("Skill", id, kSkill, sr) && enabledRow(s, id, sr)) // (Critical First Attack 2's: enabled at trigger 3)
                     for (const auto& [k, v] : skillEffects(id, adv)) forceCrit |= k == 139;
         }
         if (forceCrit) crit = true;
@@ -719,6 +763,10 @@ int Cr3BattleRules::hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr
     d *= c.multiplier > 0 ? c.multiplier : 1.0f;
     d *= effectMultiplier(t, 34); // ("Status Effect": the target's kind 34 - Guard's status effect 2, x 0.5)
     d *= coopNow_;                // (x MbBattleInfo::GetCooperationScale: a cooperation's units)
+    // (calculateBasicDamage 0x7e3950's last step, a critical's - +0xa1: x BtlSkillUtility::GetCriticalDamageCorrection 0x9af3b4,
+    // the attacker's enabled skills' kind 69 (0x45) constants / 100 multiplied - Critical x2 1's 200)
+    if (crit)
+        for (int k69 : skillConstants(s, 69)) d *= float(k69) / 100.0f;
     int out = std::max(int(d), 1);
     if (bootCharacter) out *= 10; // (MbCouplingInfo +0x44 bit 3: IsBootCharacter)
     // (calculatePhysicalDamage / calculateMagicDamage: x the attacker's kind 54 / 55 multipliers)
@@ -843,6 +891,7 @@ void Cr3BattleRules::loadMode(Cr3Fighter& f, const MbeFile::Row& m) {
     f.attackCommand = m.i(5);
     f.lastAttack = m.i(6), f.finestArts = m.i(7); // (+0x18 / +0x1c: the finishers)
     f.commands.clear(), f.skills.clear();
+    f.skillsOn.clear(), f.skillUses.clear(); // (initializeCommandSkill: a new BtlSkillList - none enabled, the uses the rows')
     for (size_t c = 0; c < 8; ++c)
         if (m.i(8 + c * 3) >= 0) f.commands.push_back({m.i(8 + c * 3), m.i(9 + c * 3), m.i(10 + c * 3)});
     for (size_t k = 32; k < 40; ++k)
@@ -1217,10 +1266,12 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         }
     };
     // (after a command: TriggerAfterCommandToCalculation 0x97dc38 - trigger 11 on every unit - and playCommand
-    // 0x7dc940's end timing 10 on every unit: Regenerate's revive, a used Mental Wall / Moonlight Shadow gone)
-    const auto afterAnyCommand = [&](int attackKind) {
+    // 0x7dc940's EndSourceEffectToCalculation(9) - the source's: a Rally used up, Afterthought Guard 127 ended straight after
+    // its trigger 10 - and end timing 10 on every unit: Regenerate's revive, a used Mental Wall / Moonlight Shadow gone)
+    const auto afterAnyCommand = [&](int attackKind, int source) {
         for (size_t k = 0; k < fighters.size(); ++k) (void)triggerSkills(int(k), 11, attackKind);
         for (size_t k = 0; k < fighters.size(); ++k) queueEffectCommands(int(k), triggerEffects(int(k), 11, attackKind), -1);
+        if (source >= 0) endEffects(source, 9);
         for (size_t k = 0; k < fighters.size(); ++k) endEffects(int(k), 10);
     };
     // (a no-actor command next - Regenerate's - is still played once the party has fallen)
@@ -1309,7 +1360,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         if (src < 0) { // (a command with no actor: a status effect's kind 98 / 101 - Regenerate's 306 on its bearer)
             Cr3Action na = resolveSourceless(cmd, tgt);
             if (!na.targets.empty()) {
-                afterAnyCommand(0);
+                afterAnyCommand(0, -1);
                 snapshotAfter(na), out.push_back(na);
             }
             if (decided(at)) break;
@@ -1317,6 +1368,11 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         }
         Cr3Fighter& s = fighters[size_t(src)];
         if (s.dead()) continue;
+        // (BtlStatus::ResetCountPerCommandToCalculation, a command's start: BtlSkill::ResetCountPerCommand 0x9c608c - every unit's
+        // skills' uses a command their rows' again: Narrow Escape / Blue-Moon Brave once a command)
+        for (Cr3Fighter& u : fighters)
+            for (auto& [id, uses] : u.skillUses)
+                if (MbeFile::Row sr; tables_ && tables_->skill.find("Skill", id, kSkill, sr)) uses[2] = sr.i(6);
         // (BtlDamageChunk::Calculate 0x97ac10, the command's start: trigger 3 on the actor - its skills', its status effects' -
         // as the command is worked out (BtlCalculator::Calculate 0x971e94: Rally / Concentrate / Lock On enabled for a physical
         // / magic one, by its +0xc4); not for a command a skill or a status effect put in - an unlimited one's own interrupt
@@ -1358,6 +1414,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             Cr3Command g;
             if (command(51, g))
                 for (int e : g.effects) giveEffect(src, e);
+            endEffects(src, 9); // (its end: what its trigger 3 enabled - In the Pink 6 at full HP - ended)
             a.gaugeAfter = gauge;
             snapshotAfter(a), out.push_back(a);
             continue;
@@ -1498,7 +1555,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 }
             }
             int ti = chosen, reflectedFrom = -1;
-            (void)triggerSkills(chosen, 4, c.elementC4, false, cmd);
+            (void)triggerSkills(chosen, 4, c.elementC4, false, cmd, 0, src);
             queueEffectCommands(chosen, triggerEffects(chosen, 4, c.elementC4), src);
             if (hostile && chosen != src && hasKind(fighters[size_t(chosen)], 49)) reflectedFrom = chosen, ti = src;
             endEffects(chosen, 4);
@@ -1506,6 +1563,18 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             Cr3Hit hit;
             hit.target = ti, hit.reflectedFrom = reflectedFrom, hit.coveredFrom = coveredFrom;
             bool landed = false;
+            const int hpBefore = t.hp;
+            int dealt = 0;          // (the hits' HP damage, summed: BtlDamageTarget's GetTotalDamage)
+            bool damaging = false;  // (the hits worked out on the HP as they come, then put back for trigger 5)
+            bool downedHere = false;
+            // (BtlBasicStatus::TakeDamage 0x9b41c4: no lower than the least HP - the status effects' kind 53 a number, 121 a
+            // percentage of the max - an endure -, and BtlSkillUtility::GetLeastHp 0x9b0368: the enabled skills' highest kind 53,
+            // Narrow Escape's / Blue-Moon Brave's 1; a skill's added command past it - the spider's finisher)
+            const auto leastHp = [&]() {
+                return c.damage == 24 ? std::max(c.power, 1)
+                       : fromSkill == 1 ? 0
+                                        : std::max({effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)), skillMost(t, 53)});
+            };
             if (c.damage < 0) { // (CommandFomula -1: no damage - its status effects alone)
                 landed = true;
             } else if (ally) {
@@ -1541,6 +1610,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 // BtlDamageTargetList::Calculate (0x0097f81c): a cooperation fires ONE combined attack
                 // scaled by coopNow_ (not N separate loops); critical and down are rolled once per target.
                 lastTargets.push_back(ti);
+                damaging = true;
                 const Cr3Fighter& u = fighters[size_t(src)];
                 bool critUnit = false, downUnit = false, critShown = false;
                 float rate = 1;
@@ -1598,17 +1668,18 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     }
                     // (calculateHpFluctuation 0x7e35e0: the target's enabled skill kind 91 - the Eggons' 479, trigger
                     // 4 - makes the HP change its constant, GetFixedDamage's highest: -1 one damage a hit)
-                    if (int fixed = 0; rawDmg > 0 && skillEnabled(t, 91, 4, &fixed)) rawDmg = std::max(-fixed, 0);
+                    if (int fixed = 0; rawDmg > 0 && skillEnabled(t, 91, &fixed)) rawDmg = std::max(-fixed, 0);
                     // (calculateFluctuation 0x7e122c: blocked - no HP lost - by the target's enabled status kind 62,
                     // or kind 3 against a physical command, or CanBlockBySkill 0x7e2924: unless the attacker's skill
                     // kind 89 pierces, the target's skill of the element's block kind - BtlElement +0x0c, 4e + 5 -,
-                    // kind 3 against a physical command, 6 against magic; never on a hit on oneself not reflected)
+                    // kind 3 against a physical command, 6 against magic - enabled ones: 121 / 122's by trigger 4, their chance
+                    // rolled there once a command -; never on a hit on oneself not reflected)
                     bool blocked = false;
                     if (rawDmg > 0 && (reflectedFrom >= 0 || ti != src)) {
                         blocked = hasKind(t, 62) || (c.elementC4 == 1 && hasKind(t, 3));
-                        if (!blocked && !skillEnabled(u, 89, 3))
-                            blocked = (c.element >= 1 && c.element <= 6 && skillEnabled(t, 4 * c.element + 5, 4)) ||
-                                      (c.elementC4 == 1 && skillEnabled(t, 3, 4)) || (c.elementC4 == 2 && skillEnabled(t, 6, 4));
+                        if (!blocked && !skillEnabled(u, 89))
+                            blocked = (c.element >= 1 && c.element <= 6 && skillEnabled(t, 4 * c.element + 5)) ||
+                                      (c.elementC4 == 1 && skillEnabled(t, 3)) || (c.elementC4 == 2 && skillEnabled(t, 6));
                     }
                     if (blocked) rawDmg = 0;
                     const bool downHit = downUnit && !blocked; // (calculateDown 0x7e0ddc: CanBlockBySkill - no down)
@@ -1623,19 +1694,31 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     hit.flags.push_back(uint8_t((markCrit ? 1 : 0) | (downHit ? 2 : 0) | (blocked ? 8 : 0)));
                     hit.colors.push_back(elemColor);
                     ++t.chain; // (BtlStatusList::AddChainNum: after CalculateChainBonus on landed hit)
-                    // (BtlBasicStatus::TakeDamage: no lower than the least HP its effects allow -
-                    // kind 53 a number, 121 a percentage of the max: an endure; a skill's added
-                    // command past it - the spider's finisher)
-                    const int least = c.damage == 24 ? std::max(c.power, 1)
-                                      : fromSkill == 1 ? 0
-                                                     : std::max(effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)));
-                    const int before = t.hp;
+                    const int least = leastHp();
                     t.hp = std::max(t.hp - d, t.hp > 0 ? std::min(least, t.hp) : 0);
-                    if (s.player && !t.player) partyDamage = std::min(partyDamage + d, 9999999L), killed += before > 0 && t.hp <= 0;
+                    dealt += d;
+                    if (s.player && !t.player) partyDamage = std::min(partyDamage + d, 9999999L);
+                    downedHere |= downHit;
                     if (downHit) t.comboChance = true, ++t.combo; // (BtlBasicStatus::TakeDamage, addComboNum)
                     anyCrit |= critUnit && !blocked, anyDown |= downHit;
                     if (downHit && std::find(downed.begin(), downed.end(), ti) == downed.end()) downed.push_back(ti);
                 }
+            }
+            // (playCommand 0x7dc940's first step - BtlDamageChunk::TriggerDamageToCalculation 0x97d7b0, before the HP change:
+            // trigger 5 once a target - its skills' with param +0x1c the target's total HP change, below 0 damage, +0x20 a
+            // down -, then its status effects' and AddEffectCommand; Narrow Escape 134 / Blue-Moon Brave 132 enabled - kind 53,
+            // the least HP 1 - and their status effect 109 given. The original fires it for all of a command's targets before
+            // any HP changes: here a target at a time, each hit's damage worked out first on the HP, put back, the trigger, then
+            // the sum taken under the least HP as it then stands - the same as hit by hit under one least HP; a heal's after)
+            int total = 0;
+            for (size_t h = 0; h < hit.hits.size(); ++h)
+                if (!(hit.flags[h] & 4)) total -= hit.hits[h];
+            if (damaging) t.hp = hpBefore, total = -dealt;
+            (void)triggerSkills(ti, 5, c.elementC4, downedHere, cmd, total, src);
+            queueEffectCommands(ti, triggerEffects(ti, 5, c.elementC4, downedHere), src);
+            if (damaging) {
+                t.hp = std::max(hpBefore - dealt, hpBefore > 0 ? std::min(leastHp(), hpBefore) : 0);
+                if (s.player && !t.player) killed += hpBefore > 0 && t.hp <= 0;
             }
             // the status effects it takes away (BtlDamage's RemovesStatusEffect), where it landed
             if (landed)
@@ -1678,19 +1761,19 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             // summed no heal - calculateHpFluctuation's sign: damage below 0 -: trigger 8 and end timing 7 (Counter / Magic
             // Counter, Braveheart's 1525); no hit at all - a status command's -: trigger 9 and end timing 8)
             if (hit.hits.empty()) {
-                (void)triggerSkills(ti, 9, c.elementC4, false, cmd);
+                (void)triggerSkills(ti, 9, c.elementC4, false, cmd, 0, src);
                 queueEffectCommands(ti, triggerEffects(ti, 9, c.elementC4), src);
                 endEffects(ti, 8);
             } else if (!(hit.flags[0] & 4)) {
                 const bool firstDown = (hit.flags[0] & 2) != 0, firstBlocked = (hit.flags[0] & 8) != 0;
-                (void)triggerSkills(ti, 7, c.elementC4, firstDown, cmd);
+                (void)triggerSkills(ti, 7, c.elementC4, firstDown, cmd, 0, src);
                 queueEffectCommands(ti, triggerEffects(ti, 7, c.elementC4, firstDown), src);
                 endEffects(ti, 6);
                 int change = 0;
                 for (size_t h = 0; h < hit.hits.size(); ++h)
                     if (!(hit.flags[h] & 4)) change += hit.hits[h];
                 if (!firstBlocked && change >= 0) {
-                    (void)triggerSkills(ti, 8, c.elementC4, false, cmd);
+                    (void)triggerSkills(ti, 8, c.elementC4, false, cmd, 0, src);
                     queueEffectCommands(ti, triggerEffects(ti, 8, c.elementC4), src);
                     endEffects(ti, 7);
                 }
@@ -1774,14 +1857,13 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         }
         a.gaugeAfter = gauge;
         a.target = a.targets[0].target, a.hits = a.targets[0].hits, a.hpAfter = a.targets[0].hpAfter, a.killed = a.targets[0].killed;
-        // (the command's end: the actor's end timing 9 - a Rally used up -, its trigger 10, then every unit's
-        // trigger 11 and end timing 10)
-        endEffects(src, 9);
+        // (the command's end - playCommand's order: its trigger 10, every unit's trigger 11, the actor's end timing 9, every
+        // unit's end timing 10; the break points - AddBreakPointToCalculation - after them there, before them here)
         if (ownCommand) {
             (void)triggerSkills(src, 10, c.elementC4, false, cmd); // (its commands: the trigger 10 skills' below)
             queueEffectCommands(src, triggerEffects(src, 10, c.elementC4), -1);
         }
-        afterAnyCommand(c.elementC4);
+        afterAnyCommand(c.elementC4, src);
         // (calculateCommands 0x7db93c, after a command of extraType 0xb - Reverse Gravity 387: BtlFieldEffectList::Add
         // 0x7deaac - type 0, 5 turns: a toggle, cleared where it is on -, then lists 0 and 2's bit 3 to match; their
         // BtlCommandList::Sort before every next command - the rest of this turn re-sorted here, the inserted left be)
@@ -2189,53 +2271,94 @@ std::vector<std::pair<int, int>> Cr3BattleRules::triggerEffects(int fi, int trig
 }
 
 // (the conditions: IsLowHp - HP / max HP at or under the constant's % -, the command's +0xc4 - 1 physical, 2 magic -, the
-// turns left, the HP against the constant, the hit's +0x69 - it downed the unit -; a skill's 19 - the command the constant -
-// and 28 - every foe's HP at or under it; the rest not traced: never)
-bool Cr3BattleRules::conditionHolds(const Cr3Fighter& f, int cond, int c, int attackKind, bool downed, int turns, int cmd) const {
+// turns left, the HP against the constant, the hit's +0x69 - it downed the unit -; a skill's (BtlSkill::Trigger's switch) 2 HP
+// at or over the constant's %, 4 the command the unit's own attack (param +0x48 - VGetAttackCommandId, vtable +0xb0 - against
+// +8, neither -1), 5 not downed and physical, 15 physical or magic, 19 the command the constant, 21 holding status effect
+// the constant, 23 the other unit's HP at or under it, 24 / 25 the device's hour in 6 .. 17 / outside, 28 every foe's HP at
+// or under it, 29 HP + the trigger's HP change at 0 or under at the constant's % or over (Narrow Escape 134); the rest - 9 ..
+// 14, 16, 26, 27 - not traced: never)
+bool Cr3BattleRules::conditionHolds(const Cr3Fighter& f, int cond, int c, int attackKind, bool downed, int turns, int cmd, int total,
+                                    int other) const {
+    const auto hpAtLeast = [&](int pct) { return f.maxHp > 0 && int64_t(f.hp) * 100 >= int64_t(pct) * f.maxHp; };
     switch (cond) {
     case 0: return true;
+    case 2: return hpAtLeast(c);
     case 3: return f.maxHp > 0 && float(f.hp) / float(f.maxHp) <= float(c) / 100.0f;
+    case 4: return cmd >= 0 && &f >= fighters.data() && &f < fighters.data() + fighters.size() && cmd == attackCommandOf(int(&f - fighters.data()));
+    case 5: return !downed && attackKind == 1;
     case 6: return attackKind == 1;
     case 7: return attackKind == 2;
+    case 15: return attackKind == 1 || attackKind == 2;
     case 17: return turns >= 0 && turns <= c;
     case 18: return f.hp >= c;
     case 19: return cmd >= 0 && cmd == c;
     case 20: return downed;
+    case 21: return std::any_of(f.effects.begin(), f.effects.end(), [c](const std::pair<int, int>& e) { return e.first == c; });
     case 22: return f.hp <= c;
+    case 23: return other >= 0 && size_t(other) < fighters.size() && fighters[size_t(other)].hp <= c;
+    case 24:
+    case 25: {
+        int hour = localHour;
+        if (hour < 0) {
+            const std::time_t now = std::time(nullptr);
+            std::tm local{};
+#ifdef _WIN32
+            localtime_s(&local, &now);
+#else
+            localtime_r(&now, &local);
+#endif
+            hour = local.tm_hour;
+        }
+        return (hour >= 6 && hour < 18) == (cond == 24);
+    }
     case 28: {
         for (const Cr3Fighter& o : fighters)
             if (o.player != f.player && o.hp > c) return false;
         return true;
     }
+    case 29: return f.hp + total <= 0 && hpAtLeast(c);
     default: return false;
     }
 }
 
-std::vector<std::pair<int, int>> Cr3BattleRules::triggerSkills(int fi, int trigger, int attackKind, bool downed, int cmd) {
+std::vector<std::pair<int, int>> Cr3BattleRules::triggerSkills(int fi, int trigger, int attackKind, bool downed, int cmd, int total, int other) {
     std::vector<std::pair<int, int>> added;
-    if (!tables_ || fi < 0 || size_t(fi) >= fighters.size() || trigger <= 0) return added;
+    if (!tables_ || fi < 0 || size_t(fi) >= fighters.size() || trigger < 0) return added;
     const std::vector<int> skills = fighters[size_t(fi)].skills; // (a copy: a given effect may not touch it, but be safe)
     MbeFile::Row r;
-    for (int id : skills) {
-        if (!tables_->skill.find("Skill", id, kSkill, r)) continue;
-        const Cr3Fighter& f = fighters[size_t(fi)];
-        const bool adv = advantage(f.player);
-        const auto effects = skillEffects(id, adv);
-        if (r.i(7) == 0) { // (no trigger - always enabled: its kind 60 one where the unit has none - skill 451's 77)
-            if (r.i(8) == 0)
-                for (const auto& [kind, value] : effects)
-                    if (kind == 60 && !hasEffect(fi, value) && !effectInvalid(f, value)) giveEffect(fi, value);
-            continue;
+    // (BtlSkillList::Trigger 0x9bb224 -> BtlSkill::Trigger 0x9c60a0: the trigger's skills - +0x1c - with their three uses not
+    // 0, the condition holding and the chance - the trigger's chances visitor, +0x2c / +0x40 of 256 - rolled (here after the
+    // other tests, as CR3-U always drew it), each use above 0 one less, enabled. Trigger 0's skills - no condition, chance
+    // 256, uses -1 - count as enabled from the start: enabledRow)
+    if (trigger > 0)
+        for (int id : skills) {
+            if (!tables_->skill.find("Skill", id, kSkill, r) || r.i(7) != trigger) continue;
+            Cr3Fighter& f = fighters[size_t(fi)];
+            std::array<int, 3>& uses = skillUsesOf(f, id, r);
+            if (uses[0] == 0 || uses[1] == 0 || uses[2] == 0) continue;
+            if (!conditionHolds(f, r.i(8), r.i(9), attackKind, downed, -1, cmd, total, other)) continue;
+            const bool adv = advantage(f.player);
+            const int chance = r.i(adv ? 16 : 11);
+            if (chance < 256 && !(int(random() * 256.0f) < chance)) continue;
+            for (int& u : uses)
+                if (u > 0) --u;
+            f.skillsOn.insert(id);
+            for (const auto& [kind, value] : skillEffects(id, adv))
+                if ((kind >= 97 && kind <= 101) || kind == 126) added.emplace_back(kind, value);
         }
-        if (r.i(7) != trigger || !conditionHolds(f, r.i(8), r.i(9), attackKind, downed, -1, cmd)) continue;
-        const int chance = r.i(adv ? 16 : 11);
-        if (chance < 256 && !(int(random() * 256.0f) < chance)) continue;
-        for (const auto& [kind, value] : effects) {
-            if (kind == 60 && !effectInvalid(fighters[size_t(fi)], value)) giveEffect(fi, value); // (TakeStatusEffect)
-            else if (kind == 61) removeEffect(fi, value);
-            else if ((kind >= 97 && kind <= 101) || kind == 126) added.emplace_back(kind, value);
+    // (then BtlSkillVisitor 0x9b8cc4 over the enabled skills, the gauge's advantage's pair: every kind 60 ->
+    // TakeStatusEffectToCalculation(id, GetTurn) - a held one an accumulation more, BtlStatusEffectList::Add 0x9b75c8 -, then
+    // every kind 61 -> Remove; each trigger again, the no-trigger skills' always: a lost one comes back)
+    for (const int kindNow : {60, 61})
+        for (int id : skills) {
+            const Cr3Fighter& f = fighters[size_t(fi)];
+            if (!tables_->skill.find("Skill", id, kSkill, r) || !enabledRow(f, id, r)) continue;
+            for (const auto& [kind, value] : skillEffects(id, advantage(f.player))) {
+                if (kind != kindNow) continue;
+                if (kind == 61) removeEffect(fi, value);
+                else if (!effectInvalid(fighters[size_t(fi)], value)) giveEffect(fi, value, false, true);
+            }
         }
-    }
     return added;
 }
 
@@ -2271,6 +2394,10 @@ void Cr3BattleRules::endEffects(int fi, int timing) {
     if (!tables_ || fi < 0 || size_t(fi) >= fighters.size() || timing == 0) return;
     Cr3Fighter& f = fighters[size_t(fi)];
     MbeFile::Row r;
+    // (BtlStatus::EndEffectToCalculation 0x9b5190 ends the skill list too: BtlSkill::End 0x9c6504 - enabled cleared where the
+    // row's +0x28 is the timing)
+    for (auto it = f.skillsOn.begin(); it != f.skillsOn.end();)
+        it = tables_->skill.find("Skill", *it, kSkill, r) && r.i(10) == timing ? f.skillsOn.erase(it) : std::next(it);
     std::vector<int> gone;
     for (const auto& [id, turns] : f.effects) {
         if (!tables_->skill.find("StatusEffect", id, kStatusEffectFull, r) || r.i(11) != timing) continue;
@@ -2431,20 +2558,9 @@ Cr3Action Cr3BattleRules::resolveSourceless(int id, int target) {
     return a;
 }
 
-bool Cr3BattleRules::skillEnabled(const Cr3Fighter& f, int kind, int trigger, int* most) {
-    if (!tables_) return false;
-    const bool adv = advantage(f.player);
+bool Cr3BattleRules::skillEnabled(const Cr3Fighter& f, int kind, int* most) const {
     bool on = false;
-    MbeFile::Row r;
-    for (int id : f.skills) {
-        if (!tables_->skill.find("Skill", id, kSkill, r) || r.i(8) != 0 || (r.i(7) != 0 && r.i(7) != trigger)) continue;
-        bool has = false;
-        int value = 0;
-        for (const auto& [k, v] : skillEffects(id, adv))
-            if (k == kind) value = has ? std::max(value, v) : v, has = true;
-        if (!has) continue;
-        const int chance = r.i(adv ? 16 : 11);
-        if (r.i(7) != 0 && chance < 256 && !(int(random() * 256.0f) < chance)) continue;
+    for (int value : skillConstants(f, kind)) {
         if (most) *most = on ? std::max(*most, value) : value;
         on = true;
     }

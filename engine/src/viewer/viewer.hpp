@@ -2187,6 +2187,13 @@ struct Viewer {
     // the result (BattleResultV2Menu: the EXP and money - the monsters' MbMonsterInfo::GetExp /
     // GetMoney at their levels: +0x3c / +0x40 + (level - 1) x the s16 at +0x44 / +0x46)
     int cr3ResultExp = 0, cr3ResultMoney = 0;
+    // (VIP - BattleResultV2Menu::SetParamNumber 0xb27188 case 4's +0: the totals before the vipbonus, its factors - +0x328 / +0x32c,
+    // btRsltVipPanel's x n.n -; the base shown first, then multiplied and pulsed - Update 0xb23e1c states 0 / 1)
+    bool cr3ResultVip = false;
+    int cr3ResultBase[2] = {};
+    float cr3ResultVipBy[2] = {1, 1};
+    static constexpr float kCr3VipWait = 2.0666666f; // (case 4's +0x318 0x40044444: state 0's wait with VIP)
+    float cr3ResultLead() const { return cr3ResultVip ? kCr3VipWait + 1.0f / 3 : 0.0f; } // (the VIP's part before the tally)
     // the EXP into the genes (BattleResultMenu::Update, CrxGene::AddTemporaryExp / SaveExp): each
     // party member's worn gene - the first three slots' standing ones the whole, the rest (and the
     // fallen) half; its level from its EXP (MbGeneInfo::GetLevel), at its top the EXP held there; a
@@ -3186,6 +3193,7 @@ struct Viewer {
     static Cr3GeneLabTap circleTap(float cx, float cy, float ax, float ay, int id);
     std::vector<Cr3GeneLabTap> modeTaps; // (CR3's title's mode select: its buttons, its Yes / No)
     static constexpr int kTapCard = 1000, kTapRow = 2000, kTapTab = 3000, kTapMix = 4000, kTapYes = 4001, kTapNo = 4002, kTapOk = 4003, kTapAlert = 4004;
+    static constexpr int kTapGeneTab = 9020, kTapGeneSort = 9022; // (the camp gene footer's Parameters / Skills - + 1 -, its sort button)
     std::vector<Cr3GeneLabTap> geneLabTaps;
     bool geneLabWasOpen = false;
     int geneLabFocus = 0;
@@ -3306,7 +3314,8 @@ struct Viewer {
         bool geneButton = false;
         int geneSkill = -1;
         int geneTake = -1, geneAskFocus = 1;
-        int geneSort = 0, geneTab = 0;
+        int geneSort = 0, geneTab = 0; // (geneTab 1: the footer's Skills - GeneSkillListMenu 0x4f in the cards' place)
+        int geneListRow = 0;           // (its row in focus)
         int barCursor = 5;      // (the Vita's cursor over the field's buttons - kCr3BarIds' place; 5 Camp)
     } cr3Camp;
     static constexpr int kCampButtons[7] = {0, 1, 2, 5, 4, 3, 6};
@@ -3461,6 +3470,17 @@ struct Viewer {
     void cr3CampPadHeld(bool held);
     bool campGeneShoulder(bool right);
     void sortCampGenes();
+    // GeneSkillListMenu's rows (AddListItem 0xa8a95c): the gene's eight - type 0 a command, 1 a skill -, then the ones its
+    // levels still to come teach (learnt false: dimmed, "Learn at Level {level}")
+    struct Cr3GeneSkillRow {
+        int type = 0, id = -1, level = 0;
+        bool learnt = true;
+    };
+    std::vector<Cr3GeneSkillRow> campGeneSkillRows() const;
+    std::string campGeneSkillHelp(const Cr3GeneSkillRow& row);
+    void drawCr3CampGeneSkills(int w, int h, const Mat4& view);
+    void drawCr3CampGeneFooter(int w, int h, const Mat4& view);
+    void setCampGeneTab(int tab);
     bool cr3CampKey(SDL_Keycode key);
     void drawAreaDrag(int w, int h);
     void drawAreaCam(int w, int h);
@@ -3933,7 +3953,7 @@ struct Viewer {
     void openSpacePortQuests(bool again = false);
     void spacePortLeave(int questReturn);
     bool spacePortOkOn(const cr3::Cr3OfflineDb::Quest& q) const;
-    void drawCr3SpacePort(cr3::EventRuntime& ev, int w, int h);
+    void drawCr3SpacePort(cr3::EventRuntime& ev, int w, int h, bool front = true); // (front false: its backdrop, behind the clerk)
     void chooseSpacePort(cr3::EventRuntime& ev, int id);
     bool spacePortClick(float fx, float fy);
     bool spacePortKey(SDL_Keycode key);
@@ -4095,6 +4115,9 @@ struct Viewer {
         int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
         int top = 0;   // (Graphics: the first row shown)
         bool footer = false;
+        int footerAt = 5;    // (the footer's focus: 0 .. 4 the mpMe panels - the field's alone -, 5 the back)
+        bool titleAsk = false; // (Title Screen's question, 0x1a3)
+        int titleFocus = 1;
         bool asking = false; // (CR3-U's Reset: its question up)
         int askFocus = 1;    // (0 Yes, 1 No)
         float askSince = 0;
@@ -4146,7 +4169,8 @@ struct Viewer {
     static constexpr int kOptionTabs = 4, kGraphicsRows = 4;
     static constexpr int kTapGraphicsRow = 1000, kTapGraphicsUp = 1100, kTapGraphicsDown = 1101;
     static constexpr int kTapOptionsReset = 1200, kTapResetYes = 1201, kTapResetNo = 1202;
-    void drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const Mat4& view);
+    static constexpr int kTapOptPanel = 1230, kTapTitleYes = 1240, kTapTitleNo = 1241; // (the field's footer panels 0 .. 4; Title Screen's question)
+    void drawCr3OptionsFooter(int w, int h, const Mat4& view);    void drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const Mat4& view);
     float cr3OptionsScale(int w, int h) const;
     float cr3OptionsFloor(int w, int h) const;
     void drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& view);

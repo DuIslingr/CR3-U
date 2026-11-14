@@ -175,3 +175,11 @@ unset CR3_BATTLE_SEED
 want battle && run battle-opening "0.1:until=turn_1,_the_get-set 0.5:quit" \
     "the opening - 1 commands, 1 rounds|the opening's round 0 (group 0, camera Cam_bt_all_PC_00): 1:81 (effect 166|fighter 1's status icon 13|the opening over|turn 1, the get-set" \
     -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --cr3-gene 2:39 --input "guard:party"
+
+# BattleResultV2Menu's VIP (round 27: --vip-days): the totals before the vipbonus shown first with btRsltVipPanel's factors, then
+# multiplied and pulsed; the tally as ever (team level 60: the battle won within the runner's 120 s)
+export CR3_BATTLE_SEED=1
+want battle && run battle-vip-result "0.1:until=result_- 3:quit" \
+    "battle: result - VIP: the base 1300 EXP, 1000 money first|battle: VIP x|battle 22: result -" \
+    -- --battle 22 --team-level 60 --cr3-party 1,2,3 --vip-days 30 --input "auto"
+unset CR3_BATTLE_SEED

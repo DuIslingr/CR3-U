@@ -1156,7 +1156,7 @@ call_SshopVipPanel (the VIP days - SshopVipCount and SshopVipNum's digits, 0.3 l
 or SshopVipDefault), the header's sentence 0x275. A panel tapped (+0x70: 1 the box, 2 the items, 3
 VIP) goes on through SShopMenu's table (0x11, 0xc, 4): the boxes (0x12: CreateLuckyBoxMenu,
 SetBoxNumberLuckyBoxMenu(0xc, 0x22)), Special Items (0xd: the goods - PiuComMenu's list in CR3-U),
-VIP (not in).
+VIP (4: below).
 
 The boxes (LuckyBoxMenu, interface 0x44; its header title 0xb) - IBox's kinds, in order: the gene
 boxes on offer (GeneBox: `cltList_gene_01`, `boxBg_gene_01`; constants GENEBOX_PRICES / _AMOUNTS,
@@ -1179,6 +1179,14 @@ VIP (the top's third panel, SShopMenu 4 .. 0xb): SshopVipCard over the top, the 
 asked 0x316; yes - under 30 coins told 0x317, else BuyVIP (request 0x5e: VIP_PRICE coins, VIP_DAYS
 more up to VIP_DAYS_MAX), com_024. SetVipPanelControl: at 90 days or more the panel is at half and
 can't be tapped; the days' SshopVipNum digits from the ones at the first joint. `--input vs:vip`.
+A VIP's battles (cr3VipDays 1 or more): the result's EXP and money x the month's vipbonus exp_bonus /
+gold_bonus (BattleResultV2Menu, SetParamNumber 0xb27188 case 4: the plain title banners deleted for
+btRsltTitleVipTMenu / VipBMenu; btRsltVipPanel at btRsltPointMenu's call_btRsltVipPanel_001 / 002 - "x
+n.n", SetRsltVipMenu 0xb27990: comNum01_fr00 at its _002 / _001, the factor 9.9 at most). The base
+totals shown first (Update 0xb23e1c state 0, 2.0667 s), then the panels fade out over 0.133 s as
+the multiplied digits fade in (SetRsltPointMenuVip 0xb24fb0) and pulse 1/3 s (state 1: diffuse 1 +
+p, scale 1 + p / 2, slid by p (x - the EXP row's middle) / 2). `--vip-days n` (tests). The login
+bonus and the day used: dbutils::SendVIPLoginBonus below.
 
 People turn (Cr3GimmickData.ChangeDirection(name, target, frames) - Fld2ChangeNPCDirection,
 Fld2DirectionManager::SetDirection): about y toward "player" or another person (Cr3GetDirY:
@@ -1750,6 +1758,22 @@ condition 3 its HP at or under the constant's percentage (IsHpPercentLessEqual);
 97 (AddInterruptCommand: the command next) and 100 (AddCommand: after it) - played even if the
 unit is downed or can't act. Battle 5's 1109 has skill 425: at 60% its 1756, whose direction's end
 turns on flag 5002 and the cooperation tutorial.
+
+A skill is enabled (BtlSkill +0x14) by its trigger (BtlSkill::Trigger 0x9c60a0: its three uses - a
+battle, a turn, a command: +0x10 / +0x14 / +0x18, -1 unlimited - not 0, the condition holding, the
+chance - +0x2c / +0x40 of 256 - rolled; each use above 0 one less) and stays so until its end timing
+(+0x28 - BtlSkill::End: every end-timing call ends the status effects and the skills alike); a skill
+of no trigger is on from BtlStatus::Initialize's trigger 0. Only enabled skills' kinds are read
+(BtlSkillVisitor): Critical x2 (1, trigger 3 on the unit's own attack - condition 4 - kind 69: a
+critical's damage x 2, calculateBasicDamage's last step), Critical First Attack (2, once a battle),
+the blocks (121 / 122: their chance rolled at trigger 4, the command's hits all blocked). At every
+trigger the enabled skills' kind 60 status effects are given - one held gains an accumulation alone
+- and their kind 61 ones taken away (452 / 454: the Death Mask's 78 / 79 by the gauge's side).
+Trigger 5 is a command aimed at the unit, before its HP changes (+0x1c the total change: Narrow
+Escape 134 - lethal at full HP, once a battle - and Blue-Moon Brave 132 hold it at 1 HP - kind 53 -,
+status effect 109 then casts Braveheart 1525 at trigger 8); trigger 6 the break gauge crossing 0,
+every unit, end timing 5 straight after (Emergency Guard 126: Guard for the side that lost the
+advantage). The turn's uses are restored at its end, the command's at each command's start.
 
 A cooperation (BtlCommandManager::calculateCooperation): a command with +0xbc bit 7 (gene
 commands 241 ..), not a skill's, its unit free of kind 47 for a gene's (bit 0); a random byte

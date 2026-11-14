@@ -4008,6 +4008,7 @@ void Viewer::drawEventUi() {
     if (!vistaName.fig.meshes.empty()) drawWindow(vistaName, onVista, screenW, screenH);
     drawCr3GeneLab(*ev, screenW, screenH, false); // (its backdrop behind the clerk)
     drawCr3Shop(*ev, screenW, screenH, false);    // (the shop's likewise)
+    drawCr3SpacePort(*ev, screenW, screenH, false); // (the Space Port's)
     if (cr3CutInsLoaded) drawCr3CutIns(screenW, screenH);
     else drawCutIns(screenW, screenH);
     drawCr3GeneLab(*ev, screenW, screenH, true);

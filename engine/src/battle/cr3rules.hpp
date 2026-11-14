@@ -144,6 +144,12 @@ struct Cr3Fighter {
     std::array<int, 7> lowerElement{}, elementResist{};
     int weight = 0; // (CrxCharacter::GetWeight: the weapon's +0x34 and the armour's +0x40, each where above 0)
     std::vector<int> skills; // (skill_para Skill ids: a guest gene's, a monster's mode's)
+    // its skills' state (BtlSkill, 0x18 bytes: +0x14 enabled - BtlSkill::Trigger 0x9c60a0 sets it, End 0x9c6504 clears it at
+    // the row's end timing +0x28; +8 / +0xc / +0x10 the uses a battle / turn / command - Initialize 0x9c604c copies the row's
+    // +0x10 / +0x14 / +0x18, -1 unlimited, ResetCountPerTurn 0x9c6078 / ResetCountPerCommand 0x9c608c restore the last two),
+    // by skill id; a skill of no trigger and no condition always counts as enabled (trigger 0 at BtlStatus::Initialize)
+    std::set<int> skillsOn;
+    std::map<int, std::array<int, 3>> skillUses;
     int attackCommand = -1;                     // (a character's +0x10; a monster's mode's +0x14)
     std::vector<int> geneCommands;              // (a character's gene's: a guest's GuestGene row)
     int geneMaster = -1;                        // (the equipped gene's master ID for the battle card)
@@ -261,6 +267,11 @@ public:
     // GetFinestArtsCommandId (0x00931d7c: the FinestArts rows allowed, the highest level's, ties at
     // random; a character's none under 0x3f / 0x40); -1 none
     int lastAttackCommand(int fighter);
+    // a skill enabled (BtlSkill::IsEnable 0x9c6558 - what BtlSkillVisitor 0x9b8cc4 visits: every reader of a skill's kinds)
+    bool skillOn(const Cr3Fighter& f, int skill) const;
+    // the device clock's hour for skill conditions 24 / 25 (day 6 .. 17 - Date::set_epoch_time_msec at GameSystem +0x15c's
+    // time zone: skills 113 / 114); -1 the local time's, a test's own else
+    int localHour = -1;
     // the attack command (BtlStatus::GetAttackCommandId 0x009b57ec / VGetAttackCommandId 0x009b294c): under a
     // transformation's effect kind 63 command 8, 64 - the pig form - command 9, else its own
     int attackCommandOf(int fighter) const;
@@ -374,8 +385,8 @@ public:
     int mpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetMpCost)
     int hpCost(const Cr3Fighter& f, const Cr3Command& c) const; // (MbCommandInfo::GetHpCost)
     float mpCostScale = 1.0f; // (BtlBufferPotion::GetMpCostMultiplier: 1.0 default)
-    // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the skills
-    // without a condition, their effects without the gauge's advantage)
+    // a fighter's skills' constants of one effect kind, summed (BtlSkillUtility: the enabled skills - skillOn -, their
+    // effects of the gauge's advantage as it stands)
     int skillConstant(const Cr3Fighter& f, int kind) const;
     std::vector<int> skillConstants(const Cr3Fighter& f, int kind) const; // (BtlSkillVisitor: each of the kind's constants)
     int skillKindMax(int skill, int kind) const;
@@ -390,7 +401,9 @@ public:
     // status effects (BtlStatusEffectList): given (a script's, or a command's that landed), removed;
     // whether one of a kind is on; a kind's multiplier (the effects' constants / 100, multiplied)
     // and sum; the stats as they stand (CrxCharacter's x kinds 36 / 38 / 40 / 42)
-    void giveEffect(int fighter, int id, bool lasting = false); // (lasting: no end - a field's)
+    // (lasting: no end - a field's; stackOnly: BtlStatusEffectList::Add 0x9b75c8 on an id held - one more accumulation,
+    // AddAccumulation 0x9c7d98, up to the max: its turns not refreshed, its uses not re-armed - a skill's kind 60)
+    void giveEffect(int fighter, int id, bool lasting = false, bool stackOnly = false);
     void removeEffect(int fighter, int id);
     bool hasEffect(int fighter, int id) const;
     int effectIcon(int id) const; // (StatusEffect col 2, +0x08: the panel's btStIcon_fr00 frame; -1 none)
@@ -454,13 +467,16 @@ public:
     // bit 3), and removed with no uses or turns left
     void endEffects(int fighter, int timing);
     bool effectEnabled(const Cr3Fighter& f, int id) const { return !f.effectsDormant.count(id); }
-    // BtlStatus::TriggerSkillToCalculation 0x9b3488 at a skill trigger (+0x1c: 1 / 2 the opening, 3 .. 12 as the status
-    // effects'): each skill of that trigger whose condition (+0x20, its constant +0x24 - the status effects' table, 19 the
-    // command the constant, 28 every foe's HP at or under it) holds and whose chance (+0x2c, +0x40 with the gauge's
-    // advantage, of 256) rolls fires - its kind 60 gives that status effect (MbStatusEffectInfo::GetTurn's turns), 61 takes
-    // it away; a skill of no trigger gives its kind 60 one where the unit has none (whether the original gives it again at
-    // each trigger - re-arming it - unsettled). The fired skills' kinds 97 .. 101 / 126 commands returned (kind, command)
-    std::vector<std::pair<int, int>> triggerSkills(int fighter, int trigger, int attackKind = 0, bool downed = false, int command = -1);
+    // BtlStatus::TriggerSkillToCalculation 0x9b3488 at a skill trigger (+0x1c: 0 BtlStatus::Initialize's, 1 / 2 the opening,
+    // 3 .. 12 as the status effects', 5 a command aimed at it - playCommand's first step -, 6 the break gauge crossing 0):
+    // BtlSkillList::Trigger 0x9bb224 - each skill of that trigger with all three uses left whose condition (+0x20, its constant
+    // +0x24) holds and whose chance (+0x2c, +0x40 with the gauge's advantage, of 256) rolls is enabled, each use above 0 one
+    // less (BtlSkill::Trigger 0x9c60a0); then every enabled skill's kind 60 (with the gauge's advantage as it stands) gives
+    // its status effect - one held gains an accumulation alone - and its kind 61 takes it away. total: the trigger's HP change
+    // (+0x1c: a command's on it, below 0 damage - condition 29); other: the other unit (condition 23 - the command's source).
+    // The newly enabled skills' kinds 97 .. 101 / 126 commands returned (kind, command)
+    std::vector<std::pair<int, int>> triggerSkills(int fighter, int trigger, int attackKind = 0, bool downed = false, int command = -1,
+                                                   int total = 0, int other = -1);
     // BtlStatusEffectUtility::GetCommandChange 0x9b1f30: the unit's first enabled status effect - in the list's slot order,
     // StatusEffect +0x04 - with a kind 120 (0x78) constant of 0 or more: the command it plays instead; -1 none
     int commandChange(const Cr3Fighter& f) const;
@@ -484,7 +500,10 @@ private:
     void queueTurnEnd(int bearer, const std::vector<std::pair<int, int>>& added);
     void markAssist(Cr3Action& a) const;
     // a trigger's condition (BtlStatusEffect::Trigger's / BtlSkill::Trigger's +0x24 / +0x20 and its constant); turns -1: a skill's
-    bool conditionHolds(const Cr3Fighter& f, int condition, int constant, int attackKind, bool downed, int turns, int command) const;
+    bool conditionHolds(const Cr3Fighter& f, int condition, int constant, int attackKind, bool downed, int turns, int command, int total = 0,
+                        int other = -1) const;
+    std::array<int, 3>& skillUsesOf(Cr3Fighter& f, int skill, const MbeFile::Row& row); // (the row's +0x10 / +0x14 / +0x18 at first)
+    int skillMost(const Cr3Fighter& f, int kind) const; // (the enabled skills' highest constant of the kind - BtlSkillUtility::GetLeastHp 0x9b0368's 53; 0 none)
     std::vector<std::array<int, 3>> turnEndQueue_; // (BtlCommandManager +0x48: source - -1 none -, command, target)
     bool turnEndTriggered_ = false;                // (turn() ran trigger 12; endTurn() then doesn't)
     uint32_t rng_ = 1;
@@ -493,10 +512,10 @@ private:
     int hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool crit, bool down, float rate);
     bool effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, int id);
     bool effectInvalid(const Cr3Fighter& t, int id) const; // (HasStatusEffectInvalid: kind 68 - a status effect's or a skill's - of the id)
-    // a skill effect of the kind enabled for this hit (BtlSkillList::HasEnableEffect): a skill without a
-    // condition whose trigger (+0x1c) is 0 or the one given, its chance (+0x2c, +0x40 with the gauge's
-    // advantage, out of 256) rolled below 256; its constants (the highest - GetFixedDamage 0x9b02a0)
-    bool skillEnabled(const Cr3Fighter& f, int kind, int trigger, int* most = nullptr);
+    // a skill effect of the kind enabled (BtlSkillList::HasEnableEffect): an enabled skill's - one of no trigger, or one its
+    // trigger enabled (a block's at trigger 4, its chance rolled there) until its end timing -; its constants' highest
+    // (GetFixedDamage 0x9b02a0)
+    bool skillEnabled(const Cr3Fighter& f, int kind, int* most = nullptr) const;
     std::array<int, 4> breakWith_{0, 25, 25, 50}, breakWithout_{100, 50, 50, 100}; // (battle.mbe Battle +0x50 / +0x60: base, critical, down, kill)
     std::vector<int> resistIds_;
     std::set<std::pair<int, int>> usedSkills_; // (fighter, skill: the added commands fired)

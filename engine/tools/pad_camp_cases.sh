@@ -17,6 +17,12 @@ want camp && run camp-genes "4:r 4.5:l 5:west 5.5:west 6:quit" \
     -- --area t0101 --flag 26 --flag 41 --flag 21 --cr3-party 1,2 --cr3-gene 1:1 --cr3-gene 2:2 \
     --input "camp:open camp:button2 camp:row0"
 
+# FutterMenu's Skills (round 27, the Vita's R): GeneSkillListMenu in the cards' place - the gene's eight, then those its levels
+# still to come teach (@ the level: dimmed, "Learn at Level {level}"); ↓ its rows
+want camp && run camp-gene-skills "4:r 4.5:down 5:down 6:quit" \
+    "camp: gene tab Skill|camp: gene skills (9): 0:241 0:201 0:311 1:41 0:259 1:8 0:247@20 0:318@40 1:121@60|camp: gene skill row 1|camp: gene skill row 2" \
+    -- --area t0101 --flag 26 --flag 41 --flag 21 --cr3-party 1,2 --cr3-gene 1:3:3704 --input "camp:open camp:button2 camp:row0"
+
 want camp && run camp-reels "3:up 3.5:right 4:down 4.5:right 5:right 5.5:east 7:quit" \
     "camp: item 2 chosen|camp: item count 11|camp: item count focus 1|camp: item count 10|camp: item count focus 2|camp: item count focus 3|camp: item count cancelled" \
     -- --area t0101 --flag 26 --cr3-item 2:30 --input "camp:open camp:button0 camp:row0"
@@ -73,3 +79,10 @@ quest_pad="$(k=1; while [ $k -le 24 ]; do printf "%d:east " $k; k=$((k + 1)); do
 want camp && run quest-clear "$quest_pad" \
     "area d0202: quest_complete|quest clear: OK|quest clear: closed" \
     -- --area d0202 --player j001 --work 24:50 --input "wait:1 call:quest_complete"
+
+# OptionFooterMenu (round 27: the field's Options - mpMe panels Title Screen, Download's empty frame, Manual, App Intro,
+# Achievements, then the back): ↓ to the footer on the back, ← over the panels - Download passed over -, ○ Title Screen asks
+# 0x1a3, ← Yes, ○: the title again (GameMain::Reboot)
+want camp && run options-footer "3:down 3.5:down 4:down 4.5:left 5:left 5.5:left 6:left 6.5:east 7.5:left 8:east 10:quit" \
+    "options: sound row 2 footer|options: footer focus 4|options: footer focus 3|options: footer focus 2|options: footer focus 0|options: footer panel 0 (0x193)|options: to the title screen (0x1a3 Yes)|title: CR3's" \
+    -- --area t0101 --flag 26 --input "camp:open camp:button6"

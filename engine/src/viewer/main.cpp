@@ -690,7 +690,7 @@ int main(int argc, char** argv) {
     std::string inputArg; // (--input: the commands chosen, as tokens)
     std::vector<int> flagsArg;
     std::vector<std::pair<int, int>> genesArg; // (--gene id[:level]: a gene held to begin with - tests)
-    int goldArg = -1, coinsArg = -1;
+    int goldArg = -1, coinsArg = -1, vipDaysArg = -1; // (--vip-days n: the VIP days left - tests)
     int teamLevelArg = 0;
     std::vector<std::string> presentsArg; // (--present item:count | g<gene>:level: in the presents box - tests)
     bool continueSave = false;
@@ -764,6 +764,8 @@ int main(int argc, char** argv) {
             presentsArg.push_back(next), ++i;
         else if (a == "--gold" && next)
             goldArg = std::atoi(next), ++i;
+        else if (a == "--vip-days" && next)
+            vipDaysArg = std::atoi(next), ++i;
         else if (a == "--coins" && next)
             coinsArg = std::atoi(next), ++i;
         else if (a == "--sopia" && next) { // (a sopia's level: id:level, tests)
@@ -1293,6 +1295,7 @@ int main(int argc, char** argv) {
             v.game.cr3GeneBook.insert(id);
         }
         if (goldArg >= 0) v.game.cr3Money = goldArg;
+        if (vipDaysArg >= 0) v.game.cr3VipDays = vipDaysArg;
         if (teamLevelArg > 0) v.game.cr3TeamLevel = teamLevelArg;
         if (coinsArg >= 0) v.game.cr3Coins = coinsArg;
         for (const std::string& a : presentsArg) {

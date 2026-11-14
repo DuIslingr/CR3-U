@@ -1678,6 +1678,15 @@ void Viewer::drawCr3CampGenes(int w, int h, const Mat4& view) {
         cr3CampTaps.push_back({-100, -100, 100, 100, 9010});
         return;
     }
+    // (the footer's Skills: GeneSkillListMenu in the cards' and the status' place, its row's help in the header)
+    if (cr3Camp.geneTab != 0) {
+        drawCr3CampGeneSkills(w, h, view);
+        drawCr3CampGeneFooter(w, h, view);
+        const std::vector<Cr3GeneSkillRow> rows = campGeneSkillRows();
+        const int row = std::clamp(cr3Camp.geneListRow, 0, std::max(int(rows.size()) - 1, 0));
+        drawCr3Header(cr3Camp.since, 3, row < int(rows.size()) ? campGeneSkillHelp(rows[size_t(row)]) : std::string(), w, h, view);
+        return;
+    }
     // (the base select's drawing, its genes and focus the camp's)
     std::string help;
     if (vitaButtons() && cr3Camp.geneButton && cr3Camp.focus < int(cr3Camp.genes.size())) {
@@ -1713,16 +1722,158 @@ void Viewer::drawCr3CampGenes(int w, int h, const Mat4& view) {
             const float scale = s == 5 ? 4.0f : 3.0f;
             cr3UiPut("camequchr_fr00", "", float(wearer - 1) / 30, px[s] - 0.1f * scale, py[s] + 0.25f + 0.18f * scale, view);
         }
-    float x, y, cx, cy;
-    UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
-    if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
-        UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
-        float ax, ay, ex, ey;
-        if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
-        if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) cr3CampTaps.push_back({ax, ay, ex, ey, -1});
-    }
+    drawCr3CampGeneFooter(w, h, view);
     drawCr3Header(cr3Camp.since, 3, help, w, h, view);
     if (cr3Camp.geneTake >= 0) drawCr3Asked(menuAnnounce(0x241), cr3Camp.since, cr3Camp.geneAskFocus, true, 9001, 9002, w, h, view);
+}
+
+std::vector<Viewer::Cr3GeneSkillRow> Viewer::campGeneSkillRows() const {
+    std::vector<Cr3GeneSkillRow> rows;
+    if (!game.cr3Db || cr3Camp.focus < 0 || cr3Camp.focus >= int(cr3Camp.genes.size())) return rows;
+    const cr3::Cr3Gene& gene = game.cr3Genes[size_t(cr3Camp.genes[size_t(cr3Camp.focus)])];
+    for (const auto& slot : gene.slots)
+        if (slot[1] >= 0) rows.push_back({slot[0], slot[1], 0, true});
+    // (then MbGeneInfo::GetCommandSkillParam's entries above the gene's level - CrxGene +0x88 - not learnt already)
+    const cr3::Cr3OfflineDb::GeneInfo* gi = game.cr3Db->geneInfo(gene.master);
+    const int level = game.cr3Db->geneLevel(gene);
+    if (gi)
+        for (const auto& l : gi->learns) {
+            if (l[0] <= level) continue;
+            const bool held = std::any_of(rows.begin(), rows.end(), [&](const Cr3GeneSkillRow& r) { return r.type == l[1] && r.id == l[2]; });
+            if (!held) rows.push_back({l[1], l[2], l[0], false});
+        }
+    return rows;
+}
+
+// (SetHelpText 0xa89cac: the row's help - a command's command_help, a skill's skill_help -, one not learnt 0x26d's "Learn at
+// Level {level}" above it; shown in the header here - where the original puts it unsettled)
+std::string Viewer::campGeneSkillHelp(const Cr3GeneSkillRow& row) {
+    std::string help = row.type == 1 ? cr3NameOf("skill_help.mbe", "SkillHelp", row.id) : cr3NameOf("command_help.mbe", "CommandHelp", row.id);
+    if (row.learnt) return help;
+    std::string learn = menuAnnounce(0x26d);
+    if (const size_t at = learn.find("{level}"); at != std::string::npos) learn.replace(at, 7, std::to_string(row.level));
+    if (const size_t at = learn.find("{help}"); at != std::string::npos) return learn.replace(at, 6, help);
+    return learn + "\n" + help;
+}
+
+// GeneSkillListMenu (0x4f, Initialize 0xa888c0 - CreateGeneChangeSkillMenuCamp 0x8a738c, FutterMenu::Update 0xa8c1c0 state 3 -> 5:
+// the footer's Skills): comListMenu at comListPosition's call_comListMenu (its io in), its category comListCategoryPanel
+// (comListCBg_fr00 frame 0, comListCIcon_fr00 2, comListCtext_fr00 27), the bar, the rows at call_comListPanel - a command its
+// icon (MbCommandInfo +8) and MP (InterfaceMain::GetGeneCommandMPCost: the cost for the character as it stands - a battle's
+// MbCommandInfo::GetMpCost here), a skill none; one not learnt dimmed (comListItem kind 0xb); the gene's card at
+// geneCngCardPositon's call_geneCngCardMenu - geneCngCardMenu's call_GeneCard (SetCardModel 0xa8b0ec: card_default; 4 x here,
+// the size unsettled). ↑ / ↓ the rows (com_002)
+void Viewer::drawCr3CampGeneSkills(int w, int h, const Mat4& view) {
+    const float t = cr3Camp.since;
+    const std::vector<Cr3GeneSkillRow> rows = campGeneSkillRows();
+    const int n = int(rows.size());
+    cr3Camp.geneListRow = std::clamp(cr3Camp.geneListRow, 0, std::max(n - 1, 0));
+    const int focus = cr3Camp.geneListRow;
+    cr3::Cr3BattleRules costs; // (the MP costs: the character's numbers at its equipment)
+    cr3::Cr3Fighter self;
+    const bool tables = cr3TablesReady();
+    if (tables) costs.useTables(cr3BattleTables), (void)costs.playerStats(cr3BattleTables, cr3Camp.chara, self), self.mp = self.maxMp;
+    float x, y, cx, cy;
+    UiFig& lp = cr3UiPut("comlistposition", "comlistposition_io", t, 0, 0, view);
+    if (cr3UiCall(lp, "call_comListMenu", x, y, w, h)) {
+        UiFig& menu = cr3UiPut("comlistmenu", "", 0, x, y, view);
+        float lx, ly;
+        if (cr3UiCall(menu, "call_comListCategoryPanel", lx, ly)) {
+            UiFig& cat = cr3UiPut("comlistcategorypanel", "", 0, lx, ly, view);
+            if (cr3UiCall(cat, "call_comListCBg_fr00", cx, cy)) cr3UiPut("comlistcbg_fr00", "", 0, cx, cy, view);
+            if (cr3UiCall(cat, "call_comListCIcon_fr00", cx, cy)) cr3UiPut("comlistcicon_fr00", "", 2.0f / 30, cx, cy, view);
+            if (cr3UiCall(cat, "call_comListCtext_fr00", cx, cy)) cr3UiPut("comlistctext_fr00", "", 27.0f / 30, cx, cy, view);
+        }
+        if (cr3UiCall(menu, "call_comListPanel", lx, ly)) {
+            const int top = focus - 2; // (comListMenu: the focused row the third)
+            drawCr3ListBar(menu, false, focus, n, 1, view, 0.15f);
+            drawCr3ListEnds(lx, ly, n, focus, view);
+            for (int k = std::max(top, 0); k < n && k <= focus + 2; ++k) {
+                const Cr3GeneSkillRow& row = rows[size_t(k)];
+                Cr3FocusRow focusRow(*this, k == focus, row.learnt);
+                UiFig& panel = cr3UiPut("comlistpanel", "", 0, cr3ListRowX(lx, k, focus), cr3ListRowY(ly, k, top, focus), view);
+                if (k == focus && cr3UiCall(panel, "call_comListCursor", cx, cy)) cr3UiPut("comlistcursor", "", 0, cx, cy, view);
+                cr3::Cr3Command c;
+                if (row.type == 0 && tables && costs.command(row.id, c)) {
+                    if (c.icon >= 0 && cr3UiCall(panel, "call_comListIcon_fr00", cx, cy))
+                        cr3UiPut("comlisticon_fr00", "", cr3UiIcon(uiFig("comlisticon_fr00"), c.icon), cx, cy, view);
+                    if (cr3UiCall(panel, "call_comListNumM_num00", cx, cy)) {
+                        UiFig& num = cr3UiPut("comlistnumm_num00", "", 0, cx, cy, view);
+                        const std::string digits = std::to_string(std::max(costs.mpCost(self, c), 0));
+                        int places = 0;
+                        for (const std::string& j : num.joints) places += j.rfind("call_comListNum_fr00_", 0) == 0;
+                        for (int d = 0; d < int(digits.size()) && d < places; ++d) {
+                            float dx, dy; // (right-aligned in its places)
+                            if (cr3UiCall(num, "call_comListNum_fr00_00" + std::to_string(places - int(digits.size()) + d + 1), dx, dy))
+                                cr3UiPut("comlistnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
+                        }
+                    }
+                }
+                cr3UiLabel(panel, "typeM_L01", row.type == 1 ? cr3NameOf("skill_name.mbe", "SkillName", row.id) : cr3NameOf("command_name.mbe", "CommandName", row.id), w,
+                           h, row.learnt ? 0.3f : 0.15f);
+                float ax, ay, bx, by;
+                if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapRow + k});
+            }
+        }
+    }
+    if (cr3Camp.focus >= 0 && cr3Camp.focus < int(cr3Camp.genes.size())) {
+        UiFig& cp = cr3UiPut("genecngcardpositon", "genecngcardpositon_io", t, 0, 0, view);
+        if (cr3UiCall(cp, "call_geneCngCardMenu", x, y, w, h)) {
+            UiFig& card = cr3UiPut("genecngcardmenu", "", 0, x, y, view);
+            if (cr3UiCall(card, "call_GeneCard", cx, cy)) drawCr3Card(game.cr3Genes[size_t(cr3Camp.genes[size_t(cr3Camp.focus)])].master, cx, cy, 1.0f, 4.0f, view);
+        }
+    }
+}
+
+// FutterMenu (0x4e, Initialize 0xa8bc38, Pose 0xa8ccc8): comFtrGeneMenu at comFtrPosition's call_comFtrGeneMenu_fit4 - its
+// optSltBtn_fr00 the two-way toggle (frame 0 Parameters on, 1 Skills; typeC_C01 0x223 "Parameters", C02 0x224 "Skills"; tap
+// areas 01 / 02 - TouchGestureTap 0xa8d890, com_003), comFtrGeneSwh the sort button (comFtrGenetxt_fr00 at the sort type's
+// frame - InterfaceMain +0x2c8 -; dimmed to 0.5 - SetcomFtrGeneSwhFlag 0xa8cc30 - here with the Skills list up), and the back
+void Viewer::drawCr3CampGeneFooter(int w, int h, const Mat4& view) {
+    float x, y, cx, cy, ax, ay, bx, by;
+    UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
+    if (cr3UiCall(foot, "call_comFtrGeneMenu", x, y, w, h)) {
+        UiFig& fm = cr3UiPut("comftrgenemenu", "", 0, x, y, view);
+        const bool skills = cr3Camp.geneTab != 0;
+        if (cr3UiCall(fm, "call_optSltBtn_fr00", cx, cy)) {
+            UiFig& tab = cr3UiPut("optsltbtn_fr00", "", skills ? 1.0f / 30 : 0.0f, cx, cy, view);
+            for (int k = 0; k < 2; ++k) {
+                float tx, ty;
+                if (cr3UiCall(tab, "typeC_C0" + std::to_string(k + 1), tx, ty)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(menuAnnounce(0x223 + k), 22, tx / 10, (ty - 0.1f) / 10, w, h, false, (k == 1) == skills ? 1.0f : 0.55f);
+                }
+                if (cr3UiCall(tab, "tapAreaS0" + std::to_string(k + 1), ax, ay) && cr3UiCall(tab, "tapAreaE0" + std::to_string(k + 1), bx, by))
+                    cr3CampTaps.push_back({ax, ay, bx, by, kTapGeneTab + k});
+            }
+        }
+        if (cr3UiCall(fm, "call_comFtrGeneSwh", cx, cy)) {
+            UiFig& sw = cr3UiPut("comftrgeneswh", "", 0, cx, cy, view, skills ? 0.5f : 1.0f);
+            float sx, sy;
+            if (cr3UiCall(sw, "call_comFtrGenetxt_fr00", sx, sy)) cr3UiPut("comftrgenetxt_fr00", "", float(cr3Camp.geneSort) / 30, sx, sy, view, skills ? 0.5f : 1.0f);
+            if (!skills && cr3UiCall(sw, "tapAreaS01", ax, ay) && cr3UiCall(sw, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapGeneSort});
+        }
+    }
+    if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
+        UiFig& menu = cr3UiPut("combackmenu", "", 0, x, y, view);
+        if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
+        if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, -1});
+    }
+}
+
+// the footer's toggle (FutterMenu::Update 0xa8c1c0: Parameters - state 2 -> 4, CreateGeneStatusChangeMenuCamp 0x4d - / Skills -
+// 3 -> 5, GeneSkillListMenu 0x4f; com_003), the Vita's L / R
+void Viewer::setCampGeneTab(int tab) {
+    if (tab == cr3Camp.geneTab) return;
+    cr3Camp.geneTab = tab;
+    cr3Camp.geneButton = false, cr3Camp.geneSkill = -1, cr3Camp.geneListRow = 0, cr3Camp.since = 0;
+    audio.playSe("com_003", false);
+    SDL_Log("camp: gene tab %s", tab ? "Skill" : "Gene");
+    if (tab) {
+        std::string list;
+        for (const Cr3GeneSkillRow& r : campGeneSkillRows()) list += " " + std::to_string(r.type) + ":" + std::to_string(r.id) + (r.learnt ? "" : "@" + std::to_string(r.level));
+        SDL_Log("camp: gene skills (%zu):%s", campGeneSkillRows().size(), list.c_str());
+    }
 }
 
 void Viewer::chooseCr3Camp(int id) {
@@ -1876,7 +2027,17 @@ void Viewer::chooseCr3Camp(int id) {
         const auto it = std::find(cr3Camp.genes.begin(), cr3Camp.genes.end(), worn);
         cr3Camp.focus = it != cr3Camp.genes.end() ? int(it - cr3Camp.genes.begin()) : 0;
         cr3Camp.stage = 3, cr3Camp.since = 0, cr3Camp.geneButton = false, cr3Camp.geneSkill = -1, cr3Camp.geneTake = -1;
+        cr3Camp.geneTab = 0, cr3Camp.geneListRow = 0; // (the footer on Parameters)
         SDL_Log("camp: %d's gene (%zu cards)", cr3Camp.chara, cr3Camp.genes.size());
+        return;
+    }
+    if (cr3Camp.stage == 3 && (id == kTapGeneTab || id == kTapGeneTab + 1)) return setCampGeneTab(id - kTapGeneTab);
+    if (cr3Camp.stage == 3 && id == kTapGeneSort) { // (the sort button: the next sort - FutterMenu state 6 re-sorts, as □ does)
+        cr3Camp.geneSort = (cr3Camp.geneSort + 1) % 6, sortCampGenes(), audio.playSe("com_002", false);
+        return;
+    }
+    if (cr3Camp.stage == 3 && cr3Camp.geneTab != 0 && id >= kTapRow && id < kTapTab) {
+        if (id - kTapRow != cr3Camp.geneListRow) cr3Camp.geneListRow = id - kTapRow, audio.playSe("com_002", false);
         return;
     }
     if (cr3Camp.stage == 3 && id >= kTapCard && id < kTapRow) {
@@ -1931,12 +2092,8 @@ void Viewer::cr3CampPadHeld(bool held) {
 
 bool Viewer::campGeneShoulder(bool right) {
     (void)right;
-    if (!vitaButtons() || cr3Camp.stage != 3 || cr3Camp.geneTake >= 0) return false;
-    cr3Camp.geneTab ^= 1;
-    cr3Camp.geneButton = cr3Camp.geneTab != 0;
-    cr3Camp.geneSkill = cr3Camp.geneButton ? 0 : -1;
-    audio.playSe("com_003", false);
-    SDL_Log("camp: gene tab %s", cr3Camp.geneTab ? "Skill" : "Gene");
+    if (!vitaButtons() || cr3Camp.stage != 3 || cr3Camp.geneTake >= 0 || geneInspectOpen) return false;
+    setCampGeneTab(cr3Camp.geneTab ^ 1); // (FutterMenu 0x81156662: the Gene / Skill toggle - the footer's Parameters / Skills)
     return true;
 }
 
@@ -2020,6 +2177,15 @@ bool Viewer::cr3CampKey(SDL_Keycode key) {
         const int n = int(cr3PartyMembers().size());
         if ((up || down) && n > 0) cr3Camp.row = std::clamp(cr3Camp.row + (down ? 1 : -1), 0, n - 1), audio.playSe("com_002", false);
         else if (enter && n > 0) chooseCr3Camp(300 + cr3Camp.row);
+    } else if (cr3Camp.stage == 3 && cr3Camp.geneTab != 0) { // (the Skills list: ↑ / ↓ its rows)
+        const int n = int(campGeneSkillRows().size());
+        if ((up || down) && n > 0) {
+            const int to = std::clamp(cr3Camp.geneListRow + (down ? 1 : -1), 0, n - 1);
+            if (to != cr3Camp.geneListRow) cr3Camp.geneListRow = to, audio.playSe("com_002", false);
+            std::string help = campGeneSkillHelp(campGeneSkillRows()[size_t(cr3Camp.geneListRow)]);
+            if (const size_t nl = help.find_first_of("\n"); nl != std::string::npos) help.resize(nl);
+            SDL_Log("camp: gene skill row %d - %s", cr3Camp.geneListRow, help.c_str());
+        }
     } else if (cr3Camp.stage == 3) {
         const int n = int(cr3Camp.genes.size());
         if (vitaButtons() && key == SDLK_X) cr3Camp.geneSort = (cr3Camp.geneSort + 1) % 6, sortCampGenes(), audio.playSe("com_002", false);
@@ -4451,6 +4617,38 @@ void Viewer::saveImportAnswer(bool yes) {
     }
 }
 
+// OptionFooterMenu (0xae - CreateOptionMenuUI 0x892d50, the field's Options; Initialize 0xaf20a0, Pose 0xaf23e4): mpMeMenu at
+// mpMePosition's call_mpMeMenu, five MyPagebottomPanel (Initialize 0xadd098: mpMePanel, its icon mpMeIcon_fr00 at frame 2n - n
+// 5 .. 9 -, the focused one's 2n + 1 - SetActivePattern 0xadd5c4 -; SetStringData 0xadd43c: the MnlCmp line at its "01" text
+// joint, size 18, dark) at the call_mpMePanel joints in turn: 0x193 Title Screen, 0x194 Download (SetOnlyFrame: the frame
+// alone, its text and icon hidden), 0x195 Manual, 0x196 App Intro, 0x197 Achievements. Their taps (round 26): Title Screen asks
+// 0x1a3 - Yes reboots to the title -, Manual the tutorials' list (TutorialMain); Download (DownLoadMenuMain), App Intro (OpenURL)
+// and Achievements (GameCenter) the online services': not in - inert
+void Viewer::drawCr3OptionsFooter(int w, int h, const Mat4& view) {
+    const Cr3CampOptions& co = campOptions;
+    float x, y;
+    UiFig& pos = cr3UiPut("mpmeposition", "", 0, 0, 0, view);
+    if (!cr3UiCall(pos, "call_mpMeMenu", x, y, w, h)) return;
+    UiFig& menu = cr3UiPut("mpmemenu", "", 0, x, y, view);
+    for (int k = 0; k < 5; ++k) {
+        float px, py, cx, cy;
+        if (!cr3UiCallNth(menu, "call_mpMePanel", k, px, py)) continue;
+        const bool focused = vitaButtons() && co.footer && co.footerAt == k;
+        UiFig& panel = cr3UiPut("mpmepanel", "", 0, px, py, view);
+        if (k != 1) { // (Download: the frame alone)
+            if (cr3UiCall(panel, "call_mpMeIcon_fr", cx, cy)) cr3UiPut("mpmeicon_fr00", "", float(2 * (k + 5) + (focused ? 1 : 0)) / 30, cx, cy, view);
+            for (const std::string& j : panel.joints)
+                if (j.compare(0, 4, "type") == 0 && j.size() >= 2 && j.compare(j.size() - 2, 2, "01") == 0 && uiJoint(panel, j, cx, cy)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(menuAnnounce(0x193 + k), 18, cx / 10, (cy - 0.1f) / 10, w, h, false, focused ? 1.0f : 0.3f); // (centred on it)
+                    break;
+                }
+        }
+        float ax, ay, bx, by;
+        if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapOptPanel + k});
+    }
+}
+
 void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
     saveImport.poll();
     const float t = cr3Camp.since;
@@ -4588,6 +4786,7 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
     }
     if (!listUp && co.tab == 3 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) drawCr3GraphicsTab(cr3UiPut("optsltmenu", "", 0, x, y, view), w, h, view);
     cr3UiScale = 1, uiTextScale = 1;
+    if (co.from == 0 && sl.kind == 0) drawCr3OptionsFooter(w, h, view); // (the field's: OptionFooterMenu's panels)
     // (the back, and CR3-U's Reset left of it)
     UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
     if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
@@ -4596,7 +4795,9 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
         if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
         if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) {
             cr3CampTaps.push_back({ax, ay, ex, ey, -1});
-            if (sl.kind == 0) drawCr3OptionsReset(std::min(ax, ex), (ay + ey) / 2, w, h, view);
+            // (the field's: above the back's right end, the footer's panels at its left)
+            if (sl.kind == 0 && co.from == 0) drawCr3OptionsReset(std::max(ax, ex), std::max(ay, ey) + 0.55f, w, h, view);
+            else if (sl.kind == 0) drawCr3OptionsReset(std::min(ax, ex), (ay + ey) / 2, w, h, view);
         }
     }
     std::string line = co.tab < 3 ? menuAnnounce(0x19f + co.tab) : std::string("Change graphics settings.");
@@ -4611,6 +4812,10 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
     if (co.asking) { // (the Reset's question over all; its Yes / No the only taps)
         cr3CampTaps.clear();
         drawCr3Asked(cr3OptionsResetAsk(), co.askSince, co.askFocus, true, kTapResetYes, kTapResetNo, w, h, view);
+    }
+    if (co.titleAsk) { // (Title Screen's question over all)
+        cr3CampTaps.clear();
+        drawCr3Asked(menuAnnounce(0x1a3), co.askSince, co.titleFocus, true, kTapTitleYes, kTapTitleNo, w, h, view);
     }
     if (saveImport.state == vitaimport::Session::Confirm || saveImport.state == vitaimport::Session::Result) {
         cr3CampTaps.clear();
@@ -4641,6 +4846,30 @@ void Viewer::chooseCampOptions(int id) {
         co.asking = false;
         audio.playSe(id == kTapResetYes ? "com_003" : "com_004", false);
         if (id == kTapResetYes) cr3OptionsReset();
+        return;
+    }
+    if (co.titleAsk) { // (Title Screen's question: Yes - GameMain::Reboot, the title again)
+        if (id != kTapTitleYes && id != kTapTitleNo && id != -1) return;
+        co.titleAsk = false;
+        audio.playSe(id == kTapTitleYes ? "com_003" : "com_004", false);
+        if (id == kTapTitleYes) {
+            SDL_Log("options: to the title screen (0x1a3 Yes)");
+            if (scriptSaves) writeSystem();
+            cr3Camp.stage = 0, cr3Camp.since = 0, cr3Reboot = true;
+        }
+        return;
+    }
+    if (id >= kTapOptPanel && id < kTapOptPanel + 5) {
+        const int k = id - kTapOptPanel;
+        SDL_Log("options: footer panel %d (0x%x)", k, 0x193 + k);
+        if (k == 0) {
+            co.titleAsk = true, co.askSince = 0, co.titleFocus = 1; // (No first)
+            audio.playSe("com_003", false);
+            SDL_Log("options: %s (0x1a3)", menuAnnounce(0x1a3).c_str());
+        } else if (k == 2) {
+            audio.playSe("com_003", false);
+            openManual(); // (TutorialMain: the tutorials' list)
+        } else SDL_Log("options: footer panel %d - an online service, not in", k);
         return;
     }
     if (id == kTapOptionsReset) {
@@ -4712,9 +4941,21 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
     if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampOptions(-1);
     if (key == SDLK_TAB) return chooseCampOptions(400 + (co.tab + 1) % kOptionTabs);
     if (key == SDLK_R) return chooseCampOptions(kTapOptionsReset);
+    if (co.titleAsk) { // (Title Screen's question: left / right Yes or No)
+        if (key == SDLK_LEFT || key == SDLK_RIGHT) co.titleFocus = key == SDLK_LEFT ? 0 : 1, audio.playSe("com_002", false);
+        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(co.titleFocus == 0 ? kTapTitleYes : kTapTitleNo);
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCampOptions(kTapTitleNo);
+        return;
+    }
     if (vitaButtons() && co.footer) {
-        if (key == SDLK_UP) co.footer = false, audio.playSe("com_002", false);
-        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(-1);
+        // (the field's: left / right over the panels - Download's empty frame passed over - and the back)
+        if (co.from == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) {
+            int to = co.footerAt + (key == SDLK_RIGHT ? 1 : -1);
+            if (to == 1) to += key == SDLK_RIGHT ? 1 : -1;
+            if (to >= 0 && to <= 5) co.footerAt = to, audio.playSe("com_002", false);
+            SDL_Log("options: footer focus %d", co.footerAt);
+        } else if (key == SDLK_UP) co.footer = false, audio.playSe("com_002", false);
+        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(co.footerAt < 5 && co.from == 0 ? kTapOptPanel + co.footerAt : -1);
         return;
     }
     if (vitaButtons() && co.tab == 0 && (key == SDLK_UP || key == SDLK_DOWN)) {
