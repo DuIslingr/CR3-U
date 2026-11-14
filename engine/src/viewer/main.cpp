@@ -857,6 +857,28 @@ int main(int argc, char** argv) {
         else if (a == "--movie" && next) movieArg = next, ++i;
         else if (a == "--sharpness" && next) sharpness = std::clamp(float(std::atof(next)), 0.0f, 1.0f), ++i;
     }
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+    // the log, also into cr3view.log in the profile folder (the last start's kept as cr3view.prev.log): the Windows
+    // build has no console, so a report can come with it. Not for captures, exports or a test's virtual controller
+    if (capture.empty() && !exportTextures && !exportModels && !std::getenv("CR3_PAD_SCRIPT")) {
+        static std::FILE* logFile = nullptr;
+        const std::string path = Viewer::savePath("cr3view.log"), prev = Viewer::savePath("cr3view.prev.log");
+        std::remove(prev.c_str());
+        std::rename(path.c_str(), prev.c_str());
+        if ((logFile = std::fopen(path.c_str(), "w"))) {
+            static SDL_LogOutputFunction toConsole = nullptr;
+            static void* toConsoleData = nullptr;
+            SDL_GetLogOutputFunction(&toConsole, &toConsoleData);
+            SDL_SetLogOutputFunction(
+                [](void*, int category, SDL_LogPriority priority, const char* message) {
+                    if (logFile && message) std::fprintf(logFile, "%s\n", message), std::fflush(logFile);
+                    if (toConsole) toConsole(toConsoleData, category, priority, message);
+                },
+                nullptr);
+            SDL_Log("CR3-U, logged to %s", path.c_str());
+        }
+    }
+#endif
     if (resW || resH) {
         if (resW < 320 || resH < 180 || resW > kMaxResW || resH > kMaxResH)
             return std::fprintf(stderr, "--resolution: 320x180 up to %dx%d\n", kMaxResW, kMaxResH), 2;
@@ -880,6 +902,10 @@ int main(int argc, char** argv) {
             cr3::SetupResult got;
             if (cr3::installDroppedVita(cr3SetupGame(), place, got, !capture.empty())) break;
         }
+#if !defined(SDL_PLATFORM_IOS)
+        for (const std::string& place : searched) // (an .ipa copied into ios/ by hand: its .app unpacked there, as the setup would)
+            if (cr3::installDroppedIpa(cr3SetupGame(), place, !capture.empty())) break;
+#endif
         data = cr3::defaultArchive(searched);
         if (data.empty()) data = storedSetting("data="); // (an older setup's: an Android or Vita copy where it lay)
     }
@@ -902,6 +928,8 @@ int main(int argc, char** argv) {
             cr3::SetupResult dropped;
             if (cr3::installDroppedVita(setup, place, dropped, !capture.empty())) break;
         }
+        for (const std::string& place : dataPlaces())
+            if (cr3::installDroppedIpa(setup, place, !capture.empty())) break;
         data = cr3::resolveArchive(cr3::defaultArchive(dataPlaces()));
         SDL_Log("setup: iOS %s, Android %s, Vita %s, its translation %s - the game: %s", got.ios.c_str(), got.android.c_str(), got.vita.c_str(),
                 got.patch.c_str(), data.c_str());
@@ -915,7 +943,7 @@ int main(int argc, char** argv) {
 #endif
         std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the folder here:\n";
         msg += searched.empty() ? std::string("(no folder)") : searched.front();
-        msg += "\n\n  ios/      the iOS ChaosRings3_FINAL_ENG.app (or the unpacked .ipa)"
+        msg += "\n\n  ios/      the iOS release's .ipa (unpacked on the next start), or its ChaosRings3_FINAL_ENG.app"
                "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
                "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump's folder"
                "\n            (decrypted here on the next start)\n\nAlso looked in:";
@@ -997,7 +1025,13 @@ int main(int argc, char** argv) {
         s.hdTextures = hdArg == 1;
     }
     std::string err;
-    if (!v.archive.open(data, &err)) {
+    // (a repacked .apks: its asset packs - ~1.3 GB - unpacked on the first start before any window; a progress
+    // window over it, else the game seems to hang - GitHub issue 6. Not for captures and exports: logged)
+    if (capture.empty() && !exportTextures && !exportModels)
+        v.archive.setUnpackProgress(cr3::progressWindow(cr3SetupGame(), "First start - unpacking"));
+    const bool opened = v.archive.open(data, &err);
+    v.archive.setUnpackProgress({}); // (its window closed)
+    if (!opened) {
         std::fprintf(stderr, "%s\n", err.c_str());
         if (argc <= 1) // (opened with nothing - a double-click -: said in a window, not only to a terminal)
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", ("The copy of the game in\n" + data + "\ncan't be read: " + err).c_str(), nullptr);

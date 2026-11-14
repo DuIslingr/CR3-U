@@ -59,7 +59,7 @@ Vita copy the setup also asks for a fan translation (optional).
 unpacked once on the first start, into `assetpacks/` beside it (about **1.3 GB** of free space; that
 first start takes a while). An `.apks` or `.xapk` that holds its APKs themselves compressed (as some
 download sites pack them) has those unpacked once into `unpacked/` (about **3.7 GB** with the asset
-packs). Later starts reuse them.
+packs). Later starts reuse them. A progress window shows while they unpack.
 
 ### Your copy
 
@@ -70,7 +70,7 @@ Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over
 ```
 <game folder>/
 ├── android/      the 1.1.3 .apks - or its base.apk with the asset packs' CRDB{bgm,voice,se,mov}.android.mvgl
-├── ios/          the 1.2.2 app (ChaosRings3_FINAL_ENG.app, or Payload/ChaosRings3_FINAL_ENG.app as unzipped)
+├── ios/          the 1.2.2 .ipa (unpacked there on the next start) - or its ChaosRings3_FINAL_ENG.app (or Payload/... as unzipped)
 ├── vita/         PCSG00500/ (or PCSG00457/) as installed - or a NoNpDrm dump as dumped
 ├── translation/  optional: en/ and es/, the fan translations (over a Vita copy)
 ├── movies/       optional: story movies your release lacks (the iPad's lacks c04..c11)

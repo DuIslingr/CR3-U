@@ -78,6 +78,9 @@ public:
     const std::string& root() const { return root_; } // the release's own folder (resources/, the .app)
     size_t archiveCount() const { return files_.size(); }
     const std::vector<std::string>& unpackFailed() const { return unpackFailed_; }
+    // (before open(): told as a repacked .apks' asset packs are unpacked - the pack's name, 0 .. 1 of all
+    // of them -; a first start's long step, ~1.3 GB, that would otherwise show nothing)
+    void setUnpackProgress(std::function<void(const std::string&, double)> f) { unpackProgress_ = std::move(f); }
     const MvglFile& archive(size_t i) const { return *files_[i]; }
 
     // fan translations over the release (the Vita's: a rePatch folder, PCSG00500 or CR3/resources
@@ -123,6 +126,7 @@ private:
     std::vector<std::unique_ptr<MvglFile>> files_;
     std::vector<std::string> loose_; // loose files' paths
     std::vector<std::string> unpackFailed_; // (asset packs an .apks held deflated that couldn't be unpacked)
+    std::function<void(const std::string&, double)> unpackProgress_;
     std::vector<Entry> entries_;
     std::unordered_map<std::string, size_t> byName_;
     struct Overlay {

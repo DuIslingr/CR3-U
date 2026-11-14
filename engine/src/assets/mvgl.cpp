@@ -127,7 +127,7 @@ void packedArchives(std::FILE* f, uint64_t base, uint64_t size, int depth, std::
 }
 
 // one inflated to `to` (by way of to.part: a cut-off unpacking is never taken for a whole one)
-bool inflateTo(std::FILE* f, const ZipEntry& e, const fs::path& to) {
+bool inflateTo(std::FILE* f, const ZipEntry& e, const fs::path& to, const std::function<void(uint64_t)>& onWritten = {}) {
 #ifdef CR3_HAVE_ZLIB
     std::error_code ec;
     fs::create_directories(to.parent_path(), ec);
@@ -151,6 +151,7 @@ bool inflateTo(std::FILE* f, const ZipEntry& e, const fs::path& to) {
         const size_t got = buf.size() - s.avail_out;
         ok = ok && std::fwrite(buf.data(), 1, got, o) == got;
         written += got;
+        if (onWritten && got) onWritten(written);
     }
     inflateEnd(&s);
     ok = std::fclose(o) == 0 && ok && written == e.size;
@@ -158,7 +159,7 @@ bool inflateTo(std::FILE* f, const ZipEntry& e, const fs::path& to) {
     if (!ok) fs::remove(part, ec);
     return ok;
 #else
-    (void)f, (void)e, (void)to;
+    (void)f, (void)e, (void)to, (void)onWritten;
     return false;
 #endif
 }
@@ -400,17 +401,34 @@ bool Database::open(const std::string& path, std::string* error) {
             std::FILE* zf = std::fopen(f.c_str(), "rb");
             if (!zf) continue;
             std::vector<ZipEntry> es;
-            if (zipEntries(zf, 0, fileSize(zf), es))
+            if (zipEntries(zf, 0, fileSize(zf), es)) {
+                const auto target = [&](const ZipEntry& e) { return fs::path(f).parent_path() / "unpacked" / baseName(e.name); };
+                const auto have = [&](const ZipEntry& e) {
+                    std::error_code fe;
+                    return fs::exists(target(e), fe) && fs::file_size(target(e), fe) == e.size;
+                };
+                uint64_t total = 0, done = 0; // (the progress: of the APKs still to unpack)
+                for (const ZipEntry& e : es)
+                    if (e.method == 8 && endsWith(e.name, ".apk") && !have(e)) total += e.size;
                 for (const ZipEntry& e : es) {
                     if (e.method != 8 || !endsWith(e.name, ".apk")) continue;
-                    const fs::path to = fs::path(f).parent_path() / "unpacked" / baseName(e.name);
-                    std::error_code fe;
-                    if (!(fs::exists(to, fe) && fs::file_size(to, fe) == e.size) && !inflateTo(zf, e, to)) {
-                        unpackFailed_.push_back(baseName(e.name));
-                        continue;
+                    const fs::path to = target(e);
+                    if (!have(e)) {
+                        const std::string name = baseName(e.name);
+                        auto told = [&](uint64_t n) {
+                            if (unpackProgress_ && total) unpackProgress_(name, double(done + n) / double(total));
+                        };
+                        told(0);
+                        const bool ok = inflateTo(zf, e, to, told);
+                        done += e.size;
+                        if (!ok) {
+                            unpackFailed_.push_back(name);
+                            continue;
+                        }
                     }
                     if (std::find(files.begin(), files.end(), to.string()) == files.end()) unpacked.push_back(to.string());
                 }
+            }
             std::fclose(zf);
         }
         files.insert(files.end(), unpacked.begin(), unpacked.end());
@@ -477,18 +495,37 @@ bool Database::open(const std::string& path, std::string* error) {
         }
         // and those any of them holds deflated: unpacked once into assetpacks/ beside it, then read as
         // unpacked ones (sound, voices, the movies and the windows' figures are theirs)
+        // (the ones still to unpack first, so the progress is of them all)
+        struct Pending {
+            std::string bundle;
+            ZipEntry entry;
+            fs::path to;
+        };
+        std::vector<Pending> pending;
+        uint64_t total = 0, done = 0;
         for (const std::string& b : bundles) {
             std::FILE* zf = std::fopen(b.c_str(), "rb");
             if (!zf) continue;
             std::vector<ZipEntry> packed;
             packedArchives(zf, 0, fileSize(zf), 2, packed);
+            std::fclose(zf);
             for (const ZipEntry& e : packed) {
                 const fs::path to = fs::path(zipPath).parent_path() / "assetpacks" / baseName(e.name);
                 std::error_code fe;
                 if (fs::exists(to, fe) && fs::file_size(to, fe) == e.size) continue; // (unpacked before: walk below finds it)
-                if (!inflateTo(zf, e, to)) unpackFailed_.push_back(baseName(e.name));
+                pending.push_back({b, e, to}), total += e.size;
             }
-            std::fclose(zf);
+        }
+        for (const Pending& p : pending) {
+            std::FILE* zf = std::fopen(p.bundle.c_str(), "rb");
+            const std::string name = baseName(p.entry.name);
+            auto told = [&](uint64_t n) {
+                if (unpackProgress_ && total) unpackProgress_(name, double(done + n) / double(total));
+            };
+            told(0);
+            if (!zf || !inflateTo(zf, p.entry, p.to, told)) unpackFailed_.push_back(name);
+            if (zf) std::fclose(zf);
+            done += p.entry.size;
         }
         for (const std::string& f : walk(dir, 8)) // (asset packs unpacked beside it)
             if (endsWith(f, ".android.mvgl") && !isMain(f)) archives.emplace_back(f, 0);
