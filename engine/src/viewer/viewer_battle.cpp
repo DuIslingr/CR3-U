@@ -2012,7 +2012,7 @@ void Viewer::commentCr3AfterDamage(const cr3::Cr3Action& a) {
     for (const cr3::Cr3Hit& th : a.targets) {
         if (th.stealBack || th.effectsGiven.empty() || th.target < 0) continue;
         const bool same = a.source < 0 ? isPlayer(th.target) : isPlayer(a.source) == isPlayer(th.target);
-        const auto& map = same ? buff : debuff;
+        const auto map = [&](int e) { return same ? buff(e) : debuff(e); }; // (not "same ? buff : debuff": two lambdas, no common type for MSVC)
         std::vector<int> got;
         for (int e : th.effectsGiven)
             if (const int c = (same ? buff(e) : debuff(e)); c != 0) got.push_back(c);
