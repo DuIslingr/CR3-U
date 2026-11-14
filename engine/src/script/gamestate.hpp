@@ -50,6 +50,10 @@ struct GameState {
     // CrxCharacter::initialize; raised by the lab clerk's c115_TeamLvCheck to the collection count
     // + 1) and the profile value Invoke(4) / Invoke2(5, n) keep
     int cr3TeamLevel = 1, cr3ProfileValue = 0;
+    // the NEW badges (CrxGameData +0x280d0, new_mark - WriteSaveData_NewMark): 0 the Sp Shop's
+    // (Cr3Flag.Set on 1181 .. 1192), 1 .. 4 My Page's (3 a present sent, 4 the news); the field's
+    // buttons show them while flag 27 is set (CampFieldMenu::Pose)
+    bool newMark[5] = {};
     // Port feature: each restart keeps earned progression and starts the story again.
     int cr3NewGamePlus = 0;
     bool canNewGamePlus() const { return flag(6016); } // MainQuestClear(16), after the final battle

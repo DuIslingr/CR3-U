@@ -1508,6 +1508,26 @@ void Viewer::stepStepSwitches() {
     }
 }
 
+// the doors (Fld2Door, d0508's: its box a trigger - CollisionEventF 0x9f7264 in, SE 0x26d, its
+// _n01 from 0; CollisionEventB 0x9f7354 out, SE 0x26e, from 0.9 - the field free. Update 0x9f6e88:
+// opening till 0.8667 s, then held at 0.9; closing till 1.6 s, then back at 0, shut)
+void Viewer::stepAreaDoors(float dt) {
+    const bool scripted = areaEvents && areaEvents->running();
+    for (AreaNpc& npc : areaNpcs) {
+        if (!npc.door || !game.gimmickVisible(npc.name)) continue;
+        AreaGimmick box{npc.name, false, npc.ragdoll, false, {}};
+        const bool in = gimmickHolds(box);
+        if (in != npc.doorIn && !scripted) {
+            audio.playSe(in ? 0x26d : 0x26e, false);
+            npc.doorState = in ? 0 : 1, npc.doorT = in ? 0.0f : 0.9f;
+            SDL_Log("area %s: %s %s", area.name.c_str(), npc.name.c_str(), in ? "opening" : "closing");
+        }
+        npc.doorIn = in;
+        if (npc.doorState == 0 && (npc.doorT += dt) >= 0.8667f) npc.doorT = 0.9f, npc.doorState = -1;
+        else if (npc.doorState == 1 && (npc.doorT += dt) >= 1.6f) npc.doorT = 0, npc.doorState = -1;
+    }
+}
+
 void Viewer::updateGimmickWalls() {
     const bool riding = game.flag(4105);
     auto vehicleSolid = [riding](const std::string& n) { // (Fld2VehicleCollision::SetRide)
@@ -1922,6 +1942,11 @@ void Viewer::setupAreaGimmicks(const std::string& name) {
             // party's j<id>_00, the monsters' m<id>_<nn>, each's function named so, tapped like
             // a check object)
             areaGimmicks.push_back({names[j].substr(8), names[j].compare(0, 11, "ragdoll_evt") == 0, w[j], false, {}});
+        else if (names[j].compare(0, 12, "ragdoll_jem_") == 0) { // (Fld2Jem::Create: a trigger box at the joint - CollisionEventF: jem_NN)
+            AreaGimmick g{names[j].substr(8), true, w[j], false, {}};
+            g.jem = true;
+            areaGimmicks.push_back(g);
+        }
         else if (names[j].compare(0, 12, "ragdoll_ldr_") == 0 && names[j].size() >= 18) { // (Fld2Ladder::Create: ragdoll_ldr_NN_ups / dws / upe; lad unused)
             const std::string ladder = names[j].substr(8, 6), part = names[j].substr(15, 3);
             auto it = std::find_if(areaLadders.begin(), areaLadders.end(), [&](const AreaLadder& l) { return l.name == ladder; });
@@ -2076,6 +2101,14 @@ void Viewer::loadAreaNpcs(const std::string& name, const std::vector<std::string
             loadAnim(fig, size_t(at - fig.anims.begin()));
             time = keep;
         }
+        if (gimmick.compare(0, 11, "ragdoll_jem") == 0) { // (Fld2Jem::Create: SetLoop(0, true) - the model's own anim, its spin)
+            const auto at = std::find(npc.body.anims.begin(), npc.body.anims.end(), model + ".anim");
+            if (at != npc.body.anims.end()) {
+                const float keep = time;
+                loadAnim(npc.body, size_t(at - npc.body.anims.begin()));
+                time = keep;
+            }
+        }
         npc.box = gimmick.compare(0, 12, "ragdoll_kbox") == 0 || drawn;
         npc.solid = row.i(9) != 0;
         npc.rock = gimmick.compare(0, 13, "ragdoll_krock") == 0;
@@ -2087,7 +2120,13 @@ void Viewer::loadAreaNpcs(const std::string& name, const std::vector<std::string
             if (rj != joints.end() && size_t(rj - joints.begin()) < world.size()) npc.ragdoll = world[size_t(rj - joints.begin())];
             else npc.ragdoll = npc.place;
         }
-        if (npc.stepSwitch) // (its going down: <model>_n01, slot 1)
+        npc.door = gimmick.compare(0, 12, "ragdoll_door") == 0;
+        if (npc.door) { // (Fld2Door::Create 0x9f6f84: slot 0 <model>_n01, not looped; its box at the ragdoll joint)
+            const auto rj = std::find(joints.begin(), joints.end(), gimmick);
+            npc.ragdoll = rj != joints.end() && size_t(rj - joints.begin()) < world.size() ? world[size_t(rj - joints.begin())] : npc.place;
+            SDL_Log("area %s: door %s, its box at (%.2f %.2f %.2f)", name.c_str(), npc.name.c_str(), npc.ragdoll.m[3], npc.ragdoll.m[7], npc.ragdoll.m[11]);
+        }
+        if (npc.stepSwitch || npc.door) // (its going down / opening: <model>_n01, slot 1)
             for (size_t k = 0; k < npc.body.anims.size(); ++k)
                 if (npc.body.anims[k] == model + "_n01.anim") {
                     const float keep = time;
@@ -2355,6 +2394,18 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
                 return;
             }
         SDL_Log("area %s: MoveTo %s - no such point", this->area.name.c_str(), point.c_str());
+    });
+    // (Fld2SetEncounter 0x86ea68 -> Fld2TaskEncount::SetEnable: the tab's encounter switch,
+    // cr3_field_data +0x31 - CampFieldMenu::SetEncountPermit its icon's frame; quest_reset's, quest 63's)
+    vm.setNative("Cr3TabMenu", "SetEncounter", [this](cr3::NativeCall& c) {
+        encountersOff = !c.boolean(0, true);
+        SDL_Log("field: encounters %s (SetEncounter)", encountersOff ? "off" : "on");
+    });
+    // (GameMain::Reboot 0x96d6f4: state 0x11 - SM_Reboot the sound stopped, Cleanup, back to the
+    // title; t01's Reboot() and AfterQuestClearEvent after their Sync. The script dropped at once)
+    vm.setNative("Cr3System", "Reboot", [this](cr3::NativeCall&) {
+        cr3Reboot = true;
+        SDL_Log("Reboot: back to the title");
     });
     vm.setNative("Cr3System", "SetEncount", [this, area](cr3::NativeCall&) {
         if (area && areaMode && !eventMode) areaHeld = true, SDL_Log("area %s: held for the battle (SetEncount)", this->area.name.c_str());
@@ -3791,7 +3842,8 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         }
         // (Fld2Gimmick +8, its event - Fld2SetGimmickEventEnable: off, walking in or tapping does nothing)
         const bool eventOn = !areaEventOff.count(g.function) && (g.boxName.empty() || !areaEventOff.count(g.boxName));
-        if (g.eventBox && in && !g.inside && !scripted && eventOn) runAreaFunction(g.function);
+        // (a gem: Fld2Jem::CollisionEventF - only while shown, Disp(false) taking its box away too)
+        if (g.eventBox && in && !g.inside && !scripted && eventOn && (!g.jem || game.gimmickVisible(g.function))) runAreaFunction(g.function);
         // (a check object: near it across - Fld2TaskPlayer's gimmick ghost, a sphere of 1.0,
         // against its box; the nearest within range taken)
         if (!g.eventBox && eventOn && game.gimmickVisible(g.boxName.empty() ? g.function : g.boxName) &&
@@ -3827,6 +3879,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
     stepFieldBombs(dt);
     stepAreaMovers(dt);
     stepStepSwitches();
+    stepAreaDoors(dt);
     updateGimmickWalls();
     if (!fieldPendingFunctions.empty() && areaEvents && !areaEvents->running()) {
         const std::string fn = fieldPendingFunctions.front();
@@ -3931,6 +3984,12 @@ void Viewer::drawArea(int w, int h) {
             const float dur = npc.body.animLoaded ? npc.body.anim.duration() : 0.0f;
             npc.body.place = npc.place;
             pose(npc.body, npc.stepState == 0 ? 0.0f : npc.stepState == 1 ? std::min(areaClock - npc.stepAt, dur) : dur, false);
+            drawFigure(npc.body, vp.data());
+            continue;
+        }
+        if (npc.door) { // (its _n01 at the door's time)
+            npc.body.place = npc.place;
+            pose(npc.body, npc.doorT, false);
             drawFigure(npc.body, vp.data());
             continue;
         }
@@ -4488,6 +4547,8 @@ void Viewer::drawCr3FieldButtons(int w, int h, const Mat4& view) {
     UiFig& pos = cr3UiPut("febtnposition", "", 0, 0, 0, view);
     if (cr3UiCall(pos, "call_feBtnMenu", x, y, w, h)) {
         UiFig& menu = cr3UiPut("febtnmenu", "", 0, x, y, view);
+        float hx, hy; // (ButteryMenu 0x59, made with the field's tab - SetFieldTabMenuParameter: set A at call_comHeIconMenu)
+        if (cr3UiCall(menu, "call_comHeIconMenu", hx, hy)) drawCr3Battery(hx, hy, view);
         if (cr3UiCall(menu, "call_feBtnPanel", x, y)) {
             UiFig& panel = cr3UiPut("febtnpanel", "febtnpanel_in", pt, x, y, view);
             struct Btn {
@@ -4516,6 +4577,11 @@ void Viewer::drawCr3FieldButtons(int w, int h, const Mat4& view) {
                     cr3UiPut("febtniconencount_fr00", "", encountersOff ? 1.0f / 30 : 0.0f, ix, iy, view, fade);
                     setTint(cr3UiTint, kWhite);
                 }
+                // (CampFieldMenu::Pose 0xa30bc4: feUpnew at the button's call_feUpnew, with the panel's
+                // fade - feBtnCamp's (My Page) for new_mark 1 .. 4, feBtnMypage's (the Sp Shop) for 0)
+                const bool* nm = game.newMark;
+                const bool badge = game.flag(27) && (b.id == 4 ? nm[1] || nm[2] || nm[3] || nm[4] : b.id == 5 && nm[0]);
+                if (badge && cr3UiCall(u, "call_feUpnew", ix, iy)) cr3UiPut("feupnew", "", 0, ix, iy, view, fade);
                 if (b.id == 0 || open) tapOf(u, 100 + b.id);
             }
         }

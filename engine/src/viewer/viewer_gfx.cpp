@@ -1509,6 +1509,7 @@ bool Viewer::menuPointerUp(float x, float y) {
 
 void Viewer::pointerDown(float fx, float fy) {
     if (eventMode && event && event->vistaPaused) return;
+    if (staffListPress(fx, fy)) return; // (the Options' Credits / Copyright Notice: dragged)
     if (!menuPointerDown(fx, fy)) pointerActivate(fx, fy);
 }
 
@@ -1517,6 +1518,7 @@ void Viewer::pointerActivate(float fx, float fy) {
     else if (overFast(fx, fy)) fastHeld = true; // (the fast-forward button: held, not a tap)
     else if (cr3OptionsClick(fx, fy)) {} // (CR3-U's Options over the title or a battle; the title's button)
     else if (saveMenuClick(fx, fy)) {} // (CR3's save files)
+    else if (cr3TitleClick(fx, fy)) {} // (CR3's boot logos: a tap ends them; its mode select)
     else if (cr3Title.stage == 2) tap(); // (CR3's title: a click anywhere is its tap)
     else if (titleMenu.stage) titleClick(fx, fy);
     else if (geneGetTap()) {}
@@ -1613,6 +1615,7 @@ void Viewer::advance(float dt, float sx, float sy, bool run) {
             }
     }
     stepKeyBuy(dt);
+    stepClearQuest();
     if (!inputScript.empty() && inputScript.front() == "questok" && clearQuestShown() && activeEvents()->clearQuestAge() > 0.5f) { // (--input: the cleared quest's OK)
         answerClearQuest();
         inputScript.pop_front();
@@ -1640,6 +1643,7 @@ void Viewer::advance(float dt, float sx, float sy, bool run) {
     // the field, a vista, a battle, the title)
     if (!inputScript.empty() && inputScript.front().compare(0, 5, "wait:") == 0 && (inputWait += dt) >= float(std::atof(inputScript.front().c_str() + 5)))
         inputScript.pop_front(), inputWait = 0;
+    stepStaffList(dt);
     if (credits.stage) return updateCredits(dt);
     if (titleMenu.stage) return updateTitle(dt);
     if (cr3OptionsOver()) cr3OptionsInput(), cr3Camp.since += dt, campOptions.askSince += dt; // (its clock: the field's camp keeps its own)
@@ -5246,6 +5250,25 @@ void Viewer::drawCr3Card(int master, float x, float y, float z, float scale, con
     drawFigure(e.fig, view.data());
 }
 
+// comHeIconMenu - the battery (InterfaceMain::SetBatteryLevel 0x8f894c, each update): the gauge
+// comHeBattery_per at the level x 100 (its frame) on battery, full otherwise; the plug
+// comHeBatteryC_fr00 hidden on battery, charging frame 0 (1 once full), charged frame 1. The
+// Java states as SDL's: on battery 0, charging 1, charged - or no battery, unknown - 2
+void Viewer::drawCr3Battery(float x, float y, const Mat4& view) {
+    if (uiClock >= batteryReadAt) { // (read once a second)
+        int percent = -1;
+        const SDL_PowerState p = SDL_GetPowerInfo(nullptr, &percent);
+        batteryState = p == SDL_POWERSTATE_ON_BATTERY ? 0 : p == SDL_POWERSTATE_CHARGING ? 1 : 2;
+        batteryLevel = percent >= 0 ? std::clamp(float(percent) / 100.0f, 0.0f, 1.0f) : 1.0f;
+        batteryReadAt = uiClock + 1.0f;
+    }
+    UiFig& icon = cr3UiPut("comheiconmenu", "", 0, x, y, view);
+    float bx, by;
+    if (cr3UiCall(icon, "call_comHeBattery_per", bx, by)) cr3UiPut("comhebattery_per", "", (batteryState == 0 ? std::round(batteryLevel * 100) : 100.0f) / 30, bx, by, view);
+    if (batteryState != 0 && cr3UiCall(icon, "call_comHeBatteryC_fr00", bx, by))
+        cr3UiPut("comhebatteryc_fr00", "", (batteryState == 2 || batteryLevel >= 1.0f ? 1.0f : 0.0f) / 30, bx, by, view);
+}
+
 // the header (HeaderMenu, interface 0x42: comHeMenu - its title comHeTitle_fr00 at the
 // screen's frame (SetHeaderTitle: 1 Items, 2 Equipment, 3 Gene Swap, 4 Fuse Gifts, 5 Quests ..,
 // 30 .. the gene lab's), the sentence at typeM_L01 -, comHeIconMenu's battery, comHeInfoAMenu's
@@ -5259,12 +5282,7 @@ void Viewer::drawCr3Header(float t, int title, const std::string& sentence, int 
         if (cr3UiCall(menu, "call_comHeTitle_fr00", tx, ty)) cr3UiPut("comhetitle_fr00", "", float(title) / 30, tx, ty, view);
         drawGeneLabSentence(menu, sentence, w, h);
     }
-    if (cr3UiCall(head, "call_comHeIconMenu", x, y, w, h)) {
-        UiFig& icon = cr3UiPut("comheiconmenu", "", 0, x, y, view);
-        float bx, by;
-        if (cr3UiCall(icon, "call_comHeBattery_per", bx, by)) cr3UiPut("comhebattery_per", "", 100.0f / 30, bx, by, view);
-        if (cr3UiCall(icon, "call_comHeBatteryC_fr00", bx, by)) cr3UiPut("comhebatteryc_fr00", "", 0, bx, by, view);
-    }
+    if (cr3UiCall(head, "call_comHeIconMenu", x, y, w, h)) drawCr3Battery(x, y, view);
     if (cr3UiCall(head, "call_comHeInfoAMenu", x, y, w, h)) {
         UiFig& info = cr3UiPut("comheinfoamenu", "", 0, x, y, view);
         float px, py;

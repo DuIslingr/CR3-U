@@ -1356,7 +1356,9 @@ int main(int argc, char** argv) {
             v.seJobs.push_back({10,456});
             v.pendingBgm = 15, v.pendingBgmAt = 10;
         }
-        if (!v.startCr3Title()) return 1;
+        // (the boot logos first - not under the self-tests, which check the title itself)
+        const bool selftest = checkAudio || sessionPicker || SDL_getenv("CR_SELFTEST_BAD_SAVE") || SDL_getenv("CR_SELFTEST_NEW_SESSION");
+        if (!v.startCr3Title(!selftest)) return 1;
         if (SDL_getenv("CR_SELFTEST_BAD_SAVE")) {
             const std::string path = v.savePath(v.cr3SaveFile().c_str());
             if (std::filesystem::exists(std::filesystem::u8path(path))) return 1;
@@ -1765,6 +1767,7 @@ int main(int argc, char** argv) {
                         continue;
                     }
                     if (v.saveMenuKey(k)) continue; // (CR3's save files)
+                    if (v.cr3TitleKey(k)) continue; // (CR3's boot logos, its mode select)
                     if (v.inputDialogKey(k)) continue; // (CR3's text entry)
                     if (v.cr3Title.stage == 2 && v.cr3Camp.stage == 0 && (k == SDLK_O || k == SDLK_G)) { // (the title's Options)
                         v.openCr3OptionsFrom(1);
@@ -1932,7 +1935,7 @@ int main(int argc, char** argv) {
                     else if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER && (v.inMenu() || v.cr3Title.stage == 4)) key = shopList ? SDLK_LEFT : SDLK_PAGEUP;
                     else if (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER && (v.inMenu() || v.cr3Title.stage == 4)) key = shopList ? SDLK_RIGHT : SDLK_PAGEDOWN;
                     else if (b == SDL_GAMEPAD_BUTTON_START && v.titleMenu.stage >= 2 && v.titleMenu.stage <= 3) key = SDLK_RETURN;
-                    else if (b == SDL_GAMEPAD_BUTTON_START && v.vitaButtons() && v.cr3Title.stage == 2) // (CR3's TitleMenu, 0x81256cde: ○ or START its tap)
+                    else if (b == SDL_GAMEPAD_BUTTON_START && v.vitaButtons() && (v.cr3Title.stage == 2 || v.cr3Title.stage == 6)) // (CR3's TitleMenu, 0x81256cde: ○ or START its tap; the logos ended by it)
                         key = SDLK_RETURN, SDL_Log("title: START");
                     if (key) pushKey(key);
                 } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION || e.type == SDL_EVENT_FINGER_UP ||
@@ -1972,7 +1975,7 @@ int main(int argc, char** argv) {
                     if (v.pointerCancelled) continue; // an interrupted gesture cannot activate or finish anything
                     float fx, fy;
                     screenFraction(e.button.x, e.button.y, fx, fy);
-                    if (v.menuPointerUp(fx, fy)) { dragging = false; continue; }
+                    if (v.staffListRelease() || v.menuPointerUp(fx, fy)) { dragging = false; continue; }
                     if (!v.areaDrag.own) v.areaDragEnd();
                     v.worldSel.dragging = false; // (the planet let go: spun on)
                     v.town.dragging = false;    // (the town map let go)
@@ -1989,6 +1992,10 @@ int main(int argc, char** argv) {
                         screenFraction(e.button.x, e.button.y, fx, fy);
                         v.aimPointer(fx, fy, 2);
                     }
+                } else if (e.type == SDL_EVENT_MOUSE_MOTION && v.staffList.held) { // (the Options' Credits list dragged)
+                    float fx, fy;
+                    screenFraction(e.motion.x, e.motion.y, fx, fy);
+                    v.staffListMove(fx, fy);
                 } else if (e.type == SDL_EVENT_MOUSE_MOTION && v.menuSwipe.down) {
                     float fx, fy;
                     screenFraction(e.motion.x, e.motion.y, fx, fy);
@@ -2040,6 +2047,11 @@ int main(int argc, char** argv) {
             consumeInputCancel();
             if (!running) break;
             if (!takeTitle()) running = false;
+            if (v.cr3Reboot) { // (GameMain::Reboot: SM_Reboot - the game's sounds and scenes dropped, the title again)
+                v.cr3Reboot = false;
+                v.leaveBattle();
+                if (!v.startCr3Title()) running = false;
+            }
             if (v.toTitle) { // (the options' Title Screen, yes: the title screen; --play without it from a new game again; else the end)
                 v.toTitle = false;
                 if (titleScreen) {

@@ -4045,6 +4045,7 @@ void Viewer::openMyPage() {
     cr3Camp.stage = 10, cr3Camp.since = 0;
     audio.playSe("com_003", false);
     if (game.cr3Presents.size() > 79) myPage.told = menuAnnounce(0x2f5); // (MyPageNewTopMain 1: DAT_0143a080 over 0x4f)
+    if (game.cr3Presents.empty()) game.newMark[1] = game.newMark[3] = false; // (MyPageNewTop 0xae6704: no presents, no NEW)
     SDL_Log("my page: open (%s, %zu presents)", myPage.vs ? "VS" : "story", game.cr3Presents.size());
 }
 
@@ -4237,6 +4238,7 @@ void Viewer::openPresents() {
     Cr3MyPage& mp = myPage;
     mp.screen = 1, mp.screenSince = 0, mp.pressed = 0, mp.row = 0;
     presentRows();
+    game.newMark[3] = false; // (MyPageNewTop's button 3)
     SDL_Log("my page: presents (%zu)", game.cr3Presents.size());
 }
 
@@ -4358,6 +4360,7 @@ void Viewer::choosePresents(int id) {
     audio.playSe("com_003", false);
     if (k < 0) { // (Accept All: ReceivePresents, then the screen closes)
         const int r = game.cr3Db->receivePresents(game);
+        game.newMark[1] = false;
         SDL_Log("my page: accepted all presents -> %#x (%zu left)", r, game.cr3Presents.size());
         return closePresents();
     }
@@ -4371,6 +4374,7 @@ void Viewer::choosePresents(int id) {
 
 void Viewer::acceptPresent(int k) {
     const int r = game.cr3Db->receivePresent(game, k);
+    game.newMark[1] = false; // (PresentGetMain::Update 0xb03fac)
     SDL_Log("my page: accepted present %d -> %#x (%zu left)", k, r, game.cr3Presents.size());
     presentRows();
     if (myPage.rows.empty()) closePresents();
@@ -6390,7 +6394,10 @@ void Viewer::chooseVs(int id) {
     }
     audio.playSe("com_003", false);
     if (vs.screen == 10 && id == 1000) openSpBoxes();
-    else if (vs.screen == 10 && id == 1001) vs.screen = 8, vs.since = 0, vs.row = 0, SDL_Log("shop: the goods");
+    else if (vs.screen == 10 && id == 1001) { // (ShopBuyCoreMain's constructor: the Sp Shop's NEW gone)
+        vs.screen = 8, vs.since = 0, vs.row = 0, game.newMark[0] = false;
+        SDL_Log("shop: the goods");
+    }
     else if (vs.screen == 10 && id == 1002 && game.cr3VipDays < 90) vs.screen = 12, vs.since = 0, vs.ask = 5, SDL_Log("shop: VIP");
     else if (vs.screen == 11 && id >= 1100 && id < 1103) { // (LuckyBoxMenu: a neighbour turned to; the one in focus - its buy panels)
         const int n = std::max(int(spBoxes().size()), 1);
@@ -6405,7 +6412,7 @@ void Viewer::chooseVs(int id) {
         vs.screen = 2, vs.since = 0, vs.buttonFocus = 0;
         runVsScript("VS_Top2"); // (VsModeMain 0x18)
     }
-    else if (vs.screen == 1 && id == 2) vs.screen = 8, vs.since = 0, vs.row = 0, SDL_Log("vs: sp shop");
+    else if (vs.screen == 1 && id == 2) vs.screen = 8, vs.since = 0, vs.row = 0, game.newMark[0] = false, SDL_Log("vs: sp shop");
     else if ((vs.screen == 1 || vs.screen == 2) && id >= 10 && id < 14) {
         if (id == 11) openCr3Camp(), vsCampOpened = true; // (VsModeMain 0xe: the camp, its Gene Swap off)
         else if (id == 12) vs.ask = 2, vs.since = 0;

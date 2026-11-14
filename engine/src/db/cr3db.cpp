@@ -399,6 +399,7 @@ int Cr3OfflineDb::earnGenePrize(GameState& s, const Cr3Gene& gene) {
 void Cr3OfflineDb::sendPresent(GameState& s, const Cr3Present& p) {
     if (s.cr3Presents.size() >= 100) s.cr3Presents.erase(s.cr3Presents.begin()); // (the oldest)
     s.cr3Presents.push_back(p);
+    s.newMark[3] = true; // (dbutils::SendPresent: My Page's NEW)
 }
 
 bool Cr3OfflineDb::removeItem(GameState& s, int item, int n) {

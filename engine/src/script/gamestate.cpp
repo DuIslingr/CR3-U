@@ -12,7 +12,11 @@
 namespace cr3 {
 
 void bindGameState(ScriptVM& vm, GameState& state) {
-    vm.setNative("Cr3Flag", "Set", [&state](NativeCall& c) { state.setFlag(c.integer(0), true); });
+    vm.setNative("Cr3Flag", "Set", [&state](NativeCall& c) { // (Cr3UtilFlagSet 0x93aeec: 1181 .. 1192, the Sp Shop's goods - its NEW, each time)
+        const int n = c.integer(0);
+        state.setFlag(n, true);
+        if (n >= 1181 && n <= 1192) state.newMark[0] = true;
+    });
     vm.setNative("Cr3Flag", "Clear", [&state](NativeCall& c) { state.setFlag(c.integer(0), false); });
     vm.setNative("Cr3Flag", "Check", [&state](NativeCall& c) { c.result(state.flag(c.integer(0))); });
     // (Cr3Work is the global work: Cr3BindWork's Set / Get are Cr3UtilGlobalWorkSet / Get - 100
@@ -153,6 +157,9 @@ void bindGameState(ScriptVM& vm, GameState& state) {
         case 17: // (utils::Invoke 0x92f8e8: request 0x69 - BeginVSTournament on DAT_0149ef7c; the VS tutorial's)
             if (db && state.vsSelected >= 0) db->beginVSTournament(state, state.vsSelected, {}, std::time(nullptr));
             else if (db) db->finish(kDbOk);
+            break;
+        case 19: // (ExchangeGem - DBEmu::ExchangeGem 0x81fc54: GetJem's at 99 gems, a Continue Gem for them)
+            if (db) db->exchangeGem(state);
             break;
         default:
             if (db) db->finish(kDbOk);
@@ -699,6 +706,9 @@ std::string GameState::save(const std::map<std::string, std::string>& extra) con
     o << "cr3records " << static_cast<long long>(r.playSeconds) << ' ' << r.kills << ' ' << r.maxDamage << ' ' << r.vsMatches << ' ' << r.genesObtained << ' '
       << r.merges << ' ' << r.fusions << '\n';
     o << "cr3ngplus " << cr3NewGamePlus << '\n';
+    o << "cr3newmark";
+    for (const bool m : newMark) o << ' ' << (m ? 1 : 0);
+    o << '\n';
     o << "cr3team " << cr3TeamLevel << ' ' << cr3ProfileValue << '\n';
     for (const auto& [k, v] : cr3Names) o << "cr3name " << k << ' ' << v << '\n'; // (the rest of the line the name)
     for (const auto& [k, v] : extra) o << k << ' ' << v << '\n';
@@ -890,6 +900,11 @@ bool GameState::parse(const std::string& text, std::map<std::string, std::string
             l >> k;
             const size_t at = line.find(' ', line.find(k, 8));
             cr3Names[k] = at == std::string::npos ? std::string() : line.substr(at + 1);
+        } else if (key == "cr3newmark") {
+            for (bool& m : newMark) {
+                int v = 0;
+                if (l >> v) m = v != 0;
+            }
         } else if (key == "cr3ngplus") {
             l >> cr3NewGamePlus;
             cr3NewGamePlus = std::clamp(cr3NewGamePlus, 0, 9999);

@@ -657,6 +657,25 @@ A delegated pass (`/tmp/cr3-opening-audit/round25-leftovers.md`), implemented by
 | Trigger corrections | Trigger 4 on the first time a target is hit in any command; 7 / 8 / 9 once per target - 7 on the first landed hit (none if it was evaded), 8 and end 7 only unblocked with the HP change a loss, 9 when nothing landed | 7 each hit, 8 always, 4 on hostile commands only | As traced |
 | Cover (skill kind 118 = the command; skill 435, command 1685; `battle_0034`'s Brave Pigtapir; `PlayCover` `0x9df840`) | The first other unit (not under kind 31) with it takes the hit, jumping in front at event 2 | None | As traced; the jump's depth and motion guessed |
 
+### 30. Round 26 parity audit (the field and the menus)
+
+A survey of everything outside battle (`/tmp/cr3-opening-audit/round26-backlog.md`), two delegated passes
+(`round26-field.md`, `round26-menus.md`), implemented by another under memory caps. The event census: all 4127 events end;
+the only unbound natives any script calls were `Cr3System.Reboot` and `Cr3TabMenu.SetEncounter`.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Gems (`ragdoll_jem` -> `Fld2Jem`: `CreateGimmickItem` `0x9faa60`, `Fld2Jem::Create` `0x9fbf10`, `CollisionEventF` `0x9fc13c`; 57 dungeon areas) | `f0000jem00` spinning on its own animation; walked into (visible, the field idle): `jem_NN` - `FlgOn(4054 + NN)`, `GetJem`: `com_029`, `fe101get04`, hidden, item 500001 +1; at 99, `Invoke(19)` ExchangeGem (99 Gems -> a Continue Gem 400006); gone for the visit (`FieldFlag_Init`) | Not collectable | As traced (`gem-pickup`, `gem-exchange`) |
+| `Cr3TabMenu.SetEncounter` (`Fld2SetEncounter` `0x86ea68`) / `Cr3System.Reboot` | The tab's encounter switch (quest 63's `quest_reset`); back to the title after the episode-end `Sync` | Stubs | Bound (`reboot`) |
+| The field buttons' NEW (`CampFieldMenu::Initialize` `0xa30160` / `Update` `0xa309a4`) | `feUpnew` at `call_feUpnew`: on `feBtnCamp` (My Page) for marks 1 .. 4, on `feBtnMypage` (the Sp Shop) for mark 0, with flag 27; mark 0 set by any flag 1181 .. 1192 (`ShopItemPlus`), cleared by the goods list; mark 3 by presents; saved | None | As traced (`GameState::newMark`) |
+| d0508's door (`ragdoll_door` -> `Fld2Door` `0x9f6da4`) | Opens on approach (SE 0x26d, 0 -> 0.8667 s, held at 0.9), closes on leaving (0x26e, 0.9 -> 1.6 s) | Static | As traced (`door`) |
+| Quest Clear (`QuestDitailMenu::Initialize` `0xb38c60` with 0x7e) | `comBgMenu` + `comBgMark`, the `spQstTitleT/BMenu` banners sliding in over 0.3 s; the clear stamp the base `spqstclear` over 0 .. 0.167 s then held (its `_loop` never played - here and in an ended quest's detail) | The plain detail, the `_loop` stamp | As traced (`quest-clear`) |
+| Options' Credits / Copyright (`OptionMain::Update` `0xaec0c0` -> `StaffNameListMenu`) | Two rows (0x30f / 0x310), `staff2.dat` (854 lines, size 24) / `copyright.dat` (668, 18), 13 lines at 0.32, drag scrolling (decay 2/3, spring back), the bar | None | As traced (`options-credits`) |
+| The title (`TitleMenuMain::Update` `0xb4b47c`: `LogoMenu` `0x8c1120`, `ModeSelectMenu` 0xd4) | Square Enix / Media.Vision, then the CHAOS RINGS emblem (`ttl_logo2`), a tap ending them (the CESA notice in Japanese only); after a save with story flag 40, Story / VS (`ttlMode*`, Yes / No, the fades). `ScenarioSelectMenu` (0xd5) is dead code | Straight to the title; VS only from My Page | As traced (`mode-select`); who sets flag 40 untraced |
+| The header's battery (`ButteryMenu` 0x59, `SetBatteryLevel`) | The gauge at the level, the plug by the charge state | A full gauge always | `SDL_GetPowerInfo`, once a second |
+
+The minimap's goal markers (`fieldgoal.mbe`, `CheckGoalGimmick`) are a cut feature: no caller, "feMapGoal" in no build.
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -824,9 +843,9 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`60/60` cases, `0 problems`)**:
+- **Controller & UI integration suite (`67/67` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 60 headless controller cases (round 25 added `special-support`, `target-icons`, `battle-opening`; round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
+  passes all 67 headless controller cases (round 26 added `gem-pickup`, `gem-exchange`, `door`, `reboot`, `mode-select`, `options-credits`, `quest-clear`; round 25 added `special-support`, `target-icons`, `battle-opening`; round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
   `CR3_EVTANIM`), `ladder` (d0202: a fall onto the floor, the ladder from the foot, a rung, off at the
   top), `ranged-camera` (battle 22's ranged direction's global clips, seed 1), `camp-event-ask` (the
   event camp's Yes / No: No, the hard back's stall, Yes) and `camp-event-nogene` (the `0x307` alert);

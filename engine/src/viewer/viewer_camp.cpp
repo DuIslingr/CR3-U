@@ -1456,7 +1456,9 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
     float x, y, cx, cy;
     // (CampTopMenu: the background and the party's panels)
     UiFig& top = cr3UiPut("camtopposition", "", 0, 0, 0, view);
+    if (cr3Camp.stage == 9) cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = staffList.dim; // (OptionMain's backgrounds under the Credits)
     if (cr3UiCall(top, "call_comBgMenu", x, y, w, h)) cr3UiPut("combgmenu", "", 0, x, y, view);
+    cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
     dev->clearDepth();
     if (cr3Camp.stage == 3) return drawCr3CampGenes(w, h, view);
     if (cr3Camp.stage == 4) {
@@ -3464,9 +3466,9 @@ bool Viewer::questReady(const cr3::Cr3OfflineDb::Quest& q) const {
 // the flick arrows (spQstArrow on its _loop at the position's ragdoll_call_spQstArrow -
 // SetQuestDetailMenuChangeButton). Taps: 500 OK (only enabled - CheckOkButtonPermit), 501 / 502
 // the arrows
-void Viewer::drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, float t, int w, int h, const Mat4& view, bool okOn, bool cleared) {
+void Viewer::drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, float t, int w, int h, const Mat4& view, bool okOn, bool cleared, float positionT) {
     float x, y, cx, cy, ax, ay, bx, by;
-    UiFig& pos = cr3UiPut("spqstposition", "", t, 0, 0, view);
+    UiFig& pos = cr3UiPut("spqstposition", "", positionT >= 0 ? positionT : t, 0, 0, view);
     if (count > 1 && cr3UiCall(pos, "ragdoll_call_spQstArrow", x, y, w, h)) {
         UiFig& arrow = cr3UiPut("spqstarrow", "spqstarrow_loop", uiClock, x, y, view, 1, true);
         if (cr3UiCall(arrow, "tapAreaS01", ax, ay) && cr3UiCall(arrow, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 501});
@@ -3522,13 +3524,16 @@ void Viewer::drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, fl
         UiFig& bar = cr3UiPut("spqstbar", "", 0, cx, cy, view);
         if (cr3UiCall(bar, "call_spQstCursor", cx, cy)) cr3UiPut("spqstcursor", "", 0, cx, cy, view);
     }
-    if ((cleared || game.cr3Quests.ended.count(q.id)) && cr3UiCall(menu, "call_spQstClear", cx, cy)) cr3UiPut("spqstclear", "spqstclear_loop", uiClock, cx, cy, view, 1, true);
     if (cr3UiCall(menu, "call_spQstBtn", cx, cy)) {
         if (!okOn) cr3UiTint[0] = cr3UiTint[1] = 0.549f, cr3UiTint[2] = 0.655f; // (ControlQuestDetailMenuOkButton(false))
         UiFig& btn = cr3UiPut("spqstbtn", "", 0, cx, cy, view);
         cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
         if (okOn && cr3UiCall(btn, "tapAreaS01", ax, ay) && cr3UiCall(btn, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 500});
     }
+    // (SetClearMark 0xb3a880, drawn after OK: the base spqstclear over 0 .. spqstclear_in's length -
+    // mosion_01 2 -> 1, mat_clear_01 0 -> 1, a stamp - then held, Update looping its still rest;
+    // spqstclear_loop's own keys never played)
+    if ((cleared || game.cr3Quests.ended.count(q.id)) && cr3UiCall(menu, "call_spQstClear", cx, cy)) cr3UiPut("spqstclear", "", std::min(t, 1.0f / 6), cx, cy, view);
 }
 
 void Viewer::drawClearQuest(cr3::EventRuntime& ev, int w, int h) {
@@ -3544,11 +3549,34 @@ void Viewer::drawClearQuest(cr3::EventRuntime& ev, int w, int h) {
     cr3::SceneLighting none;
     dev->setLighting(none);
     dev->clearDepth();
+    // (QuestDitailMenu 0x7e - Initialize 0xb38c60, ProvisionalDraw 0xb3a080: spQstClearPosition on its
+    // still _in, comBgMenu and its comBgMark_id00 over the screen, the two spQstTitle banners sliding
+    // in on their _in at the position's fit9 / fit1 calls; then the detail - no arrows. Its OK:
+    // spQstPosition back from where it is, a 5-frame fade to black, the menu gone at the end)
+    const float t = ev.clearQuestAge();
+    float x, y;
+    UiFig& clearPos = cr3UiPut("spqstclearposition", "spqstclearposition_in", t, 0, 0, view);
+    UiFig& bg = cr3UiPut("combgmenu", "", 0, 0, 0, view);
+    if (cr3UiCall(bg, "call_comBgMark_id00", x, y)) cr3UiPut("combgmark_id00", "", 0, x, y, view);
+    if (cr3UiCall(clearPos, "call_spQstTitleTMenu", x, y, w, h)) cr3UiPut("spqsttitletmenu", "spqsttitletmenu_in", std::min(t, 0.3f), x, y, view);
+    if (cr3UiCall(clearPos, "call_spQstTitleBMenu", x, y, w, h)) cr3UiPut("spqsttitlebmenu", "spqsttitlebmenu_in", std::min(t, 0.3f), x, y, view);
+    const float opening = 1.0f / 6;
+    const float positionT = clearQuestOkAt >= 0 ? std::max(opening - (uiClock - clearQuestOkAt), 0.0f) : std::min(t, opening);
     std::vector<Cr3GeneLabTap> keep;
     keep.swap(cr3CampTaps);
-    drawCr3QuestDetail(*q, 1, std::min(ev.clearQuestAge(), 1.0f), w, h, view, true, true);
+    drawCr3QuestDetail(*q, 1, t, w, h, view, true, true, positionT);
     clearQuestTaps.swap(cr3CampTaps);
     keep.swap(cr3CampTaps);
+    if (clearQuestOkAt >= 0) clearQuestTaps.clear();
+    // (InterfaceMain's fade window over the menu: the script's FadeIn after Create, the OK's FadeOut)
+    const cr3::EventFade& fd = ev.fade();
+    const float alpha = fd.at(eventLead() / cr3::EventRuntime::kTick);
+    if (alpha > 0 && white.id) {
+        static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+        const float* c = fadeColours[std::clamp(fd.colour, 0, 3)];
+        const float rgba[4] = {c[0], c[1], c[2], alpha};
+        fullFrameQuad(white, kScreen, rgba);
+    }
 }
 
 // The team's level-up banner (EventRuntime::levelUpShown - LevelUpMenu)
@@ -3612,10 +3640,20 @@ void Viewer::drawCr3GetItemPanel(int item, float t, const std::string& line) {
 
 void Viewer::answerClearQuest() {
     cr3::EventRuntime* ev = activeEvents();
-    if (!ev || ev->clearQuestShown() <= 0) return;
-    audio.playSe("com_003", false);
-    ev->answerClearQuest();
+    if (!ev || ev->clearQuestShown() <= 0 || clearQuestOkAt >= 0) return;
+    // (spQstBtn's release 0xb3b4c8 in clear mode: InterfaceCloseAnimeSet, Cr3FadeOut(0, 5) - no SE,
+    // nor one in the scripts' ClearQuestMenu)
+    ev->menuFade(true, 5);
+    clearQuestOkAt = uiClock;
     SDL_Log("quest clear: OK");
+}
+
+// (the OK's close over: the menu dead - the script's CheckAliveQuestDetailMenu false)
+void Viewer::stepClearQuest() {
+    if (clearQuestOkAt < 0) return;
+    cr3::EventRuntime* ev = activeEvents();
+    if (!ev || ev->clearQuestShown() <= 0) clearQuestOkAt = -1;
+    else if (uiClock - clearQuestOkAt >= 1.0f / 6) ev->answerClearQuest(), clearQuestOkAt = -1, SDL_Log("quest clear: closed");
 }
 
 bool Viewer::clearQuestShown() {
@@ -4422,9 +4460,15 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
     const float s = cr3OptionsScale(w, h);
     constexpr float kPivot = 2.1f;
     cr3UiScale = s, uiTextScale = s;
-    UiFig& top = cr3UiPut("opttoppositon", "opttoppositon_io", t, 0, kPivot * (1 - s), view);
-    if (cr3UiCall(top, "call_optTab_fr00", x, y, w, h)) drawCr3OptionTabs(co.tab, x, y, w, h, view);
-    if (co.tab == 0 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) {
+    Cr3StaffList& sl = staffList;
+    const bool listUp = sl.kind != 0 && sl.stage >= 2; // (StaffNameListMenu in OptionMenu's place)
+    // (the OptionMenu going: its optTopPositon_io back)
+    const float io = sl.kind != 0 && sl.stage == 1 ? std::max(1.0f / 6 - (uiClock - sl.at), 0.0f) : t;
+    if (listUp) drawStaffList(s, kPivot, w, h, view);
+    UiFig& top = cr3UiPut("opttoppositon", "opttoppositon_io", listUp ? 0.0f : io, 0, kPivot * (1 - s), view, listUp ? 0.0f : 1.0f);
+    // (the tabs and their settings not shown under the list - its own optTopPositon drawn above)
+    if (!listUp && cr3UiCall(top, "call_optTab_fr00", x, y, w, h)) drawCr3OptionTabs(co.tab, x, y, w, h, view);
+    if (!listUp && co.tab == 0 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) {
         UiFig& menu = cr3UiPut("optsltmenu", "", 0, x, y, view);
         for (int k = 0; k < 3; ++k) {
             float px, py;
@@ -4449,7 +4493,7 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
             }
         }
     }
-    if (co.tab == 1 && cr3UiCall(top, "call_optHndMenu", x, y, w, h)) {
+    if (!listUp && co.tab == 1 && cr3UiCall(top, "call_optHndMenu", x, y, w, h)) {
         UiFig& menu = cr3UiPut("opthndmenu", "", 0, x, y, view);
         for (int k = 0; k < 2; ++k) {
             if (!cr3UiCall(menu, "call_optHnd_fr00_00" + std::to_string(k + 1), cx, cy)) continue;
@@ -4463,7 +4507,7 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
             if (cr3UiCall(hnd, "tapAreaS01", ax, ay) && cr3UiCall(hnd, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 500 + k});
         }
     }
-    if (co.tab == 2 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) {
+    if (!listUp && co.tab == 2 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) {
         UiFig& menu = cr3UiPut("optsltmenu", "", 0, x, y, view);
         float px, py;
         if (cr3UiCall(menu, "call_optSltPanel_001", px, py)) {
@@ -4522,9 +4566,27 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
                 if (co.from == 1 && cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by))
                     cr3CampTaps.push_back({ax - 3.0f * s, ay, bx, by, 1300});
             }
+            // (SetModeParts(2) 0xaefb3c: Credits 0x30f and Copyright Notice 0x310 - optSltPanel rows,
+            // the original's at call_optSltLRPanel 1 / 2, here below CR3-U's rows -, each with a
+            // comListLLBtn_fr00 at its call_optSltBtn_fr00 + (2, 0), "Confirm" 0xb1 on it)
+            for (int k = 0; k < 2; ++k) {
+                below += 0.85f * s;
+                if (vitaButtons() && !co.footer && co.otherRow == 3 + k) cr3UiTintMaterial = "mat_opt_btn_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+                UiFig& row = cr3UiPut("optsltpanel", "", 0, px, py - below, view);
+                cr3UiTintMaterial.clear();
+                cr3UiLabel(row, "typeM_L00", menuAnnounce(0x30f + k), w, h, 0.26f);
+                if (!cr3UiCall(row, "call_optSltBtn_fr00", cx, cy)) continue;
+                cx += 2.0f * s;
+                UiFig& btn = cr3UiPut("comlistllbtn_fr00", "", 0, cx, cy, view);
+                if (cr3UiCall(btn, "typeM_C00", tx, ty)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(menuAnnounce(0xb1), 24, tx / 10, (ty - 0.03f * s) / 10, w, h, false, 1.0f);
+                }
+                cr3CampTaps.push_back({cx, cy, cx + 1.43f * s, cy - 0.45f * s, k == 0 ? kTapCredits : kTapCopyright}); // (the button's own bounds)
+            }
         }
     }
-    if (co.tab == 3 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) drawCr3GraphicsTab(cr3UiPut("optsltmenu", "", 0, x, y, view), w, h, view);
+    if (!listUp && co.tab == 3 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) drawCr3GraphicsTab(cr3UiPut("optsltmenu", "", 0, x, y, view), w, h, view);
     cr3UiScale = 1, uiTextScale = 1;
     // (the back, and CR3-U's Reset left of it)
     UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
@@ -4534,7 +4596,7 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
         if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
         if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) {
             cr3CampTaps.push_back({ax, ay, ex, ey, -1});
-            drawCr3OptionsReset(std::min(ax, ex), (ay + ey) / 2, w, h, view);
+            if (sl.kind == 0) drawCr3OptionsReset(std::min(ax, ex), (ay + ey) / 2, w, h, view);
         }
     }
     std::string line = co.tab < 3 ? menuAnnounce(0x19f + co.tab) : std::string("Change graphics settings.");
@@ -4544,6 +4606,7 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
     }
     if (co.tab == 2 && co.otherRow == 2) line = co.from == 1 ? "Import decrypted Vita saves (I). Existing saves are backed up." : "Import saves from the title screen's Options.";
     if (co.tab == 2 && co.otherRow == 1) line = "The language of the game's text: its own, or a fan translation over it.";
+    if (sl.kind != 0 && sl.stage == 1) cr3CampTaps.clear(); // (nothing taken while the menus change)
     drawCr3Header(t, 7, line, w, h, view);
     if (co.asking) { // (the Reset's question over all; its Yes / No the only taps)
         cr3CampTaps.clear();
@@ -4585,6 +4648,11 @@ void Viewer::chooseCampOptions(int id) {
         audio.playSe("com_003", false);
         return;
     }
+    if (staffList.kind != 0) { // (StaffNameListMenu up: the footer's back alone - once it's in)
+        if (id == -1 && staffList.stage == 2 && uiClock - staffList.at >= 1.0f / 6) closeStaffList();
+        return;
+    }
+    if (id == kTapCredits || id == kTapCopyright) return openStaffList(id == kTapCredits ? 1 : 2);
     const int settingCount = int(settingRows().size());
     if (id == kTapGraphicsUp || id == kTapGraphicsDown) {
         settingsCursor = std::clamp(settingsCursor + (id == kTapGraphicsUp ? -1 : 1), 0, settingCount - 1);
@@ -4632,6 +4700,15 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCampOptions(kTapResetNo);
         return;
     }
+    if (staffList.kind != 0) { // (the list: back; CR3-U's - up / down a line)
+        if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampOptions(-1);
+        if ((key == SDLK_UP || key == SDLK_DOWN) && staffList.stage == 2 && !staffList.held) {
+            staffList.offset = std::clamp(staffList.offset + (key == SDLK_DOWN ? 0.32f : -0.32f), 0.0f, staffListRange());
+            staffList.velocity = 0;
+            SDL_Log("staff list: line %d", int(staffList.offset / 0.32f + 0.5f) + 1);
+        }
+        return;
+    }
     if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) return chooseCampOptions(-1);
     if (key == SDLK_TAB) return chooseCampOptions(400 + (co.tab + 1) % kOptionTabs);
     if (key == SDLK_R) return chooseCampOptions(kTapOptionsReset);
@@ -4665,15 +4742,157 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
     if (co.tab == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(500 + (key == SDLK_RIGHT ? 1 : 0));
     if (co.tab == 2) {
         if (key == SDLK_UP || key == SDLK_DOWN) { // (the Language row only where there are languages to pick)
-            const int rows = languages.size() > 1 ? 3 : 2, at = co.otherRow == 2 ? rows - 1 : co.otherRow;
+            std::vector<int> order = {0, 2, 3, 4};
+            if (languages.size() > 1) order.insert(order.begin() + 1, 1);
+            const int rows = int(order.size());
+            const int at = int(std::find(order.begin(), order.end(), co.otherRow) - order.begin()) % rows;
             if (vitaButtons() && key == SDLK_DOWN && at == rows - 1) { co.footer = true; audio.playSe("com_002", false); return; }
             const int next = vitaButtons() ? std::clamp(at + (key == SDLK_DOWN ? 1 : -1), 0, rows - 1) : (at + (key == SDLK_DOWN ? 1 : rows - 1)) % rows;
-            co.otherRow = next == rows - 1 ? 2 : next;
+            co.otherRow = order[size_t(next)];
             if (vitaButtons()) audio.playSe("com_002", false);
-        } else if (key == SDLK_I || (co.otherRow == 2 && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))) chooseCampOptions(1300);
+            SDL_Log("options: other row %d", co.otherRow);
+        } else if ((co.otherRow == 3 || co.otherRow == 4) && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))
+            chooseCampOptions(co.otherRow == 3 ? kTapCredits : kTapCopyright);
+        else if (key == SDLK_I || (co.otherRow == 2 && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))) chooseCampOptions(1300);
         else if (co.otherRow == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 600 : 601);
         else if (co.otherRow == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 1400 : 1401);
     }
+}
+
+void Viewer::openStaffList(int kind) {
+    Cr3StaffList& sl = staffList;
+    audio.playSe("com_003", false);
+    sl = Cr3StaffList();
+    sl.kind = kind, sl.stage = 1, sl.at = uiClock;
+    // (SetNumbers / SetFile / SetFontSize: Staff2 854 lines at 24, Copyright 668 at 18)
+    const char* file = kind == 1 ? "staff2" : "copyright";
+    sl.lines = kind == 1 ? 854 : 668, sl.size = kind == 1 ? 24 : 18;
+    sl.text.resize(size_t(sl.lines));
+    for (int n = 1; n <= sl.lines; ++n) sl.text[size_t(n - 1)] = vsText(file, n);
+    for (int n = 2; n <= sl.lines; ++n) // (GetLineText 0xaedc7c: a line the same as line 1 - its blank token - drawn empty)
+        if (sl.text[size_t(n - 1)] == sl.text[0]) sl.text[size_t(n - 1)].clear();
+    SDL_Log("options: %s (%d lines)", kind == 1 ? "credits" : "copyright notice", sl.lines);
+}
+
+void Viewer::closeStaffList() {
+    audio.playSe("com_004", false);
+    staffList.stage = 3, staffList.at = uiClock, staffList.held = staffList.dragging = false;
+    SDL_Log("options: %s closed", staffList.kind == 1 ? "credits" : "copyright notice");
+}
+
+float Viewer::staffListRange() const { return std::max(0.32f * float(staffList.lines - 13), 0.0f); }
+
+// (the stages' clocks, the backgrounds' dim - 0.05 an update -, AutoScroll's carrying on and
+// drawing back: 2/3 a 30-Hz frame)
+void Viewer::stepStaffList(float dt) {
+    Cr3StaffList& sl = staffList;
+    if (sl.kind == 0) return;
+    if (cr3Camp.stage != 9) return (void)(sl = Cr3StaffList());
+    const float frames = dt * 30, keep = std::pow(2.0f / 3.0f, frames);
+    sl.dim = sl.stage == 3 ? std::min(sl.dim + 0.05f * frames, 1.0f) : std::max(sl.dim - 0.05f * frames, 0.5f);
+    if (sl.stage == 1 && uiClock - sl.at >= 1.0f / 6) sl.stage = 2, sl.at = uiClock;
+    if (sl.stage == 3 && uiClock - sl.at >= 1.0f / 6) { // (the list dead: ReturnOptionMenuT - the options in again)
+        sl = Cr3StaffList();
+        cr3Camp.since = 0;
+        return;
+    }
+    const float range = staffListRange();
+    if (sl.held) {
+        if (frames > 0) sl.velocity = sl.moved / frames;
+        sl.moved = 0;
+        return;
+    }
+    if (std::fabs(sl.velocity) >= 0.01f) sl.offset += sl.velocity * frames, sl.velocity *= keep;
+    else sl.velocity = 0;
+    if (sl.offset < 0) sl.offset *= keep;
+    else if (sl.offset > range) sl.offset = range + (sl.offset - range) * keep;
+}
+
+void Viewer::drawStaffList(float s, float pivot, int w, int h, const Mat4& view) {
+    Cr3StaffList& sl = staffList;
+    const float io = sl.stage == 3 ? std::max(1.0f / 6 - (uiClock - sl.at), 0.0f) : uiClock - sl.at;
+    float x, y, lx, ly, ax, ay, ex, ey;
+    UiFig& top = cr3UiPut("opttoppositon", "opttoppositon_io", io, 0, pivot * (1 - s), view);
+    if (!cr3UiCall(top, "call_opTSltStaff", x, y, w, h)) return;
+    UiFig& staff = cr3UiPut("optsltstaff", "", 0, x, y, view);
+    if (cr3UiCall(staff, "tapAreaS01", ax, ay) && cr3UiCall(staff, "tapAreaE01", ex, ey))
+        sl.areaX0 = std::min(ax, ex), sl.areaX1 = std::max(ax, ex), sl.areaY0 = std::min(ay, ey), sl.areaY1 = std::max(ay, ey);
+    sl.scale = s;
+    const float range = staffListRange();
+    if (cr3UiCall(staff, "call_comListBarLPanel", x, y)) {
+        UiFig& bar = cr3UiPut("comlistbarlpanel", "", 0, x, y, view);
+        float ux, uy, wx, wy, cx, cy;
+        if (cr3UiCall(bar, "tapAreaS02", ax, ay) && cr3UiCall(bar, "tapAreaE02", ex, ey))
+            sl.barX0 = std::min(ax, ex) - 0.1f * s, sl.barX1 = std::max(ax, ex) + 0.1f * s, sl.barY0 = std::min(ay, ey), sl.barY1 = std::max(ay, ey);
+        if (cr3UiCall(bar, "barLimitUp", ux, uy) && cr3UiCall(bar, "barLimitLow", wx, wy) && cr3UiCall(bar, "call_comListBarCursor", cx, cy)) {
+            sl.barUp = uy, sl.barLow = wy;
+            if (sl.lines > 13 && range > 0) { // (the cursor: 0.1 + the place x ((low + 0.1) - (up - 0.1)) down its call)
+                const float ratio = std::clamp(sl.offset / range, 0.0f, 1.0f);
+                cr3UiPut("comlistbarcursor", "", 0, cx, cy + 0.1f * s + ratio * ((wy + 0.1f * s) - (uy - 0.1f * s)), view);
+            }
+        }
+    }
+    if (!cr3UiCall(staff, "typeM_L01", lx, ly)) return;
+    // (the mask: the text area alone - SetMaskSprite's quad, its exact size unknown)
+    const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+    const float cx0 = float(screenX) + float(screenW) / 2 + sl.areaX0 * k, cy0 = float(screenY) + float(screenH) / 2 - sl.areaY1 * k;
+    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+    dev->setClip(true, cx0, cy0, (sl.areaX1 - sl.areaX0) * k, (sl.areaY1 - sl.areaY0) * k);
+    const float pitch = 0.32f;
+    const int first = int(std::floor(sl.offset / pitch));
+    const float frac = sl.offset - float(first) * pitch;
+    for (int n = 0; n <= 13; ++n) { // (13 seen, one more coming in)
+        const int line = first + n;
+        if (line < 0 || line >= int(sl.text.size()) || sl.text[size_t(line)].empty()) continue;
+        const float ty = ly + (frac - float(n) * pitch) * s;
+        drawUiText(sl.text[size_t(line)], float(sl.size), (lx + 0.075f * s) / 10, (ty - 0.13f * s * float(sl.size) / 24) / 10, w, h, true, 0.22f);
+    }
+    dev->setClip(false);
+}
+
+// (TouchGestureBegin / Move / End 0xaed878 ..: a press in the text starts a drag once past 20 px -
+// 0.1 units -; on the bar it sets the place at once)
+bool Viewer::staffListPress(float fx, float fy) {
+    Cr3StaffList& sl = staffList;
+    if (sl.kind == 0 || cr3Camp.stage != 9) return false;
+    if (sl.stage != 2 || uiClock - sl.at < 1.0f / 6) return true; // (no touch till the io ends)
+    const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+    const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+    const bool inBar = ux >= sl.barX0 && ux <= sl.barX1 && uy >= sl.barY0 && uy <= sl.barY1;
+    const bool inText = !inBar && ux >= sl.areaX0 && ux <= sl.areaX1 && uy >= sl.areaY0 && uy <= sl.areaY1;
+    if (!inBar && !inText) return false; // (the footer's back and the rest as before)
+    sl.held = true, sl.dragging = false, sl.onBar = inBar, sl.pressY = sl.lastY = uy, sl.velocity = 0, sl.moved = 0;
+    if (inBar) staffListMove(fx, fy);
+    return true;
+}
+
+void Viewer::staffListMove(float fx, float fy) {
+    Cr3StaffList& sl = staffList;
+    if (!sl.held) return;
+    const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+    const float uy = (0.5f - fy) * float(screenH) / k;
+    const float range = staffListRange();
+    if (sl.onBar) { // (the bar: range x (y - (up - 0.01)) / (low - (up - 0.01)))
+        const float up = sl.barUp - 0.01f * sl.scale;
+        if (sl.barLow != up) sl.offset = std::clamp(range * (uy - up) / (sl.barLow - up), 0.0f, range);
+        return;
+    }
+    if (!sl.dragging && std::fabs(uy - sl.pressY) < 0.1f) return;
+    if (!sl.dragging) sl.dragging = true, sl.lastY = uy;
+    float d = (uy - sl.lastY) / std::max(sl.scale, 0.01f);
+    sl.lastY = uy;
+    if (sl.offset < 0 || sl.offset > range) d *= 0.5f; // (past the ends: half as far)
+    sl.offset += d, sl.moved += d;
+}
+
+bool Viewer::staffListRelease() {
+    Cr3StaffList& sl = staffList;
+    if (!sl.held) return false;
+    sl.held = false;
+    if (sl.onBar || !sl.dragging) sl.velocity = 0;
+    sl.dragging = false;
+    SDL_Log("staff list: let go at %.2f, moving %.3f", double(sl.offset), double(sl.velocity));
+    return true;
 }
 
 } // namespace cr3_viewer

@@ -64,7 +64,8 @@ want camera && run right-stick "6:rx=1 7:rx=0 8:ry=-0.4 9:ry=0 10:quit" \
     -- --area d0301
 
 # TitleMenu (0x81256cde): ○ or START its tap
-want title && run title-start "3:start 5:quit" "title: START|title: tapped" -- --title
+# (LogoMenu first: START - any key or tap - ends the logos, then the title's own)
+want title && run title-start "1:start 3:start 5:quit" "title: the logos|title: the logos skipped|title: START|title: tapped" -- --title
 
 # Fld2CameraOrtho (CreateArea2D: e0015): s111_d02_00202's SetMode(1), Scroll(0, -1), ScrollTo(0, 0.8, 400) - the picture
 # panned up to the castle
@@ -72,7 +73,7 @@ want camera && run area-2d "16:quit" \
     "the 2D camera, mode 0|scrolled to (0.000|scrolling to (0.000 -" -- --area e0015 --player j001 --flag 2131
 want camera && run camera-behind "5:rx=1 6:rx=0 6.5:l 7.5:quit" \
     "camera: the right stick let go|camera: behind the player" -- --area d0301
-want saves && run save-footer "3:start 4:down 4.5:up 5:right 5.5:down 6:quit" \
+want saves && run save-footer "1:start 3:start 4:down 4.5:up 5:right 5.5:down 6:quit" \
     "title: save focus 1|title: save footer copy|title: save footer delete|title: save focus 1" -- --title
 want movies && run movie-pad "3:north 4:east 5:north 6:west 7:quit" \
     "movie: paused|test controller: east|movie: resumed|movie c01: skipped" -- --movie c01 --area t0101
@@ -104,6 +105,34 @@ want field && run ladder "$ladder_pad 24:ly=1 26:ly=0 30:quit" \
 want lunch && run lunch-balloons "0.1:until=the_balloons,_at_frame 0.5:up 1:down 1.5:east 4:quit" \
     "lunch: the balloons, at frame|lunch: the cursor on|lunch: the cursor on|lunch: s001_t02_00301_" \
     -- --area t0101 --page 0.01 --input "lunch:start:s001_t02_00301_evt:s001_t02_00301"
+
+# Fld2Jem (round 26): walked into d0202's jem_02 - GetJem: under 99 a Gem (500001), at 99 ExchangeGem (Invoke 19) and
+# its Continue Gem (400006) told; the d0508 door (Fld2Door) opening on the way in, closing on the way out
+export CR3_TRACE_NATIVES=Item
+gem_pad="$(k=1; while [ $k -le 24 ]; do printf "%d:east " $k; k=$((k + 1)); done)26:quit" # (the area's tutorials tapped through)
+want field && run gem-pickup "$gem_pad" \
+    "area d0202: event box jem_02|area d0202: jem_02|Cr3System.ItemGet(500001, 1)|effect fe101get04 on jem_02" \
+    -- --area d0202 --player j001 --input "put:-0.3/2.6/-4.9/0 wait:1"
+want field && run gem-exchange "$gem_pad" \
+    "area d0202: jem_02|Cr3System.ItemCheck(400006)|EvtWindow.SetItemMessage(7, 400006, 1)" \
+    -- --area d0202 --player j001 --cr3-item 500001:99 --input "put:-0.3/2.6/-4.9/0 wait:1"
+unset CR3_TRACE_NATIVES
+want field && run door "6:quit" "area d0508: door door_00|area d0508: door_00 opening|area d0508: door_00 closing" \
+    -- --area d0508 --player j001 --input "wait:1 put:0/0.5/-5/3.14159 wait:1 put:0/0.5/-7.6/3.14159 wait:2 put:0/0.5/-4/3.14159"
+# Cr3System.Reboot (t01's Reboot(): flag 2076 without 2192 - Episode 1's end, told, then the title again; no logos)
+want field && run reboot "2:east 3:east 4:east 5:east 6:east 7:east 9:quit" "area t0101: evt000 running|Reboot: back to the title|title: CR3's" \
+    -- --area t0101 --flag 26 --flag 27 --flag 2076
+
+# ModeSelectMenu (TitleMenuMain 4 / 0xe .. 0x18): a file with story flag 40 - the mode select; Main, No (back to
+# the buttons), Main, Yes - into the story
+save_dir="$work/home/DuIslingr/CR3-U"
+if want title; then
+    mkdir -p "$save_dir"
+    printf 'CR3-U save 1\nflags 1 26 27 40\narea t0101\n' > "$save_dir/save1.txt"
+    run mode-select "1:start 3:start 4:down 4.5:east 5.5:east 6.5:east 7.5:down 8:east 9:east 10:east 13:quit" \
+        "title: mode select|title: mode Main pressed|title: mode no|title: mode Main pressed|title: mode yes|title: mode story|continue: t0101" -- --title
+    rm -f "$save_dir/save1.txt"
+fi
 
 case_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 for group in shop camp battle; do

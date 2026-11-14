@@ -1496,7 +1496,10 @@ void Viewer::drawCr3Part(Cr3Part& p, int w, int h, float t, float alpha, float d
     drawFigure(p.fig, view.data());
 }
 
-bool Viewer::startCr3Title() {
+// (TitleMenuMain::Update 0xb4b47c: state 0 the LogoMenu - interface 0x6b - first, the reel, the
+// title and its music once it's gone; logos false: SetParamNumber(1)'s state 1 - a Reboot, the
+// way back; music false: state 0x14's - the mode select's Back, the music playing on)
+bool Viewer::startCr3Title(bool logos, bool music) {
     Cr3Title& t = cr3Title;
     std::string err;
     for (int k = 0; k < 4; ++k) {
@@ -1518,16 +1521,69 @@ bool Viewer::startCr3Title() {
     pendingBgm = 0, pendingBgmAt = 0;
     initEventDrawing();
     t.stage = 1, t.clock = t.stageClock = 0, t.shot = 0, t.shotClock = 0, t.lightsOf = -1;
+    t.boot = 0, t.mode = 0;
     fieldMode = eventMode = areaMode = false;
-    audio.playBgm(33, 10); // (CrxSound::PlayBgm(0x21, 10, loop))
+    if (logos) { // (LogoMenu: the CESA notice in Japanese alone - GameSystem+0x198 0 -, then the logos)
+        t.stage = 6, t.boot = optionLanguage == 0 ? 1 : 2;
+        audio.stopBgm(0);
+        SDL_Log("title: the logos");
+    } else if (music) audio.playBgm(33, 10); // (CrxSound::PlayBgm(0x21, 10, loop))
     SDL_Log("title: CR3's");
     return true;
+}
+
+// a chosen file into its game: the story (Main, or no mode select), or the VS mode
+// (TitleMenuMain 0x18: SetVS(true) - My Page's way to it, over the save's field)
+void Viewer::enterCr3Save(bool vs) {
+    cr3Playing = true;
+    if (loadCr3Save()) {
+        if (vs) openVs();
+        return;
+    }
+    // A failed existing load is never an empty slot. In particular,
+    // do not let the prologue's autosave overwrite an unreadable file.
+    cr3Playing = cr3SavePending = false;
+    cr3SaveRetryAt = 0;
+    if (startCr3Title()) {
+        cr3Title.stage = 4;
+        openSaveMenu((cr3SaveSlot - 1) / kCr3SavePageSize);
+        saveMenu.notice = "Could not load this save.\\nThe original file has been kept.";
+    }
 }
 
 void Viewer::updateCr3Title(float dt) {
     Cr3Title& t = cr3Title;
     t.clock += dt, t.stageClock += dt, t.shotClock += dt;
     if (t.shotClock >= kDemoShots[t.shot].seconds) t.shotClock -= kDemoShots[t.shot].seconds, t.shot = (t.shot + 1) % 6;
+    if (t.stage == 6) { // (LogoMenu::Update 0xb4a1d0)
+        const float cesa = 0.2f + 9.0f + 0.2f; // (in 0.2 s, 180 updates at SetFps(20), out 0.2 s)
+        const float first = 7.3f, emblem = 7.3f * 0.5f - 1.0f / 30; // (animation 0 whole; then 0 .. half less a frame)
+        if (t.boot == 1 && t.stageClock >= cesa) t.boot = 2, t.stageClock = 0;
+        else if (t.boot == 2 && t.stageClock >= first) t.boot = 3, t.stageClock = 0; // (ttl_logo2 on mat_title_logo_01)
+        else if (t.boot == 3 && t.stageClock >= emblem) t.boot = 0, t.stage = 0;
+        if (t.stage == 0) { // (the menu dead: TitleMenuMain 1 - the reel, Cr3FadeIn(1, 30), the title, its music)
+            t.stage = 1, t.clock = t.stageClock = 0, t.shot = 0, t.shotClock = 0;
+            audio.playBgm(33, 10);
+            SDL_Log("title: the logos over");
+        }
+        return;
+    }
+    if (t.stage == 7) { // (ModeSelectMenu: a press's 0.1 s, then the bare Yes / No; Yes or Back out over 6 frames)
+        const float age = uiClock - t.modeAt;
+        if ((t.mode == 1 || t.mode == 3) && age >= 0.1f) t.mode += 1, t.modeAt = uiClock, t.modeAsk = 0;
+        else if (t.mode == 5 && age >= 0.1f) t.mode = 0, t.modeAt = uiClock;
+        else if (t.mode == 6 && age >= 0.2f) { // (0x15 / 0x18: EndModeSelectMenu, SetVS)
+            t.stage = 0;
+            for (ViewFigure& f : t.maps) unload(f);
+            unload(t.logo.position), unload(t.logo.fig);
+            SDL_Log("title: mode %s", t.modePicked == 2 ? "VS" : "story");
+            enterCr3Save(t.modePicked == 2);
+        } else if (t.mode == 7 && age >= 0.2f) { // (0x14: EndModeSelectMenu, a new reel, CreateTitleMenu, Cr3FadeIn(1, 30))
+            resetForNewSession();
+            startCr3Title(false, false);
+        }
+        return;
+    }
     if (t.stage == 1 && t.stageClock >= 1.0f) t.stage = 2, t.stageClock = 0; // (Cr3FadeIn(1, 30): in over 30 frames)
     if (t.stage == 2 && t.stageClock > 0.5f && !inputScript.empty() && inputScript.front() == "title:tap") inputScript.pop_front(), cr3TitleTap(); // (tests)
     if (t.stage == 2 && t.stageClock > 0.5f && !inputScript.empty() && inputScript.front() == "title:options") inputScript.pop_front(), openCr3OptionsFrom(1); // (tests)
@@ -1540,20 +1596,18 @@ void Viewer::updateCr3Title(float dt) {
         std::error_code saveError;
         const bool occupied = std::filesystem::exists(std::filesystem::u8path(savePath(cr3SaveFile().c_str())), saveError) || bool(saveError);
         resetForNewSession();
-        cr3Playing = true;
         if (occupied) {
-            if (loadCr3Save()) return;
-            // A failed existing load is never an empty slot. In particular,
-            // do not let the prologue's autosave overwrite an unreadable file.
-            cr3Playing = cr3SavePending = false;
-            cr3SaveRetryAt = 0;
-            if (startCr3Title()) {
-                cr3Title.stage = 4;
-                openSaveMenu((cr3SaveSlot - 1) / kCr3SavePageSize);
-                saveMenu.notice = "Could not load this save.\\nThe original file has been kept.";
+            // (TitleMenuMain 4: story flag 40 clear - straight into the story; set - Cr3FadeIn(1, 10)
+            // and, the WebView's news being online, CreateModeSelectMenu)
+            cr3::GameState probe;
+            if (probe.load(readSaveText()) && probe.flag(40)) {
+                t.stage = 7, t.stageClock = 0, t.mode = 0, t.modePicked = 0, t.modeFocus = 0, t.modeAt = uiClock;
+                SDL_Log("title: mode select");
+                return;
             }
-            return;
+            return enterCr3Save(false);
         }
+        cr3Playing = true;
         SDL_Log("title: file %d - a new game", cr3SaveSlot);
         SDL_Log("title: a new game");
         // (TitleMain::Init: Cr3FieldData 0x700000000 - town 0, area 7: the field t0108, whose evt000
@@ -1567,6 +1621,11 @@ void Viewer::updateCr3Title(float dt) {
 
 bool Viewer::cr3TitleTap() {
     Cr3Title& t = cr3Title;
+    if (t.stage == 6) { // (LogoMenu::TouchGestureTap 0xb4a60c: the notice to the logos; the logos all ended - no SE)
+        if (t.boot == 1) t.boot = 2, t.stageClock = 0, SDL_Log("title: the notice skipped");
+        else t.boot = 3, t.stageClock = 1e9f, SDL_Log("title: the logos skipped");
+        return true;
+    }
     if (t.stage != 2) return true;
     audio.playSe("com_001", false); // (TitleMenuMain 2: the SE alone - the music plays on over the save files)
     t.stage = 3, t.stageClock = 0;
@@ -1576,6 +1635,7 @@ bool Viewer::cr3TitleTap() {
 
 void Viewer::drawCr3TitleScene(int w, int h) {
     Cr3Title& t = cr3Title;
+    if (t.stage >= 6) return; // (no reel under the logos, nor the mode select - deleted at TitleMenuMain 4)
     const DemoShot& sh = kDemoShots[t.shot];
     cr3::Mat34 cw;
     float fov = 45, zn = 0.1f, zf = 5000;
@@ -1596,6 +1656,8 @@ void Viewer::drawCr3TitleScene(int w, int h) {
 
 void Viewer::drawCr3TitleUi() {
     Cr3Title& t = cr3Title;
+    if (t.stage == 6) return drawCr3Logos(screenW, screenH);
+    if (t.stage == 7) return drawCr3ModeSelect(screenW, screenH);
     if (t.stage <= 2) drawCr3Part(t.logo, screenW, screenH, t.clock, 1);
     else if (t.stage == 3) drawCr3Part(t.logo, screenW, screenH, t.clock, 1 - std::min(t.stageClock * 2, 1.0f)); // (ttlLogoPositon_out)
     drawCr3TitleOptions();
@@ -1605,9 +1667,9 @@ void Viewer::drawCr3TitleUi() {
     float a = 0, c = 0;
     if (t.shotClock < 0.5f && sh.in >= 0) a = 1 - 2 * t.shotClock, c = sh.in;
     else if (t.shotClock > sh.seconds - 0.5f && sh.out >= 0) a = 2 * (t.shotClock - (sh.seconds - 0.5f)), c = sh.out;
-    if (t.stage == 1) { // (behind the title's own fade from black: that one over it)
+    if (t.stage == 1) { // (behind the title's own fade - Cr3FadeIn(1, 30), from white: that one over it)
         const float b = 1 - std::min(t.stageClock, 1.0f);
-        a = std::max(a, b), c = a > b ? c : 0;
+        a = std::max(a, b), c = a > b ? c : 1;
     }
     if (t.stage == 5) a = std::min(t.stageClock * 3, 1.0f), c = 1;
     if (a > 0 && white.id) {
@@ -1617,6 +1679,175 @@ void Viewer::drawCr3TitleUi() {
         fullFrameQuad(white, kScreen, rgba);
     }
     drawCr3OptionsOver(screenW, screenH);
+}
+
+// LogoMenu (0xb49e74 ..): ttlLogoIncMenu at ttlLogoIncPositon's call_ttlLogoIncMenu_fit0 - its
+// bg opaque throughout, animation 0 (7.3 s) fading mat_title_logo_01 (Square Enix: frames 0 .. 9
+// in, 100 .. 109 out) and mat_title_logo_02 (Media.Vision: 110 .. 119 in, 210 .. 219 out); then
+// ttl_logo2 (the CHAOS RINGS emblem) on mat_title_logo_01, the animation again over 0 .. 3.617 s.
+// In Japanese the CESA notice first (SetSceneCESA 0xb49fa0: five ProvisionalMenuText lines, size 40,
+// from (0, 1.25) down, the 4th a line lower; in 0.2 s, held, out 0.2 s)
+void Viewer::drawCr3Logos(int w, int h) {
+    Cr3Title& t = cr3Title;
+    Mat4 camera = cr3::mat4Identity();
+    camera[14] = -0.881f * 10;
+    const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+    dev->setLighting(cr3::SceneLighting());
+    dev->clearDepth();
+    static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+    if (t.boot == 1) {
+        const float black[4] = {0, 0, 0, 1};
+        if (white.id) fullFrameQuad(white, kScreen, black); // (Cr3FadeIn(0, 1): black)
+        static const char* kNotice[5] = {"＜未成年の方へ＞", "あらかじめ保護者の同意を得てから、", "このゲームをご利用ください。",
+                                         "ゲームの利用方法（利用時間等）は、", "保護者とよく相談して決めてください。"};
+        const float a = std::clamp(std::min(t.stageClock / 0.2f, (9.4f - t.stageClock) / 0.2f), 0.0f, 1.0f);
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+        for (int k = 0; k < 5; ++k) {
+            const float y = 1.25f - 0.6f * float(k) - (k >= 3 ? 0.6f : 0.0f);
+            drawUiText(kNotice[k], 40, 0, y / 10, w, h, false, a); // (white on black: its shade the fade)
+        }
+        return;
+    }
+    float x, y;
+    UiFig& pos = cr3UiPut("ttllogoincpositon", "", 0, 0, 0, view);
+    if (!cr3UiCall(pos, "call_ttlLogoIncMenu_fit0", x, y, w, h)) x = y = 0;
+    UiFig& menu = uiFig("ttllogoincmenu");
+    cr3UiMaterial(menu, "mat_title_logo_01", t.boot == 3 ? "ttl_logo2" : "");
+    cr3UiPut("ttllogoincmenu", "", std::min(t.stageClock, t.boot == 3 ? 3.617f : 7.3f), x, y, view);
+}
+
+// ModeSelectMenu (0xb4c0ec Initialize, 0xb4c338 Pose, 0xb4c538 SetParamNumber, 0xb4c660 taps):
+// ttlModeBG, ttlModeMain, ttlModeVS at ttlModePositon's calls, ttlModePositon's own Info panels,
+// ttlModeBack at its call_ttlModeBack_fit3. The position held at frame 0; Main pressed plays
+// 0 .. 0.1 s (Main to the middle, its Info up), cleared 0.1 .. 0.2; VS 0.2 .. 0.3, cleared 0.3 ..
+// 0.4; the other two faded out over 0.1 s and back. Then the bare YNChoiceButton (comBtnMenu, no
+// text). In from white over 10 frames; Yes out to black over 6, Back to white over 6
+void Viewer::drawCr3ModeSelect(int w, int h) {
+    Cr3Title& t = cr3Title;
+    modeTaps.clear();
+    Mat4 camera = cr3::mat4Identity();
+    camera[14] = -0.881f * 10;
+    const Mat4 view = cr3::mat4Multiply(uiProjection(w, h, 10), camera);
+    dev->setLighting(cr3::SceneLighting());
+    dev->clearDepth();
+    const float age = uiClock - t.modeAt, step = std::min(age, 0.1f);
+    const bool vsPicked = t.modePicked == 2;
+    float at = 0, others = 1;
+    switch (t.mode) {
+    case 1: case 3: at = (vsPicked ? 0.2f : 0.0f) + step, others = 1 - step / 0.1f; break;
+    case 2: case 4: case 6: at = vsPicked ? 0.3f : 0.1f, others = 0; break;
+    case 5: at = (vsPicked ? 0.3f : 0.1f) + step, others = step / 0.1f; break;
+    default: break;
+    }
+    const bool idle = t.mode == 0;
+    static constexpr float kLit[3] = {0.5f, 1.0f, 1.5f};
+    auto put = [&](const char* fig, const char* call, int id, float alpha, bool fit) {
+        float x, y, ax, ay, bx, by;
+        UiFig& pos = cr3UiPose("ttlmodepositon", "", at, 0, 0);
+        if (!cr3UiCall(pos, call, x, y, fit ? w : 0, fit ? h : 0)) return;
+        if (vitaButtons() && idle && id == t.modeFocus + 1) cr3UiTint[0] = kLit[0], cr3UiTint[1] = kLit[1], cr3UiTint[2] = kLit[2];
+        UiFig& u = cr3UiPut(fig, "", 0, x, y, view, alpha);
+        cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
+        if (idle && id > 0 && cr3UiCall(u, "tapAreaS01", ax, ay) && cr3UiCall(u, "tapAreaE01", bx, by))
+            modeTaps.push_back({std::min(ax, bx), std::min(ay, by), std::max(ax, bx), std::max(ay, by), id});
+    };
+    put("ttlmodebg", "call_ttlModeBG", 0, 1, false);
+    put("ttlmodemain", "call_ttlModeMain", kTapModeMain, vsPicked ? others : 1, false);
+    put("ttlmodevs", "call_ttlModeVS", kTapModeVs, t.modePicked == 1 ? others : 1, false);
+    cr3UiPut("ttlmodepositon", "", at, 0, 0, view);
+    put("ttlmodeback", "call_ttlModeBack_fit3", kTapModeBack, t.modePicked ? others : 1, true);
+    static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
+    if (t.mode == 2 || t.mode == 4) { // (SetYNChoiceTWindowParameter: the bare YNChoiceButton, the screen dimmed under it)
+        const float a = std::min(age * 10.0f, 1.0f);
+        const float dim[4] = {0, 0, 0, 0.5f * a};
+        if (white.id) fullFrameQuad(white, kScreen, dim);
+        dev->clearDepth();
+        float x, y;
+        UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
+        if (cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) {
+            UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", age, x, y, view, 0);
+            for (int b = 0; b < 2; ++b) {
+                float px, py, cx, cy, ax, ay, bx, by;
+                if (!cr3UiCall(menu, "call_comBtnPanel_00" + std::to_string(5 + b), px, py)) continue;
+                if (vitaButtons() && b == t.modeAsk) cr3UiTintMaterial = "mat_com_menuBtn_02", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+                UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view, a);
+                if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view, a);
+                if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(10 + b) / 30, cx, cy, view, a);
+                if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy)) cr3UiPut("combtntext_fr00", "", float(10 + b) / 30, cx, cy, view, a);
+                if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view, a);
+                cr3UiTintMaterial.clear();
+                cr3UiMaterialTint[0] = cr3UiMaterialTint[1] = cr3UiMaterialTint[2] = 1;
+                if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by))
+                    modeTaps.push_back({std::min(ax, bx), std::min(ay, by), std::max(ax, bx), std::max(ay, by), b == 0 ? kTapModeYes : kTapModeNo});
+            }
+        }
+    }
+    // (the fades: Cr3FadeIn(1, 10) in from white; Yes Cr3FadeOut(0, 6), Back Cr3FadeOut(1, 6))
+    float a = 0, c = 1;
+    if (t.stageClock < 1.0f / 3) a = 1 - t.stageClock * 3;
+    if (t.mode == 6) a = std::min(age / 0.2f, 1.0f), c = 0;
+    if (t.mode == 7) a = std::min(age / 0.2f, 1.0f), c = 1;
+    if (a > 0 && white.id) {
+        const float rgba[4] = {c, c, c, a};
+        fullFrameQuad(white, kScreen, rgba);
+    }
+}
+
+// (TitleMenuMain 0x11 .. 0x13 / 0x17: a press - Main or VS com_003, Back com_004 -; Yes com_003,
+// No com_004 - SEPermitBattleYNChoicePushBottom(false): the buttons' own SE off)
+void Viewer::cr3ModeChoose(int id) {
+    Cr3Title& t = cr3Title;
+    if (t.stage != 7) return;
+    if (t.mode == 0 && (id == kTapModeMain || id == kTapModeVs)) {
+        audio.playSe("com_003", false);
+        t.modePicked = id == kTapModeMain ? 1 : 2, t.mode = id == kTapModeMain ? 1 : 3, t.modeAt = uiClock;
+        SDL_Log("title: mode %s pressed", id == kTapModeMain ? "Main" : "VS");
+    } else if (t.mode == 0 && id == kTapModeBack) {
+        audio.playSe("com_004", false);
+        t.mode = 7, t.modeAt = uiClock;
+        SDL_Log("title: mode select back");
+    } else if ((t.mode == 2 || t.mode == 4) && uiClock - t.modeAt >= 0.1f && (id == kTapModeYes || id == kTapModeNo)) {
+        const bool yes = id == kTapModeYes;
+        audio.playSe(yes ? "com_003" : "com_004", false);
+        t.mode = yes ? 6 : 5, t.modeAt = uiClock;
+        SDL_Log("title: mode %s", yes ? "yes" : "no");
+    }
+}
+
+// the title's keys: the logos any key; the mode select ← → over Main / VS (↓ Back), Return its
+// press, Escape Back - the question ← → / ↑ ↓ Yes or No, Return it, Escape No
+bool Viewer::cr3TitleKey(SDL_Keycode k) {
+    Cr3Title& t = cr3Title;
+    if (t.stage == 6) return cr3TitleTap();
+    if (t.stage != 7 || cr3Camp.stage != 0) return false;
+    const bool enter = k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE, back = k == SDLK_ESCAPE || k == SDLK_BACKSPACE;
+    if (t.mode == 0) {
+        if (k == SDLK_LEFT || k == SDLK_RIGHT) t.modeFocus = t.modeFocus == 2 ? 0 : (k == SDLK_LEFT ? 0 : 1), audio.playSe("com_002", false);
+        else if (k == SDLK_DOWN && t.modeFocus != 2) t.modeFocus = 2, audio.playSe("com_002", false);
+        else if (k == SDLK_UP && t.modeFocus == 2) t.modeFocus = 0, audio.playSe("com_002", false);
+        else if (enter) cr3ModeChoose(t.modeFocus + 1);
+        else if (back) cr3ModeChoose(kTapModeBack);
+        if (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_UP || k == SDLK_DOWN) SDL_Log("title: mode focus %d", t.modeFocus);
+    } else if (t.mode == 2 || t.mode == 4) {
+        if (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_UP || k == SDLK_DOWN) t.modeAsk ^= 1, audio.playSe("com_002", false);
+        else if (enter) cr3ModeChoose(t.modeAsk == 0 ? kTapModeYes : kTapModeNo);
+        else if (back) cr3ModeChoose(kTapModeNo);
+    }
+    return true;
+}
+
+bool Viewer::cr3TitleClick(float fx, float fy) {
+    Cr3Title& t = cr3Title;
+    if (t.stage == 6) return cr3TitleTap(); // (anywhere: no tap area tested)
+    if (t.stage != 7 || cr3Camp.stage != 0) return false;
+    const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+    const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+    for (auto it = modeTaps.rbegin(); it != modeTaps.rend(); ++it)
+        if (ux >= it->x0 && ux <= it->x1 && uy >= it->y0 && uy <= it->y1) {
+            cr3ModeChoose(it->id);
+            break;
+        }
+    return true;
 }
 
 // (CR3-U's: an Options button on the title - the camp's, comBtnSPanel with comBtnIconS_fr00's

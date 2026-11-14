@@ -1185,6 +1185,7 @@ struct Viewer {
         int box = -1;          // (a drawn treasure / gold box: its GameState::cr3Boxes index - its function OpenTBox / OpenGBox)
         std::string boxName;   // ("tbox_00")
         float checkRange = 0;  // (Field row +0x34 when > 0: custom check distance)
+        bool jem = false;      // (a gem - Fld2Jem: ragdoll_jem_NN, its function jem_NN; touched only while shown)
     };
     std::vector<AreaGimmick> areaGimmicks;
     // the area's camera (Fld2TaskCamera::SetupCamera by the map table's type - the executable's
@@ -1325,6 +1326,7 @@ struct Viewer {
     void placeMover(AreaNpc& npc);
     void stepAreaMovers(float dt);
     void stepStepSwitches();
+    void stepAreaDoors(float dt);
     void updateGimmickWalls();
     // The bomb (Fld2BombManager, Fld2Bomb - the goods button's first): three at most, each put at the
     // player's feet (Put; SE fe_011, the fuse fe_012 looped while any burns) as fe002bom01 - its fuse,
@@ -1394,6 +1396,10 @@ struct Viewer {
         float motionAt = 0;
         int stepState = 0;              // 0 up, 1 going down, 2 down (done: once)
         float stepAt = 0;
+        bool door = false;              // (Fld2Door: ragdoll_door_.. - its _n01 opening as the player comes into its box, closing behind)
+        bool doorIn = false;            // (the player in its box - ragdoll: the box's joint)
+        int doorState = -1;             // (+0x164: 0 opening, 1 closing, -1 still)
+        float doorT = 0;                // (its _n01's time: 0 shut, 0.9 open)
         bool mover = false;             // (Fld2MovingObject: ragdoll_fmove_.. - SetMove plays <area>p's animation, it follows its ragdoll joint)
         bool moving = false;
         float moveTime = 0, moveEnd = 0, moveSpeed = 0;
@@ -2440,8 +2446,14 @@ struct Viewer {
     // out (ttlLogoPositon_out) and, a first game's, on through white into the prologue
     // (TitleMain: t01's Login, then the new game's first vista - s000_t01_00101_evt)
     struct Cr3Title {
-        int stage = 0;  // 0 off, 1 fading in, 2 waiting for a tap, 3 the logo away, 4 the save files, 5 on into the game
+        int stage = 0;  // 0 off, 1 fading in, 2 waiting for a tap, 3 the logo away, 4 the save files, 5 on into the game,
+                        // 6 the boot logos (LogoMenu), 7 the mode select (ModeSelectMenu)
         float clock = 0, stageClock = 0;
+        int boot = 0;   // (LogoMenu: 1 the CESA notice - Japanese -, 2 Square Enix / Media.Vision, 3 ttl_logo2's emblem)
+        // (ModeSelectMenu: 0 the buttons, 1 Main pressed, 2 its Yes / No, 3 VS pressed, 4 its Yes / No,
+        // 5 cleared - the No -, 6 Yes: out to black, 7 Back: out to white)
+        int mode = 0, modePicked = 0, modeFocus = 0, modeAsk = 0;
+        float modeAt = 0;
         int shot = 0;
         float shotClock = 0;
         std::array<ViewFigure, 4> maps;
@@ -2457,9 +2469,16 @@ struct Viewer {
     static constexpr DemoShot kDemoShots[6] = {{9.733f, 0, 0, 0, -1}, {6.467f, 0, 1, -1, 1}, {8.167f, 1, 2, 1, 1},
                                                {10.0f, 2, 3, 1, 1},   {12.5f, 3, 4, 1, 1},  {11.0f, 0, 5, 1, 0}};
     static constexpr const char* kDemoMaps[4] = {"t0209f", "d0304f", "d0704f", "d0405f"};
-    bool startCr3Title();
+    bool startCr3Title(bool logos = false, bool music = true);
     void updateCr3Title(float dt);
     bool cr3TitleTap();
+    void enterCr3Save(bool vs);
+    void drawCr3Logos(int w, int h);
+    void drawCr3ModeSelect(int w, int h);
+    void cr3ModeChoose(int id);
+    bool cr3TitleKey(SDL_Keycode k);
+    bool cr3TitleClick(float fx, float fy);
+    static constexpr int kTapModeMain = 1, kTapModeVs = 2, kTapModeBack = 3, kTapModeYes = 4, kTapModeNo = 5;
     void drawCr3TitleScene(int w, int h);
     void drawCr3TitleUi();
     void drawCr3TitleOptions();
@@ -2654,6 +2673,7 @@ struct Viewer {
     // the Title Screen's question (BattleOptionMenu::Update 3, 5, 6: the window closed, a system
     // window with announcebattle 0x6d, choice_io's Yes / No - yes to the title, no back)
     bool optionsAsk = false, toTitle = false, optionsWasOpen = false;
+    bool cr3Reboot = false; // (Cr3System.Reboot: CR3's title again - its logos skipped, TitleMenuMain::SetParamNumber(1))
     float optionsAskStart = 0;
     void optionTap(int id);
     // The manual (the options' Manual: BattleOptionMenu 4 -> 9, InterfaceMain's 0x22 -> 0x61,
@@ -3134,6 +3154,9 @@ struct Viewer {
     static float cr3ListRowY(float y, int k, int top, int focus);
     UiFig& cr3UiPose(const std::string& name, const std::string& anim, float t, float x, float y, bool loop = false);
     UiFig& cr3UiPut(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, float alpha = 1, bool loop = false);
+    void drawCr3Battery(float x, float y, const Mat4& view);
+    int batteryState = 2;
+    float batteryLevel = 1, batteryReadAt = 0;
     UiFig& cr3UiPutOverOwn(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, bool loop);
     bool cr3UiCall(const UiFig& u, const std::string& prefix, float& x, float& y, int w = 0, int h = 0);
     void cr3UiTexture(UiFig& u, const std::string& image, const std::string& mask = {});
@@ -3161,6 +3184,7 @@ struct Viewer {
         int id; // (a button's: 17, 28, 21, 29, 30, 31; -1 back; kTapCard + n a card, kTapRow + n a row, kTapTab + n a tab; kTapMix the mix button; kTapYes / kTapNo)
     };
     static Cr3GeneLabTap circleTap(float cx, float cy, float ax, float ay, int id);
+    std::vector<Cr3GeneLabTap> modeTaps; // (CR3's title's mode select: its buttons, its Yes / No)
     static constexpr int kTapCard = 1000, kTapRow = 2000, kTapTab = 3000, kTapMix = 4000, kTapYes = 4001, kTapNo = 4002, kTapOk = 4003, kTapAlert = 4004;
     std::vector<Cr3GeneLabTap> geneLabTaps;
     bool geneLabWasOpen = false;
@@ -3605,7 +3629,9 @@ struct Viewer {
     void drawCampQuests(int w, int h, const Mat4& view);
     void drawCr3Quests(bool port, float t, int w, int h, const Mat4& view);
     bool questReady(const cr3::Cr3OfflineDb::Quest& q) const;
-    void drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, float t, int w, int h, const Mat4& view, bool okOn = true, bool cleared = false);
+    void drawCr3QuestDetail(const cr3::Cr3OfflineDb::Quest& q, int count, float t, int w, int h, const Mat4& view, bool okOn = true, bool cleared = false, float positionT = -1);
+    float clearQuestOkAt = -1; // (the Quest Clear's OK pressed: its spQstPosition back over 1/6 s, faded to black, then gone)
+    void stepClearQuest();
     // The cleared quest's detail (EventRuntime::clearQuestShown - ClearQuestMenu): the detail as the
     // Space Port shows it, its clear mark on, over the event (the script faded the screen out under
     // it); its OK closes it
@@ -4064,7 +4090,7 @@ struct Viewer {
     vitaimport::Session saveImport;
     struct Cr3CampOptions {
         int tab = 0;
-        int otherRow = 0; // 0 resolution, 1 the language (where there's more than one), 2 Vita save import
+        int otherRow = 0; // 0 resolution, 1 the language (where there's more than one), 2 Vita save import, 3 Credits, 4 Copyright Notice
         int hands = 0; // (Controls: 0 two-handed, 1 one-handed)
         int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
         int top = 0;   // (Graphics: the first row shown)
@@ -4073,6 +4099,39 @@ struct Viewer {
         int askFocus = 1;    // (0 Yes, 1 No)
         float askSince = 0;
     } campOptions;
+    // the Other tab's Credits and Copyright Notice (OptionMain::Update 0xaec0c0: SE com_003, the
+    // OptionMenu away, OptionMain's backgrounds dimmed 1 -> 0.5 at 0.05 an update; then
+    // StaffNameListMenu 0xe5 - SetNumbers 854 / 668, SetFile Staff2 / Copyright, Copyright's
+    // SetFontSize 18). The list: optTopPositon on its _io (in from the right over 1/6 s), at its
+    // call_opTSltStaff opTSltStaff - the lines from typeM_L01 down, 0.32 apart, 13 seen (masked
+    // to its tap area) -, comListBarLPanel at its call and comListBarCursor on it. Message file
+    // record n the line n (past the file's count, or the same as line 1 - its blank -: empty). A
+    // drag past 20 px scrolls (AutoScroll 0xaed214: half as far past the ends; let go, on at 2/3 a
+    // frame till under 0.01, the overshoot drawn back by 2/3 a frame); the bar pressed or dragged
+    // sets it. Back: com_004, the list out, the backgrounds back, ReturnOptionMenuT
+    struct Cr3StaffList {
+        int kind = 0;           // 0 none, 1 Credits (staff2.dat), 2 Copyright Notice (copyright.dat)
+        int stage = 0;          // 1 the OptionMenu going, 2 the list (in, then up), 3 the list going
+        float at = 0;           // (uiClock at the stage's start)
+        float offset = 0, velocity = 0, moved = 0; // (layout units, 0 .. 0.32 x (lines - 13); moved: this update's drag)
+        bool held = false, dragging = false, onBar = false;
+        float pressY = 0, lastY = 0;
+        float dim = 1;          // (OptionMain's backgrounds' diffuse)
+        int size = 24, lines = 0;
+        std::vector<std::string> text;
+        float areaX0 = 0, areaY0 = 0, areaX1 = 0, areaY1 = 0; // (the text's tap area, UI units - the drag's)
+        float barX0 = 0, barY0 = 0, barX1 = 0, barY1 = 0;     // (the bar's)
+        float barUp = 0, barLow = 0, scale = 1;
+    } staffList;
+    static constexpr int kTapCredits = 1500, kTapCopyright = 1501;
+    void openStaffList(int kind);
+    void closeStaffList();
+    void stepStaffList(float dt);
+    void drawStaffList(float s, float pivot, int w, int h, const Mat4& view);
+    float staffListRange() const;
+    bool staffListPress(float fx, float fy);
+    void staffListMove(float fx, float fy);
+    bool staffListRelease();
     void openCr3OptionsFrom(int from);
     bool cr3OptionsOver() const;
     void drawCr3OptionsOver(int w, int h);

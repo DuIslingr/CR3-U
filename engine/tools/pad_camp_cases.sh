@@ -61,3 +61,15 @@ full_box=$(k=1; while [ $k -le 50 ]; do printf ' --cr3-gene 0:%d' $((k % 20 + 1)
 want camp && run gene-event-disposal "0:until=a_gene_to_discard 1:east 2:right 2.5:east 3.5:east 4.5:east 5.5:until=at_level_100 1:east 15:quit" \
     "gene disposal: the box full (50)|- 49 held|gene disposal: done|gene: status 378 at level 100|gene: status closed|event ended at frame" \
     -- --event d16:s481_d16_00104_evt --page 0.05 $full_box
+
+# OptionMain's Credits / Copyright Notice (round 26: the Other tab's rows, StaffNameListMenu - Staff2's 854 lines,
+# Copyright's 668; ↓ a line, × back to the options)
+want camp && run options-credits "0:until=camp:_options 0.5:r 1:r 1.5:down 2:down 2.5:down 3:east 4:down 4.5:down 5.5:south 6.5:down 7:east 8:quit" \
+    "options: tab 2|options: other row 3|options: credits (854 lines)|staff list: line 2|staff list: line 3|options: credits closed|options: other row 4|options: copyright notice (668 lines)" \
+    -- --area d0301 --flag 26 --input "camp:open camp:button6"
+
+# The Quest Clear screen (QuestDitailMenu 0x7e - d02's quest_complete for quest 50): OK, its 1/6 s close, the script on
+quest_pad="$(k=1; while [ $k -le 24 ]; do printf "%d:east " $k; k=$((k + 1)); done)26:quit" # (the area's tutorials tapped through, then OK)
+want camp && run quest-clear "$quest_pad" \
+    "area d0202: quest_complete|quest clear: OK|quest clear: closed" \
+    -- --area d0202 --player j001 --work 24:50 --input "wait:1 call:quest_complete"
