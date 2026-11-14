@@ -5253,8 +5253,9 @@ void Viewer::drawCr3Card(int master, float x, float y, float z, float scale, con
 // comHeIconMenu - the battery (InterfaceMain::SetBatteryLevel 0x8f894c, each update): the gauge
 // comHeBattery_per at the level x 100 (its frame) on battery, full otherwise; the plug
 // comHeBatteryC_fr00 hidden on battery, charging frame 0 (1 once full), charged frame 1. The
-// Java states as SDL's: on battery 0, charging 1, charged - or no battery, unknown - 2
-void Viewer::drawCr3Battery(float x, float y, const Mat4& view) {
+// Java states as SDL's: on battery 0, charging 1, charged - or no battery, unknown - 2. VS mode's
+// header has its own VSHeIconMenu with the same joints
+Viewer::UiFig& Viewer::drawCr3Battery(float x, float y, const Mat4& view, const char* menu) {
     if (uiClock >= batteryReadAt) { // (read once a second)
         int percent = -1;
         const SDL_PowerState p = SDL_GetPowerInfo(nullptr, &percent);
@@ -5262,11 +5263,12 @@ void Viewer::drawCr3Battery(float x, float y, const Mat4& view) {
         batteryLevel = percent >= 0 ? std::clamp(float(percent) / 100.0f, 0.0f, 1.0f) : 1.0f;
         batteryReadAt = uiClock + 1.0f;
     }
-    UiFig& icon = cr3UiPut("comheiconmenu", "", 0, x, y, view);
+    UiFig& icon = cr3UiPut(menu, "", 0, x, y, view);
     float bx, by;
     if (cr3UiCall(icon, "call_comHeBattery_per", bx, by)) cr3UiPut("comhebattery_per", "", (batteryState == 0 ? std::round(batteryLevel * 100) : 100.0f) / 30, bx, by, view);
     if (batteryState != 0 && cr3UiCall(icon, "call_comHeBatteryC_fr00", bx, by))
         cr3UiPut("comhebatteryc_fr00", "", (batteryState == 2 || batteryLevel >= 1.0f ? 1.0f : 0.0f) / 30, bx, by, view);
+    return icon;
 }
 
 // the header (HeaderMenu, interface 0x42: comHeMenu - its title comHeTitle_fr00 at the

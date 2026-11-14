@@ -1246,7 +1246,9 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
     // (BtlStatusList::AddEffectCommand: the commands a status effect's enabled kinds add - 97 an interrupt,
     // next - AddInterruptCommand -, 98 the same with no actor, 99 a counter - AddCounterCommand 0x9b0f64: only
     // against an attacker of the other side, aimed at it -, 100 / 101 after the turn's - AddCommand /
-    // AddNoSourceCommand -; marked 4: a status effect's put in at the top - BtlCommand +0x1a set -, 5 one appended - not)
+    // AddNoSourceCommand -; marked 7: a status effect's interrupt put in at the top - VInsertTop, BtlCommand +0x1a set -, 4
+    // its counter put in here (the original's AddCounterCommand 0x9b0f64 calls VAdd: +0x18 alone), 5 one appended. A
+    // skill's: 6 an interrupt (97 / 126: +0x1a), 1 a kind 100 put in here - the original's AddCommand: VAdd)
     size_t nextAt = 0;
     const auto insertAt = [&](size_t pos, const std::array<int, 4>& e) {
         order.insert(order.begin() + long(std::min(pos, order.size())), e);
@@ -1255,8 +1257,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
     const auto queueEffectCommands = [&](int bearer, const std::vector<std::pair<int, int>>& added, int attacker) {
         for (const auto& [kind, id] : added) {
             if (order.size() > 256) break; // (a guard: a turn's commands bounded)
-            if (kind == 97) insertAt(nextAt++, {bearer, id, -1, 4});
-            else if (kind == 98) insertAt(nextAt++, {-1, id, bearer, 4});
+            if (kind == 97) insertAt(nextAt++, {bearer, id, -1, 7});
+            else if (kind == 98) insertAt(nextAt++, {-1, id, bearer, 7});
             else if (kind == 99 && attacker >= 0 && fighters[size_t(attacker)].player != fighters[size_t(bearer)].player) insertAt(nextAt++, {bearer, id, attacker, 4});
             else if (kind == 100) order.push_back({bearer, id, -1, 5}); // (appended - +0x1a 0: not inserted)
             else if (kind == 101) order.push_back({-1, id, bearer, 5});
@@ -1360,6 +1362,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         int cmd = cmd0, tgt = tgt0;
         if (src < 0) { // (a command with no actor: a status effect's kind 98 / 101 - Regenerate's 306 on its bearer)
             Cr3Action na = resolveSourceless(cmd, tgt);
+            na.chains = fromSkill == 7;
             if (!na.targets.empty()) {
                 afterAnyCommand(0, -1);
                 snapshotAfter(na), out.push_back(na);
@@ -1381,7 +1384,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         // which those are) - the first enabled kind 120 - GetCommandChange: Dance's 1512, the pig form's 9 - is the command, its
         // target chosen again (+0x20 -1); then end timing 3 - the kind 120 ones' - and the no-action, MP and ban tests below,
         // all on the new command)
-        const bool ownCommand = fromSkill != 1 && fromSkill != 4 && fromSkill != 5;
+        const bool ownCommand = fromSkill != 1 && fromSkill != 4 && fromSkill != 5 && fromSkill != 6 && fromSkill != 7;
         if (ownCommand) {
             Cr3Command pre;
             if (!command(cmd < 0 ? 51 : cmd, pre)) pre = Cr3Command();
@@ -1393,9 +1396,10 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         Cr3Action a;
         a.source = src, a.command = cmd;
         a.finisher = fromSkill == 2 || fromSkill == 3; // (a Last Attack - 2 - or Finest Arts - 3 - addLastAttack put in)
+        a.chains = fromSkill == 2 || fromSkill == 3 || fromSkill == 6 || fromSkill == 7;
         // (MbStatusEffectInfo::IsNoAction: a kind 31 effect - stunned, asleep - and it does nothing;
         // a skill's command plays all the same)
-        if (hasKind(s, 31) && (fromSkill == 0 || fromSkill == 4 || fromSkill == 5)) {
+        if (hasKind(s, 31) && (fromSkill == 0 || fromSkill == 4 || fromSkill == 5 || fromSkill == 7)) {
             a.command = -2, a.gaugeAfter = gauge;
             snapshotAfter(a), out.push_back(a);
             continue;
@@ -1573,7 +1577,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             // Narrow Escape's / Blue-Moon Brave's 1; a skill's added command past it - the spider's finisher)
             const auto leastHp = [&]() {
                 return c.damage == 24 ? std::max(c.power, 1)
-                       : fromSkill == 1 ? 0
+                       : fromSkill == 1 || fromSkill == 6 ? 0
                                         : std::max({effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)), skillMost(t, 53)});
             };
             if (c.damage < 0) { // (CommandFomula -1: no damage - its status effects alone)
@@ -1931,7 +1935,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 if (r.i(8) != 0 && !(r.i(8) == 19 && r.i(9) == cmd)) continue;
                 size_t next = at + 1;
                 for (const auto& [kind, value] : skillEffects(id, advantage(s.player)))
-                    if (kind == 97 || kind == 126 || kind == 100) order.insert(order.begin() + long(next++), {src, value, kind == 97 ? tgt : -1, 1});
+                    if (kind == 97 || kind == 126 || kind == 100) order.insert(order.begin() + long(next++), {src, value, kind == 97 ? tgt : -1, kind == 100 ? 1 : 6});
             }
         // (BtlDamageTarget::TriggerAfterDamageToCalculation - trigger 7, a hit landed on it: a
         // target's skills whose condition holds - 3 its HP at or under the constant's percentage,
@@ -1951,7 +1955,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     usedSkills_.insert({th.target, id});
                     for (int e = 0; e < 2; ++e)
                         if (r.i(12 + 2 * e) == 97 || r.i(12 + 2 * e) == 100)
-                            order.insert(order.begin() + long(next++), {th.target, r.i(13 + 2 * e), -1, 1});
+                            order.insert(order.begin() + long(next++), {th.target, r.i(13 + 2 * e), -1, r.i(12 + 2 * e) == 97 ? 6 : 1});
                 }
             }
         // (delayCommandByDown: a downed unit's command still to come goes to the back)

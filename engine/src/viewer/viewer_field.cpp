@@ -4823,7 +4823,13 @@ void Viewer::stepTalkMark(float dt) {
 // FieldGoodsMenu (Pose 0xa68000): the focused panel at the arc's middle (call_feGoodsPanel_03 - fegoodsmenu's _01 .. _05 down
 // from the corner), its icon (fegoodsicon_fr00: goods i at i / 30, the "!" at 1/3, the ride at 0.2667); a tap on the icon's
 // circle (tapAreaCP00 / AP00 - the panel has none). The "!" (SetExclamationPanel 0xa69a0c): over 0.1333 s it comes in from
-// 0.4 up and left at alpha t while the panel before goes on _03 -> _04 -> _05; out, the other way
+// 0.4 up and left at alpha t while the panel before goes on _03 -> _04 -> _05; out, the other way. At rest Pose draws
+// the focused panel alone - the others round the arc only while the arc slides (+0x11c, a swipe), each at a share of the
+// joints between, scaled 1 - 0.5 x its distance from the middle. ProvisionalDraw 0xa6960c: with two or more (the "!"
+// counted) the two feGoodsNext arrows at fegoodsmenu's call_feGoodsNext joints. The focused goods' name (ids 0 .. 3:
+// feGoodsNameBase and feGoodsName_fr00 at frame id / 30, placed at (7, 0) by Initialize 0xa67704 - past a 16:9 screen's
+// right edge: unseen there, as in the original -) over the timer +0x13c - Update's, from 0 as the menu is made and after
+// a slide -: alpha t / 0.2 to 0.2 s, 1 to 2.2, then out by 2.4
 void Viewer::drawCr3Goods(int w, int h, const Mat4& view) {
     const bool talkUp = talkMark.state != 0;
     if (shownGoods().empty() && !talkUp) return;
@@ -4832,6 +4838,22 @@ void Viewer::drawCr3Goods(int w, int h, const Mat4& view) {
     if (!cr3UiCall(pos, "call_feGoodsMenu", x, y, w, h)) return;
     UiFig& menu = cr3UiPut("fegoodsmenu", "", 0, x, y, view);
     const int goods = focusedGoods();
+    if (int(shownGoods().size()) + (talkUp ? 1 : 0) >= 2) {
+        if (!goodsArrowsLogged) goodsArrowsLogged = true, SDL_Log("field: the goods arrows up");
+        for (int n = 0; n < 2; ++n)
+            if (float ax, ay; cr3UiCallNth(menu, "call_feGoodsNext", n, ax, ay)) cr3UiPut("fegoodsnext", "", 0, ax, ay, view);
+    } else {
+        goodsArrowsLogged = false;
+    }
+    if (goods != goodsNameFor || area.name != goodsNameArea) {
+        goodsNameFor = goods, goodsNameArea = area.name, goodsNameAt = uiClock;
+        if (goods >= 0 && goods < 4) SDL_Log("field: the goods name %d", goods);
+    }
+    if (const float t = uiClock - goodsNameAt; goods >= 0 && goods < 4 && t <= 2.4f && (!talkUp || !talkMark.focused)) {
+        const float alpha = t < 0.2f ? t / 0.2f : t <= 2.2f ? 1.0f : (2.4f - t) / 0.2f;
+        cr3UiPut("fegoodsnamebase", "", float(goods) / 30, 7.0f, 0, view, alpha);
+        cr3UiPut("fegoodsname_fr00", "", float(goods) / 30, 7.0f, 0, view, alpha);
+    }
     if (!cr3UiCall(menu, "call_feGoodsPanel_03", p3x, p3y)) return;
     float p4x = p3x, p4y = p3y, p5x = p3x, p5y = p3y;
     cr3UiCall(menu, "call_feGoodsPanel_04", p4x, p4y), cr3UiCall(menu, "call_feGoodsPanel_05", p5x, p5y);

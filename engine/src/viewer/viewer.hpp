@@ -1988,9 +1988,10 @@ struct Viewer {
     // the hit effects (BtlDamageTarget::PlaySingleHitEffect -> BtlUnitList::PlayHitEffect): the
     // command's CommandDirection +0x2c (direction.mbe column 9: attack 1, be001hit01), on every hit
     // that lands, at the target; and with +0x59 bit 0 set the critical's (4) and the element's
-    // (element + 4) too. Its effect.mbe Effect row: the figure and its sound (+0x10). A random size
-    // with +0x58 bit 7 ((rand - 0.5) x 2 x +0x68 + 1). Each a figure of its own animation, played
-    // once (a .sprk's particles: Cr3Fx::spark; the random turn - bit 3 - not in)
+    // (element + 4) too. Its effect.mbe Effect row: the figure and its sound (+0x10). +0x58: bit 7
+    // a random size ((rand - 0.5) x 2 x +0x68 + 1), bit 2 times the target's effect scale, bit 3 a
+    // random offset round the +0x60 / +0x64 ellipse, bits 6 / 5 / 4 a random turn about z / y / x
+    // (Cr3Fx::turn). Each a figure of its own animation, played once (a .sprk's particles: Cr3Fx::spark)
     struct Cr3ProjectilePath {
         cr3::Vec3 from{}, via{}, to{};
         float speed = 0, acceleration = 0;
@@ -2029,6 +2030,7 @@ struct Viewer {
         std::string figure;
         cr3::Vec3 at{};
         float start = 0, scale = 1, life = -1, yaw = 0;
+        std::array<float, 4> turn{0, 0, 0, 1}; // (a hit effect's random turn: a quaternion x, y, z, w)
         float animStart = 0, animLength = 0;
         float sparkTime = 0;
         bool loop = false;
@@ -3165,7 +3167,7 @@ struct Viewer {
     static float cr3ListRowY(float y, int k, int top, int focus);
     UiFig& cr3UiPose(const std::string& name, const std::string& anim, float t, float x, float y, bool loop = false);
     UiFig& cr3UiPut(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, float alpha = 1, bool loop = false);
-    void drawCr3Battery(float x, float y, const Mat4& view);
+    UiFig& drawCr3Battery(float x, float y, const Mat4& view, const char* menu = "comheiconmenu");
     int batteryState = 2;
     float batteryLevel = 1, batteryReadAt = 0;
     UiFig& cr3UiPutOverOwn(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, bool loop);
@@ -3425,8 +3427,12 @@ struct Viewer {
     // .. _05 an arc out of the corner; the goods in focus a feGoodsPanel (feGoodsPanel_in) at the
     // middle one - feGoodsIcon_fr00 at its frame by the goods: 0 the bomb, 1 the toy camera -;
     // tapped, used (Fld2GoodsButton::OnUpdate: 1 PutBomb). The others round the arc, the
-    // feGoodsNext arrows, the names: not yet
+    // feGoodsNext arrows with two or more, the focused one's name for 2.4 s (drawCr3Goods)
     int goodsFocus = -1;
+    int goodsNameFor = -2;      // (the goods whose name timer runs - FieldGoodsMenu +0x13c - and since when)
+    std::string goodsNameArea;
+    float goodsNameAt = 0;
+    bool goodsArrowsLogged = false;
     // The talk mark (Fld2BalloonManager::CheckBalloons 0xa07810 / Fld2GoodsButton::ShowExclamationButton 0xa07534): something
     // to check in reach - a feFlag_fr00 balloon over it, and the "!" panel (FieldGoodsMenu's id 4) slid into the goods
     // button over 0.1333 s, focused; while it's focused a tap anywhere on the field talks (Fld2IsExclamationButton)
@@ -4317,6 +4323,11 @@ struct Viewer {
     void stepVsCommentary(float dt);
     bool vsMoreBattlesAfter() const;
     bool vsCampOpened = false, vsLabOpened = false;
+    // (VsModeMain 8 / 0xc / 0xf: back from the Sp Shop - PiucomTop -, the gene lab or the camp, DBSystem::Sync(0x84 -
+    // SyncProperty); VsModeMenu::Update 0xb600e0 shows comHeAutoSave_fr00 - at VSHeIconMenu's call_comHeAutoSave, z 10.1,
+    // ProvisionalDraw 0xb62ac4 - while the request is 0x80 / 0x84 and for 2 s after: offline the request is over at once)
+    float vsAutoSaveAt = -1e9f;
+    void vsAutoSave(const char* from);
     bool vsBattleHookPending = false; // (VS_BattleIn running: its battles once it's over)
     void vsEnter();               // (VSMain: evt000, then the vista it reserved or the menu)
     void openVsMenu();

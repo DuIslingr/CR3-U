@@ -39,6 +39,11 @@ want vs && run vs-detail "3:east 3.5:east 4:east 4.5:r 5:l 5.5:south 6:left 7:qu
     "normal tournaments|vs: tournament detail 1|vs: tournament detail 0" \
     -- --area t0101 --input "vs:open" $vs_done
 
+# VsModeMain 8: back from the Sp Shop - DBSystem::Sync(0x84), SyncProperty -, VsModeMenu's comHeAutoSave_fr00 for 2 s
+want vs && run vs-autosave "3:down 3.5:east 4.5:south 6:quit" \
+    "vs: the cursor presses 1|vs: sp shop|vs: back from the Sp Shop - SyncProperty, the autosave icon for 2 s" \
+    -- --area t0101 --input "vs:open" $vs_done
+
 # The VS tutorial (round 10): a fresh game's VS - vs.nut's evt000 reserves s910_t01_00101_evt; its
 # gene cards (CreateGeneCardSelector: one put in focus, then taken), the gene's status, VS again:
 # s910_t01_00201_evt's camp party window (its back asking 0x1f0 - the party wears its genes -, ○ on

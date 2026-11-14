@@ -222,6 +222,11 @@ struct Cr3Action {
     // its break points broke the gauge - BtlBreakPoint::Add's +0x31, the jump across 0)
     bool combo = false, broke = false;
     bool finisher = false; // (BtlCommandManager::addLastAttack's: a Last Attack or a Finest Arts, played as its command's own)
+    // (put in at the top - BtlCommandList::VInsertTop 0x7e4fd8: BtlCommand +0x1a set, BtlDamageChunk::Calculate's +0xa5, the
+    // "chaining" BtlDirectionManager::playSequenceNext keeps the totals by: a skill's or a status effect's interrupt - kinds
+    // 97 / 98 / 126, BtlSkillUtility::AddInterruptCommand 0x9aec28 and the like, which set it themselves too -, and
+    // addLastAttack's finisher. Not a counter or a kind 100 / 101 command: VAdd)
+    bool chains = false;
     bool cooperated() const { return !partners.empty(); } // (BtlDamageChunk::IsCooperation)
     // (source -1: a command with no actor - an assist, BtlCommandManager::calculateAssist 0x7dbbf4, or a
     // status effect's kind 98 / 101 one, AddNoSourceInterruptCommand / AddNoSourceCommand: Regenerate's 306)

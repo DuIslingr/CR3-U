@@ -1666,8 +1666,7 @@ attacker's size's attack_<size> at the target's front (x, 0, Battle +0 / 10), 0.
 (or a click on a button), Backspace back from the targets; `--input attack,t0,guard,...` chooses
 for captures. `cr3tool cr3battle <release> <coupling> <field> [party]` prints its set-up and
 simulates it; `--input battle,escape,attack,gene<n>,item<n>,t<n>,guard,result` chooses for
-captures. Not in yet: the hit effects' random turn (CommandDirection +0x58 bit 3) and the Sparks'
-forces, trails and other emitter shapes.
+captures. Not in yet: the Sparks' forces, trails and other emitter shapes.
 
 ### The result's EXP (CR3)
 
@@ -1816,8 +1815,12 @@ whole), the gauge even (BtlBreakGaugeUI::Even), the battle's music again, the ne
 BtlDamageTarget::PlaySingleHitEffect, on every hit that lands (BtlUnitList::PlayHitEffect, at the
 target): the command's CommandDirection +0x2c effect (direction.mbe column 9 - the attacks' 1 and
 3, ...), and with +0x59 bit 0 the critical's (4, GetCriticalHitEffectId) and the element's (element
-+ 4, GetElementHitEffectId). +0x58: bit 3 a random turn about +0x60 / +0x64, bit 7 a random size
-(rand x 2 - 1) x +0x68 + 1, bit 2 the unit's effect scale. `data\effect.mbe` "Effect", 56-byte
++ 4, GetElementHitEffectId). +0x58: bit 3 a random offset round an ellipse (a whole degree a: x
++0x60 sin a, y +0x64 cos a, unturned), bits 6 / 5 / 4 a random whole-degree turn about z / y / x
+(getOffsetRotation 0x985c58: the quaternions multiplied in that order, then by the effect point's
+turn - BtlUnit::PlayHitEffect 0x9de81c), bit 7 a random size (rand x 2 - 1) x +0x68 + 1, bit 2
+times the target's effect scale (GetEffectScale: the Model row's +0x28 x the model's scale). The
+attacks: 1 bits 3 (no offset), 6, 7; 2 bits 3 to 7 (0.5 / 0.5). `data\effect.mbe` "Effect", 56-byte
 rows: the id, the figure (`be001hit01` ..: geom, skel, its own animation, some with `.sprk`
 particles), two sounds (the first played with it), floats. The figures blend additively (SRC_ALPHA,
 ONE) or take their dark parts off (REVERSE_SUBTRACT).
@@ -2032,8 +2035,9 @@ The rest of DBEmu (libcrx 0x71b350 .. ; the Vita's Sync2 at 0x8107a1b0 reads cle
   into ten slots, 4's up to 10 from slot 0, 3's up to 6 from 4, 2's up to 3 from 7, 1's up to 10
   from 9 downward, the later over the earlier, once a day; then 5 / 6's up to 10. Begin / End /
   SetQuest; EarnQuestRewards (`questprizes`: item, gold, genebox, luckybox, else a gene; taken
-  already 0x3f9). utils::SelectQuest is a menu (DBSelectQuestTask) the port has not yet: none chosen (no event
-  calls it).
+  already 0x3f9). utils::SelectQuest is a menu (DBSelectQuestTask) the port has not yet: none chosen. No shipped
+  script reaches it: the `select_quest` helper is defined in 36 scripts (twice in d10) and called by none, and the
+  library names only the debug `test_select_quest` script.
 - Tickets: GotTicket (today's had), ReceiveTicket (item 118, once a day; 0x3ef).
 - Sync2(event): an event's gifts - the tutorials' genes, quest56's, s100_t01_00702's two gold keys,
   s272_t01_00401's pairs of gifts, c140's, t02_kbox_03's item 59.

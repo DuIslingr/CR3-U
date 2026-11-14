@@ -166,7 +166,7 @@ public:
     // gene boxes on offer, the flags set, the VS rewards' sheets
     int getThisMonthMaster(GameState& s, std::time_t now);
     struct Month {
-        float expBonus = 1, dropBonus = 1, goldBonus = 1;
+        float expBonus = 1, dropBonus = 1, goldBonus = 1; // (drop_bonus: GetThisMonthMaster's DAT_0144b7ac - no reader found)
         std::vector<int> geneBoxes; // (geneBoxSchedules' _id)
         std::string vsScoreSheet, vsSeasonSheet; // (the VS score / season rewards' item sheets)
         int seasonItem = -1;                     // (vsseasonscorerewards' itemId: the season's token, 661 .. 672)

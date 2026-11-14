@@ -4647,6 +4647,11 @@ void Viewer::vsEnter() {
     openVsMenu();
 }
 
+void Viewer::vsAutoSave(const char* from) {
+    vsAutoSaveAt = uiClock;
+    SDL_Log("vs: back from %s - SyncProperty, the autosave icon for 2 s", from);
+}
+
 void Viewer::stepVsScript(float dt) {
     stepSpBoxes(dt); // (the Sp Shop's boxes: LuckyBoxMain's timed states)
     // (VSMain::OnUpdate 0x96e2dc state 5: the menu's fade-in - 20 frames at 30 a second - over; +0x74d set and story flag 36 - the
@@ -4662,10 +4667,12 @@ void Viewer::stepVsScript(float dt) {
     // (VsModeMain 0x11 / 0xd: back from the camp - on the top - or the gene lab: VS_Top)
     if (vsCampOpened && cr3Camp.stage == 0) {
         vsCampOpened = false;
+        vsAutoSave("the camp");
         if (vs.screen == 1 && !vsScriptRunning()) runVsScript("VS_Top");
     }
     if (vsLabOpened && !(areaEvents && areaEvents->geneLab().open)) {
         vsLabOpened = false;
+        vsAutoSave("the gene lab");
         if (vs.screen != 0 && !vsScriptRunning()) runVsScript("VS_Top");
     }
     if (!vsEvents || !vsEvents->running()) return;
@@ -5923,6 +5930,8 @@ void Viewer::drawVs(int w, int h) {
     }
     UiFig& pos = cr3UiPut("vsposition", "", 0, 0, 0, view);
     if (cr3UiCall(pos, "call_VsMainBlack", x, y, w, h)) cr3UiPut("vsmainblack", "", 0, x, y, view);
+    float saveX = 0, saveY = 0;
+    bool saving = false; // (the autosave icon: drawn after the menu - its z 10.1 over the header's bar)
     dev->clearDepth();
     // the header
     if (cr3UiCall(pos, "call_VsHeMenu", x, y, w, h)) {
@@ -5935,6 +5944,11 @@ void Viewer::drawVs(int w, int h) {
         }
         const char* title = vs.screen == 1 ? "VS" : vs.screen == 2 ? "Battle" : nullptr;
         (void)title;
+        if (cr3UiCall(he, "call_VSHeIconMenu", cx, cy)) { // (the battery, and the autosave icon while it shows)
+            UiFig& icon = drawCr3Battery(cx, cy, view, "vsheiconmenu");
+            const float since = uiClock - vsAutoSaveAt;
+            saving = since >= 0 && since < 2.0f && cr3UiCall(icon, "call_comHeAutoSave", saveX, saveY);
+        }
     }
     // the footer: the week's score, the tournament's (the list's: the chosen lifeline items' coins)
     if (vs.screen == 3 || vs.screen == 4) drawVsListFooter(w, h, view);
@@ -6146,6 +6160,10 @@ void Viewer::drawVs(int w, int h) {
         float ax, ay, ex, ey;
         if (cr3UiCall(menu, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
         if (cr3UiCall(menu, "tapAreaS01", ax, ay) && cr3UiCall(menu, "tapAreaE01", ex, ey)) vsTaps.push_back({ax, ay, ex, ey, -1});
+    }
+    if (saving) {
+        dev->clearDepth();
+        cr3UiPut("comheautosave_fr00", "", 0, saveX, saveY, view); // (frame 0 "SAVING..": its frame 1 a blank cell)
     }
     if (vs.ask) {
         std::string text;
@@ -6408,8 +6426,10 @@ void Viewer::chooseVs(int id) {
             SDL_Log("shop: leaving the boxes");
             return;
         }
+        const bool fromShop = vs.screen == 8 && !vs.shopOnly;
         vs.screen = vs.screen == 4 ? 3 : vs.screen == 3 ? 2 : vs.screen == 2 ? 1 : vs.screen == 8 ? (vs.shopOnly ? 10 : 1) : vs.screen == 11 || vs.screen == 12 ? 10 : 0, vs.since = 0;
         if (vs.screen == 0) SDL_Log("vs: closed");
+        if (fromShop) vsAutoSave("the Sp Shop");
         return;
     }
     if (id < -1 || id == 602) return;

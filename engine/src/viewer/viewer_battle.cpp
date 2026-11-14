@@ -1647,17 +1647,41 @@ void Viewer::releaseCr3Hold(int holder) {
     SDL_Log("battle %.2f s: %d lets %d go", cr3BattleClock, holder, held);
 }
 
+// BtlDamageTarget::PlaySingleHitEffect 0x986160 / getOffsetRotation 0x985c58 / BtlUnit::PlayHitEffect 0x9de81c: one
+// placement for all three effects. +0x58 bit 3 an offset round an ellipse - a whole degree a (CrxRandom % 360), x +0x60
+// sin a, y +0x64 cos a, added to the point unturned -; bits 6 / 5 / 4 a random whole-degree turn about z / y / x (the
+// quaternions multiplied in that order, then by the point's own turn); bit 7 the random size, bit 2 times the target's
+// effect scale (BtlUnit::GetEffectScale 0x9de6a0: the Model row's +0x28 x the model's scale)
 void Viewer::cr3HitEffects(int command, int element, size_t targetUnit, bool critical) {
     cr3::MbeFile::Row d;
     if (!cr3BattleTables.direction.find("CommandDirection", command, "iiiiiii_piiiiiiiiiiiiiiiii", d)) return;
     const uint32_t flags = uint32_t(d.i(20)); // (+0x58)
+    const auto degrees = [] { return float(SDL_rand(360)) * 0.01745328f; };
+    std::array<float, 3> at = unitPoint(targetUnit, "DummyDP01", 1.2f);
+    if (flags & 8) {
+        const float a = degrees();
+        at[0] += d.f(22) * std::sin(a), at[1] += d.f(23) * std::cos(a); // (+0x60 / +0x64)
+    }
+    std::array<float, 4> turn{0, 0, 0, 1}; // (x, y, z, w)
+    for (int axis = 2; axis >= 0; --axis) {
+        if (!(flags & (0x10u << axis))) continue; // (bit 6 z, 5 y, 4 x)
+        const float half = degrees() * 0.5f, s = std::sin(half), c = std::cos(half);
+        std::array<float, 4> r{0, 0, 0, c};
+        r[size_t(axis)] = s;
+        const auto& q = turn;
+        turn = {q[3] * r[0] + q[0] * r[3] + q[1] * r[2] - q[2] * r[1], q[3] * r[1] - q[0] * r[2] + q[1] * r[3] + q[2] * r[0],
+                q[3] * r[2] + q[0] * r[1] - q[1] * r[0] + q[2] * r[3], q[3] * r[3] - q[0] * r[0] - q[1] * r[1] - q[2] * r[2]};
+    }
     float scale = 1;
     if (flags & 0x80) scale = (SDL_randf() * 2 - 1) * d.f(24) + 1; // (+0x68)
-    const std::array<float, 3> at = unitPoint(targetUnit, "DummyDP01", 1.2f);
-    if (cr3ActionPlay.timing.effects.empty()) spawnCr3Effect(d.i(9), at, scale);
+    if ((flags & 4) && targetUnit < cr3Battle.units.size()) scale *= cr3Battle.units[targetUnit].scale * cr3Battle.units[targetUnit].effectScale;
+    const auto spawn = [&](int id) {
+        if (Cr3Fx* fx = spawnCr3Effect(id, at, scale)) fx->turn = turn;
+    };
+    if (cr3ActionPlay.timing.effects.empty()) spawn(d.i(9));
     if (flags & 0x100) { // (+0x59 bit 0)
-        if (critical) spawnCr3Effect(4, at, scale);
-        if (element > 0) spawnCr3Effect(element + 4, at, scale);
+        if (critical) spawn(4);
+        if (element > 0) spawn(element + 4);
     }
 }
 
@@ -1687,6 +1711,17 @@ void Viewer::drawCr3Effects(const cr3::Mat34& camera, const Mat4& vp) {
             place = {{cy, sy * sp, sy * cp, 0, 0, cp, -sp, 0, -sy, cy * sp, cy * cp, 0}};
         } else if (it->followUnit >= 0 && size_t(it->followUnit) < cr3BattleUnits.size()) {
             at = cr3EffectPoint(size_t(it->followUnit), it->point);
+        }
+        if (it->turn[3] != 1) { // (a hit effect's random turn, after its yaw)
+            const float x = it->turn[0], y = it->turn[1], z = it->turn[2], w = it->turn[3];
+            const float r[9] = {1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+                                2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+                                2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)};
+            cr3::Mat34 turned = place;
+            for (int row = 0; row < 3; ++row)
+                for (int col = 0; col < 3; ++col)
+                    turned.m[row * 4 + col] = place.m[row * 4] * r[col] + place.m[row * 4 + 1] * r[3 + col] + place.m[row * 4 + 2] * r[6 + col];
+            place = turned;
         }
         for (int row = 0; row < 3; ++row) {
             for (int col = 0; col < 3; ++col) place.m[row * 4 + col] *= it->scale;
@@ -2318,12 +2353,20 @@ void Viewer::playCr3MotionCamera(size_t source, int motion) {
 // attack_ALL clip at the origin turned 0.4 toward the target -, 0 the melee's -, then PlayAnimation(0xf) and
 // its PlayCamera(15) over it (the one s01 clip: Cam_s01_m316_00). No white (their unit observers take
 // states 1, 2, 6 only) and the end the motion's, not the clip's. (A combo's PlayRangedComboCamera 0x9ddd1c
-// not in. BtlShotCoverDirection - IsCover - plays PlayGlobal(5.0) at once over the s01 camera: how a cover
-// shot is told apart, BtlDamageChunk::IsCover, not traced, so a cover shot is played as a Shot here)
+// not in.) A Shot whose chunk IsCover (BtlDamageChunk::IsCover 0x97e7f0 / BtlDamageTargetList::IsCover 0x982028: any
+// target's +0x14 not its original +0x18 - a coverer took it) is a BtlShotCoverDirection (CreateDirection 0x990d98 kind 3:
+// sequence 5, not 4): its vPlay 0x99ae54 has no playCameraByType - PlayAnimation(0xf), then PlayGlobal(5.0) over the
+// motion's camera: a global clip at the origin, its end at 5 s (BtlCameraMotion::Load's end time)
 bool Viewer::startCr3RangedCamera(const cr3::Cr3Action& a, size_t su) {
     cr3::MbeFile::Row dir;
     if (!cr3BattleTables.direction.find("CommandDirection", cr3ActionPlay.directionCommand, "iiii", dir)) return false;
     if (dir.i(1) != 2 && dir.i(1) != 3) return false;
+    if (dir.i(1) == 3 && std::any_of(a.targets.begin(), a.targets.end(), [](const cr3::Cr3Hit& h) { return h.coveredFrom >= 0; })) {
+        cr3ActionPlay.ranged = true;
+        playCr3Camera(pickCr3GlobalCamera(), 5.0f, false, {}, 0, 0);
+        SDL_Log("battle %.2f s: a cover shot - PlayGlobal(5.0) %s", cr3BattleClock, cr3Cam.name.c_str());
+        return true;
+    }
     int type = dir.i(3);
     if (cr3::MbeFile::Row attack; type < 0 &&
         cr3BattleTables.direction.find("CommandDirection", cr3Rules.fighters[size_t(a.source)].attackCommand, "iiii", attack))
@@ -2911,17 +2954,16 @@ void Viewer::stepCr3Action() {
         }
         ++cr3ActionAt;
         cr3AnalyzeDone = false;
-        { // (BtlDirectionManager::playSequenceNext 0x00991ae0: BtlTotalDamageUI::Close as the sequence ends, unless
-          // the next direction chains on - its data's +0xa5, here the same side's next action - and its command
-          // hasn't +0xbd bit 2)
+        { // (BtlDirectionManager::playSequenceNext 0x00991ae0: BtlTotalDamageUI::Close as the sequence ends, unless a
+          // direction follows and the one ended chains - its chunk's +0xa5, Cr3Action::chains: an interrupt - with its
+          // command's +0xbd bit 2 clear, or the next one chains)
             bool chains = false;
             if (cr3ActionAt < cr3Actions.size() && cr3Actions[cr3ActionAt].command >= 0) {
-                const cr3::Cr3Action& n = cr3Actions[cr3ActionAt];
-                cr3::Cr3Command nc;
-                chains = n.source >= 0 && cr3Rules.fighters[size_t(n.source)].player == cr3Rules.fighters[size_t(a.source)].player &&
-                         (!cr3Rules.command(n.command, nc) || !(nc.flags & 0x400));
+                cr3::Cr3Command ac;
+                chains = (a.chains && (!cr3Rules.command(a.command, ac) || !(ac.flags & 0x400))) || cr3Actions[cr3ActionAt].chains;
             }
             if (!chains) closeCr3Totals();
+            else SDL_Log("battle %.2f s: the totals kept - an interrupt chains", cr3BattleClock);
         }
         // (BtlSysStateAction: the battle's script after each direction - battle_0002's cut-in
         // once the spider endures at 1 HP - and the next action after it; BattleArgument its
@@ -3034,7 +3076,8 @@ void Viewer::reinforceCr3Slot(int fi, int monster) {
 }
 
 // BtlAvatarDirection (Create 0x99767c, vPlay 0x9976e4): after the name, the caster's motion (+0x08) and its up camera
-// (PlayEnemyUp / PlayPlayerUp; motion 10's PlayItem not traced - the up camera); at its event 2 BtlFade::WhiteOut(1.0) and
+// (PlayEnemyUp / PlayPlayerUp; motion 10 BtlCameraSystem::PlayItem 0x978efc - Cam_bt_item_PC_00 at the unit's camera point,
+// turned as the unit, to its own end, no colosseum variant); at its event 2 BtlFade::WhiteOut(1.0) and
 // SE ev_018; white, BtlMovie::Play - Effect(+0x28)'s file -; the movie over, WhiteIn(1.0), playCameraByType (+0x0c 5) and
 // playGroupEffect (+0x2c) with the hits from its timer. The effects and hits put after the white; the movie a pause
 bool Viewer::startCr3Avatar(const cr3::Cr3Action& a, size_t su) {
@@ -3049,7 +3092,13 @@ bool Viewer::startCr3Avatar(const cr3::Cr3Action& a, size_t su) {
     for (auto& e : play.timing.effects) e.time += shift;
     for (float& h : play.timing.hits) h += shift;
     play.end = std::max(play.end, play.timing.hits.back() + 0.9f);
-    playCr3UpCamera(su);
+    if (dir.i(2) == 10) {
+        const auto& unit = cr3Battle.units[su];
+        playCr3Camera("Cam_bt_item_PC_00", cr3BattleCam.duration(), false, unitPoint(su, "DummyCP", 1.0f), unit.yaw, 0);
+        if (!cr3BattleCam.has("Cam_bt_item_PC_00")) SDL_Log("battle: Cam_bt has no Cam_bt_item_PC_00");
+    } else {
+        playCr3UpCamera(su);
+    }
     SDL_Log("battle %.2f s: an avatar - command %d, motion %d, its event 2 at %.2f s, movie %s", cr3BattleClock, a.command, dir.i(2), double(play.cue),
             play.movie.empty() ? "(none)" : play.movie.c_str());
     return true;

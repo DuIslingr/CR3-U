@@ -78,7 +78,7 @@ want saves && run save-footer "1:start 3:start 4:down 4.5:up 5:right 5.5:down 6:
 want movies && run movie-pad "3:north 4:east 5:north 6:west 7:quit" \
     "movie: paused|test controller: east|movie: resumed|movie c01: skipped" -- --movie c01 --area t0101
 want goods && run field-goods "3:r 3.5:r 4:west 5:quit" \
-    "field: goods cursor 1|field: goods cursor 0|field: goods uses 0" \
+    "field: the goods arrows up|field: goods cursor 1|field: the goods name 1|field: goods cursor 0|field: goods uses 0" \
     -- --area t0101 --input "goods:show0 goods:show1"
 # Fld2TaskPlayer::SetStateRide (0x00878858): d03's animal - the tutorial, ○ yes -, ridden; goods button 5 (□ uses
 # the focused goods: Fld2GoodsButton::OnUpdate 6 - the script's VehicleOut), ○ yes, off
