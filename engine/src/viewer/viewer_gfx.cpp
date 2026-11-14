@@ -1395,6 +1395,9 @@ void Viewer::safeInsets(int fw, int fh, int& ix, int& iy) const {
         }
         l = int(std::ceil(std::max(fl, 0.0f))), t = int(std::ceil(std::max(ft, 0.0f)));
         r = int(std::ceil(std::max(fr, 0.0f))), b = int(std::ceil(std::max(fb, 0.0f)));
+#ifdef SDL_PLATFORM_IOS
+        b = 0; // (the bottom's home indicator is no camera - SDL hides it in fullscreen: the UI may run under it)
+#endif
     }
     ix = std::clamp(std::max(l, r), 0, fw / 4), iy = std::clamp(std::max(t, b), 0, fh / 4);
 }

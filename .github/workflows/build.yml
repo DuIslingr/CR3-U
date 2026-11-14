@@ -1,5 +1,5 @@
-# Builds the port on Linux, Windows and macOS (no game data: the build, the packaging). The
-# binaries are the run's artifacts; nothing of the game is in them.
+# Builds the port on Linux, Windows, macOS, Android and iOS (no game data: the build, the packaging).
+# The binaries are the run's artifacts; nothing of the game is in them.
 name: build
 on:
   push:
@@ -7,6 +7,9 @@ on:
     tags: ['v*'] # (a version: the release job publishes the builds)
   pull_request:
   workflow_dispatch:
+
+env:
+  MOLTENVK: v1.4.2 # (Khronos's MoltenVK release: macOS bundles its dylib, iOS links its static library in)
 
 jobs:
   desktop:
@@ -45,10 +48,10 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
       - name: Vulkan SDK
-        # (glslc and the headers everywhere - Ubuntu 22.04 has no glslc package; macOS: MoltenVK, universal - bundled into the .app)
+        # (glslc and the headers everywhere - Ubuntu 22.04 has no glslc package; macOS: the loader - bundled into the .app)
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
-          vulkan_version: 1.4.309.0
+          vulkan_version: 1.4.363.1
           cache: true
       - name: DLSS SDK
         if: matrix.dlss
@@ -68,9 +71,15 @@ jobs:
       - name: Configure
         if: runner.os != 'macOS'
         run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${{ env.CR_DLSS_ARG }} ${{ matrix.dlss && '-DCR_DLSS_REQUIRED=ON' || '' }}
+      - name: MoltenVK (macOS; Khronos's latest release, over the SDK's)
+        if: runner.os == 'macOS'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/mvk.tar" "https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK/MoltenVK-macos.tar"
+          tar -xf "$RUNNER_TEMP/mvk.tar" -C "$RUNNER_TEMP"
+          test -f "$RUNNER_TEMP/MoltenVK/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"
       - name: Configure (macOS, universal)
         if: runner.os == 'macOS'
-        run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON -DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON
+        run: cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON -DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON "-DCR_MOLTENVK=$RUNNER_TEMP/MoltenVK"
       - name: Build
         run: cmake --build build --parallel
       - name: Native Vita importer tests
@@ -113,15 +122,21 @@ jobs:
         run: |
           mkdir -p dist
           lipo -info build/cr3view.app/Contents/MacOS/cr3view
-          ! otool -L build/cr3view.app/Contents/MacOS/cr3view | grep -e /opt/homebrew -e /usr/local  # (nothing of Homebrew's)
+          # (nothing of Homebrew's - an if: a "!" line doesn't stop a bash -e step)
+          if otool -L build/cr3view.app/Contents/MacOS/cr3view | grep -e /opt/homebrew -e /usr/local; then echo "::error::links Homebrew's"; exit 1; fi
           lipo -info build/cr3view.app/Contents/Frameworks/libMoltenVK.dylib build/cr3view.app/Contents/Frameworks/libvulkan.1.dylib
+          # (the MoltenVK release's dylib - not the SDK's -, both architectures)
+          cmp build/cr3view.app/Contents/Frameworks/libMoltenVK.dylib "$RUNNER_TEMP/MoltenVK/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"
+          lipo build/cr3view.app/Contents/Frameworks/libMoltenVK.dylib -verify_arch arm64 x86_64
           test -f build/cr3view.app/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json
           # (MoltenVK's and the loader's licences with them: Apache-2.0 - THIRD_PARTY.md)
           lic=build/cr3view.app/Contents/Resources/licenses
           mkdir -p "$lic"
           find "$VULKAN_SDK/.." -maxdepth 5 \( -iname 'LICENSE*' -o -iname 'NOTICE*' \) | head -40
           for n in MoltenVK Vulkan-Loader; do
-            f=$(find "$VULKAN_SDK/.." -maxdepth 6 -ipath "*$n*" -iname 'LICENSE*' | head -1)
+            f=""
+            [ "$n" = MoltenVK ] && f=$(find "$RUNNER_TEMP/MoltenVK" -maxdepth 2 -iname 'LICENSE*' | head -1)  # (the release's own)
+            [ -n "$f" ] || f=$(find "$VULKAN_SDK/.." -maxdepth 6 -ipath "*$n*" -iname 'LICENSE*' | head -1)
             if [ -n "$f" ]; then cp "$f" "$lic/$n-LICENSE.txt"; else curl -fsSL https://www.apache.org/licenses/LICENSE-2.0.txt -o "$lic/$n-LICENSE.txt"; fi
           done
           [ -f "$VULKAN_SDK/../Licenses/LICENSE.txt" ] && cp "$VULKAN_SDK/../Licenses/LICENSE.txt" "$lic/VulkanSDK-LICENSE.txt"  # (the SDK's: every component's)
@@ -196,11 +211,60 @@ jobs:
           name: ${{ github.event.repository.name }}-android
           path: upload
 
+  # iOS (iPhone, iPad): Vulkan through MoltenVK linked in (MetalFX from iOS 16), OpenGL ES 3 the fallback. Built
+  # unsigned: the .ipa is signed by whoever sideloads it (AltStore, Sideloadly, ...)
+  ios:
+    runs-on: macos-15
+    name: ios
+    steps:
+      - uses: actions/checkout@v5
+      - name: Vulkan SDK (glslc, to compile the shaders)
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.363.1
+          cache: true
+      - name: MoltenVK (iOS; static)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/mvk.tar" "https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK/MoltenVK-ios.tar"
+          tar -xf "$RUNNER_TEMP/mvk.tar" -C "$RUNNER_TEMP"
+          test -f "$RUNNER_TEMP/MoltenVK/MoltenVK/static/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
+      - name: Configure
+        run: |
+          ver=0.5.0
+          case "$GITHUB_REF_NAME" in v[0-9]*) ver="${GITHUB_REF_NAME#v}" ;; esac
+          cmake -S engine -B build -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON -DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON "-DCR_MOLTENVK=$RUNNER_TEMP/MoltenVK" "-DCR_VERSION=$ver"
+      - name: Build
+        run: cmake --build build --config Release --target cr3view -- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+      - name: Package (an unsigned .ipa)
+        run: |
+          app=$(find build -maxdepth 4 -path '*Release-iphoneos/cr3view.app' | head -1)
+          test -n "$app"
+          plutil -p "$app/Info.plist" | grep -E 'CFBundleIdentifier|CFBundleShortVersionString|UIFileSharingEnabled|CADisableMinimumFrameDurationOnPhone'
+          lipo -info "$app/cr3view"
+          otool -L "$app/cr3view" | grep -E 'Metal|OpenGLES'
+          # (nothing of Homebrew's; MoltenVK linked in, no loader)
+          if otool -L "$app/cr3view" | grep -e /opt/homebrew -e /usr/local -e libvulkan -e libMoltenVK; then echo "::error::links a library it can't carry"; exit 1; fi
+          mkdir -p upload Payload
+          cp -R "$app" Payload/
+          # (the licences with it: MoltenVK's Apache-2.0 makes the app GPL-3.0 - THIRD_PARTY.md)
+          lic="Payload/cr3view.app/licenses"
+          mkdir -p "$lic"
+          cp LICENSE THIRD_PARTY.md "$lic/"
+          f=$(find "$RUNNER_TEMP/MoltenVK" -maxdepth 2 -iname 'LICENSE*' | head -1)
+          if [ -n "$f" ]; then cp "$f" "$lic/MoltenVK-LICENSE.txt"; else curl -fsSL https://www.apache.org/licenses/LICENSE-2.0.txt -o "$lic/MoltenVK-LICENSE.txt"; fi
+          zip -qry "upload/${{ github.event.repository.name }}-ios-unsigned.ipa" Payload
+          ls -la upload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-ios
+          path: upload
+
   # A version tag (v*): every platform's build - none with DLSS - on a GitHub release, its notes
   # packaging/release-notes.md
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [desktop, android]
+    needs: [desktop, android, ios]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

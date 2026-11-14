@@ -73,7 +73,8 @@ std::string upscaleName(const cr3::UpscaleSettings& u) {
 
 // Where a copy of the game is looked for without --data: beside the executable (Android: the app's
 // folder on the shared storage, reachable over USB - Android/data/local.preservation.chaosrings3/
-// files/), beside an AppImage or a macOS .app (their base paths are inside them), the working directory
+// files/), beside an AppImage or a macOS .app (their base paths are inside them), the working directory.
+// iOS: the app's Documents first - the folder the Files app and Finder show (Info.plist's UIFileSharingEnabled)
 std::vector<std::string> dataPlaces() {
     std::vector<std::string> out;
     auto add = [&](std::string p) {
@@ -91,6 +92,10 @@ std::vector<std::string> dataPlaces() {
 #endif
 #ifdef SDL_PLATFORM_MACOS
     if (const size_t app = base.rfind(".app/"); app != std::string::npos) add(base.substr(0, base.rfind('/', app) + 1));
+#endif
+#ifdef SDL_PLATFORM_IOS
+    // (an iPhone's or iPad's: On My iPhone / iPad > Chaos Rings III in the Files app - not the .app, which can't be written)
+    if (const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS)) add(docs);
 #endif
     add(base);
     if (char* cwd = SDL_GetCurrentDirectory()) add(cwd), SDL_free(cwd);
@@ -977,11 +982,23 @@ int main(int argc, char** argv) {
         if (cr3::setupScripted()) return data.empty() ? 1 : 0; // (a test's: the setup alone)
     }
 #endif
+#ifdef SDL_PLATFORM_IOS
+    if (data.empty() && argc <= 1) SDL_Init(SDL_INIT_VIDEO); // (the box below: the setup, which inits it elsewhere, isn't iOS's)
+#endif
     while (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
-#ifdef SDL_PLATFORM_ANDROID
-        if (!searched.empty()) // (the folders made, to be seen over USB)
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+        if (!searched.empty()) // (the folders made, to be seen over USB - iOS: in the Files app)
             for (const char* f : {"ios", "android", "vita"}) SDL_CreateDirectory((searched.front() + f).c_str());
 #endif
+#ifdef SDL_PLATFORM_IOS
+        // (the game folder: the app's Documents - no .ipa unpacked here, no Vita dump decrypted - nor archives opened)
+        std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the app's folder - in the Files app, "
+                          "On My iPhone (or iPad) > Chaos Rings III; or in Finder with the device connected, its Files - then choose Look again:\n"
+                          "\n  ios/      the iOS release's ChaosRings3_FINAL_ENG.app (its .ipa unzipped - an .ipa is a .zip)"
+                          "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
+                          "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), decrypted"
+                          "\n\nThe README's \"Your copy\" has the details.";
+#else
         std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the folder here, then choose Look again:\n";
         msg += searched.empty() ? std::string("(no folder)") : searched.front();
         msg += "\n\n  ios/      the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app"
@@ -990,6 +1007,7 @@ int main(int argc, char** argv) {
                "\n            (decrypted when it is found)\n\nAlso looked in:";
         for (size_t k = 1; k < searched.size(); ++k) msg += "\n" + searched[k];
         msg += "\n\nThe README's \"Your copy\" has the details.";
+#endif
         const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Look again"},
                                                     {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Quit"}};
         const SDL_MessageBoxData box{SDL_MESSAGEBOX_ERROR, nullptr, "Chaos Rings III", msg.c_str(), 2, buttons, nullptr};

@@ -24,15 +24,18 @@ repository; in the CI artifacts):
 
 | What | Licence |
 |---|---|
-| [SDL 3.2.0](https://github.com/libsdl-org/SDL) (linked in statically) | zlib |
+| [SDL 3.4.20](https://github.com/libsdl-org/SDL) (linked in statically) | zlib |
 | [zlib 1.3.1](https://github.com/madler/zlib) (Windows, Android) | zlib |
 | [libarchive 3.7.7](https://github.com/libarchive/libarchive) (Windows, macOS: the setup reads a Vita dump's .rar, .7z, .zip, .vpk) | BSD-2-Clause |
-| [FreeType 2.13.3](https://gitlab.freedesktop.org/freetype/freetype) (Windows, macOS, Android: the text) | FreeType License or GPL-2.0 - used here under the GPL |
+| [FreeType 2.13.3](https://gitlab.freedesktop.org/freetype/freetype) (Windows, macOS, Android, iOS: the text) | FreeType License or GPL-2.0 - used here under the GPL |
 
-Carried by the macOS `.app` (Contents/Frameworks, from the LunarG Vulkan SDK; their licence texts in
-Contents/Resources/licenses): the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader) and
-[MoltenVK](https://github.com/KhronosGroup/MoltenVK), both Apache-2.0. Apache-2.0 meets the GPL in
-its version 3, which "or any later version" allows: a `.app` with them is under GPL-3.0.
+Carried by the macOS `.app` (Contents/Frameworks; their licence texts in Contents/Resources/licenses):
+the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader) (from the LunarG Vulkan SDK 1.4.363.1)
+and [MoltenVK v1.4.2](https://github.com/KhronosGroup/MoltenVK/releases/tag/v1.4.2) (Khronos's release,
+its universal dylib), both Apache-2.0. The iOS app links MoltenVK v1.4.2's static library in (no
+loader; the licence texts in the app's `licenses/`), and has neither psvpfsparser nor libarchive.
+Apache-2.0 meets the GPL in its version 3, which "or any later version" allows: a macOS or iOS app
+with MoltenVK is under GPL-3.0.
 
 Not included: the **NVIDIA DLSS SDK** (proprietary, NVIDIA RTX SDKs licence). DLSS support
 builds only with the SDK's headers and NGX library: `-DCR_DLSS_SDK=<a checkout of

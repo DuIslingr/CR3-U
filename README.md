@@ -1,7 +1,7 @@
 # CR3-U - Chaos Rings III, native
 
 CR3-U is a from-scratch native port of *Chaos Rings III* (Square Enix / Media.Vision, 2014) for
-Windows, macOS, Linux and Android. It runs the game from the files of **your own copy**: nothing of
+Windows, macOS, Linux, Android and iPhone / iPad. It runs the game from the files of **your own copy**: nothing of
 the game is included.
 
 It is new code, written by reverse-engineering the Android release (whose 64-bit library keeps its
@@ -34,7 +34,7 @@ The Android and iOS releases have English and Japanese. The Vita release is Japa
 translations add English and Spanish to it (see [Fan translations](#fan-translations)). With the
 Vita copy, a controller also works the game the way the Vita's own buttons do.
 
-A PC needs Vulkan 1.3 or OpenGL 3.3; a phone, Android 7 or later (64-bit).
+A PC needs Vulkan 1.3 or OpenGL 3.3; a phone, Android 7 or later (64-bit) or iOS / iPadOS 15 or later.
 
 ## Install and first start
 
@@ -54,6 +54,7 @@ Vita copy the setup also asks for a fan translation (optional).
 | macOS 11+ | Right-click `cr3view.app` and choose *Open* (it isn't signed). |
 | Linux | `chmod +x` the AppImage and run it, or use the `.tar.gz`. |
 | Android 7+ | Install the APK and start it. The first start offers the same setup: pick your `.apks` (or APK and asset packs), the `.ipa` or a Vita archive. Folders can't be picked on Android; copy them over USB instead (below). |
+| iPhone / iPad, iOS 15+ | The `CR3-U-ios-unsigned.ipa` isn't signed: sideload it with AltStore, Sideloadly or the like (they sign it with your Apple ID). There is no setup window: put your game files into the app's folder yourself (below), then choose *Look again*. It runs at the display's rate (120 Hz on ProMotion screens; Options > Graphics > Frame Rate) and keeps the menus clear of the notch. |
 
 **Android `.apks` files:** a repacked `.apks` that holds its asset packs compressed has them
 unpacked once on the first start, into `assetpacks/` beside it (about **1.3 GB** of free space; that
@@ -66,7 +67,12 @@ packs). Later starts reuse them. A progress window shows while they unpack.
 You can also copy your game into the **game folder** yourself; the port finds it when it starts (or when you choose
 *Look again* on its "Could not find your copy" box).
 The game folder is the folder holding `cr3view` (or `cr3view.exe`, `cr3view.app`, the AppImage). On
-Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over USB.
+Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over USB. On an iPhone or
+iPad it is the app's own folder: in the Files app *On My iPhone* (or *iPad*) *> Chaos Rings III*, or in
+Finder's *Files* tab with the device connected. There the copy has to be ready to read: the unpacked
+`.app` (an `.ipa` is a `.zip`: unzip it - on a computer, or renamed to `.zip` and tapped in the Files
+app - and copy its `Payload` folder into `ios/`), the Android `.apks`, or a decrypted Vita folder. The iOS build doesn't unpack an
+`.ipa`, decrypt a Vita dump or open archives (a fan translation goes in as its folder).
 
 ```
 <game folder>/
@@ -117,6 +123,7 @@ Saves and `settings.ini` go to your profile folder, not the game folder:
 | Linux | `~/.local/share/DuIslingr/CR3-U/` |
 | Windows | `%APPDATA%\DuIslingr\CR3-U\` |
 | macOS | `~/Library/Application Support/DuIslingr/CR3-U/` |
+| iPhone / iPad | inside the app (`Library/Application Support/DuIslingr/CR3-U/`; not shown in the Files app, kept in the device's backups) |
 
 With Vulkan it also keeps `vulkan-pipelines.bin`, the driver's compiled shaders, so later starts
 and new screens are smoother (safe to delete; a new GPU or driver starts it afresh).
@@ -314,8 +321,8 @@ Its `README.txt` has the details.
 - **Android, updating from an older version:** v0.3.0 and earlier were each signed with a different
   key. Uninstall the old version once first. This deletes the game files and saves you copied in,
   so keep a copy of them. From v0.4.0 on, each release installs over the last.
-- **Tested on:** Linux (played), Windows (under Wine), Android (the emulator). The macOS build comes
-  from CI and hasn't been tried on real hardware, nor the Android one on many phones. Reports are
+- **Tested on:** Linux (played), Windows (under Wine), Android (the emulator). The macOS and iOS
+  builds come from CI and haven't been tried on real hardware, nor the Android one on many phones. Reports are
   welcome in the [issues](https://github.com/DuIslingr/CR3-U/issues): please say which copy of the
   game you use (Android, iOS or Vita, and how you got the files), your system, and what you did.
 
@@ -340,13 +347,14 @@ that drive the Vita controls headless (`viewer-pad-vita`, `viewer-vista-pause`) 
 | Windows 10+ x64 | MSVC and Ninja from a Developer prompt, with the [Vulkan SDK](https://vulkan.lunarg.com/); or from Linux with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw): `-DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-x86_64.cmake` | Vulkan, OpenGL 3.3; FSR 3.1, FSR 4, DLSS (MSVC, with the SDK) |
 | macOS 11+ | Xcode command-line tools, Ninja and the [Vulkan SDK](https://vulkan.lunarg.com/) (MoltenVK is copied into the `.app`); `"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"` for a universal build | Vulkan (MoltenVK), OpenGL 3.3; FSR 3.1, MetalFX (macOS 13+) |
 | Android 7+ (arm64, x86-64) | Android SDK and NDK: `git clone -b release-3.4.20 https://github.com/libsdl-org/SDL android/SDL`, then `gradle assembleRelease` in `android/` | OpenGL ES 3.0 |
+| iOS 15+ (iPhone, iPad; arm64) | macOS with Xcode and the [Vulkan SDK](https://vulkan.lunarg.com/) (for `glslc`), plus a [MoltenVK release](https://github.com/KhronosGroup/MoltenVK/releases)'s `MoltenVK-ios.tar`: `cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DCR_MOLTENVK=<its MoltenVK folder>`, then build `cr3view` (unsigned: `CODE_SIGNING_ALLOWED=NO`). CI's `.ipa` is unsigned - sideload it with AltStore, Sideloadly or the like | Vulkan (MoltenVK, linked in), OpenGL ES 3.0; FSR 3.1, MetalFX (iOS 16+) |
 
 - `-DCR3_GLES=ON` builds the desktop version on OpenGL ES 3.0, as Android runs it.
 - **DLSS:** add `-DCR_DLSS_SDK=<NVIDIA's DLSS SDK checkout>` (or put it in
   `engine/third_party/dlss/`) and copy its runtime next to the game. NGX is proprietary, so a DLSS
   build is for your own use only (see `THIRD_PARTY.md`).
-- Every push is built for all four platforms by `.github/workflows/build.yml`; a `v*` tag publishes
-  a release.
+- Every push is built for all five platforms by `.github/workflows/build.yml` (macOS with Khronos's
+  MoltenVK release bundled, iOS with it linked in); a `v*` tag publishes a release.
 
 Build options, `cr3view`'s debug modes and `cr3tool`'s checks: [docs/ENGINE.md](docs/ENGINE.md).
 
@@ -372,8 +380,8 @@ Build options, `cr3view`'s debug modes and `cr3tool`'s checks: [docs/ENGINE.md](
 
 ## Licence and credits
 
-- CR3-U is GPL-2.0-or-later (`LICENSE`). The macOS app is GPL-3.0, because of the bundled
-  MoltenVK. Bundled libraries keep their own licences: see `THIRD_PARTY.md`.
+- CR3-U is GPL-2.0-or-later (`LICENSE`). The macOS and iOS apps are GPL-3.0, because of MoltenVK
+  (bundled in the `.app`, linked into the iOS app). Bundled libraries keep their own licences: see `THIRD_PARTY.md`.
 - **No game data is in this repository or the downloads** - no art, audio, text, scripts or code
   of the game, nor anything generated from them. You need your own copy of the game.
 - The fan translations are the Chaos Rings III Translation Project's (English) and Joseas's

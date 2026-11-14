@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(CR3U LANGUAGES C CXX)
+# (the iOS bundle's version - numbers alone, as Apple asks: CI passes the tag's)
+set(CR_VERSION "0.5.0" CACHE STRING "The iOS app's version (x.y.z)")
 if(WIN32)
     enable_language(RC) # (the .exe's icon: cmake/app-icon.cmake)
 endif()
@@ -16,6 +18,9 @@ set(THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 # SQInteger (no _SQ64) on every host - the compiled scripts store their counts and integers in 4
 # bytes, and Squirrel 2's loader reads them as SQInteger
 file(GLOB SQUIRREL_SOURCES ${THIRD_PARTY_DIR}/squirrel2/squirrel/*.cpp ${THIRD_PARTY_DIR}/squirrel2/sqstdlib/*.cpp)
+if(IOS) # (its system library - not registered by the port - calls system(), which iOS doesn't have)
+    list(FILTER SQUIRREL_SOURCES EXCLUDE REGEX "sqstdsystem[.]cpp$")
+endif()
 add_library(squirrel2 STATIC ${SQUIRREL_SOURCES})
 target_include_directories(squirrel2 PUBLIC ${THIRD_PARTY_DIR}/squirrel2/include)
 if(MINGW)
@@ -261,8 +266,10 @@ else()
     message(STATUS "Text: FreeType not found - no text")
 endif()
 
-add_executable(cr3tool tools/cr3tool.cpp)
-target_link_libraries(cr3tool PRIVATE cr3core)
+if(NOT IOS) # (the command-line tool: not on a phone)
+    add_executable(cr3tool tools/cr3tool.cpp)
+    target_link_libraries(cr3tool PRIVATE cr3core)
+endif()
 
 # The viewer: SDL3 (the system's when present, else built from source as CR1:U does) and OpenGL 3.3
 find_package(SDL3 CONFIG QUIET)
@@ -278,13 +285,37 @@ if(NOT SDL3_FOUND)
 endif()
 # Vulkan back end: the loader + headers and glslc (shaders are compiled to SPIR-V at build time
 # and embedded). Without them the game builds with OpenGL only.
-find_package(Vulkan QUIET)
+# iOS: MoltenVK linked into the app - a MoltenVK release's static xcframework (CR_MOLTENVK: the folder
+# holding its MoltenVK/static and MoltenVK/include) - with no loader: SDL finds vkGetInstanceProcAddr in
+# the program itself (SDL_uikitvulkan.m); glslc the build machine's (the Vulkan SDK's). macOS: a release's
+# universal dylib bundled in place of the SDK's (cmake/apple-vulkan.cmake)
+set(CR_MOLTENVK "" CACHE PATH "A MoltenVK release's MoltenVK folder (MoltenVK/static, MoltenVK/dynamic, MoltenVK/include)")
+if(IOS AND CR_MOLTENVK)
+    set(mvk_lib ${CR_MOLTENVK}/MoltenVK/static/MoltenVK.xcframework/ios-arm64/libMoltenVK.a)
+    if(EXISTS ${mvk_lib})
+        add_library(Vulkan::Vulkan STATIC IMPORTED)
+        set_target_properties(Vulkan::Vulkan PROPERTIES IMPORTED_LOCATION ${mvk_lib}
+            INTERFACE_INCLUDE_DIRECTORIES ${CR_MOLTENVK}/MoltenVK/include
+            INTERFACE_LINK_LIBRARIES "-framework Metal;-framework IOSurface;-framework QuartzCore;-framework UIKit;-framework Foundation;-framework CoreGraphics;c++")
+        set(Vulkan_FOUND TRUE)
+        set(Vulkan_INCLUDE_DIRS ${CR_MOLTENVK}/MoltenVK/include)
+        set(Vulkan_VERSION "MoltenVK (static, iOS)")
+        find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/bin NO_CMAKE_FIND_ROOT_PATH)
+    else()
+        message(WARNING "CR_MOLTENVK: no ${mvk_lib} - OpenGL ES alone")
+    endif()
+elseif(IOS)
+    message(STATUS "iOS without CR_MOLTENVK (a MoltenVK release's MoltenVK folder): OpenGL ES alone")
+endif()
+if(NOT IOS)
+    find_package(Vulkan QUIET)
+endif()
 if(NOT Vulkan_FOUND AND MINGW AND CMAKE_CROSSCOMPILING)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/mingw-vulkan.cmake) # (llvm-mingw: no Vulkan SDK)
 endif()
 find_program(GLSLC glslc HINTS ${Vulkan_GLSLC_EXECUTABLE})
 set(CR_VULKAN OFF)
-if(Vulkan_FOUND AND GLSLC AND NOT ANDROID) # (Android: GLES 3)
+if(Vulkan_FOUND AND GLSLC AND NOT ANDROID) # (Android: GLES 3; iOS: MoltenVK, GLES 3 the fallback)
     set(CR_VULKAN ON)
     set(SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/shaders)
     set(SHADER_OUT ${CMAKE_CURRENT_BINARY_DIR}/shaders)
@@ -391,9 +422,13 @@ if(ANDROID)
 else()
     add_executable(cr3view WIN32 MACOSX_BUNDLE ${VIEWER_SOURCES})
 endif()
-# The GL device on OpenGL ES 3.0: Android's; elsewhere (Mesa's GLES) a test of that path
+# The GL device on OpenGL ES 3.0: Android's and iOS's; elsewhere (Mesa's GLES) a test of that path
 option(CR3_GLES "OpenGL ES 3.0 for the GL device" ${ANDROID})
-if(CR3_GLES)
+if(IOS) # (iPhone, iPad: the system's OpenGLES.framework - <OpenGLES/ES3/gl.h>, gfx/gl.hpp -, which Apple calls deprecated)
+    target_link_libraries(cr3view PRIVATE "-framework OpenGLES" "-framework QuartzCore")
+    target_compile_definitions(cr3view PRIVATE CR_GLES=1 GLES_SILENCE_DEPRECATION=1)
+    message(STATUS "GL device: OpenGL ES 3.0 (OpenGLES.framework)")
+elseif(CR3_GLES)
     find_library(CR3_GLES_LIBRARY NAMES GLESv3 GLESv2 REQUIRED)
     target_link_libraries(cr3view PRIVATE ${CR3_GLES_LIBRARY})
     target_compile_definitions(cr3view PRIVATE CR_GLES=1)
@@ -466,6 +501,16 @@ endif()
 set_target_properties(cr3view PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "Chaos Rings III"
     MACOSX_BUNDLE_GUI_IDENTIFIER "local.preservation.chaosrings3")
+if(IOS) # iPhone and iPad (packaging/ios/Info.plist.in): the app's Documents its game folder (Files, Finder),
+    # landscape, 120 Hz; built unsigned - the .ipa is signed by whoever sideloads it
+    set_target_properties(cr3view PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/ios/Info.plist.in
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${CR_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${CR_VERSION}"
+        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "local.preservation.chaosrings3"
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO")
+endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/app-icon.cmake)
 cr_app_icon(cr3view chaosrings3)
 add_dependencies(cr3view cr_glsl)

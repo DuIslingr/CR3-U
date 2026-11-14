@@ -45,7 +45,8 @@ folder's if that one can't be written), the same layout as putting them there by
   `.rar`, `.7z`, `.zip` or `.vpk` - is decrypted as Vita3K's install does, this game's parts alone.
 
 One copy is the game: the first given starts it. Nothing is read where it was chosen, so the folder it came from can go
-afterwards. (Windows, Linux and macOS; on Android, copy the files over USB as below.)
+afterwards. (Windows, Linux and macOS; on Android, copy the files over USB as below; iOS has no setup
+window - copy them in with the Files app or Finder.)
 
 Or, as before, nothing given on the command line: put your copy in the **game folder** and start
 the program - it finds it by itself. The game folder is:
@@ -56,6 +57,7 @@ the program - it finds it by itself. The game folder is:
 | Linux AppImage | the folder holding the `.AppImage` |
 | macOS | the folder holding `cr3view.app` (its `Contents/Resources/` works too) |
 | Android | `Android/data/local.preservation.chaosrings3/files/` on the shared storage (copy your files there over USB) |
+| iPhone / iPad | the app's Documents: in the Files app *On My iPhone* (or *iPad*) *> Chaos Rings III*, or in Finder's *Files* tab with the device connected (Info.plist's `UIFileSharingEnabled`); `ios/`, `android/` and `vita/` are made there by the "Could not find your copy" box |
 
 (then the working directory too). In it, a folder for each release you have - any one is enough:
 
@@ -99,6 +101,12 @@ phone's too, which shows when there's no copy yet and picks files (folders are c
 The release downloads come with these folders made, each with a `README.txt` saying what
 goes in it.
 
+On an iPhone or iPad the copy has to be in the app's folder ready to read: the iOS build has no setup
+window, doesn't unpack an `.ipa` (an `.ipa` is a `.zip`: unzip it - on a computer, or renamed to `.zip`
+and tapped in the Files app - and copy in its `Payload/ChaosRings3_FINAL_ENG.app`), can't decrypt a Vita dump (copy
+in the installed, decrypted `PCSG00500`) and can't open archives (a fan translation goes into
+`translation/` as its folder). The Android `.apks` works as it is.
+
 CR3-U plays one release at a time: with several, **the first of `vita/`, `android/`, `ios/`** (the
 same order as the other ports take one alone); `--data` picks another. `translation/` is used only
 with the Vita release (the iOS and Android ones have English of their own); a Vita copy with the
@@ -107,7 +115,7 @@ patch already installed shows that English without it.
 If nothing is found the program says where it looked. The older places still work: `ipad/`, `PCSG00500/`, `PCSG00457/`, `ChaosRings3_FINAL_ENG.app/`, `Payload/` or `data/` straight in the game folder.
 To use a copy elsewhere: `--data <a release: its folder, .apks, archive>` (or `CR3_DATA`), `--patch <the rePatch folder>`. Settings and saves go to the profile folder
 (`~/.local/share/DuIslingr/CR3-U/` on Linux; the same folders under `%APPDATA%\` on Windows and
-`~/Library/Application Support/` on macOS), not the game folder. All four ports (CR1:U, CRO-U, CR2-U, CR3-U) look for their copies the same way.
+`~/Library/Application Support/` on macOS and, inside the app, on iOS), not the game folder. All four ports (CR1:U, CRO-U, CR2-U, CR3-U) look for their copies the same way.
 With Vulkan the profile folder also keeps `vulkan-pipelines.bin`: the graphics driver's compiled
 pipelines, so later starts and new screens don't compile them again (safe to delete; another GPU
 or a driver update starts it anew).
