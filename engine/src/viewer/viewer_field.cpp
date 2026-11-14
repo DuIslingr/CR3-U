@@ -4070,6 +4070,16 @@ void Viewer::drawBloomMask() {
     dev->setLighting(b.lighting);
     areaMask.place = cr3::Mat34();
     pose(areaMask, areaMask.animLoaded && areaMask.anim.duration() > 0 ? std::fmod(areaClock, areaMask.anim.duration()) : 0.0f, false);
+    if (area.maskBehind) { // (<kit>m2: CrxSimpleModel::SetColor(0, 0, 0), EntryDepthFunc(GL_GREATER) - only where it's behind the
+        // scene as drawn -, layer 10 alone)
+        const std::array<float, 4> was = {areaMask.tint[0], areaMask.tint[1], areaMask.tint[2], areaMask.tint[3]};
+        areaMask.tint[0] = areaMask.tint[1] = areaMask.tint[2] = 0;
+        dev->setDepthCompare(cr3::RenderDevice::DepthCompare::Greater);
+        drawFigure(areaMask, b.vp.data());
+        dev->setDepthCompare(cr3::RenderDevice::DepthCompare::LessEqual);
+        for (int k = 0; k < 4; ++k) areaMask.tint[k] = was[size_t(k)];
+        return;
+    }
     drawFigure(areaMask, b.vp.data());
     auto black = [&](ViewFigure& f) {
         if (f.meshes.empty()) return;
@@ -4825,6 +4835,82 @@ bool Viewer::goodsPad(bool cycle) {
     return true;
 }
 
+std::vector<int> Viewer::goodsArc() {
+    std::vector<int> arc;
+    for (int g : shownGoods()) arc.push_back(g);
+    if (talkMark.state == 2) arc.push_back(-1); // (the "!": +0x114, counted in +0xf8's checks)
+    return arc;
+}
+
+int Viewer::goodsArcFocus() {
+    const std::vector<int> arc = goodsArc();
+    const int want = talkMark.state == 2 && talkMark.focused ? -1 : focusedGoods();
+    const auto it = std::find(arc.begin(), arc.end(), want);
+    return it == arc.end() ? 0 : int(it - arc.begin());
+}
+
+void Viewer::setGoodsArcFocus(int index) {
+    const std::vector<int> arc = goodsArc();
+    if (arc.empty()) return;
+    const int n = int(arc.size()), g = arc[size_t(((index % n) + n) % n)];
+    if (g < 0) talkMark.focused = true;
+    else talkMark.focused = false, goodsFocus = g;
+    SDL_Log("field: the goods swiped to %d", g);
+}
+
+// the goods' swipe (FieldGoodsMenu::TouchSimplePress / Move / Release; GoodsSwipe). Press: pressed, the place kept, 6 moves to
+// skip; in the corner (right of _05's x, below _01's y) the settling stopped - and here its tap kept for the release. A move:
+// none with fewer than two round the arc (the "!" counted); a first one with no press starts there, 5 to skip; past the
+// skipped ones and right of _05, below _01 the slide takes the move across - or up and down, the larger - over 200; beyond 0.5
+// the focus one back (+0x110 - 1) and the slide 1 less, below -0.5 one on and 1 more. Release: settling (Pose: halved each
+// frame - here each 30th of a second -, 0 under 0.01)
+bool Viewer::goodsPointer(float fx, float fy, int phase) {
+    GoodsSwipe& g = goodsSwipe;
+    const bool live = areaMode && cr3FieldIdle() && cr3Camp.stage == 0 && !toyCam.on && goodsJoints[0] != 0 && !goodsArc().empty();
+    if (!live) {
+        const bool kept = g.tapKept;
+        g = GoodsSwipe();
+        if (phase == 2 && kept) pointerActivate(fx, fy);
+        return false;
+    }
+    float x = 0, y = 0;
+    mobile::BoxSwipe::units(fx, fy, float(screenW) / float(std::max(screenH, 1)), x, y);
+    const bool corner = x > goodsJoints[8] * 200 && y < goodsJoints[1] * 200;
+    if (phase == 0) {
+        g.pressed = true, g.lx = g.px = x, g.ly = g.py = y, g.skip = 6, g.tapKept = false;
+        if (corner) g.settling = false, g.tapKept = true;
+        return g.tapKept;
+    }
+    if (phase == 2) {
+        const bool kept = g.tapKept;
+        g.pressed = false, g.settling = true, g.tapKept = false;
+        // (InterfaceMain::TouchSingleEvent: a tap only where it moved under W x 50 / 960 - taken as 100 -; TouchGestureTap2:
+        // none while the arc slides)
+        if (kept && std::hypot(x - g.px, y - g.py) < 100 && g.slide == 0) pointerActivate(fx, fy);
+        return kept;
+    }
+    const int n = int(goodsArc().size());
+    if (n < 2) return false;
+    if (!g.pressed) {
+        g.pressed = true, g.lx = x, g.ly = y, g.skip = 5;
+        return false;
+    }
+    const int was = g.skip--;
+    if ((g.skip != 0 && was > 0) || x <= goodsJoints[8] * 200) {
+        g.lx = x, g.ly = y;
+        return false;
+    }
+    if (y < goodsJoints[1] * 200) {
+        g.settling = false;
+        const float dx = x - g.lx, dy = y - g.ly;
+        g.slide += (std::abs(dx) > std::abs(dy) ? dx : dy) / 200;
+    }
+    if (g.slide > 0.5f) setGoodsArcFocus(goodsArcFocus() - 1), g.slide -= 1;
+    else if (g.slide < -0.5f) setGoodsArcFocus(goodsArcFocus() + 1), g.slide += 1;
+    g.lx = x, g.ly = y;
+    return false;
+}
+
 // (Fld2NPC::Check 0xa016e0 / Fld2TaskPlayer::CheckGimmickItems 0x879380 / CheckGimmick_Ladder 0x8792fc: the balloon's target)
 void Viewer::talk() {
     if (areaClimb.on || areaFall.on || toyCam.on || !talkFocused()) return;
@@ -4896,6 +4982,15 @@ void Viewer::drawCr3Goods(int w, int h, const Mat4& view) {
     if (!cr3UiCall(menu, "call_feGoodsPanel_03", p3x, p3y)) return;
     float p4x = p3x, p4y = p3y, p5x = p3x, p5y = p3y;
     cr3UiCall(menu, "call_feGoodsPanel_04", p4x, p4y), cr3UiCall(menu, "call_feGoodsPanel_05", p5x, p5y);
+    float p1x = p3x, p1y = p3y, p2x = p3x, p2y = p3y;
+    cr3UiCall(menu, "call_feGoodsPanel_01", p1x, p1y), cr3UiCall(menu, "call_feGoodsPanel_02", p2x, p2y);
+    goodsJoints = {p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y, p5x, p5y};
+    GoodsSwipe& gs = goodsSwipe;
+    const float sinceDrawn = std::clamp(uiClock - gs.drawnAt, 0.0f, 0.25f);
+    gs.drawnAt = uiClock;
+    if (gs.settling && gs.slide != 0) { // (Pose with +0x121: the slide halved, 0 under 0.005 a half)
+        if (gs.slide *= std::pow(0.5f, sinceDrawn * 30.0f); std::abs(gs.slide) < 0.01f) gs.slide = 0;
+    }
     auto iconTime = [](int id) { return id == 4 ? 1.0f / 3 : id == 5 ? 0.26666668f : float(id) / 30; };
     auto drawPanel = [&](int id, float px, float py, float alpha, bool tappable) {
         UiFig& panel = cr3UiPut("fegoodspanel", "fegoodspanel_in", 1.0f, px, py, view, alpha);
@@ -4906,6 +5001,35 @@ void Viewer::drawCr3Goods(int w, int h, const Mat4& view) {
         if (cr3UiCall(icon, "tapAreaCP00", ax, ay) && cr3UiCall(icon, "tapAreaAP00", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, 120 + id));
         else cr3CampTaps.push_back({px - 0.5f, py - 0.5f, px + 0.5f, py + 0.5f, 120 + id});
     };
+    // (Pose with the arc sliding - +0x11c s: the panel in focus from _03 toward _04 (s above 0) or _02 (below), the one before
+    // from _01 toward _02 (above 0), the one after from _05 toward _04 (below); each one's icon scaled 1 - 0.5 x its distance
+    // across from _03 over _03 .. _05 or _01 .. _03, the panel moved (1 - that) x (0.4, -0.4); +0x13c - the name's timer -
+    // from 0 again; the "!" a panel round the arc as the others)
+    if (gs.slide != 0) {
+        const std::vector<int> arc = goodsArc();
+        const int n = int(arc.size()), at = goodsArcFocus();
+        auto place = [&](int index, float x, float y) {
+            const float d = x > p3x ? (x - p3x) / std::max(p5x - p3x, 1e-4f) : (p3x - x) / std::max(p3x - p1x, 1e-4f);
+            const float sc = 1 - 0.5f * d;
+            const int id = arc[size_t(((index % n) + n) % n)];
+            const float keep = cr3UiScale;
+            UiFig& panel = cr3UiPut("fegoodspanel", "fegoodspanel_in", 1.0f, x + (1 - sc) * 0.4f, y - (1 - sc) * 0.4f, view);
+            if (cr3UiCall(panel, "call_feGoodsIcon_fr00", ix, iy)) cr3UiScale = sc, cr3UiPut("fegoodsicon_fr00", "", iconTime(id < 0 ? 4 : id), ix, iy, view);
+            cr3UiScale = keep;
+        };
+        const float s = gs.slide;
+        if (s > 0) {
+            place(at, p3x + 2 * s * (p4x - p3x), p3y + 2 * s * (p4y - p3y));
+            const float f = 2 * (s - 0.5f);
+            place(at - 1, p2x + f * (p2x - p1x), p2y + f * (p2y - p1y));
+        } else {
+            const float f = 2 * s + 1;
+            place(at + 1, p4x + f * (p5x - p4x), p4y + f * (p5y - p4y));
+            place(at, p3x - 2 * s * (p2x - p3x), p3y - 2 * s * (p2y - p3y));
+        }
+        goodsNameAt = uiClock;
+        return;
+    }
     if (!talkUp) return drawPanel(goods, p3x, p3y, 1, true);
     const float k = std::clamp(talkMark.t / 0.1333f, 0.0f, 1.0f);
     const float a = talkMark.state == 1 ? k : talkMark.state == -1 ? 1 - k : 1; // (the "!"'s share)

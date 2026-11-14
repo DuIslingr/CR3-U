@@ -1278,9 +1278,10 @@ void Viewer::applyBloomMask(int fw, int fh) {
         SDL_Log("bloom mask: not on this renderer");
         return;
     }
-    // (BeginScene(main, .., false, true): the depth cleared, the colour kept; layers 10 and 11)
+    // (BeginScene(main, .., false, true): the depth cleared, the colour kept; layers 10 and 11. A random floor's <kit>m2 -
+    // GameSystem +0x56 -: BeginScene(main, .., false, false), the scene's depth kept, layer 10 alone - m2 under GL_GREATER)
     dev->setViewport(float(frameX), float(frameY), float(frameW), float(frameH));
-    dev->clearDepth();
+    if (!area.maskBehind) dev->clearDepth();
     drawBloomMask();
     // (SetBlur(2, 0, 0.013, 3.3); pass 2 - CustomFigure type 6, the bloom's blur - into RT1)
     using Filter = cr3::RenderDevice::Filter;
@@ -1508,6 +1509,8 @@ bool Viewer::menuScroll(int rows) {
 
 void Viewer::cancelPointerInput() {
     menuSwipe = mobile::MenuSwipe();
+    spBoxSwipe = mobile::BoxSwipe();
+    goodsSwipe.pressed = goodsSwipe.tapKept = false, goodsSwipe.settling = true;
     areaDrag = Cr3AreaDrag();
     areaCam = Cr3AreaCam();
     worldSel.dragging = town.dragging = myPage.dragging = false;
@@ -1551,6 +1554,8 @@ bool Viewer::menuPointerUp(float x, float y) {
 
 void Viewer::pointerDown(float fx, float fy) {
     if (eventMode && event && event->vistaPaused) return;
+    spBoxPointer(fx, fy, 0);
+    if (goodsPointer(fx, fy, 0)) return; // (the goods' corner: its tap at the release, a swipe else)
     if (staffListPress(fx, fy)) return; // (the Options' Credits / Copyright Notice: dragged)
     if (!menuPointerDown(fx, fy)) pointerActivate(fx, fy);
 }

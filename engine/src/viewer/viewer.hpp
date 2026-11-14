@@ -1707,6 +1707,7 @@ struct Viewer {
         // (BtlHoldLastAttackDirection's held target: ChangeStayAnimation / ChangeDamageAnimation(0x18) and
         // +0x206 - its stance and hit reactions bt07 till the release)
         bool heldPose = false;
+        int stayType = 0; // (BtlUnit +0x168: its stay's AnimCommon type - cr3Stance)
         Ramp opacity;
         cr3::Vec3 meleeOffset{};
         Ramp meleeStep{0, 0}, meleeTurn{0, 0};
@@ -1999,6 +2000,8 @@ struct Viewer {
     void cr3CountRecords();
     void setCr3Motion(size_t k, const std::string& suffix, bool loop, bool hold = false);
     std::string cr3MotionOf(int type) const;
+    std::string cr3Stance(size_t unit); // (PlayStayAnimation's motion: the shown effects' stay type - ChangeAnim)
+    void flipCr3Stances(const cr3::Cr3Action& a);
     void startCr3Melee(size_t source, size_t target);
     void stepCr3MeleeReturn(size_t source, float actionTime);
     // a unit's joint as last posed (DummyCP its camera point, DummyDP01 where its damage shows)
@@ -3450,6 +3453,20 @@ struct Viewer {
     std::string goodsNameArea;
     float goodsNameAt = 0;
     bool goodsArrowsLogged = false;
+    // the goods' swipe (FieldGoodsMenu::TouchSimplePress 0xa69d78 / TouchSimpleMove 0xa69e0c / TouchSimpleRelease 0xa6a034, in
+    // mobile::BoxSwipe's touch units - 200 a UI unit): +0x11c the arc's slide, +0x120 pressed, +0x121 settling, +0x148 the moves
+    // still skipped, +0x100 / +0x104 the last place; the joints call_feGoodsPanel_01 .. _05 as last drawn; a press in the corner
+    // its tap kept for the release (TouchGestureTap2: none while it slides)
+    struct GoodsSwipe {
+        bool pressed = false, settling = false, tapKept = false;
+        int skip = 0;
+        float lx = 0, ly = 0, px = 0, py = 0, slide = 0, drawnAt = 0;
+    } goodsSwipe;
+    std::array<float, 10> goodsJoints{}; // (x, y of _01 .. _05; 0s: not drawn yet)
+    std::vector<int> goodsArc();         // (the goods round the arc in order, -1 the "!")
+    int goodsArcFocus();
+    void setGoodsArcFocus(int index);
+    bool goodsPointer(float fx, float fy, int phase); // (0 down - true: its tap kept -, 1 a move, 2 up)
     // The talk mark (Fld2BalloonManager::CheckBalloons 0xa07810 / Fld2GoodsButton::ShowExclamationButton 0xa07534): something
     // to check in reach - a feFlag_fr00 balloon over it, and the "!" panel (FieldGoodsMenu's id 4) slid into the goods
     // button over 0.1333 s, focused; while it's focused a tap anywhere on the field talks (Fld2IsExclamationButton)
@@ -4415,6 +4432,8 @@ struct Viewer {
     std::string spBoxHelp(const SpBox& box);
     bool spBoxBuyable(const SpBox& box, int k) const;
     void stepSpBoxes(float dt);
+    mobile::BoxSwipe spBoxSwipe; // (the Lucky Box's swipe: LuckyBoxMenu::TouchSimplePress / Move / Release)
+    void spBoxPointer(float fx, float fy, int phase); // (0 down, 1 a move, 2 up: screen fractions)
     void spBoxPrize();
     void drawSpBoxOpening(const SpBox& box, int w, int h, const Mat4& view);
     bool spBoxKey(SDL_Keycode key);

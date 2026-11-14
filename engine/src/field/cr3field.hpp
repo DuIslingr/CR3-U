@@ -21,6 +21,8 @@ struct Cr3Area {
     std::string name;                 // "d0101"
     std::vector<std::string> figures; // drawn, in order: <area>f, <area>s (those it has; not m1 - a post effect's mask)
     std::string mask;                 // <area>m1 where it has one: drawn only into the bloom mask (PostEffectBloomMask)
+    // (a random area's: <kit>m2 - d0600m2 -, drawn over the scene's depth as it stands with GL_GREATER, alone)
+    bool maskBehind = false;
     std::vector<Mat34> places;        // each figure's (a random area's pieces: at their joints)
     std::array<float, 3> spawn{};     // <area>c's defaultPos
     float spawnYaw = 0;               // (its rotation about y: the way the player faces)

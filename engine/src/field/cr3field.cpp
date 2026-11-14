@@ -108,6 +108,11 @@ bool Cr3Area::load(const MvglArchive& a, const std::string& area, std::string* e
             walls.addScene(solid);
             cameraWalls.addScene(camera);
         }
+        // (CreateAreaRandom 0x86ae60: <kit>m2 - d0600m2 alone ships - built black, GameSystem +0x3c / +0x55 / +0x56 on and
+        // Fld2TaskMap +0xe8 2; Fld2TaskMap::OnDraw keeps the three on at graphic level 1 / 2 - GameSystem +0x108 - only, and
+        // renders it into layer 10 under EntryDepthFunc(GL_GREATER); PostEffectBloomMask with +0x56: the depth not cleared,
+        // layer 10 alone - no player or gimmicks)
+        if (a.contains(kit + "m2.geom")) mask = kit + "m2", maskBehind = true;
         return true;
     }
     // (<area>m1 isn't the scene's: Fld2TaskMap::OnDraw renders it into layer 10 alone - the post

@@ -174,6 +174,11 @@ public:
     virtual void setViewport(float x, float y, float w, float h) = 0;
     virtual void clearDepth() = 0;
     virtual void setColorWrite(bool on) = 0;
+    // The depth test's comparison for the meshes drawn from here on (Framework::RenderSystem::EntryDepthFunc /
+    // ResetDepthFunc: LEQUAL the default; GL_GREATER - 0x204 - for Fld2TaskMap's <kit>m2, drawn only where it's behind
+    // what's there)
+    enum class DepthCompare { LessEqual, Greater };
+    virtual void setDepthCompare(DepthCompare c) = 0;
     // What's drawn kept inside a rectangle (drawable pixels, top-left origin) until switched off -
     // the menus' mask sprites (a list's or a text's window)
     virtual void setClip(bool /*on*/, float /*x*/ = 0, float /*y*/ = 0, float /*w*/ = 0, float /*h*/ = 0) {}

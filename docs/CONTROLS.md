@@ -32,6 +32,11 @@ controller (`feConMove01` .. `03`) showing once it moves or after half a second.
 having moved and it is a tap (a message's page, the check object at hand). The keys, the d-pad and
 the left stick walk as before.
 
+The goods button slides round its arc under a drag from its corner (FieldGoodsMenu::TouchSimpleMove: a panel a
+hundred of the 640-high layout's pixels, the focus moving on past half of one; let go, it settles); a press there
+without a drag is its tap. The Sp Shop's Lucky Boxes swipe: across more than 40 of those pixels, more across than up
+or down, within half a second (LuckyBoxMenu::TouchSimpleRelease) - left the next box, right the one before.
+
 ## CR3's camera and field buttons
 
 The camera turns as the iPad's and Android's releases turn it (Fld2TaskTouch::UpdateTouch,

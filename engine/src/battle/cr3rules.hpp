@@ -181,6 +181,11 @@ struct Cr3Fighter {
     // whose MP is below 0, nothing spent; its MP here 0 of 0)
     bool unlimitedMp = false;
     int stolenGold = 0; // (BtlStatus +0x1e0 - AddGold 0x9b63b0: what its Steal Gold hits took from the party)
+    // (BtlBasicStatus::TakeDamage 0x9ba428: +0x40 each element's HP damage taken this battle - a hit's raw HP change by its
+    // BtlDamage +0x20, the attack element, unless status kind 141 is on -, reset by an enabled skill's kind 114; +0x58 the MP
+    // changes summed - an MP steal's gain, an MP hit's loss, an MP heal -; skill conditions 26 / 27 read them)
+    std::array<int, 7> elementDamage{};
+    int mpChange = 0;
     bool dead() const { return hp <= 0; }
 };
 
@@ -208,6 +213,15 @@ struct Cr3Hit {
     // summed, a recovery; not a target's: no break points, chain, combo or total)
     bool stealBack = false;
 };
+// (BtlDamageTarget::TriggerAfterDamageToCalculation 0x988498's BtlEffectTrigger at triggers 7 / 8: +0x18 the hit's BtlDamage
+// +0x20 - BtlCalculator +0x80, the attack element calculateBasicDamage sets, GetAttackElement 0x9b69c8: 0 for a formula that
+// doesn't run it, taken as cleared once a command -; +0x10 the target's +0x98 - the status effects its command takes away,
+// CalculateStatusEffect 0x9844a8, where a hit landed)
+struct Cr3TriggerHit {
+    int element = -1;
+    const std::vector<int>* removed = nullptr;
+};
+
 struct Cr3Action {
     int source = -1, target = -1, command = -1; // (fighters' indices - the first target; command -1: a guard, -2: unable to act)
     std::vector<int> hits;                      // (the first target's, as Cr3Hit's)
@@ -233,6 +247,9 @@ struct Cr3Action {
     bool assist = false; // (calculateAssist's: its direction BtlAssistDirection, the announcement's {assistant})
     std::vector<std::vector<int>> effectsAfter; // (every fighter's status effects once it is calculated - Cr3BattleRules::snapshotAfter)
     std::vector<int> elementsAfter;             // (every fighter's element then - ChangeElementToCalculation's)
+    // (its points' break - addBreak's trigger 6 and end timing 5 on every unit: the status effects that gave - +1 - or took
+    // away - -1 - {fighter, effect, +-1}; the direction side does the same at that hit, BtlSysStateAction::VUpdate 0x9d2c48)
+    std::vector<std::array<int, 3>> flipChanges;
     // (a field toggle - extraType 0xb, Reverse Gravity 387: BtlFieldEffectList::Add's type 0 - 1 opened, -1 closed; 0 none)
     int fieldToggle = 0;
     // (a call for help - extraType 0x11, action 37: the fallen slot it aimed at, the monster now in it - -1 none -, and
@@ -316,6 +333,7 @@ public:
     bool gaugeStarted = false;
     bool advantage(bool player) const { return player ? gauge > 0 : gauge < 0; }
     bool addBreak(int points); // (true: a break - BtlBreakPoint::Add's +0x31)
+    std::vector<std::array<int, 3>> flipChanges; // (each break's trigger 6 / end 5 changes, appended: Cr3Action::flipChanges)
     // (the party's first strike - BtlStatusList::ClearRatioToEnemy: the monsters' actions this turn
     // none - the next turn() the party's alone)
     bool monstersWait = false;
@@ -480,9 +498,10 @@ public:
     // less (BtlSkill::Trigger 0x9c60a0); then every enabled skill's kind 60 (with the gauge's advantage as it stands) gives
     // its status effect - one held gains an accumulation alone - and its kind 61 takes it away. total: the trigger's HP change
     // (+0x1c: a command's on it, below 0 damage - condition 29); other: the other unit (condition 23 - the command's source).
-    // The newly enabled skills' kinds 97 .. 101 / 126 commands returned (kind, command)
+    // hit: triggers 7 / 8's BtlDamageTarget parts (conditions 9 .. 14, 16). The newly enabled skills' kinds 97 .. 101 / 126
+    // commands returned (kind, command)
     std::vector<std::pair<int, int>> triggerSkills(int fighter, int trigger, int attackKind = 0, bool downed = false, int command = -1,
-                                                   int total = 0, int other = -1);
+                                                   int total = 0, int other = -1, const Cr3TriggerHit* hit = nullptr);
     // BtlStatusEffectUtility::GetCommandChange 0x9b1f30: the unit's first enabled status effect - in the list's slot order,
     // StatusEffect +0x04 - with a kind 120 (0x78) constant of 0 or more: the command it plays instead; -1 none
     int commandChange(const Cr3Fighter& f) const;
@@ -509,7 +528,7 @@ private:
     void markAssist(Cr3Action& a) const;
     // a trigger's condition (BtlStatusEffect::Trigger's / BtlSkill::Trigger's +0x24 / +0x20 and its constant); turns -1: a skill's
     bool conditionHolds(const Cr3Fighter& f, int condition, int constant, int attackKind, bool downed, int turns, int command, int total = 0,
-                        int other = -1) const;
+                        int other = -1, const Cr3TriggerHit* hit = nullptr) const;
     std::array<int, 3>& skillUsesOf(Cr3Fighter& f, int skill, const MbeFile::Row& row); // (the row's +0x10 / +0x14 / +0x18 at first)
     int skillMost(const Cr3Fighter& f, int kind) const; // (the enabled skills' highest constant of the kind - BtlSkillUtility::GetLeastHp 0x9b0368's 53; 0 none)
     std::vector<std::array<int, 3>> turnEndQueue_; // (BtlCommandManager +0x48: source - -1 none -, command, target)
@@ -528,6 +547,9 @@ private:
     float random(); // [0, 1)
     void rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool& crit, bool& down, float& rate);
     int hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool crit, bool down, float rate);
+    // BtlStatus::GetAttackElement 0x9b69c8: the command's element (+0x24); none and physical (+0xc4 1) the unit's own under an
+    // enabled skill kind 75 (with the gauge's advantage as it stands)
+    int attackElement(const Cr3Fighter& s, const Cr3Command& c) const;
     bool effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, int id);
     bool effectInvalid(const Cr3Fighter& t, int id) const; // (HasStatusEffectInvalid: kind 68 - a status effect's or a skill's - of the id)
     // a skill effect of the kind enabled (BtlSkillList::HasEnableEffect): an enabled skill's - one of no trigger, or one its

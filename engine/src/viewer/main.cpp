@@ -171,6 +171,20 @@ void storeSetting(const char* key, const std::string& value) {
 int inputCancelViewerSelfTest() {
     if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
     int problems = 0;
+    { // (round 32: the Lucky Box's swipe - LuckyBoxMenu::TouchSimplePress / Move / Release, in the touch's units)
+        auto swipe = [](float x0, float y0, float x1, float y1, float held) {
+            mobile::BoxSwipe s;
+            s.press(x0, y0), s.move((x0 + x1) / 2, (y0 + y1) / 2), s.step(held), s.move(x1, y1);
+            return s.release(x1, y1);
+        };
+        float ux = 0, uy = 0;
+        mobile::BoxSwipe::units(0.75f, 0.25f, 16.0f / 9.0f, ux, uy);
+        const bool unitsOk = std::abs(ux - 568.89f) < 0.1f && std::abs(uy - 320) < 0.01f;
+        const bool ok = swipe(0, 0, -100, 10, 0.2f) == -1 && swipe(0, 0, 100, -10, 0.2f) == 1 && swipe(0, 0, 70, 0, 0.2f) == 0 &&
+                        swipe(0, 0, 100, 120, 0.2f) == 0 && swipe(0, 0, -100, 0, 0.6f) == 0 && swipe(0, 300, -100, 300, 0.2f) == 0;
+        problems += !ok + !unitsOk;
+        if (!ok || !unitsOk) std::printf("viewer input cancel FAILED: the Lucky Box's swipe\n");
+    }
     {
         Viewer v;
         crinput::CancelWatch watch;
@@ -1793,6 +1807,16 @@ int main(int argc, char** argv) {
                 const bool cancelled = inputCancel.note(e);
                 consumeInputCancel();
                 if (cancelled) continue;
+                if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.vs.screen == 11) { // (the Lucky Box's swipe: TouchSimpleMove)
+                    float fx, fy;
+                    screenFraction(e.motion.x, e.motion.y, fx, fy);
+                    v.spBoxPointer(fx, fy, 1);
+                }
+                if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.areaMode) { // (the goods' swipe: FieldGoodsMenu::TouchSimpleMove)
+                    float fx, fy;
+                    screenFraction(e.motion.x, e.motion.y, fx, fy);
+                    v.goodsPointer(fx, fy, 1);
+                }
                 if (e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
                     if (e.render.windowID == SDL_GetWindowID(win) && !dev->restoreAfterContextLoss()) {
                         SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Unable to restore the OpenGL context");
@@ -2027,6 +2051,8 @@ int main(int argc, char** argv) {
                     if (v.pointerCancelled) continue; // an interrupted gesture cannot activate or finish anything
                     float fx, fy;
                     screenFraction(e.button.x, e.button.y, fx, fy);
+                    v.spBoxPointer(fx, fy, 2); // (the Lucky Box's swipe: TouchSimpleRelease)
+                    if (v.goodsPointer(fx, fy, 2)) { dragging = false; continue; } // (the goods' swipe; its kept tap)
                     if (v.staffListRelease() || v.menuPointerUp(fx, fy)) { dragging = false; continue; }
                     if (!v.areaDrag.own) v.areaDragEnd();
                     v.worldSel.dragging = false; // (the planet let go: spun on)

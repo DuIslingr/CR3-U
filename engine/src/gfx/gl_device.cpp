@@ -426,6 +426,8 @@ public:
         gl::Clear(GL_DEPTH_BUFFER_BIT);
     }
 
+    void setDepthCompare(DepthCompare c) override { depthFunc_ = c == DepthCompare::Greater ? GL_GREATER : GL_LEQUAL; }
+
     void setColorWrite(bool on) override {
         const GLboolean v = on ? GL_TRUE : GL_FALSE;
         gl::ColorMask(v, v, v, v);
@@ -578,7 +580,7 @@ public:
                   const DrawState& st) override {
         gl::UseProgram(meshProgram_);
         gl::FrontFace(GL_CCW);
-        gl::DepthFunc(GL_LEQUAL);
+        gl::DepthFunc(depthFunc_);
         gl::UniformMatrix4fv(uMvp_, 1, GL_FALSE, mvp);
         gl::Uniform4f(uMeshColor_, sh.color[0], sh.color[1], sh.color[2], sh.color[3]);
         gl::Uniform1f(uAlphaRef_, sh.alphaRef);
@@ -768,6 +770,7 @@ private:
     unsigned program_ = 0, vao_ = 0, vbo_ = 0;
     int uProj_ = -1, uColor_ = -1, uTex_ = -1;
     unsigned meshProgram_ = 0, ubo_ = 0;
+    unsigned depthFunc_ = GL_LEQUAL; // (setDepthCompare: the meshes')
     int uMvp_ = -1, uAlphaRef_ = -1, uMeshColor_ = -1, uTexMode_ = -1, uAlphaTex_ = -1, uLight_ = -1;
     int drawableW_ = 0, drawableH_ = 0;
     std::unordered_set<unsigned> mipmapped_; // textures uploaded with a mip chain

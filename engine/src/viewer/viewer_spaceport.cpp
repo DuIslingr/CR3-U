@@ -4654,6 +4654,7 @@ void Viewer::vsAutoSave(const char* from) {
 
 void Viewer::stepVsScript(float dt) {
     stepSpBoxes(dt); // (the Sp Shop's boxes: LuckyBoxMain's timed states)
+    spBoxSwipe.step(dt); // (LuckyBoxMenu::Update: +0xec while pressed)
     // (VSMain::OnUpdate 0x96e2dc state 5: the menu's fade-in - 20 frames at 30 a second - over; +0x74d set and story flag 36 - the
     // VS tutorial in course - clear: +0x74d cleared, c121_701; during the tutorial the latch kept for the next pass)
     if (vsGreetingAt >= 0 && vs.screen != 0 && uiClock - vsGreetingAt >= 20.0f / 30.0f) {
@@ -5136,6 +5137,20 @@ std::string Viewer::spBoxHelp(const SpBox& box) {
     for (size_t k = 0; k < table->rows.size(); ++k)
         if (help.row(*table, k, "ppp", r) && r.s(0) == sheet) return optionLanguage == 0 || r.s(2).empty() ? r.s(1) : r.s(2);
     return {};
+}
+
+// the boxes swiped (mobile::BoxSwipe; TouchSimpleRelease 0xad1d04: the arrows - mpBoxArrowMenu, +0x38 - shown, +0xdc 0,
+// state 1 / 2, +0xd8 cleared - a slide begun, or begun again, as the arrows' taps)
+void Viewer::spBoxPointer(float fx, float fy, int phase) {
+    if (vs.screen != 11 || vs.boxStage != 0) return void(spBoxSwipe = mobile::BoxSwipe());
+    float x = 0, y = 0;
+    mobile::BoxSwipe::units(fx, fy, float(screenW) / float(std::max(screenH, 1)), x, y);
+    if (phase == 0) return spBoxSwipe.press(x, y);
+    if (phase == 1) return spBoxSwipe.move(x, y);
+    const int way = spBoxSwipe.release(x, y);
+    if (!way || vs.boxBuy || spBoxes().size() < 2) return;
+    vs.boxSlide = way < 0 ? 1 : 2, vs.boxSlideAt = uiClock;
+    SDL_Log("shop: the boxes swiped %s", way < 0 ? "left" : "right");
 }
 
 // (LuckyBoxMenu::UpdateBuyPanel 0x00ad1684): a panel Disabled when the free of the 50 held gene slots

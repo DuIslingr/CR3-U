@@ -374,8 +374,8 @@ the kit `d0600` / `d1800`. `<area>c`'s joints named after the kit (d0600part05_0
 mirroring on that axis) each place a piece: `<piece>c.phys` with every body moved to the joint (its
 position and rotation; the mirror its shape's scaling), and - by `<area>f`'s joints of those names,
 placed at `<area>c`'s - `<piece>f` and `<piece>s` drawn there (d0600_00: the kit's own d0600f, the sky
-and the lights, at the origin). `<area>f` itself is drawn at the origin; d0600m2 (blackened) isn't in
-CR3-U. A piece placed mirrored draws with culling off (Fld2TaskMap::OnDraw: EntryCullFaceEnable(false)).
+and the lights, at the origin). `<area>f` itself is drawn at the origin; d0600m2 (blackened) is the kit's bloom mask, drawn
+under GL_GREATER over the scene's depth (Viewer::applyBloomMask; RenderDevice::setDepthCompare). A piece placed mirrored draws with culling off (Fld2TaskMap::OnDraw: EntryCullFaceEnable(false)).
 `<area>m1` is never the scene's: OnDraw renders it into layer 10 alone - a post effect's mask, a black
 stand-in of the whole field (Primordia's, the Edge of the World's: one untextured black mesh) - drawn
 by Viewer::applyBloomMask (PostEffectBloomMask: what it leaves uncovered, the sky, glows; CR3_BLOOM_MASK
@@ -1628,8 +1628,9 @@ kinds 1, 3, 6 raised 1.2): 1 MISSED! (the damage's +0x6b), 3 blocked (+0x6e, SE 
 CR3-U has the base, element, resistances (skills, equipment), level, command multiplier, spread,
 criticals, downs and combos, misses, status effects (their numbers, turns, menu, no action, HP a
 turn, triggers and end timings, stacks and icons), the delay of the downed, the break gauge, heals,
-conditional skills, evasion, items' effects and Team Play; not yet "Damage Multi", "Target Skill"
-or the skill conditions 9 .. 14, 16, 26, 27 (untraced: never true).
+conditional skills (all their conditions: 9 .. 14 the hit's element, 16 the effects taken away, 26 the bolt
+damage taken, 27 the MP changes summed - round 32), evasion, items' effects and Team Play; not yet "Damage
+Multi", "Target Skill" or kind 117 (the Mimics': no KO at 0 HP).
 Against the reference (part 1): the hero's
 first hit 352 at Even (CR3-U: 400 / 170 x 90 x 0.5 x 3.5 = 371, spread 352 - 389), a later one
 576 at Player (x 1.5: 528 - 584); Gunner's four 34 and Axer's 40 (32 - 36 and 38 - 42: the

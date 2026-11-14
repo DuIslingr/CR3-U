@@ -676,11 +676,21 @@ bool Cr3BattleRules::addBreak(int points) {
     // (the step added, the observers notified, then the points: BtlCommandManager::VUpdate(BtlBreakPoint const&) 0x7db17c -
     // +0x31 set - AllTriggerSkillToCalculation with trigger 6, attack kind 0, command -1 on every unit, then
     // AllEndEffectToCalculation(5); the advantage already the new side's - Emergency Guard 126 guards the side that lost
-    // it, its advantage pair empty. The fallen left out: whether the status list's walk takes them unsettled)
+    // it, its advantage pair empty. The fallen too: neither the list's walk - BtlStatusList::AllTriggerSkillToCalculation
+    // 0x9bfe98 / TriggerSkillToCalculation 0x9bfdac -, BtlStatus::TriggerSkillToCalculation 0x9b3488, BtlSkillList::Trigger
+    // - the "always" chances visitor - nor BtlStatusEffectList::Add 0x9b75c8 tests KO: a fallen unit's Emergency Guard guards it)
     if (broke) {
+        std::vector<std::vector<int>> before(fighters.size());
         for (size_t k = 0; k < fighters.size(); ++k)
-            if (!fighters[k].dead()) (void)triggerSkills(int(k), 6);
+            for (const auto& e : fighters[k].effects) before[k].push_back(e.first);
+        for (size_t k = 0; k < fighters.size(); ++k) (void)triggerSkills(int(k), 6);
         for (size_t k = 0; k < fighters.size(); ++k) endEffects(int(k), 5);
+        for (size_t k = 0; k < fighters.size(); ++k) {
+            for (const auto& e : fighters[k].effects)
+                if (std::find(before[k].begin(), before[k].end(), e.first) == before[k].end()) flipChanges.push_back({int(k), e.first, 1});
+            for (int id : before[k])
+                if (!hasEffect(int(k), id)) flipChanges.push_back({int(k), id, -1});
+        }
     }
     gauge = std::clamp(gauge + points, -1000, 1000);
     return broke;
@@ -716,6 +726,11 @@ void Cr3BattleRules::rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, c
     // (calculateDown: the target downs where the element's rate is above 1, on a critical, where the
     // command always downs - bit 6 - or where it is already down)
     down = crit || t.comboChance || rate > 1.0f || (c.flags & 0x40);
+}
+
+int Cr3BattleRules::attackElement(const Cr3Fighter& s, const Cr3Command& c) const {
+    if (c.element != 0) return c.element;
+    return c.elementC4 == 1 && skillEnabled(s, 75) ? s.element : 0;
 }
 
 int Cr3BattleRules::hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool crit, bool down, float rate) {
@@ -1608,6 +1623,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             int dealt = 0;          // (the hits' HP damage, summed: BtlDamageTarget's GetTotalDamage)
             bool damaging = false;  // (the hits worked out on the HP as they come, then put back for trigger 5)
             bool downedHere = false;
+            int hitElement = 0; // (the hits' BtlDamage +0x20: the attack element where calculateBasicDamage ran, else 0)
             // (BtlBasicStatus::TakeDamage 0x9b41c4: no lower than the least HP - the status effects' kind 53 a number, 121 a
             // percentage of the max - an endure -, and BtlSkillUtility::GetLeastHp 0x9b0368: the enabled skills' highest kind 53,
             // Narrow Escape's / Blue-Moon Brave's 1; a skill's added command past it - the spider's finisher)
@@ -1622,13 +1638,13 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 if (c.damage == 16 || c.damage == 17) { // (calculateConstantMpHeal / calculatePercentMpHeal: colour 4)
                     const int m = c.damage == 16 ? std::max(c.power, 0) : std::max(int(float(t.maxMp) * float(c.power) / 100.0f), 0);
                     hit.hits.push_back(0), hit.mpHits.push_back(-m), hit.flags.push_back(0), hit.colors.push_back(4);
-                    t.mp = std::min(t.mp + m, t.maxMp);
+                    t.mp = std::min(t.mp + m, t.maxMp), t.mpChange += m;
                 } else if (c.damage == 18) { // (calculatePercentHpMpHeal: Elixir / Continue - both HP and MP)
                     const int h = std::max(int(float(t.maxHp) * float(c.power) / 100.0f), 1);
                     const int m = std::max(int(float(t.maxMp) * float(c.power) / 100.0f), 0);
                     hit.hits.push_back(-h), hit.mpHits.push_back(-m), hit.flags.push_back(0), hit.colors.push_back(3);
                     t.hp = std::min(std::max(t.hp, 0) + h, t.maxHp);
-                    t.mp = std::min(t.mp + m, t.maxMp);
+                    t.mp = std::min(t.mp + m, t.maxMp), t.mpChange += m;
                 } else {
                     int h = 1;
                     if (c.damage == 5) h = heal(s, c);
@@ -1656,6 +1672,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 bool critUnit = false, downUnit = false, critShown = false;
                 float rate = 1;
                 rollCritAndDown(u, t, c, critUnit, downUnit, rate);
+                hitElement = c.damage == 8 || c.damage == 24 ? 0 : attackElement(u, c); // (8 / 24: no calculateBasicDamage)
                 const uint8_t elemColor = rate < 1.0f ? 2 : rate > 1.0f ? 1 : 0;
                 const int hitsOn = c.target == 6 ? perAction * actionsOn[coveredFrom >= 0 ? coveredFrom : chosen] : c.hits;
                 for (int wh = 0; wh < hitsOn; ++wh) {
@@ -1672,7 +1689,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                         int m = hitDamage(u, t, c, critUnit, downUnit, rate);
                         m = partyUnhurt && t.player ? 0 : std::clamp(m, 0, t.mp);
                         hit.hits.push_back(0), hit.mpHits.push_back(m), hit.flags.push_back(0), hit.colors.push_back(4);
-                        t.mp = std::max(t.mp - m, 0);
+                        t.mp = std::max(t.mp - m, 0), t.mpChange -= m;
                         continue;
                     }
                     if (c.damage == 21) { // (calculateStealGold: the physical damage - CommandFomula 20, chain -1 -
@@ -1728,6 +1745,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     // (calculateHpFluctuation 0x7e35e0: an HP steal - +0xbd bit 5 - skips the element's absorb test and
                     // takes no more than the target has)
                     if (c.flags & 0x2000) d = std::min(d, std::max(t.hp, 0));
+                    // (TakeDamage: the raw HP change into +0x40 by its element, unless status kind 141 - se 162 - is on)
+                    if (d > 0 && !hasKind(t, 141)) t.elementDamage[size_t(std::clamp(hitElement, 0, 6))] += d;
                     const bool markCrit = critUnit && !critShown && c.damage != 8 && c.damage != 24 && !blocked;
                     if (markCrit) critShown = true;
                     hit.hits.push_back(d);
@@ -1811,14 +1830,17 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 endEffects(ti, 8);
             } else if (!(hit.flags[0] & 4)) {
                 const bool firstDown = (hit.flags[0] & 2) != 0, firstBlocked = (hit.flags[0] & 8) != 0;
-                (void)triggerSkills(ti, 7, c.elementC4, firstDown, cmd, 0, src);
+                // (+0x98: the command's take-aways where it landed - extra type 4's go to +0xe0 instead)
+                const std::vector<int> noneRemoved;
+                const Cr3TriggerHit th{hitElement, landed && c.extraType != 4 ? &c.removes : &noneRemoved};
+                (void)triggerSkills(ti, 7, c.elementC4, firstDown, cmd, 0, src, &th);
                 queueEffectCommands(ti, triggerEffects(ti, 7, c.elementC4, firstDown), src);
                 endEffects(ti, 6);
                 int change = 0;
                 for (size_t h = 0; h < hit.hits.size(); ++h)
                     if (!(hit.flags[h] & 4)) change += hit.hits[h];
                 if (!firstBlocked && change >= 0) {
-                    (void)triggerSkills(ti, 8, c.elementC4, false, cmd, 0, src);
+                    (void)triggerSkills(ti, 8, c.elementC4, false, cmd, 0, src, &th);
                     queueEffectCommands(ti, triggerEffects(ti, 8, c.elementC4), src);
                     endEffects(ti, 7);
                 }
@@ -1872,7 +1894,9 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                         points *= s.player ? 1 : -1;
                         if (resetFront && &th == &a.targets.front()) // (its first landed hit: -gauge, the kill bonus its own)
                             points = -gauge + (th.killed && int(h) == lastLanded ? table[3] * (s.player ? 1 : -1) : 0), resetFront = false;
+                        flipChanges.clear();
                         a.broke |= addBreak(points); // (BtlDamageTarget::AddBreakPointToCalculation: event 3)
+                        a.flipChanges.insert(a.flipChanges.end(), flipChanges.begin(), flipChanges.end());
                     }
                     th.gauge.push_back(gauge);
                 }
@@ -1907,6 +1931,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 hpSum += hp, mpSum += mp;
             }
             s.hp = std::min(s.hp + std::max(hpSum, 0), s.maxHp), s.mp = std::min(s.mp + std::max(mpSum, 0), s.maxMp);
+            s.mpChange += mpSum; // (TakeDamage's +0x58: the change as it is, before the clamp)
             back.hpAfter = s.hp, back.mpAfter = s.mp;
             a.targets.push_back(back);
         }
@@ -2335,10 +2360,13 @@ std::vector<std::pair<int, int>> Cr3BattleRules::triggerEffects(int fi, int trig
 // at or over the constant's %, 4 the command the unit's own attack (param +0x48 - VGetAttackCommandId, vtable +0xb0 - against
 // +8, neither -1), 5 not downed and physical, 15 physical or magic, 19 the command the constant, 21 holding status effect
 // the constant, 23 the other unit's HP at or under it, 24 / 25 the device's hour in 6 .. 17 / outside, 28 every foe's HP at
-// or under it, 29 HP + the trigger's HP change at 0 or under at the constant's % or over (Narrow Escape 134); the rest - 9 ..
-// 14, 16, 26, 27 - not traced: never)
+// or under it, 29 HP + the trigger's HP change at 0 or under at the constant's % or over (Narrow Escape 134); 9 .. 14 param
+// +0x18 1 .. 6 - at triggers 7 / 8 the hit's attack element: Adam 604's 480 - 485, the magma worms' 423 / 424 -, 16 the list at
+// +0x10 holding the constant - the target's taken-away effects: Counter Ignition 85's KO, a revive -, 26 BtlBasicStatus +0x40's
+// [4] - the bolt damage taken - at the constant's % of the max HP or over (the robots' 405 / 442 short circuit), 27 its +0x58 -
+// the MP changes summed - at the constant or over (the Mimics' 432); the rest never)
 bool Cr3BattleRules::conditionHolds(const Cr3Fighter& f, int cond, int c, int attackKind, bool downed, int turns, int cmd, int total,
-                                    int other) const {
+                                    int other, const Cr3TriggerHit* hit) const {
     const auto hpAtLeast = [&](int pct) { return f.maxHp > 0 && int64_t(f.hp) * 100 >= int64_t(pct) * f.maxHp; };
     switch (cond) {
     case 0: return true;
@@ -2348,6 +2376,8 @@ bool Cr3BattleRules::conditionHolds(const Cr3Fighter& f, int cond, int c, int at
     case 5: return !downed && attackKind == 1;
     case 6: return attackKind == 1;
     case 7: return attackKind == 2;
+    case 9: case 10: case 11: case 12: case 13: case 14: return hit && hit->element == cond - 8;
+    case 16: return hit && hit->removed && std::find(hit->removed->begin(), hit->removed->end(), c) != hit->removed->end();
     case 15: return attackKind == 1 || attackKind == 2;
     case 17: return turns >= 0 && turns <= c;
     case 18: return f.hp >= c;
@@ -2376,12 +2406,15 @@ bool Cr3BattleRules::conditionHolds(const Cr3Fighter& f, int cond, int c, int at
             if (o.player != f.player && o.hp > c) return false;
         return true;
     }
+    case 26: return f.maxHp > 0 && float(f.elementDamage[4]) / float(f.maxHp) >= float(c) / 100.0f;
+    case 27: return f.mpChange >= c;
     case 29: return f.hp + total <= 0 && hpAtLeast(c);
     default: return false;
     }
 }
 
-std::vector<std::pair<int, int>> Cr3BattleRules::triggerSkills(int fi, int trigger, int attackKind, bool downed, int cmd, int total, int other) {
+std::vector<std::pair<int, int>> Cr3BattleRules::triggerSkills(int fi, int trigger, int attackKind, bool downed, int cmd, int total, int other,
+                                                               const Cr3TriggerHit* hit) {
     std::vector<std::pair<int, int>> added;
     if (!tables_ || fi < 0 || size_t(fi) >= fighters.size() || trigger < 0) return added;
     const std::vector<int> skills = fighters[size_t(fi)].skills; // (a copy: a given effect may not touch it, but be safe)
@@ -2396,7 +2429,7 @@ std::vector<std::pair<int, int>> Cr3BattleRules::triggerSkills(int fi, int trigg
             Cr3Fighter& f = fighters[size_t(fi)];
             std::array<int, 3>& uses = skillUsesOf(f, id, r);
             if (uses[0] == 0 || uses[1] == 0 || uses[2] == 0) continue;
-            if (!conditionHolds(f, r.i(8), r.i(9), attackKind, downed, -1, cmd, total, other)) continue;
+            if (!conditionHolds(f, r.i(8), r.i(9), attackKind, downed, -1, cmd, total, other, hit)) continue;
             const bool adv = advantage(f.player);
             const int chance = r.i(adv ? 16 : 11);
             if (chance < 256 && !(int(random() * 256.0f) < chance)) continue;
@@ -2419,6 +2452,8 @@ std::vector<std::pair<int, int>> Cr3BattleRules::triggerSkills(int fi, int trigg
                 else if (!effectInvalid(fighters[size_t(fi)], value)) giveEffect(fi, value, false, true);
             }
         }
+    // (then an enabled kind 114 - the robots' short circuit - clears the element damage taken: ResetAccumulationElementDamage)
+    if (skillEnabled(fighters[size_t(fi)], 114)) fighters[size_t(fi)].elementDamage.fill(0);
     return added;
 }
 
@@ -2596,13 +2631,13 @@ Cr3Action Cr3BattleRules::resolveSourceless(int id, int target) {
         if (c.damage == 16 || c.damage == 17) {
             const int m = c.damage == 16 ? std::max(c.power, 0) : std::max(int(float(t.maxMp) * float(c.power) / 100.0f), 0);
             hit.hits.push_back(0), hit.mpHits.push_back(-m), hit.flags.push_back(0), hit.colors.push_back(4);
-            t.mp = std::min(t.mp + m, t.maxMp);
+            t.mp = std::min(t.mp + m, t.maxMp), t.mpChange += m;
         } else if (c.damage == 18) { // (calculatePercentHpMpHeal: 72 Special Support's - HP and MP, a revive's too)
             const int h = std::max(int(float(t.maxHp) * float(c.power) / 100.0f), 1);
             const int m = std::max(int(float(t.maxMp) * float(c.power) / 100.0f), 0);
             hit.hits.push_back(-h), hit.mpHits.push_back(-m), hit.flags.push_back(0), hit.colors.push_back(3);
             t.hp = std::min(std::max(t.hp, 0) + h, t.maxHp);
-            t.mp = std::min(t.mp + m, t.maxMp);
+            t.mp = std::min(t.mp + m, t.maxMp), t.mpChange += m;
         } else if (c.damage == 5 || c.damage == 6 || c.damage == 7) {
             const int h = c.damage == 7 ? std::max(int(float(t.maxHp) * float(c.power) / 100.0f), 1) : std::max(c.power, 1);
             hit.hits.push_back(-h), hit.mpHits.push_back(0), hit.flags.push_back(0), hit.colors.push_back(3);

@@ -1434,7 +1434,7 @@ void Viewer::updateCr3Battle(float dt) {
     for (size_t k = 0; k < cr3BattleUnits.size(); ++k) {
         Cr3BattleUnitView& u = cr3BattleUnits[k];
         if (u.motionLoop || u.motionHold || !u.body.animLoaded) continue;
-        if (cr3BattleClock - u.motionStart >= u.body.anim.duration()) setCr3Motion(k, "bb01", true);
+        if (cr3BattleClock - u.motionStart >= u.body.anim.duration()) setCr3Motion(k, cr3Stance(k), true);
     }
 }
 
@@ -1478,6 +1478,39 @@ std::string Viewer::cr3MotionOf(int type) const {
     return type >= 0 && size_t(type) < cr3AnimCommon.size() ? cr3AnimCommon[size_t(type)] : std::string();
 }
 
+// the stance a unit goes back to (BtlUnit::PlayStayAnimation 0x9dbbf4: changeRequest(+0x168)). +0x168 is set by
+// BtlStatusEffectList::ChangeAnim 0x9b7e50 at every direction-side status change: the last of the unit's effects, in their
+// slots' order (StatusEffect +0x04), whose +0x84 isn't -2 - Guard 2's 3 (bg01), 35 / 79's 3, holds' 18 .. 23 -, else 0 (bb01);
+// BtlUnit::ChangeStayAnimation 0x9dce24 keeps the one it had where the model has no such motion. The effects as shown
+std::string Viewer::cr3Stance(size_t k) {
+    if (k >= cr3BattleUnits.size()) return "bb01";
+    Cr3BattleUnitView& view = cr3BattleUnits[k];
+    int fi = -1;
+    for (size_t f = 0; f < cr3Rules.fighters.size(); ++f)
+        if (cr3Rules.fighters[f].unit == int(k)) fi = int(f);
+    if (fi >= 0) {
+        std::vector<int> ids;
+        if (size_t(fi) < cr3EffectsShown.size()) ids = cr3EffectsShown[size_t(fi)];
+        else
+            for (const auto& e : cr3Rules.fighters[size_t(fi)].effects) ids.push_back(e.first);
+        std::vector<std::pair<int, int>> slots; // (slot, stay type)
+        cr3::MbeFile::Row r;
+        for (int id : ids)
+            if (cr3BattleTables.skill.find("StatusEffect", id, "iiiiiiiiiiiiiiiiiiiiiii_ipiiiiiiii", r)) slots.emplace_back(r.i(1), r.i(30));
+        std::stable_sort(slots.begin(), slots.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        int type = 0;
+        for (const auto& [slot, stay] : slots)
+            if (stay != -2) type = stay;
+        const std::string motion = cr3MotionOf(type);
+        if (!motion.empty() && view.body.animLoaded) {
+            const std::string base = motionBase(view.body.name.substr(0, view.body.name.size() - 5));
+            if (std::find(view.body.anims.begin(), view.body.anims.end(), base + "_" + motion + ".anim") != view.body.anims.end()) view.stayType = type;
+        }
+    }
+    const std::string motion = cr3MotionOf(view.stayType);
+    return motion.empty() ? "bb01" : motion;
+}
+
 void Viewer::startCr3Melee(size_t source, size_t target) {
     Cr3BattleUnitView& view = cr3BattleUnits[source];
     const cr3::Cr3BattleUnit& actor = cr3Battle.units[source];
@@ -1507,7 +1540,7 @@ void Viewer::stepCr3MeleeReturn(size_t source, float actionTime) {
     if (view.motion == "bo04") {
         if (cr3BattleClock < std::max(view.meleeStep.start + view.meleeStep.time, view.meleeTurn.start + view.meleeTurn.time)) return;
         cr3ActionPlay.melee = false;
-        setCr3Motion(source, "bb01", true);
+        setCr3Motion(source, cr3Stance(source), true);
         SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "battle %.2f s: %s returns to stance", cr3BattleClock, cr3Battle.units[source].name.c_str());
         return;
     }
@@ -1517,7 +1550,7 @@ void Viewer::stepCr3MeleeReturn(size_t source, float actionTime) {
         view.meleeStep = Ramp{0, 0};
         view.meleeTurn = Ramp{0, 0};
         cr3ActionPlay.melee = false;
-        setCr3Motion(source, "bb01", true);
+        setCr3Motion(source, cr3Stance(source), true);
         return;
     }
     const auto& back = cr3ActionPlay.returnTravel;
@@ -1622,7 +1655,7 @@ void Viewer::restoreCr3Unit(size_t k) {
     const bool revive = view.knockedOut && (cr3Battle.units[k].modelFlags & 2);
     view.knockedOut = false;
     view.opacity = Ramp();
-    setCr3Motion(k, "bb01", true);
+    setCr3Motion(k, cr3Stance(k), true);
     if (revive) setCr3Motion(k, cr3MotionOf(8), false);
 }
 
@@ -1993,6 +2026,28 @@ void Viewer::commentCr3AfterDamage(const cr3::Cr3Action& a) {
     if (!picks.empty()) cutInVsComment(picks[size_t(SDL_rand(int32_t(picks.size())))]);
 }
 
+// the gauge's flip on the direction side (BtlSysStateAction::VUpdate(BtlBreakPoint) 0x9d2c48, the break's +0x31): trigger 6 and
+// end timing 5 on every unit - AllTriggerSkillToDirection / AllEndEffectToDirection, their status effects shown (Emergency
+// Guard's 2) -, then PlayStayAnimation for every unit whose playing animation is 0 (the plain stay, bb01): its stance anew
+void Viewer::flipCr3Stances(const cr3::Cr3Action& a) {
+    for (const auto& [fi, id, sign] : a.flipChanges) {
+        if (size_t(fi) >= cr3EffectsShown.size()) continue;
+        std::vector<int>& shown = cr3EffectsShown[size_t(fi)];
+        const auto it = std::find(shown.begin(), shown.end(), id);
+        if (sign > 0 && it == shown.end()) shown.push_back(id);
+        else if (sign < 0 && it != shown.end()) shown.erase(it);
+    }
+    for (size_t k = 0; k < cr3BattleUnits.size(); ++k) {
+        Cr3BattleUnitView& u = cr3BattleUnits[k];
+        if (u.knockedOut || u.heldPose || !u.motionLoop || u.motion != cr3MotionOf(0)) continue;
+        const std::string stance = cr3Stance(k);
+        if (stance != u.motion) {
+            setCr3Motion(k, stance, true);
+            SDL_Log("battle %.2f s: the gauge's flip - %s's stance %s", cr3BattleClock, cr3Battle.units[k].name.c_str(), stance.c_str());
+        }
+    }
+}
+
 void Viewer::beginCr3Turn(bool countTurn) {
     cr3TurnEndStep = 0, cr3DefeatPlayed = false; // (a turn's end to come)
     if (countTurn) ++cr3Turn; // (BtlSysStateSelect::phaseStart)
@@ -2007,6 +2062,14 @@ void Viewer::beginCr3Turn(bool countTurn) {
     cr3Choices.clear(), cr3TurnItems.clear();
     closeCr3Totals();
     cr3EffectsShown.clear(), cr3ElementShown.clear(); // (the rules' own while choosing)
+    // (phaseStart's BtlUnitList::StopGuardAnimation 0x9d6d54: PlayStayAnimation for every unit - a guard's bg01 gone with its
+    // Guard at the turn's end)
+    if (countTurn)
+        for (size_t k = 0; k < cr3BattleUnits.size(); ++k) {
+            Cr3BattleUnitView& u = cr3BattleUnits[k];
+            if (u.knockedOut || u.heldPose || !u.motionLoop || u.scriptHidden) continue;
+            if (const std::string stance = cr3Stance(k); stance != u.motion) setCr3Motion(k, stance, true);
+        }
     cr3Chooser = -1;
     cr3BattleStage = Cr3BattleStage::Menu, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0, cr3TabLit = 0;
     playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0);
@@ -2481,7 +2544,7 @@ bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
         if (!targetCamera.empty() && cr3Cam.name == targetCamera) {
             view.meleeOffset = {}, view.meleeStep = Ramp{0, 0};
             for (Cr3BattleUnitView& u : cr3BattleUnits) u.directionHidden = false;
-            setCr3Motion(su, "bb01", true);
+            setCr3Motion(su, cr3Stance(su), true);
             cr3White = Ramp{0, 0};
             cr3LastAttack = Cr3LastAttack();
             cr3ActionPlay.end = baseEnd;
@@ -2504,7 +2567,7 @@ void Viewer::stepCr3LastAttack() {
     Cr3BattleUnitView& view = cr3BattleUnits[cr3LastAttack.unit];
     if (!cr3LastAttack.restored && cr3BattleClock >= cr3LastAttack.whiteEnd) {
         cr3LastAttack.restored = true;
-        setCr3Motion(cr3LastAttack.unit, "bb01", true);
+        setCr3Motion(cr3LastAttack.unit, cr3Stance(cr3LastAttack.unit), true);
         view.meleeOffset = {}, view.meleeStep = Ramp{0, 0};
         for (Cr3BattleUnitView& u : cr3BattleUnits) u.directionHidden = false;
         cr3White.begin(cr3BattleClock, 1, 1, 0);
@@ -2836,7 +2899,11 @@ void Viewer::stepCr3Action() {
             const int d = th.hits[h];
             const int mpD = h < th.mpHits.size() ? th.mpHits[h] : 0;
             const uint8_t flags = h < th.flags.size() ? th.flags[h] : 0;
-            if (h < th.gauge.size()) cr3GaugeShown = th.gauge[h];
+            if (h < th.gauge.size()) {
+                const int was = cr3GaugeShown;
+                cr3GaugeShown = th.gauge[h];
+                if ((was > 0 && cr3GaugeShown <= 0) || (was < 0 && cr3GaugeShown >= 0)) flipCr3Stances(a);
+            }
             const size_t tu = size_t(cr3Rules.fighters[size_t(th.target)].unit);
             int& shown = cr3HpShown[size_t(th.target)];
             const int shownBefore = shown;
@@ -2892,7 +2959,7 @@ void Viewer::stepCr3Action() {
             if (Cr3LastAttack& la = cr3LastAttack; la.on && la.kind == 30 && la.holding && !la.released) { // (the hold's event 3)
                 la.released = true;
                 cr3BattleUnits[la.holdUnit].heldPose = false;
-                setCr3Motion(la.holdUnit, "bb01", true);
+                setCr3Motion(la.holdUnit, cr3Stance(la.holdUnit), true);
                 releaseCr3Hold(a.source);
                 SDL_Log("battle %.2f s: a hold last attack's release at its last hit", cr3BattleClock);
             }

@@ -187,6 +187,9 @@ int main() {
         row({{0,1111}, {1,1}, {4,3}, {5,30000}, {8,0x101}, {32,4}, {33,1}, {34,1}});
         row({{0,1112}, {1,0}, {4,3}, {5,10}, {8,0x101}, {32,0x14}, {33,1}, {34,1}}); // (1112: one that can be critical)
         row({{0,1525}, {1,4}, {4,0}, {8,0x100}, {13,1}, {32,0xc}, {33,40}}, {{14, {88}}});
+        // Round 32: 1113 / 1114 as 1100, of element 1 (fire) / 4 (bolt) - +0x24
+        row({{0,1113}, {1,1}, {4,3}, {5,10}, {8,0x101}, {9,1}, {32,4}, {33,1}, {34,1}});
+        row({{0,1114}, {1,1}, {4,3}, {5,10}, {8,0x101}, {9,4}, {32,4}, {33,1}, {34,1}});
         Table formulas{"CommandFomula", "iiii", {
             {{0,21},{2,21},{3,uint32_t(-1)}},
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
@@ -234,6 +237,16 @@ int main() {
             {{0,452}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {11,256}, {12,61}, {13,88}, {16,256}, {17,60}, {18,88}},
             {{0,604}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {11,256}, {12,60}, {13,301}, {16,256}, {17,60}, {18,301}},
             {{0,113}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,12}, {8,24}, {10,11}, {11,256}, {12,45}, {13,10}, {16,256}, {17,45}, {18,10}},
+            // Round 32, as the release's but for their commands (here kind 60 -> 88 / 2): 480 / 481 Adam's (trigger 7, condition 9
+            // / 10 - a fire / ice hit -, end 6, once a command); 85 Counter Ignition (trigger 7, condition 16 of 1 - KO taken
+            // away -, end 6); 405 the robots' short circuit (trigger 7, condition 26 at 30 %, end 6: kind 114 too); 432 the Mimics'
+            // (trigger 4, condition 27 of 1, end 10: kind 117 1)
+            {{0,480}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,1}, {7,7}, {8,9}, {10,6}, {11,256}, {12,60}, {13,88}, {16,256}, {17,60}, {18,88}},
+            {{0,481}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,1}, {7,7}, {8,10}, {10,6}, {11,256}, {12,60}, {13,2}, {16,256}, {17,60}, {18,2}},
+            {{0,85}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,7}, {8,16}, {9,1}, {10,6}, {11,256}, {12,60}, {13,88}, {16,256}, {17,60}, {18,88}},
+            {{0,405}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,7}, {8,26}, {9,30}, {10,6}, {11,256}, {12,60}, {13,88}, {14,114},
+             {16,256}, {17,60}, {18,88}, {19,114}},
+            {{0,432}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {7,4}, {8,27}, {9,1}, {10,10}, {11,256}, {12,117}, {13,1}, {16,256}, {17,117}, {18,1}},
         }};
         Table statusEffects{"StatusEffect", "iiiiiiiiiiiiiiiiiiiiiii_ipiiiiiiii", {
             {{0,1}, {1,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}},
@@ -1331,6 +1344,59 @@ int main() {
                 r.giveEffect(0, 502), r.monstersWait = true;
                 (void)r.turn({{0, 1102, 0}});
                 check(uses(0, 502) == 4, "a status command (no hits): trigger 9");
+            }
+            // Round 32, BtlSkill::Trigger's conditions 9 .. 14 (trigger 7's +0x18: the hit's attack element - BtlDamage +0x20)
+            {
+                cr3::Cr3BattleRules r; fresh(r, 64);
+                r.fighters[2].skills = {480, 481};
+                (void)r.turn({{0, 1113, 2}});
+                check(r.hasEffect(2, 88) && !r.hasEffect(2, 2), "condition 9: a fire hit enables 480, not 481 (condition 10: ice)");
+                check(r.fighters[2].elementDamage[1] > 0 && r.fighters[2].elementDamage[4] == 0, "TakeDamage: the fire hit's HP damage counted as fire's");
+                r.removeEffect(2, 88), r.monstersWait = true;
+                (void)r.turn({{0, 1100, 2}});
+                check(!r.hasEffect(2, 88) && !r.hasEffect(2, 2), "conditions 9 / 10: an element-less hit enables neither");
+            }
+            // condition 26 (BtlBasicStatus +0x40's [4]: the bolt damage taken at 30 % of the max HP or over): the robots' short
+            // circuit (405), its kind 114 clearing the count (ResetAccumulationElementDamage)
+            {
+                cr3::Cr3BattleRules r; fresh(r, 65);
+                r.fighters[2].skills = {405};
+                r.fighters[2].elementDamage[4] = 1499; // (5000 HP: 30 % is 1500)
+                (void)r.turn({{0, 1113, 2}});
+                check(!r.hasEffect(2, 88) && r.fighters[2].elementDamage[4] == 1499, "condition 26: a fire hit - the bolt count under 30 %, not enabled");
+                r.monstersWait = true;
+                (void)r.turn({{0, 1114, 2}});
+                check(r.hasEffect(2, 88) && r.fighters[2].elementDamage[4] == 0, "condition 26: a bolt hit to 30 % - enabled, kind 114 clears the count");
+            }
+            // condition 16 (+0x10: the hit's take-aways, BtlDamageTarget +0x98): Counter Ignition (85) on a revive
+            {
+                cr3::Cr3BattleRules r; fresh(r, 66);
+                r.fighters[1].skills = {85}, r.fighters[1].hp = 0;
+                (void)r.turn({{0, 1759, 1}});
+                check(r.fighters[1].hp > 0 && r.hasEffect(1, 88), "condition 16: a revive - KO (1) taken away - enables Counter Ignition");
+                r.removeEffect(1, 88), r.fighters[1].hp = 1000, r.monstersWait = true;
+                (void)r.turn({{0, 81, 1}});
+                check(!r.hasEffect(1, 88), "condition 16: a plain heal - not enabled");
+            }
+            // condition 27 (BtlBasicStatus +0x58: the MP changes summed, 1 or more): the Mimics' 432 after an MP steal
+            {
+                cr3::Cr3BattleRules r; fresh(r, 67);
+                r.fighters[0].skills = {432};
+                (void)r.triggerSkills(0, 4);
+                check(!r.skillOn(r.fighters[0], 432), "condition 27: no MP gained - not enabled");
+                (void)r.turn({{0, 1392, 2}});
+                check(r.fighters[0].mpChange > 0 && r.fighters[2].mpChange < 0, "an MP steal: the thief's MP changes summed above 0, the target's below");
+                (void)r.triggerSkills(0, 4);
+                check(r.skillOn(r.fighters[0], 432), "condition 27: MP gained - enabled at trigger 4");
+            }
+            // trigger 6 on the fallen too (AllTriggerSkillToCalculation walks every status): a fallen member's Emergency Guard
+            // guards it; the break's changes recorded for the direction side's flip
+            {
+                cr3::Cr3BattleRules r; fresh(r, 68);
+                for (auto& f : r.fighters) f.skills = {126};
+                r.fighters[1].hp = 0, r.gauge = 300, r.gaugeStarted = true;
+                check(r.addBreak(-700) && r.hasEffect(0, 2) && r.hasEffect(1, 2), "trigger 6: the fallen party member guarded too");
+                check(!r.flipChanges.empty() && r.flipChanges.front() == std::array<int, 3>{0, 2, 1}, "the break's trigger 6 changes recorded");
             }
         }
         // Round 20 against the release's tables (CR3_DATA): monster 913 mode 2's 2 actions, 865's Augmented Core

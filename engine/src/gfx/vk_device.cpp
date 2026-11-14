@@ -478,6 +478,7 @@ public:
         vkResetCommandBuffer(f.cmd, 0);
         vkBeginCommandBuffer(f.cmd, &bi);
         cmd_ = f.cmd;
+        frameDepth_ = false;
         if (active_ != Upscaler::Off) {
             // Sub-pixel jitter: Halton (2, 3) over the upscaler's phase count
             const int phases = Fsr3::jitterPhaseCount(sw, w);
@@ -505,9 +506,14 @@ public:
             barrier(cmd_, msColorImage_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, colorWrites, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, before,
                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-        barrier(cmd_, depthImage_, depthAspect_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, before,
+        // (the depth kept where this frame's frame pass already drew it - a pass resumed after a frame copy or the filters:
+        // the bloom mask's GL_GREATER pass tests against the scene's; else cleared - the first pass, the UI after the scene)
+        const bool keepDepth = !clear && frameDepth_;
+        barrier(cmd_, depthImage_, depthAspect_, keepDepth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, before,
                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
+        frameDepth_ = true;
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         color.imageView = msColorImage_ ? msColorView_ : colorView_;
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -522,8 +528,8 @@ public:
         VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         depth.imageView = depthView_;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.loadOp = keepDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth.clearValue.depthStencil = {1.0f, 0};
         VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
         ri.renderArea = {{0, 0}, {uint32_t(targetW_), uint32_t(targetH_)}};
@@ -914,6 +920,7 @@ public:
     }
 
     void setColorWrite(bool on) override { colorWrite_ = on; }
+    void setDepthCompare(DepthCompare c) override { depthCompare_ = c == DepthCompare::Greater ? VK_COMPARE_OP_GREATER : VK_COMPARE_OP_LESS_OR_EQUAL; }
     void setQuadAdditive(bool on) override { quadAdditive_ = on; }
     bool quadAdditive_ = false;
 
@@ -1138,7 +1145,7 @@ public:
         vkCmdSetFrontFace(cmd_, VK_FRONT_FACE_COUNTER_CLOCKWISE);
         vkCmdSetDepthTestEnable(cmd_, st.depthTest ? VK_TRUE : VK_FALSE);
         vkCmdSetDepthWriteEnable(cmd_, st.depthWrite ? VK_TRUE : VK_FALSE);
-        vkCmdSetDepthCompareOp(cmd_, VK_COMPARE_OP_LESS_OR_EQUAL);
+        vkCmdSetDepthCompareOp(cmd_, depthCompare_);
         ScenePushConstants pc{};
         toVulkanClip(mvp, pc.base.matrix);
         std::memcpy(pc.base.color, sh.color, sizeof pc.base.color);
@@ -2271,6 +2278,8 @@ private:
     std::vector<std::pair<uint64_t, std::function<void()>>> deletions_;
     std::array<Frame, kFrames> frames_{};
     uint64_t serial_ = 0;
+    VkCompareOp depthCompare_ = VK_COMPARE_OP_LESS_OR_EQUAL; // (setDepthCompare: the meshes')
+    bool frameDepth_ = false; // (the frame pass's depth drawn this frame: kept when the pass resumes)
     bool inFrame_ = false, haveFrame_ = false, colorWrite_ = true, vsync_ = true, swapchainDirty_ = true;
     int errors_ = 0;
     // Offscreen target
