@@ -500,7 +500,9 @@ public:
 
 private:
     const Cr3BattleTables* tables_ = nullptr;
-    std::vector<Cr3Action> resolveOrder(std::vector<std::array<int, 4>> order, size_t bucket0End);
+    // (bucket2End: where list 2 - priority -8 - ends, list 5 - -9 - after it; npos: not the turn's lists - a turn end's, the
+    // script's -, a VAdd then appended at the end)
+    std::vector<Cr3Action> resolveOrder(std::vector<std::array<int, 4>> order, size_t bucket0End, size_t bucket2End = size_t(-1));
     std::pair<int, int> priorityAndCost(int fighter, int command) const;
     void sortBucket(std::vector<std::array<int, 4>>& bucket);
     void queueTurnEnd(int bearer, const std::vector<std::pair<int, int>>& added);

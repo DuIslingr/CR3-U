@@ -11,6 +11,12 @@ want shops && run sp-box-panels "3:east 4:east 4.5:right 5:right 5.5:left 6:up 6
     "shop: the boxes|shop: box buy panel 1|shop: box buy panel 2|shop: box buy panel 1|shop: box focus check|shop: box contents (the gene box's list)|shop: the gene box's list - month|shop: the gene box's list at line 1|shop: the gene box's list closed|shop: box focus buy|shop: leaving the boxes|shop: back from the boxes" \
     -- --area t0101 --flag 27 --flag 143 --input "camp:field5"
 
+# Round 30: LuckyBoxMenu's slide (Update 0xacf37c states 1 / 2, 0.3 s): → to the next box, → again mid-slide not taken
+# (+0xd8 clear), the focus one on at its end; ← back to the first
+want shops && run sp-box-slide "3:east 4:right 4.1:right 5:left 6:quit" \
+    "shop: the boxes - 2 (0 in focus)|shop: box 1 in focus|shop: box 0 in focus" \
+    -- --area t0101 --flag 27 --flag 143 --input "camp:field5"
+
 # CreateLuckyBoxMenu: the first visit (flag 143 clear) - the TutorialMenu (AnnounceTutorialTxt 0x144), read through
 want shops && run sp-box-tutorial "3:east 3.5:east 4:east 4.5:east 5:east 5.5:east 6:east 6.5:east 7:east 7.5:east 8:east 8.5:east 9:east 10:quit" \
     "(0 in focus)|shop: the boxes' tutorial|shop: the boxes' tutorial read" \

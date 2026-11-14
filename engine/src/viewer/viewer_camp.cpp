@@ -1586,7 +1586,7 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
 // (CampTopMenu::Update 0xa38130 state 2: 0.23333 s after Yes - InterfaceMain +0x98, the event mode's
 // DeleteBattleAnnouncementMenu and GameMain::BuildUnitModel(true) -, 0x1c: the header, footer and
 // buttons closed, RePauseFieldInterface; CheckAliveCampWindowParty false. No Cr3FadeIn: +0x13b
-// isn't set by SetCampWindowParty)
+// isn't set by SetCampWindowParty - the black of state 1's Cr3FadeOut(0, 5) stays for the event's next scene)
 void Viewer::closeCampTopEvent() {
     campTopAsk = 0, campTopStalled = false;
     cr3Camp.stage = 0, cr3Camp.since = 0;
@@ -1928,6 +1928,10 @@ void Viewer::chooseCr3Camp(int id) {
         if (id == 503) { // (Yes - GetBattleYNChoicePushBottom 1: com_003, state 1 .. 2)
             audio.playSe("com_003", false);
             campTopAsk = 2, campTopAskAt = uiClock;
+            // (state 1: Cr3FadeOut(0, 5) - to black over 5 frames. Nothing of the camp's fades back - state 2's 0x1c, the
+            // event mode's +0x13b unset: no Cr3FadeIn -; the event's own next scene does: q074_d05_00104_evt's
+            // SetBattleToVista - the battle -, s910_t01_00201_evt's VsBattleIn)
+            if (cr3::EventRuntime* ev = activeEvents()) ev->menuFade(true, 5);
             SDL_Log("camp: the party chosen (0x1f0 Yes)");
         } else if (id == 504) { // (No - 2: com_004, state 0)
             audio.playSe("com_004", false);

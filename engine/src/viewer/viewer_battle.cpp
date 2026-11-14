@@ -1757,14 +1757,22 @@ void Viewer::stepCr3CastEffects(size_t source, float t) {
 }
 
 // BtlShotCoverDirection::VUpdate 0x99acc0 at the shot's event 2 - its bullet's launch: BtlUnit::PlayCover 0x9df840 - the
-// coverer from its home to (the original's x, 0, its z less both units' half depths: not traced - 0.8 here), over the
-// bullet's flight (motion state 0xe unsettled: the stance kept) -, the shot aimed at it; both home at the end (stepCr3Action)
+// coverer's changeRequest(0xe): AnimCommon's type 14, the melee's jump back (bo04), back to the stance at its end; from its
+// home to (the covered's x, 0, its z less both units' half depths - getHalfDepth 0x9dd4f8: the model's depth x its scale
+// / 2) over the motion's step window (updateStep: AnimInfo +0x10 / +0x14; none - the bullet's flight here); the turn -
+// +0x130 the way it goes, +0x150 its own - not followed: its own kept -, the shot aimed at it; both home at the end
+// (stepCr3Action)
 void Viewer::startCr3Cover(const cr3::Cr3Hit& hit, float flight) {
     const size_t cu = size_t(cr3Rules.fighters[size_t(hit.target)].unit), ou = size_t(cr3Rules.fighters[size_t(hit.coveredFrom)].unit);
     const cr3::Cr3BattleUnit &c = cr3Battle.units[cu], &o = cr3Battle.units[ou];
     Cr3BattleUnitView& view = cr3BattleUnits[cu];
-    view.meleeOffset = {o.home[0] - c.home[0], 0, o.home[2] - 0.8f - c.home[2]};
-    view.meleeStep.begin(cr3BattleClock, 0, 1, std::max(flight, 0.2f)), view.meleeTurn = Ramp{0, 0};
+    setCr3Motion(cu, cr3MotionOf(0xe), false, false);
+    view.meleeOffset = {o.home[0] - c.home[0], 0, o.home[2] - (o.depth * o.scale + c.depth * c.scale) * 0.5f - c.home[2]};
+    if (cr3::Cr3BattleTables::MotionTravel jump; cr3BattleTables.motionTravel(c.model, 0xe, jump))
+        view.meleeStep.begin(cr3BattleClock + jump.stepStart, 0, 1, jump.stepEnd - jump.stepStart);
+    else
+        view.meleeStep.begin(cr3BattleClock, 0, 1, std::max(flight, 0.2f));
+    view.meleeTurn = Ramp{0, 0};
     SDL_Log("battle %.2f s: a cover - fighter %d takes the shot for fighter %d", cr3BattleClock, hit.target, hit.coveredFrom);
 }
 
@@ -3008,12 +3016,20 @@ bool Viewer::startCr3SpecialAction(const cr3::Cr3Action& a, size_t su, const cr3
     const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
     if (play.kind == 31) {
         // BtlEscapeDirection::vPlay 0x993e74: openAnnounce(1.5), playAllDamage - its status effect 51 -, playCameraByType
-        // (+0x0c 2), BtlUnit::PlayEscape 0x9df738 - alpha 1 to 0 over 0.8 s and a move from home 10 back, away from the
-        // other side (its run motion, state 0xb, not traced: the stance kept) -; over as the name's line closes
+        // (+0x0c 2), BtlUnit::PlayEscape 0x9df738 - alpha 1 to 0 over 0.8 s; changeRequest(0xb): AnimCommon's type 11, the
+        // melee's run (bo01), held - updateAnimationEnd's mask leaves it out -; its target home less 10 on z (+0x148, any side:
+        // away from the party) and both turns +0x130 / +0x150 the half turn (0, 1, 0, 0): updateStep 0x9e0a20 moving it over
+        // the motion's step window (AnimInfo +0x10 / +0x14), updateTurn 0x9e0b6c facing it about at its turn window's start
+        // (from and to the same); a model with no such motion row stands where it is -; over as the name's line closes
         cr3Announce.seconds = 1.5f;
         playCr3CameraType(camera, a, su);
         view.opacity.begin(cr3BattleClock, 1, 0, 0.8f);
-        view.meleeOffset = {0, 0, bu.player ? 1.0f : -1.0f}, view.meleeStep.begin(cr3BattleClock, 0, 1, 0.8f), view.meleeTurn = Ramp{0, 0};
+        setCr3Motion(su, cr3MotionOf(0xb), false, true);
+        view.meleeOffset = {}, view.meleeStep = Ramp{0, 0}, view.meleeTurn = Ramp{0, 0};
+        if (cr3::Cr3BattleTables::MotionTravel run; cr3BattleTables.motionTravel(bu.model, 0xb, run)) {
+            view.meleeOffset = {0, 0, -10.0f}, view.meleeStep.begin(cr3BattleClock + run.stepStart, 0, 1, run.stepEnd - run.stepStart);
+            view.meleeTurn.begin(cr3BattleClock + run.turnStart, 0, std::remainder(3.14159265f - bu.yaw, 6.2831853f), 0);
+        }
         play.end = 1.5f;
         SDL_Log("battle %.2f s: fighter %d escapes - command %d (camera %d)", cr3BattleClock, a.source, a.command, camera);
         return true;

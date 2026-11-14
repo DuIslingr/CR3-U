@@ -4921,44 +4921,75 @@ void Viewer::drawSpShop(int w, int h, const Mat4& view) {
         for (ViewMesh& vm : u.fig.meshes)
             if (vm.source.material < u.materials.size() && u.materials[vm.source.material] == material) vm.extraMap = a;
     };
+    // (a slide - LuckyBoxMenu::Update 0xacf37c states 1 / 2, 0.3 s, linear -: ChangeBgAndBox 0xad1ef4 fading the background
+    // and the name out over 0.15 s and in again over the next, SetBgAndBox 0xacf194 putting the box slid to in between)
+    const int boxCount = int(boxes.size());
+    const float slideT = vs.boxSlide ? uiClock - vs.boxSlideAt : 0, slideS = std::clamp(slideT / 0.3f, 0.0f, 1.0f);
+    const SpBox& shown = vs.boxSlide && slideT >= 0.15f ? boxes[size_t(((vs.boxFocus + (vs.boxSlide == 1 ? 1 : -1)) % boxCount + boxCount) % boxCount)] : box;
+    const float bgFade = !vs.boxSlide ? 1 : slideT < 0.15f ? 1 - slideT / 0.15f : std::min((slideT - 0.15f) / 0.15f, 1.0f);
     UiFig& bgPos = cr3UiPut("mpboxbgpositon", "", t, 0, 0, view);
     if (cr3UiCall(bgPos, "call_mpBoxBgMenu", x, y, w, h)) {
         UiFig& bg = cr3UiPut("mpboxbgmenu", "", t, x, y, view);
-        if (cr3UiCall(bg, "call_mpBoxBg_id00", cx, cy)) boxPicture("mpboxbg_id00", "mat_boxBg_d02", box.background), cr3UiPut("mpboxbg_id00", "", 0, cx, cy, view);
+        if (cr3UiCall(bg, "call_mpBoxBg_id00", cx, cy)) boxPicture("mpboxbg_id00", "mat_boxBg_d02", shown.background), cr3UiPut("mpboxbg_id00", "", 0, cx, cy, view, bgFade);
         // (the name plate: faded out over 0.2 s once a buy panel is chosen)
         const float plate = stage == 1 ? 1 - std::min(vs.boxSince / 0.2f, 1.0f) : stage == 9 ? std::min(vs.boxSince / 0.2f, 1.0f) : 1;
-        if (cr3UiCall(bg, "call_mpBoxName_id00", cx, cy)) boxPicture("mpboxname_id00", "mat_cltList_d02", box.texture), cr3UiPut("mpboxname_id00", "", 0, cx, cy, view, plate);
+        if (cr3UiCall(bg, "call_mpBoxName_id00", cx, cy)) boxPicture("mpboxname_id00", "mat_cltList_d02", shown.texture), cr3UiPut("mpboxname_id00", "", 0, cx, cy, view, plate * bgFade);
     }
     dev->clearDepth();
     UiFig& pos = cr3UiPut("mpboxpositon", "", t, 0, 0, view); // (its own animation: the carousel in)
     if ((!vs.boxBuy || vitaButtons()) && stage != 1 && stage != 9 && cr3UiCall(pos, "ragdoll_call_mpBoxMenu", x, y, w, h)) {
         UiFig& menu = cr3UiPut("mpboxmenu", "", t, x, y, view);
-        const int n = int(boxes.size());
-        for (int k = 0; k < 3; ++k) { // (the one before, the one in focus - 1.35 x -, the one after)
-            if (n < 2 && k != 1) continue;
-            const int b = ((vs.boxFocus + k - 1) % n + n) % n;
-            if (!cr3UiCallNth(menu, "call_mpBoxImagePanel", k, cx, cy)) continue;
+        const int n = boxCount;
+        // (five BoxPanels - LuckyBoxMenu::Initialize 0xacde1c: +0x90 .. +0xb0 the boxes focus - 2 .. focus + 2,
+        // BoxReturnToStatusQuo 0xacee78 -; the middle three on mpBoxMenu's call_mpBoxImagePanel joints - Pose 0xad02b8 -,
+        // the outer two at x -6 / +6 on the first's height; at rest the focus 1.35 x - BoxPanel::SetBoxScale -, the last
+        // unseen - alpha 0. A slide - SetBoxLeftMove 0xacfe20 / SetBoxRightMove 0xad003c -: each panel to its neighbour's
+        // place - SetPartsMoveOffset, x alone -, the focus's scale down and the next's up, the one leaving faded out and
+        // the one coming in faded in)
+        float px[5] = {-6, 0, 0, 0, 6}, py[5] = {};
+        bool placed = true;
+        for (int k = 0; k < 3; ++k) placed = placed && cr3UiCallNth(menu, "call_mpBoxImagePanel", k, px[k + 1], py[k + 1]);
+        py[0] = py[4] = py[1];
+        for (int k = 0; k < 5 && placed; ++k) {
+            if (n < 2 && k != 2) continue;
+            const int b = ((vs.boxFocus + k - 2) % n + n) % n;
+            float alpha = k == 4 ? 0 : 1, scale = k == 2 && !vs.boxCheckFocus ? 1.35f : 1.0f, at = px[k];
+            if (vs.boxSlide == 1 && k > 0) { // (the next one in: each a place to the left)
+                at = px[k] + slideS * (px[k - 1] - px[k]);
+                if (k == 1) alpha = 1 - slideS;
+                if (k == 2) scale = 1 + 0.35f * (1 - slideS);
+                if (k == 3) scale = 1 + 0.35f * slideS;
+                if (k == 4) alpha = slideS;
+            } else if (vs.boxSlide == 2 && k < 4) { // (the one before: each a place to the right)
+                at = px[k] + slideS * (px[k + 1] - px[k]);
+                if (k == 0) alpha = slideS;
+                if (k == 1) scale = 1 + 0.35f * slideS;
+                if (k == 2) scale = 1 + 0.35f * (1 - slideS);
+                if (k == 3) alpha = 1 - slideS;
+            }
+            if (alpha <= 0) continue;
+            cx = at, cy = py[k];
             boxPicture("mpboximage_id00", "mat_cltList_d02", boxes[size_t(b)].texture);
-            cr3UiScale = k == 1 && !vs.boxCheckFocus ? 1.35f : 1.0f; // (BoxPanel::SetBoxScale: the one in focus)
-            UiFig& p = cr3UiPut("mpboximagepanel", "", 0, cx, cy, view);
+            cr3UiScale = scale;
+            UiFig& p = cr3UiPut("mpboximagepanel", "", 0, cx, cy, view, alpha);
             float ix, iy;
-            if (cr3UiCall(p, "call_mpBoxImage_id", ix, iy)) cr3UiPut("mpboximage_id00", "", 0, ix, iy, view);
+            if (cr3UiCall(p, "call_mpBoxImage_id", ix, iy)) cr3UiPut("mpboximage_id00", "", 0, ix, iy, view, alpha);
             // (BoxPanel::SetComplateNumber(GetCountSize, GetItemsSize): a Lucky Box's won of its
             // entries on mpListCollected - L the won, S the entries, tens hidden under 10 -, all won
             // mpListComplete; nothing for no entries - the gene and GP boxes)
             int total = 0, won = 0;
             if (boxes[size_t(b)].kind == 1) worldSheet(boxes[size_t(b)].id, total, won);
             if (total > 0 && won < total && cr3UiCall(p, "call_mpListCollected", ix, iy)) {
-                UiFig& col = cr3UiPut("mplistcollected", "mplistcollected_loop", uiClock, ix, iy, view, 1, true);
+                UiFig& col = cr3UiPut("mplistcollected", "mplistcollected_loop", uiClock, ix, iy, view, alpha, true);
                 float nx, ny;
                 if (won > 9 && cr3UiCall(col, "call_mpListColNumL_fr00_001", nx, ny)) cr3UiPut("mplistcolnuml_fr00", "", float(won / 10 % 10) / 30, nx, ny, view);
                 if (cr3UiCall(col, "call_mpListColNumL_fr00_002", nx, ny)) cr3UiPut("mplistcolnuml_fr00", "", float(won % 10) / 30, nx, ny, view);
                 if (total > 9 && cr3UiCall(col, "call_mpListColNumS_fr00_001", nx, ny)) cr3UiPut("mplistcolnums_fr00", "", float(total / 10 % 10) / 30, nx, ny, view);
                 if (cr3UiCall(col, "call_mpListColNumS_fr00_002", nx, ny)) cr3UiPut("mplistcolnums_fr00", "", float(total % 10) / 30, nx, ny, view);
             } else if (total > 0 && won >= total && cr3UiCall(p, "call_mpListComplete", ix, iy))
-                cr3UiPut("mplistcomplete", "", 0, ix, iy, view);
+                cr3UiPut("mplistcomplete", "", 0, ix, iy, view, alpha);
             cr3UiScale = 1;
-            spTap(p, cx, cy, k == 1 ? 1.6f : 1.1f, k == 1 ? 1.6f : 1.1f, 1100 + k);
+            if (k >= 1 && k <= 3) spTap(p, cx, cy, k == 2 ? 1.6f : 1.1f, k == 2 ? 1.6f : 1.1f, 1100 + k - 1);
         }
     }
     if (!vs.boxBuy && cr3UiCall(pos, "ragdoll_call_mpBoxNumMenu", x, y, w, h)) { // (the box's place, of how many)
@@ -5037,7 +5068,7 @@ void Viewer::drawSpShop(int w, int h, const Mat4& view) {
     // (the header: hidden while a panel moves and the box opens; its sentence the box's help -
     // SetBgAndBox 0x00acf194: SetHeaderSentence(GetHelp); leaving: the shop's title 9)
     if (stage == 8) drawCr3Header(t, 9, menuAnnounce(0x275), w, h, view);
-    else if (stage == 0 || stage == 6) drawCr3Header(t, 0xb, spBoxHelp(box), w, h, view);
+    else if (stage == 0 || stage == 6) drawCr3Header(t, 0xb, spBoxHelp(shown), w, h, view); // (a slide: the next box's from 0.15 s)
     if (contents) vsTaps.clear(), dev->clearDepth(), drawSpBoxOpening(box, w, h, view); // (the boxes' taps not under it)
 }
 
@@ -5120,7 +5151,7 @@ bool Viewer::spBoxBuyable(const SpBox& box, int k) const {
 // with AnnounceTutorialTxt 0x144 and picture 60. LuckyBoxMenu's focus +0xd4: 0, the first box)
 void Viewer::openSpBoxes() {
     vs.screen = 11, vs.since = 0, vs.boxBuy = false, vs.boxPanel = 0, vs.boxCheckFocus = false;
-    vs.boxStage = 0, vs.boxSince = 0, vs.boxFocus = 0;
+    vs.boxStage = 0, vs.boxSince = 0, vs.boxFocus = 0, vs.boxSlide = 0;
     const std::vector<SpBox> boxes = spBoxes();
     SDL_Log("shop: the boxes - %zu (%d in focus)", boxes.size(), vs.boxFocus);
     if (!game.flag(143)) {
@@ -5260,6 +5291,13 @@ void Viewer::spBoxPrize() {
 void Viewer::stepSpBoxes(float dt) {
     if (vs.screen != 11) return;
     vs.boxSince += dt;
+    // (LuckyBoxMenu::Update 0xacf37c states 1 / 2: at 0.3 s the focus +0xd4 one on / back, SetLuckyBoxNumber,
+    // BoxReturnToStatusQuo - the panels at rest, their boxes one along -, the input taken again: +0xd8)
+    if (vs.boxSlide && uiClock - vs.boxSlideAt >= 0.3f) {
+        const int n = std::max(int(spBoxes().size()), 1);
+        vs.boxFocus = ((vs.boxFocus + (vs.boxSlide == 1 ? 1 : -1)) % n + n) % n, vs.boxSlide = 0;
+        SDL_Log("shop: box %d in focus", vs.boxFocus);
+    }
     if (vs.boxTutorial && (!vsEvents || !vsEvents->tutorialMenuOpen())) vs.boxTutorial = false;
     if (vs.boxTutorial) { // (its typing)
         vsEventClock = std::min(vsEventClock + dt, 0.25f);
@@ -6443,6 +6481,7 @@ void Viewer::chooseVs(int id) {
         const auto boxes = spBoxes();
         if (!vs.boxBuy || vs.boxFocus >= int(boxes.size()) || !spBoxBuyable(boxes[size_t(vs.boxFocus)], id - 1110)) return (void)SDL_Log("shop: box buy panel %d disabled", id - 1110);
     }
+    if (vs.screen == 11 && vs.boxSlide && id >= 1100 && id < 1103) return; // (sliding: +0xd8 clear - the panels not taken)
     audio.playSe("com_003", false);
     if (vs.screen == 10 && id == 1000) openSpBoxes();
     else if (vs.screen == 10 && id == 1001) { // (ShopBuyCoreMain's constructor: the Sp Shop's NEW gone)
@@ -6453,7 +6492,7 @@ void Viewer::chooseVs(int id) {
     else if (vs.screen == 11 && id >= 1100 && id < 1103) { // (LuckyBoxMenu: a neighbour turned to; the one in focus - its buy panels)
         const int n = std::max(int(spBoxes().size()), 1);
         if (id == 1101) vs.boxBuy = true, vs.boxPanel = 0, vs.boxCheckFocus = false, vs.since = 0;
-        else vs.boxFocus = ((vs.boxFocus + (id == 1100 ? -1 : 1)) % n + n) % n;
+        else if (n > 1) vs.boxSlide = id == 1100 ? 2 : 1, vs.boxSlideAt = uiClock; // (TouchGestureTap 0xad1868: 0x98 state 2, 0xa8 1)
     } else if (vs.screen == 11 && vs.boxBuy && id >= 1110 && id < 1113) { // (LuckyBoxMain 2: SetMoveBuy, the footer and header gone)
         vs.boxPanel = id - 1110, vs.boxStage = 1, vs.boxSince = 0, vs.boxCheckFocus = false;
         SDL_Log("shop: box buy panel %d chosen", vs.boxPanel);

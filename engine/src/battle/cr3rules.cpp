@@ -1160,7 +1160,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     order.insert(order.end(), bucket0.begin(), bucket0.end());
     order.insert(order.end(), bucket2.begin(), bucket2.end());
     order.insert(order.end(), bucket5.begin(), bucket5.end());
-    std::vector<Cr3Action> out = resolveOrder(std::move(order), bucket0End);
+    std::vector<Cr3Action> out = resolveOrder(std::move(order), bucket0End, bucket0End + bucket2.size());
     // (BtlCommandManager::Calculate 0x7db674: the turn's commands worked out, the field effects stepped -
     // BtlFieldEffectList::Step, a turn off each, gone at 0 -; Reverse Gravity's over, the lists' bit 3 cleared and a
     // chunk with no source for command 58 - BtlDamageParam {-1, -1, -1, 0x3a}: its BtlGravityInversionDirection)
@@ -1231,7 +1231,7 @@ void Cr3BattleRules::markAssist(Cr3Action& a) const {
 // the commands in order (BtlCommandManager::calculateCommands 0x7db93c): each worked out and applied - its finishers,
 // cooperations, triggers and the commands they add on the way; a turn's (bucket0End: where list 0 - the cooperations' -
 // ends), a turn end's (Cr3BattleRules::scriptCommands / turnEndActions: none of it list 0)
-std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 4>> order, size_t bucket0End) {
+std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 4>> order, size_t bucket0End, size_t bucket2End) {
     std::vector<Cr3Action> out;
     int lastSide = -1; // (BtlCommandManager::Clear: none yet this turn)
     bool lastHadChance = false, lastContinued = false;
@@ -1243,25 +1243,62 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
     // (calculateAssist 0x7dbbf4) and the turn-end list (CalculateTurnEnd 0x7dbeac)
     FinisherChunk& chunk = finisherChunk_;
     std::vector<int>& comboActors = comboActors_;
-    // (BtlStatusList::AddEffectCommand: the commands a status effect's enabled kinds add - 97 an interrupt,
+    // (BtlStatusList::AddEffectCommand 0x9b5510: the commands a status effect's enabled kinds add - 97 an interrupt,
     // next - AddInterruptCommand -, 98 the same with no actor, 99 a counter - AddCounterCommand 0x9b0f64: only
-    // against an attacker of the other side, aimed at it -, 100 / 101 after the turn's - AddCommand /
-    // AddNoSourceCommand -; marked 7: a status effect's interrupt put in at the top - VInsertTop, BtlCommand +0x1a set -, 4
-    // its counter put in here (the original's AddCounterCommand 0x9b0f64 calls VAdd: +0x18 alone), 5 one appended. A
-    // skill's: 6 an interrupt (97 / 126: +0x1a), 1 a kind 100 put in here - the original's AddCommand: VAdd)
+    // against an attacker of the other side, aimed at it -, 100 / 101 - AddCommand / AddNoSourceCommand. Marked 7: a status
+    // effect's interrupt put in at the top - BtlCommandList::VInsertTop 0x7e4fd8: inserted at the list's next, BtlCommand
+    // +0x1a set -; 4 its counter, 5 its kind 100 / 101 one - VAdd, +0x18 set alone. A skill's: 6 an interrupt (97 / 126: +0x1a),
+    // 1 a kind 100 - BtlSkillUtility::AddCommand: VAdd. +0x1a set - 2 / 3 / 6 / 7 - is "inserted": no finisher before it, no
+    // last chunk from it (addLastAttack 0x7dbfc8, calculateCommand 0x7dc424); the counters and kind 100 ones are not)
     size_t nextAt = 0;
+    const bool turnLists = bucket2End != size_t(-1);
+    if (!turnLists) bucket2End = 0;
+    size_t at = 0; // (the order entry in course)
+    // (the list in course: 0 - the turn's own, sorted -, 2 - priority -8, sorted -, 5 - -9, not)
+    const auto listOf = [&](size_t pos) { return pos < bucket0End ? 0 : pos < bucket2End ? 2 : 5; };
+    // (put in at pos, in the list in course - VInsertTop's)
     const auto insertAt = [&](size_t pos, const std::array<int, 4>& e) {
-        order.insert(order.begin() + long(std::min(pos, order.size())), e);
-        if (pos < bucket0End) ++bucket0End;
+        pos = std::min(pos, order.size());
+        const int list = listOf(at);
+        order.insert(order.begin() + long(pos), e);
+        if (list == 0 && pos <= bucket0End) ++bucket0End;
+        if (list <= 2 && pos <= bucket2End) ++bucket2End;
+    };
+    // (BtlCommandManager::VAdd 0x7dae20 -> addCommand 0x7daeb0: into list 5 for priority -9 or list 2 for -8 while an earlier
+    // list is in course - BtlCommand +0x1c, the command's +0xa0 -, else the list in course; BtlCommandList::VAdd 0x7e4dc4
+    // appends it - no duplicate test, +0x18 set. Lists 0 and 2 - +0x24 bit 1 - are sorted again before each command -
+    // calculateCommands 0x7db93c: Update / Sort 0x7e54cc, by priority, then speed less the weight plus the cost -, so it is
+    // put straight in after those of its key or more (ties - shuffled there - after); after the interrupts put in this
+    // command, here left first. Not the turn's lists - a turn end's, the script's -: appended)
+    const auto keyLess = [&](const std::array<int, 4>& a, const std::array<int, 4>& b) { // (a after b)
+        const auto [pa, ca] = priorityAndCost(a[0], a[1]);
+        const auto [pb, cb] = priorityAndCost(b[0], b[1]);
+        if (pa != pb) return pa < pb;
+        const int sa = (a[0] >= 0 ? speedOf(fighters[size_t(a[0])]) - fighters[size_t(a[0])].weight : 0) + ca;
+        const int sb = (b[0] >= 0 ? speedOf(fighters[size_t(b[0])]) - fighters[size_t(b[0])].weight : 0) + cb;
+        return reverseSpeed ? sa > sb : sa < sb;
+    };
+    const auto vadd = [&](const std::array<int, 4>& e) {
+        if (!turnLists) return order.push_back(e);
+        const int now = listOf(at), pri = priorityAndCost(e[0], e[1]).first;
+        const int list = pri == -9 && now < 5 ? 5 : pri == -8 && now < 2 ? 2 : now;
+        if (list == 5) return order.push_back(e);
+        const size_t end = list == 0 ? bucket0End : bucket2End;
+        size_t pos = list == now ? at + 1 : bucket0End;
+        while (pos < end && (order[pos][3] == 2 || order[pos][3] == 3 || order[pos][3] == 6 || order[pos][3] == 7)) ++pos;
+        while (pos < end && !keyLess(order[pos], e)) ++pos;
+        order.insert(order.begin() + long(pos), e);
+        if (list == 0) ++bucket0End;
+        ++bucket2End;
     };
     const auto queueEffectCommands = [&](int bearer, const std::vector<std::pair<int, int>>& added, int attacker) {
         for (const auto& [kind, id] : added) {
             if (order.size() > 256) break; // (a guard: a turn's commands bounded)
             if (kind == 97) insertAt(nextAt++, {bearer, id, -1, 7});
             else if (kind == 98) insertAt(nextAt++, {-1, id, bearer, 7});
-            else if (kind == 99 && attacker >= 0 && fighters[size_t(attacker)].player != fighters[size_t(bearer)].player) insertAt(nextAt++, {bearer, id, attacker, 4});
-            else if (kind == 100) order.push_back({bearer, id, -1, 5}); // (appended - +0x1a 0: not inserted)
-            else if (kind == 101) order.push_back({-1, id, bearer, 5});
+            else if (kind == 99 && attacker >= 0 && fighters[size_t(attacker)].player != fighters[size_t(bearer)].player) vadd({bearer, id, attacker, 4});
+            else if (kind == 100) vadd({bearer, id, -1, 5});
+            else if (kind == 101) vadd({-1, id, bearer, 5});
         }
     };
     // (after a command: TriggerAfterCommandToCalculation 0x97dc38 - trigger 11 on every unit - and playCommand
@@ -1276,8 +1313,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
     // (a no-actor command next - Regenerate's - is still played once the party has fallen)
     const auto decided = [&](size_t at) { return outcome() != 0 && !(outcome() == 2 && at + 1 < order.size() && order[at + 1][0] < 0); };
     size_t recorded = 0;
-    int resolvingFrom = 0; // (the order entry in course: its mark - 0 / 5 not inserted, BtlCommand +0x1a 0)
-    const auto notInserted = [](int from) { return from == 0 || from == 5; };
+    int resolvingFrom = 0; // (the order entry in course: its mark - 0 / 1 / 4 / 5 not inserted, BtlCommand +0x1a 0)
+    const auto notInserted = [](int from) { return from != 2 && from != 3 && from != 6 && from != 7; };
     // (BtlStatusList::CollectDamageTarget: those the next command would hit - its chosen one, or
     // its side's where it hits them all or picks one at random)
     auto wouldHit = [&](int src, int cmd, int tgt) {
@@ -1314,7 +1351,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         }
         recorded = out.size();
     };
-    for (size_t at = 0; at < order.size(); ++at) {
+    for (at = 0; at < order.size(); ++at) {
         record();
         // (addLastAttack: two linked actions at least; the last one's command able to lead into one -
         // MbCommandInfo +0xbd bit 1 -, its combo; the next not inserted and breaking the chain -
@@ -1350,8 +1387,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 if (finisher >= 0 && actor >= 0 && !fighters[size_t(actor)].dead()) {
                     // (BtlCommandList::VInsertTop 0x007e4fd8: before the next, marked inserted - 2 here,
                     // a finisher: it leads into no other)
-                    order.insert(order.begin() + long(at), {actor, finisher, first, isArts ? 3 : 2}); // (3: a Finest Arts)
-                    if (at < bucket0End) ++bucket0End;
+                    insertAt(at, {actor, finisher, first, isArts ? 3 : 2}); // (3: a Finest Arts)
                     chunk.set = false;
                 }
             }
@@ -1380,8 +1416,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         // (BtlDamageChunk::Calculate 0x97ac10, the command's start: trigger 3 on the actor - its skills', its status effects' -
         // as the command is worked out (BtlCalculator::Calculate 0x971e94: Rally / Concentrate / Lock On enabled for a physical
         // / magic one, by its +0xc4); not for a command a skill or a status effect put in - an unlimited one's own interrupt
-        // would trigger itself for ever. Then - its own chosen command alone: not a finisher's, chunk +0x18 / +0x1a (unsettled
-        // which those are) - the first enabled kind 120 - GetCommandChange: Dance's 1512, the pig form's 9 - is the command, its
+        // would trigger itself for ever. Then - its own chosen command alone: not a finisher's, BtlCommand +0x18 / +0x1a both
+        // clear: no skill's or status effect's, nothing put in at the top -, the first enabled kind 120 - GetCommandChange: Dance's 1512, the pig form's 9 - is the command, its
         // target chosen again (+0x20 -1); then end timing 3 - the kind 120 ones' - and the no-action, MP and ban tests below,
         // all on the new command)
         const bool ownCommand = fromSkill != 1 && fromSkill != 4 && fromSkill != 5 && fromSkill != 6 && fromSkill != 7;
@@ -1461,7 +1497,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                         p.mp >= (c.damage == 22 ? 1 : mpCost(p, c)) && o[3] == 0 && o[1] == cmd && (c.target != 3 || o[2] == tgt)) {
                         a.partners.push_back(o[0]);
                         order.erase(order.begin() + long(k));
-                        --bucket0End;
+                        --bucket0End, --bucket2End;
                     } else {
                         ++k;
                     }
@@ -1894,7 +1930,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 std::vector<size_t> slots; // (the list's own entries still to come: bucket 0, then bucket 2 - -8)
                 std::vector<std::array<int, 4>> rest;
                 for (size_t k = at + 1; k < order.size(); ++k) {
-                    if (order[k][3] != 0 || order[k][0] < 0) continue;
+                    if (!notInserted(order[k][3]) || order[k][0] < 0) continue; // (a VAdd's too: sorted with them)
                     const int pri = priorityAndCost(order[k][0], order[k][1]).first;
                     if (pri != -9 && (pri == -8) == late) slots.push_back(k), rest.push_back(order[k]);
                 }
@@ -1921,7 +1957,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                         if (o.player != f.player) most = std::max(most, o.hp);
                     if (most > r.i(9)) continue;
                     usedSkills_.insert({int(k), id});
-                    order.insert(order.begin() + long(at) + 1, {int(k), added, -1, 1});
+                    vadd({int(k), added, -1, 1});
                 }
             }
         // (BtlDamageChunk::TriggerAfterCommandToCalculation - trigger 10, after the unit's own
@@ -1935,7 +1971,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 if (r.i(8) != 0 && !(r.i(8) == 19 && r.i(9) == cmd)) continue;
                 size_t next = at + 1;
                 for (const auto& [kind, value] : skillEffects(id, advantage(s.player)))
-                    if (kind == 97 || kind == 126 || kind == 100) order.insert(order.begin() + long(next++), {src, value, kind == 97 ? tgt : -1, kind == 100 ? 1 : 6});
+                    if (kind == 97 || kind == 126) insertAt(next++, {src, value, kind == 97 ? tgt : -1, 6});
+                    else if (kind == 100) vadd({src, value, -1, 1});
             }
         // (BtlDamageTarget::TriggerAfterDamageToCalculation - trigger 7, a hit landed on it: a
         // target's skills whose condition holds - 3 its HP at or under the constant's percentage,
@@ -1954,8 +1991,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     if (float(t.hp) * 100.0f > float(r.i(9)) * float(t.maxHp)) continue;
                     usedSkills_.insert({th.target, id});
                     for (int e = 0; e < 2; ++e)
-                        if (r.i(12 + 2 * e) == 97 || r.i(12 + 2 * e) == 100)
-                            order.insert(order.begin() + long(next++), {th.target, r.i(13 + 2 * e), -1, r.i(12 + 2 * e) == 97 ? 6 : 1});
+                        if (r.i(12 + 2 * e) == 97) insertAt(next++, {th.target, r.i(13 + 2 * e), -1, 6});
+                        else if (r.i(12 + 2 * e) == 100) vadd({th.target, r.i(13 + 2 * e), -1, 1});
                 }
             }
         // (delayCommandByDown: a downed unit's command still to come goes to the back)
@@ -1964,6 +2001,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 if (order[k][0] == d && order[k][3] == 0) { // (a skill's or a status effect's - an interrupt - stays)
                     const auto moved = order[k];
                     order.erase(order.begin() + long(k));
+                    if (k < bucket0End) --bucket0End;
+                    if (k < bucket2End) --bucket2End;
                     order.push_back(moved);
                     break;
                 }

@@ -120,6 +120,9 @@ int main() {
         commands.chunks.push_back({});
         commands.rows.push_back({{0,761}, {1,0}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,0x414}, {33,1}});
         commands.chunks.push_back({});
+        // Round 30: 762 the same as 760, physical (+0xc4 1 - col 34): a Counter answers it
+        commands.rows.push_back({{0,762}, {1,0}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,0x244}, {33,1}, {34,1}});
+        commands.chunks.push_back({});
         // Round 18: 765 a random-enemy command (target kind 6) of 10 one-hit actions, as 1604 Omni Missiles
         commands.rows.push_back({{0,765}, {1,0}, {4,6}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x10a}, {24,100}, {32,4}, {33,1}});
         commands.chunks.push_back({});
@@ -745,6 +748,19 @@ int main() {
             any = false;
             for (const auto& a : rules.scriptCommands({{72, -1}})) any |= a.finisher;
             check(!any, "a new turn clears the last chunk");
+            // Round 30: a counter is VAdd'ed (AddCounterCommand 0x9b0f64: BtlCommand +0x18 set, +0x1a not) - appended to the
+            // list in course and sorted again before the next command: 56 (priority -7) after the other monster's 762 still
+            // to come, not straight after the command it answers; and not "inserted" - addLastAttack tests +0x1a alone -, so
+            // the comboing pair's Last Attack goes in before it
+            reset();
+            rules.giveEffect(0, 25);
+            rules.scripted[2].push_back({1, 762}), rules.scripted[3].push_back({1, 762});
+            acts = rules.turn({});
+            seen.clear();
+            for (const auto& a : acts) seen.push_back({a.source, a.command, int(a.finisher)});
+            check(seen.size() == 4 && seen[0][1] == 762 && seen[1][1] == 762 && seen[0][0] != seen[1][0] && acts[1].combo &&
+                      seen[2] == std::array<int, 3>({seen[1][0], 761, 1}) && seen[3][0] == 0 && seen[3][1] == 56 && acts[3].target == seen[0][0],
+                  "a counter goes after the list's commands of a higher priority, and a finisher goes in before it");
         }
         // Round 20: the enemy AI (BtlStatusList::addCommandByAI / Select / getCommandTarget, BtlOrderPoint)
         {

@@ -4252,6 +4252,9 @@ struct Viewer {
         // 10 the gene box's list gone (its fade back)
         int boxStage = 0;
         float boxSince = 0;
+        // (LuckyBoxMenu +0x128 1 / 2: the carousel sliding to the next / the one before - +0xdc its clock, 0.3 s)
+        int boxSlide = 0;
+        float boxSlideAt = 0;
         int boxPrize = 0;        // (4: the prize shown - GetOpenedNumber's; -1 none drawn)
         int boxOpenedKind = 0, boxOpenedSheet = -1; // (the box opened - -1 the check button's contents -; its sheet, OpenItemSheet's)
         bool boxTutorial = false; // (the first visit's TutorialMenu - flag 143 - up)
