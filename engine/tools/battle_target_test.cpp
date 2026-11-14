@@ -171,6 +171,13 @@ int main() {
         row({{0,1390}, {1,2}, {4,3}, {5,100}, {8,0x101}, {32,0x2004}, {33,1}});
         row({{0,1391}, {1,2}, {4,4}, {5,100}, {8,0x101}, {32,0x2004}, {33,1}});
         row({{0,1392}, {1,2}, {4,3}, {5,100}, {8,0x101}, {32,0x4004}, {33,20}});
+        // Round 25: 1759 se 34's revive (target 1, 100 % - damage 7 -, removes / requires KO); the turn-end script's 72 Special
+        // Support (target 11, formula 17 -> damage 18: HP and MP, removes KO) and 74 (gives 88, always landing); 1512 "I can't
+        // stop dancing!" (Dance's kind 120 command: on itself, no damage, list -8)
+        row({{0,1759}, {1,3}, {4,1}, {5,100}, {8,int(0xffff0100)}, {15,1}, {21,1}, {32,4}, {33,7}}, {{16, {1}}, {22, {1}}});
+        row({{0,72}, {1,7}, {4,11}, {5,100}, {8,int(0xffff0100)}, {15,1}, {25,uint32_t(-9)}, {32,0x404}, {33,17}}, {{16, {1}}});
+        row({{0,74}, {1,7}, {4,11}, {8,int(0xffff0100)}, {13,1}, {32,0x40c}, {33,40}}, {{14, {88}}});
+        row({{0,1512}, {1,7}, {4,0}, {8,int(0xffff0100)}, {25,uint32_t(-8)}, {32,4}, {33,40}});
         Table formulas{"CommandFomula", "iiii", {
             {{0,21},{2,21},{3,uint32_t(-1)}},
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
@@ -196,6 +203,12 @@ int main() {
             {{0,329}, {8,0}, {11,256}, {12,3}, {13,0}, {16,256}, {17,3}, {18,0}},
             {{0,107}, {8,0}, {11,256}, {12,89}, {13,0}, {16,256}, {17,89}, {18,0}},
             {{0,143}, {8,0}, {11,256}, {12,106}, {13,0}, {16,256}, {17,106}, {18,0}},
+            // Round 25 (TriggerSkillToCalculation): 600 trigger 4 - kind 60 gives 3; 601 a Catalyst (trigger 1, end 1: kind 100
+            // -> command 81, kind 60 -> 4); 602 as 426 (trigger 7, condition 3 at 0 % - KO'd by a hit -: kind 60 -> 34)
+            {{0,600}, {7,4}, {8,0}, {10,6}, {11,256}, {12,60}, {13,3}, {16,256}, {17,60}, {18,3}},
+            {{0,601}, {7,1}, {8,0}, {10,1}, {11,256}, {12,100}, {13,81}, {14,60}, {15,4}, {16,256}, {17,100}, {18,81}, {19,60}, {20,4}},
+            {{0,602}, {7,7}, {8,3}, {9,0}, {10,6}, {11,256}, {12,60}, {13,34}, {16,256}, {17,60}, {18,34}},
+            {{0,603}, {8,0}, {11,256}, {12,118}, {13,1100}, {16,256}, {17,118}, {18,1100}}, // (as 435: Cover of command 1100)
         }};
         Table statusEffects{"StatusEffect", "iiiiiiiiiiiiiiiiiiiiiii_ipiiiiiiii", {
             {{0,1}, {1,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}},
@@ -222,6 +235,15 @@ int main() {
             {{0,5}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}}, {{0,6}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}},
             {{0,13}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}}, {{0,14}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}},
             {{0,15}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}},
+            // Round 25: 34 (4 turns, trigger 12 at its turns at or under 1 - condition 17 -, end 11: kind 101 -> 1759); 88 a plain
+            // one; 56 Dance (group 12, 3 turns, trigger 3, end 3: kind 120 -> 1512); 500 / 501 / 502 counters of triggers 7 / 8 / 9
+            // (5 uses, no end)
+            {{0,34}, {1,34}, {2,uint32_t(-1)}, {4,uint32_t(-1)}, {5,4}, {6,4}, {8,12}, {9,17}, {10,1}, {11,11}, {12,256}, {13,256}, {14,101}, {15,1759}},
+            {{0,88}, {1,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}},
+            {{0,56}, {1,12}, {2,uint32_t(-1)}, {4,uint32_t(-1)}, {5,3}, {6,3}, {8,3}, {11,3}, {12,256}, {13,256}, {14,120}, {15,1512}},
+            {{0,500}, {1,uint32_t(-1)}, {4,5}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,7}, {12,256}, {13,256}},
+            {{0,501}, {1,uint32_t(-1)}, {4,5}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,8}, {12,256}, {13,256}},
+            {{0,502}, {1,uint32_t(-1)}, {4,5}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,9}, {12,256}, {13,256}},
         }};
         check(t.skill.parse(tables({skills, statusEffects})), "parse synthetic skills and status effects");
         Table elements{"Element", "ifffffff", {
@@ -1029,6 +1051,119 @@ int main() {
             (void)r.turn({{0, 1390, 2}, {1, -1, -1}});
             check(r.fighters[0].hp == 5000 && r.fighters[2].hp < 4800, "an HP steal heals the caster to its max at most");
         }
+        // Round 25: the turn end's commands (BtlSysStateAction::VUpdate case 0x12, phaseStatusEffect / TriggerTurnEnd), the
+        // command change (status kind 120 - GetCommandChange), the skills' kind 60 (TriggerSkillToCalculation) and the opening,
+        // and triggers 4 / 7 / 8 / 9 once a target (TriggerAfterDamageToCalculation 0x988498)
+        {
+            auto fresh = [&](cr3::Cr3BattleRules& r, uint32_t seed) {
+                check(r.setup(t, battle, 1, seed), "setup round 25 battle");
+                for (size_t k = 0; k < r.fighters.size(); ++k) {
+                    cr3::Cr3Fighter& f = r.fighters[k];
+                    f.player = k < 2, f.hp = f.maxHp = 5000, f.mp = f.maxMp = 100, f.attack = f.defence = 100, f.luck = 10, f.geneLevel = 0;
+                    f.speed = 100 - int(k), f.attackCommand = 1100, f.skills.clear(), f.commands.clear();
+                }
+                r.monstersWait = true;
+            };
+            auto actionOf = [](const std::vector<cr3::Cr3Action>& acts, int source, int command) -> const cr3::Cr3Action* {
+                for (const auto& a : acts) if (a.source == source && a.command == command) return &a;
+                return nullptr;
+            };
+            // the script's commands: end timing 11 first, then each with no source - 74 gives 88 to every player, 72 revives the
+            // fallen and fills HP and MP
+            {
+                cr3::Cr3BattleRules r; fresh(r, 51);
+                r.fighters[0].mp = 10, r.fighters[1].hp = 0;
+                const auto acts = r.scriptCommands({{74, -1}, {72, -1}});
+                check(acts.size() == 2 && acts[0].source == -1 && acts[0].command == 74 && acts[0].targets.size() == 1 && r.hasEffect(0, 88) &&
+                          !r.hasEffect(1, 88), "script command 74 gives its status effect (88) to the living players");
+                check(acts[1].command == 72 && acts[1].targets.size() == 2 && r.fighters[1].hp == 5000 && r.fighters[0].mp == 100 &&
+                          acts[1].targets[1].hits == std::vector<int>{-5000}, "script command 72 revives the fallen and fills HP and MP (damage 18)");
+                check(r.scriptCommands({}).empty(), "no script command: nothing");
+            }
+            // 34: given to a monster KO'd by a hit (skill 602's kind 60 at trigger 7, condition 3 at 0 %); three turns on, at the
+            // turn's end, its 1759 revives it with no source
+            {
+                cr3::Cr3BattleRules r; fresh(r, 52);
+                r.fighters[2].skills = {602}, r.fighters[2].hp = 1;
+                auto acts = r.turn({{0, 1100, 2}});
+                check(r.fighters[2].dead() && r.hasEffect(2, 34) && r.outcome() == 0, "skill kind 60 at trigger 7: the KO'd monster gets 34");
+                int revivedAt = -1;
+                for (int n = 1; n <= 5 && revivedAt < 0; ++n) {
+                    if (n > 1) r.monstersWait = true, acts = r.turn({{0, -1, -1}});
+                    const auto end = r.turnEndActions();
+                    (void)r.endTurn();
+                    if (const cr3::Cr3Action* rev = actionOf(end, -1, 1759)) {
+                        check(rev->target == 2 && r.fighters[2].hp == 5000 && !r.hasEffect(2, 34), "1759 revives 34's bearer at 100 %");
+                        revivedAt = n;
+                    } else check(end.empty() && r.fighters[2].dead(), "34 waits for its turns");
+                }
+                check(revivedAt == 4, "34 revives at the end of the third turn after the KO (condition 17: turns at or under 1)");
+            }
+            // kind 120: Dance (56) on the actor - trigger 3 enables it, its 1512 replaces the command - its target chosen again,
+            // itself -, end timing 3 disables it; a turn later the same, its three turns
+            {
+                cr3::Cr3BattleRules r; fresh(r, 53);
+                r.giveEffect(0, 56);
+                check(r.commandChange(r.fighters[0]) < 0, "a dormant kind 120: no command change");
+                auto acts = r.turn({{0, 1100, 2}});
+                const cr3::Cr3Action* d = actionOf(acts, 0, 1512);
+                check(d && !actionOf(acts, 0, 1100) && d->target == 0 && r.fighters[2].hp == 5000, "kind 120: 1512 played in place of the attack, on itself");
+                check(r.hasEffect(0, 56) && r.fighters[0].effectsDormant.count(56), "end timing 3 disables the kind 120 effect again");
+                r.monstersWait = true;
+                acts = r.turn({{0, -1, -1}});
+                check(actionOf(acts, 0, 1512) && !actionOf(acts, 0, -1), "kind 120 replaces a guard too");
+                r.removeEffect(0, 56), r.monstersWait = true;
+                acts = r.turn({{0, 1100, 2}});
+                check(actionOf(acts, 0, 1100) && r.fighters[2].hp < 5000, "no kind 120: the command as chosen");
+            }
+            // skill kind 60 at its trigger (600: trigger 4 gives 3 as it is hit), and the opening (601: trigger 1's kind 100 command
+            // and its kind 60 status effect)
+            {
+                cr3::Cr3BattleRules r; fresh(r, 54);
+                r.fighters[2].skills = {600}, r.fighters[0].skills = {601};
+                check(!r.hasEffect(2, 3), "skill 600: nothing before its trigger");
+                (void)r.turn({{0, 1100, 2}});
+                check(r.hasEffect(2, 3) && !r.hasEffect(3, 3), "skill kind 60 gives its status effect at its trigger (4)");
+                cr3::Cr3BattleRules o; fresh(o, 54);
+                o.fighters[0].skills = {601}, o.fighters[3].skills = {601}, o.fighters[3].hp = 0;
+                const auto open = o.opening();
+                check(open == std::vector<std::pair<int, int>>{{0, 81}} && o.hasEffect(0, 4) && !o.hasEffect(3, 4),
+                      "the opening: trigger 1's kind 100 command {unit, 81} and kind 60's status effect, the fallen left out");
+            }
+            // Cover (skill kind 118 = the command): the coverer takes the hit, the original untouched; another command not
+            {
+                cr3::Cr3BattleRules r; fresh(r, 56);
+                r.fighters[3].skills = {603};
+                auto acts = r.turn({{0, 1100, 2}});
+                const cr3::Cr3Action* a = actionOf(acts, 0, 1100);
+                check(a && a->targets.size() == 1 && a->targets[0].target == 3 && a->targets[0].coveredFrom == 2 && r.fighters[2].hp == 5000 &&
+                          r.fighters[3].hp < 5000, "Cover: skill kind 118 of the command - the coverer takes the hit");
+                r.monstersWait = true, r.fighters[3].hp = 5000;
+                acts = r.turn({{0, 1101, 2}});
+                a = actionOf(acts, 0, 1101);
+                check(a && a->targets[0].target == 2 && a->targets[0].coveredFrom < 0 && r.fighters[3].hp == 5000, "Cover: another command not covered");
+            }
+            // triggers 7 / 8 / 9 once a target: 500 / 501 / 502 each one use a trigger
+            {
+                cr3::Cr3BattleRules r; fresh(r, 55);
+                r.giveEffect(2, 500), r.giveEffect(2, 501), r.giveEffect(2, 502);
+                auto uses = [&](int fi, int id) { return r.fighters[size_t(fi)].effectUses[id]; };
+                (void)r.turn({{0, 1107, 2}});
+                check(uses(2, 500) == 4 && uses(2, 501) == 4 && uses(2, 502) == 5, "three landed hits: trigger 7 and 8 once, no trigger 9");
+                r.fighters[2].skills = {329}, r.monstersWait = true;
+                (void)r.turn({{0, 1100, 2}});
+                check(uses(2, 500) == 3 && uses(2, 501) == 4, "a blocked first hit: trigger 7, no trigger 8");
+                r.fighters[2].skills.clear(), r.giveEffect(2, 18), r.monstersWait = true;
+                (void)r.turn({{0, 1107, 2}});
+                check(uses(2, 500) == 3 && uses(2, 501) == 4 && uses(2, 502) == 5, "every hit evaded: no trigger at all");
+                r.giveEffect(1, 500), r.giveEffect(1, 501), r.fighters[1].hp = 1000, r.monstersWait = true;
+                (void)r.turn({{0, 81, 1}});
+                check(uses(1, 500) == 4 && uses(1, 501) == 5 && r.fighters[1].hp > 1000, "a heal: trigger 7, no trigger 8 (a net heal)");
+                r.giveEffect(0, 502), r.monstersWait = true;
+                (void)r.turn({{0, 1102, 0}});
+                check(uses(0, 502) == 4, "a status command (no hits): trigger 9");
+            }
+        }
         // Round 20 against the release's tables (CR3_DATA): monster 913 mode 2's 2 actions, 865's Augmented Core
         // costing 2, and battle 22's monster 1408 (weights 15 / 10 / 10 / 5 / 5: each U(0,1) x w / sum, the
         // highest - 54.4 / 21.2 / 21.2 / 1.7 / 1.7 %)
@@ -1242,6 +1377,42 @@ int main() {
                             gave = std::find(a.targets[0].effectsGiven.begin(), a.targets[0].effectsGiven.end(), 51) != a.targets[0].effectsGiven.end();
                     check(gave && r.hasEffect(m, 51) && !r.fighters[size_t(m)].dead() && r.defeated(r.fighters[size_t(m)]) && r.outcome() == 1,
                           "1741: the Mimic escaped - status effect 51, alive (no EXP, money or drop: not IsDead), the battle won");
+                }
+                {
+                    // Round 25 against the release: battle_0005's turn-end 72 Special Support (an assist direction, kind 13) revives
+                    // and fills the party; Dance (56) makes a party member's command 1512; se 34 revives with 1759 three turns on
+                    cr3::Cr3BattleRules r;
+                    battleOf(2612, r, 25);
+                    std::vector<int> party;
+                    int foe = -1;
+                    for (size_t k = 0; k < r.fighters.size(); ++k) (r.fighters[k].player ? party.push_back(int(k)) : void(foe = foe < 0 ? int(k) : foe));
+                    check(!party.empty() && foe >= 0, "battle 2612: a party and a monster");
+                    r.fighters.push_back(r.fighters[size_t(party[0])]), party.push_back(int(r.fighters.size()) - 1); // (a second member)
+                    r.noAssist = true, r.partyUnhurt = true;
+                    r.fighters[size_t(party[1])].hp = 0, r.fighters[size_t(party[0])].mp = 0;
+                    const auto acts = r.scriptCommands({{72, -1}});
+                    const cr3::Cr3Fighter& p0 = r.fighters[size_t(party[0])];
+                    const cr3::Cr3Fighter& p1 = r.fighters[size_t(party[1])];
+                    check(acts.size() == 1 && acts[0].assist && acts[0].source == -1 && acts[0].targets.size() == party.size() && p1.hp == p1.maxHp &&
+                              p0.mp == p0.maxMp,
+                          "release 72 Special Support: an assist direction, every player revived and filled (HP and MP)");
+                    r.giveEffect(party[0], 56);
+                    r.monstersWait = true;
+                    bool danced = false;
+                    for (const cr3::Cr3Action& a : r.turn({{party[0], r.attackCommandOf(party[0]), foe}}))
+                        danced |= a.source == party[0] && a.command == 1512 && a.target == party[0];
+                    check(danced && r.fighters[size_t(party[0])].effectsDormant.count(56), "release Dance (56): 1512 in place of the attack, end timing 3");
+                    r.removeEffect(party[0], 56);
+                    r.fighters[size_t(party[1])].hp = 0, r.giveEffect(party[1], 34);
+                    int revived = -1;
+                    for (int n = 1; n <= 5 && revived < 0; ++n) {
+                        r.monstersWait = true;
+                        (void)r.turn({{party[0], -1, -1}});
+                        for (const cr3::Cr3Action& a : r.turnEndActions())
+                            if (a.command == 1759 && a.target == party[1] && p1.hp == p1.maxHp) revived = n;
+                        (void)r.endTurn();
+                    }
+                    check(revived == 4, "release se 34: 1759 revives its bearer at the end of the third turn on");
                 }
             } else {
                 std::cout << "CR3_DATA: " << err << " - the release checks skipped\n";

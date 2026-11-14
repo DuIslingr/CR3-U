@@ -120,12 +120,14 @@ unset CR3_BATTLE_SEED
 
 # Reverse Gravity (387, extraType 0xb - the Death Mask 554, battle 152; its MP -1 unlimited): AnnounceBattle 182 after it,
 # the order slowest first from turn 2 (fighter 2 first), and at the end of turn 5 - the cast turn and four more - command
-# 58 with no source (BtlGravityInversionDirection: line 183). --input foe: the cast forced on turn 1
+# 58 with no source (BtlGravityInversionDirection: line 183). --input foe: the cast forced on turn 1, then turns 2 .. 5's
+# command 211 (round 25: skill 454 - no trigger, kind 60 - gives the Death Mask status effect 79 from its first skill trigger,
+# and battle_0152's Battle_Monster_0554 keeps it in mode 0 with it, where its own picks recast 387 - closing the space)
 export CR3_BATTLE_SEED=1
 want battle && run reverse-gravity \
     "0.1:until=turn_6,_the_get-set 0.5:quit" \
     "fighter 3 given command 387 on turn 1|action 0 - 1 -> -1|command 387|the reverse gravity on - line 182|turn 2, the get-set|action 0 - 2 -> -1|action 4 - -1 -> -1, command 58|the reverse gravity over - command 58, line 183|turn 6, the get-set" \
-    -- --battle 152 --team-level 30 --cr3-party 1,2,3 --input "guard:party foe:1:3:387 battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard"
+    -- --battle 152 --team-level 30 --cr3-party 1,2,3 --input "guard:party foe:1:3:387 battle guard guard guard foe:2:3:211 battle guard guard guard foe:3:3:211 battle guard guard guard foe:4:3:211 battle guard guard guard foe:5:3:211 battle guard guard guard battle guard guard guard"
 
 # Call for Help (1773, Rainforcement - the Ark Raptor 1555, battle 1109): the Raptor in slot 3 felled over two turns, then
 # 1773 on it - its name, AnnounceBattle 92, a Raptor 1554 faded in at the slot, acting the turn after (flag 5056: no
@@ -149,3 +151,27 @@ want battle && run gene-switch \
     "fighter 3 given command 1744 on turn 1|action 0 - 3 -> 3, command 1744|a gene switch - command 1744 by fighter 3 (camera 2, effect 51)|turn 2, the get-set" \
     -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --input "guard:party foe:1:3:1744 battle guard guard guard"
 unset CR3_BATTLE_SEED
+
+# Round 25: the turn end's script commands played with their own directions (BtlSysStateAction::VUpdate case 0x12). Battle 5
+# (the opening's): 1109 at 60 % uses its skill 425's 1756 - flag 5002, its scene tapped through -, then Battle_Turn_End queues
+# 72 "Special Support": BtlAssistDirection (kind 13) - the heal camera Cam_bt_all_PC_00, effect 158 on the party, the name
+export CR3_BATTLE_SEED=1
+special_pad="0.1:until=3_lets_1_go"
+for i in $(seq 2 25); do special_pad="$special_pad $((i * 6 / 10)).$((i * 6 % 10)):east"; done
+want battle && run special-support "$special_pad 15.5:until=turn_3,_the_get-set 0.5:quit" \
+    "command 1756|the script queued command 72|an assist direction (kind 13) - command 72, camera 6 (Cam_bt_all_PC_00), effect 158 on 3|an assist - command 72 on 3: \"Special Support\"|turn 3, the get-set" \
+    -- --battle 5 --team-level 1 --cr3-party 1,2,3 --flag 5056 --input "guard:party battle attack t0 attack t0 battle attack t0 attack t0 battle guard guard guard"
+
+# The target list's status icons (TargetSelectButton::SetParameter / Step): turn 1's Emperor Mode (315) gives its caster 3 .. 6
+# - icons 13 .. 16, in slot order -; turn 2's potion's list shows them one at a time, the next every second - the first step at
+# once -, with the element and the level
+want battle && run target-icons "0.1:until=fighter_1's_target_icon_16 0.5:quit" \
+    "fighter 1's target icons 13 14 15 16|fighter 1's target icon 14 (1 of 4)|fighter 1's target icon 15 (2 of 4)|fighter 1's target icon 16 (3 of 4)" \
+    -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --cr3-gene 2:457 --item 101:3 --input "guard:party battle guard gene3 guard battle item item0"
+unset CR3_BATTLE_SEED
+
+# The opening (BtlSysStateSelect::phaseStart, BtlOpeningDirection): gene 39's Catalyst skill 81 - trigger 1: its kind 100 command
+# 81 on itself, kind 60's Berserk (3) - in the players' group under Cam_bt_all_PC_00, effect 166, before the first menu
+want battle && run battle-opening "0.1:until=turn_1,_the_get-set 0.5:quit" \
+    "the opening - 1 commands, 1 rounds|the opening's round 0 (group 0, camera Cam_bt_all_PC_00): 1:81 (effect 166|fighter 1's status icon 13|the opening over|turn 1, the get-set" \
+    -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --cr3-gene 2:39 --input "guard:party"

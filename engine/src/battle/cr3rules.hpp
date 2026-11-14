@@ -37,9 +37,9 @@
 // chance, kept while one side acts). A hit may miss (calculateHit: speed against speed); status
 // effects (skill_para StatusEffect) scale the stats and the damage, stop a unit acting, forbid
 // commands and change HP each turn; a downed unit's command waits. The break gauge, the status
-// effects' kinds and the misses: docs/FORMATS.md "Battles (CR3)". Not in yet: skills' conditional
-// effects and the rarer multipliers (Damage Multi, Team Play, Target Skill), evasion, a command
-// change (status kind 120). The status effects' triggers and end timings (BtlStatusEffect::Trigger /
+// effects' kinds and the misses: docs/FORMATS.md "Battles (CR3)". Not in yet: the rarer
+// multipliers (Damage Multi, Team Play, Target Skill). Cover (skill kind 118) in turn(). The command change
+// (status kind 120): Cr3BattleRules::commandChange. The status effects' triggers and end timings (BtlStatusEffect::Trigger /
 // End): Cr3BattleRules::triggerEffects / endEffects; a skill's fixed damage (kind 91) and blocks (3 / 6
 // / an element's, 89 piercing) in turn(); the assists - calculateAssist - after a turn's commands.
 //
@@ -189,6 +189,9 @@ struct Cr3Hit {
     // (BtlDamageTarget::Calculate 0x983a44: the target's enabled kind 49 - Mental Wall - turned the
     // command back, +0x110 bit 1: target is then the caster, this the unit whose wall it was; -1 none)
     int reflectedFrom = -1;
+    // (BtlDamageTarget::Calculate 0x983a44 before trigger 4 - BtlSkillUtility::HasCover 0x9b0cac: a unit's skill kind 118 of
+    // this command took the hit - target the coverer, this the unit it covered, +0x18; -1 none: BtlShotCoverDirection)
+    int coveredFrom = -1;
     int hpAfter = 0, mpAfter = 0;
     bool killed = false;
     // (calculateStealGold 0x7e20e8 - formula 21, command 1647: BtlDamage +0x72 / +0x1c) -1 not a
@@ -436,11 +439,12 @@ public:
     int lowHpPlayer(bool mp) const;
     bool lowAllPlayers(bool mp) const;
     // a command with no actor (source -1: an assist, a status effect's kind 98 / 101 command), on the target
-    // given - -1 every one its target kind takes of the players' side: heals (formula 6 -> damage 7 a
-    // percentage of the max HP, 7 -> 17 of the max MP), revives, removes and gives ("always lands" with +0xbc bit 3)
+    // given - -1 every one its target kind takes of the players' side, one living player's for a one-target kind: heals
+    // (formula 6 -> damage 7 a percentage of the max HP, 7 -> 17 of the max MP, 17 -> 18 both), revives, removes and gives
+    // ("always lands" with +0xbc bit 3)
     Cr3Action resolveSourceless(int command, int target);
     // BtlStatusEffect::Trigger 0x9c7ad8 for a unit's effects at an event (the table in docs: 3 its own command
-    // worked out, 4 before it takes damage, 7 after each damaging hit, 8 after the hits, 9 no hits, 10 after
+    // worked out, 4 before it is first hit by a command, 7 its first hit landed, 8 that not blocked and no heal, 9 no hits, 10 after
     // its command, 11 every unit after any command, 12 the turn's end): one whose +0x20 is the event's, with
     // uses left and its +0x24 condition holding (0 always, 3 HP at or under +0x28 %, 6 / 7 a physical / magic
     // command - +0xc4 1 / 2 -, 17 its turns at or under +0x28, 18 / 22 HP at or over / at or under +0x28, 20 the
@@ -450,9 +454,39 @@ public:
     // bit 3), and removed with no uses or turns left
     void endEffects(int fighter, int timing);
     bool effectEnabled(const Cr3Fighter& f, int id) const { return !f.effectsDormant.count(id); }
+    // BtlStatus::TriggerSkillToCalculation 0x9b3488 at a skill trigger (+0x1c: 1 / 2 the opening, 3 .. 12 as the status
+    // effects'): each skill of that trigger whose condition (+0x20, its constant +0x24 - the status effects' table, 19 the
+    // command the constant, 28 every foe's HP at or under it) holds and whose chance (+0x2c, +0x40 with the gauge's
+    // advantage, of 256) rolls fires - its kind 60 gives that status effect (MbStatusEffectInfo::GetTurn's turns), 61 takes
+    // it away; a skill of no trigger gives its kind 60 one where the unit has none (whether the original gives it again at
+    // each trigger - re-arming it - unsettled). The fired skills' kinds 97 .. 101 / 126 commands returned (kind, command)
+    std::vector<std::pair<int, int>> triggerSkills(int fighter, int trigger, int attackKind = 0, bool downed = false, int command = -1);
+    // BtlStatusEffectUtility::GetCommandChange 0x9b1f30: the unit's first enabled status effect - in the list's slot order,
+    // StatusEffect +0x04 - with a kind 120 (0x78) constant of 0 or more: the command it plays instead; -1 none
+    int commandChange(const Cr3Fighter& f) const;
+    // the opening (BtlSysStateSelect::phaseStart 0x9d35d4, the first turn alone): trigger 1 on every living unit's skills,
+    // their enabled kind 100 constants {the unit, the command} (GetOpeningSkillCommand 0x9b5c78), end timing 1; the same for
+    // trigger 2, made unique by the command. (fighter, command) in order - their commands give nothing themselves:
+    // BtlOpeningDirection's visuals alone (the viewer's)
+    std::vector<std::pair<int, int>> opening();
+    // the turn end's script commands (BattleCommand.SetId / SetIdAndTarget: (command, target - -1 its own)) worked out:
+    // end timing 11 on every unit first, then each with no source (resolveSourceless) - an assist direction's (CommandDirection
+    // kind 13 / 40) marked assist
+    std::vector<Cr3Action> scriptCommands(const std::vector<std::pair<int, int>>& cmds);
+    // the turn-end list (trigger 12's kind 100 / 101 commands, gathered at turn()'s end) worked out, then cleared
+    std::vector<Cr3Action> turnEndActions();
 
 private:
     const Cr3BattleTables* tables_ = nullptr;
+    std::vector<Cr3Action> resolveOrder(std::vector<std::array<int, 4>> order, size_t bucket0End);
+    std::pair<int, int> priorityAndCost(int fighter, int command) const;
+    void sortBucket(std::vector<std::array<int, 4>>& bucket);
+    void queueTurnEnd(int bearer, const std::vector<std::pair<int, int>>& added);
+    void markAssist(Cr3Action& a) const;
+    // a trigger's condition (BtlStatusEffect::Trigger's / BtlSkill::Trigger's +0x24 / +0x20 and its constant); turns -1: a skill's
+    bool conditionHolds(const Cr3Fighter& f, int condition, int constant, int attackKind, bool downed, int turns, int command) const;
+    std::vector<std::array<int, 3>> turnEndQueue_; // (BtlCommandManager +0x48: source - -1 none -, command, target)
+    bool turnEndTriggered_ = false;                // (turn() ran trigger 12; endTurn() then doesn't)
     uint32_t rng_ = 1;
     float random(); // [0, 1)
     void rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool& crit, bool& down, float& rate);

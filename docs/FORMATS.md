@@ -1732,7 +1732,13 @@ BattleCommand.Add(unit, actions, command) (BtlStatusList::AddCommand) gives it t
 turn in place of its own pick (battle_0005's 1109 holds with 1507 while someone has status 43).
 After a direction, BattleArgument is its action: GetSource, GetCommand, WasDown, WasCooperated
 (BtlDamageChunk::IsCooperation). BattleStatus.GetIdByStatusEffect is the first unit with one.
-BattleCommand.SetId (commands of no unit's after the turn's end - battle_0005's 72) is not played.
+BattleCommand.SetId / SetIdAndTarget queue commands of no unit's: after Battle_Turn_End_Base (or
+Battle_Defeat_Base - flag 5053's 72, the battle then going on) end timing 11, then each worked out
+and played with its own direction (battle_0005's 72 Special Support - BtlAssistDirection, kind 13:
+the name 2.0 s, the heal camera Cam_bt_all_PC_00, effect 158 on every target, the popups at the
+effect's first hit frame). Then the turn-end list - trigger 12's kind 100 / 101 commands, gathered
+as the turn's commands were worked out (BtlCommandManager::TriggerTurnEnd: se 34's revive 1759,
+skill 471's 1738) - with the get-set camera, then the turns, end timing 11 and the poison's HP.
 
 A unit with a kind 31 status effect (held, asleep) gets no command menu
 (BtlStatusList::InitializeMenu); one with a kind 32 effect (IsNonTarget) or kind 72

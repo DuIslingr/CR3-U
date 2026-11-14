@@ -643,6 +643,20 @@ A delegated pass (`/tmp/cr3-opening-audit/round24-special.md`), implemented by a
 | Avatar (action 38: 1730 / 1731 / 1830) | Name, motion, a 1.0 s white-out and `ev_018`, the movie (c56 / c53 / c58), a 1.0 s white-in, the group effect with the all-foes damage | A motion and effect | As traced (Android's `CRDBmov` has the movies) |
 | Gene Switch (command 1744, action 14; battles 37, 52, 53) | No announce or cast: camera 2, effect 51 on itself, its name 1.0 s, commentary category 57 once a battle | "bs01" | As traced |
 
+### 29. Round 25 parity audit (the battle's leftovers)
+
+A delegated pass (`/tmp/cr3-opening-audit/round25-leftovers.md`), implemented by another under memory caps.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Turn-end commands (`phaseCallTurnEndEvent` `0x9d002c`, `BtlSysStateAction::VUpdate` `0x9d261c` phase 0x12, `phaseStatusEffect` `0x9d0098`, `TriggerTurnEnd` `0x7dbdec`) | `Battle_Turn_End_Base`'s `BattleCommand`s become source-less commands played as a full sequence with their directions; then the get-set camera and trigger 12's list; then the effects' turns, end timing 11, the field effects. `battle_0005`'s command 72 "Special Support" (every player sees it); `Battle_Defeat_Base`'s (flag 5053 -> 72); status effect 34's revive (1759) three turns on | Heals and removals as bare numbers, no direction or effects; trigger 12's commands thrown away | As traced (`special-support`) |
+| The assist's direction (`BtlAssistDirection::vPlay` `0x9956a0`; kind 40 `0x998118`) | Announcement (2.0 s with more than one target), the CommandDirection `+0x0c` camera (6: `Cam_bt_all_PC_00` on players), the effect on every target at once, popups at event 1; kind 40 camera -> effect -> announcement | 1.5 s, a fixed hit, no camera | As traced |
+| The target list's icons (`UpdateTargetInterface` `0x9b82b0`, `TargetSelectButton`, `Step` `0xb45920`) | Both sides: up to 7 effects' icons in slot order (icon 9 alone), one at a time each 1.0 s from the list's opening; the element and level digits | None | As traced (`target-icons`) |
+| Command change (effect kind 120; `BtlDamageChunk::Calculate` `0x97ac10`) | At a command's start: trigger 3, then the first enabled kind-120 effect's constant replaces the command, the target chosen again, then end timing 3 (its only use), then the no-action / MP / ban checks - Dance (1512), the Pig form (9), flag 5052's 57 on Leary / Elroux, bosses' reactions | Not read | As traced (finishers and inserted commands untouched) |
+| Skill kinds 60 / 61 and the opening (`TriggerSkillToCalculation` `0x9b3488`, `phaseStart` `0x9d35d4`, `BtlOpeningDirection`) | A skill's trigger gives (60) / removes (61) its status; triggers 1 / 2 at the battle's start (skills 81 .. 87 "Catalyst": Berserk, Diamond, Tachyon, Eggon, Mental Wall, Moonlight), played grouped - players, then monsters | None (also breaking several gene skills) | As traced (`battle-opening`); triggers 5 / 6 untraced, so skills 126 / 132 / 134 still don't fire |
+| Trigger corrections | Trigger 4 on the first time a target is hit in any command; 7 / 8 / 9 once per target - 7 on the first landed hit (none if it was evaded), 8 and end 7 only unblocked with the HP change a loss, 9 when nothing landed | 7 each hit, 8 always, 4 on hostile commands only | As traced |
+| Cover (skill kind 118 = the command; skill 435, command 1685; `battle_0034`'s Brave Pigtapir; `PlayCover` `0x9df840`) | The first other unit (not under kind 31) with it takes the hit, jumping in front at event 2 | None | As traced; the jump's depth and motion guessed |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -810,9 +824,9 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`57/57` cases, `0 problems`)**:
+- **Controller & UI integration suite (`60/60` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 57 headless controller cases (round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
+  passes all 60 headless controller cases (round 25 added `special-support`, `target-icons`, `battle-opening`; round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
   `CR3_EVTANIM`), `ladder` (d0202: a fall onto the floor, the ladder from the foot, a rung, off at the
   top), `ranged-camera` (battle 22's ranged direction's global clips, seed 1), `camp-event-ask` (the
   event camp's Yes / No: No, the hard back's stall, Yes) and `camp-event-nogene` (the `0x307` alert);

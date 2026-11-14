@@ -1881,6 +1881,19 @@ struct Viewer {
     };
     std::vector<Cr3StIcon> cr3StIcons;
     int cr3StatusIcon(size_t fighter);
+    // the target list's status icons (BtlStatusEffectList::UpdateTargetInterface 0x9b82b0 -> TargetSelectButton::SetParameter
+    // 0xb46a68 / SetStatusIcon 0xb472e0 / Step 0xb45920): the unit's effects in slot order - StatusEffect +0x04 -, enabled or
+    // not, their icons (+0x08) not -1, seven at most - icon 9 alone where one has it -; one shown at a time, the next every
+    // 1.0 s (the timer reset as the list opens - SetParameter -, the first step at once)
+    std::vector<int> cr3TargetIcons(size_t fighter) const;
+    struct Cr3TargetIconCycle {
+        float timer = 0;   // (+0x1d8)
+        int slot = 0;      // (the one shown - the first to begin with, +0x1dc)
+        float last = -1;   // (the clock last stepped)
+        float opened = -1; // (the list's opening it was reset at - cr3MenuStart)
+    };
+    std::map<int, Cr3TargetIconCycle> cr3TargetIconCycles; // (by fighter)
+    int cr3TargetIcon(size_t fighter); // (the icon its target panel shows now - stepped; -1 none)
     // Analyze (BtlAnalyzeDirection, CommandDirection kind 0x16 - command 393 -, ctor 0x0098b2e8: its effect over,
     // BtlAnnounceUI::AddObserver - tap to skip - then BtlStatusList::Analyze 0x009c1bc4 -> BtlMonsterStatus::VAnalyze
     // 0x009c6804: three lines queued - the name, AnnounceBattle 32 "HP: {hp}/{max_hp}", mon_help.mbe's -, each the
@@ -1935,6 +1948,7 @@ struct Viewer {
     void stepCr3Reinforcement(const cr3::Cr3Action& a, float actionTime);
     void reinforceCr3Slot(int fighter, int monster);
     void stepCr3StealBack(const cr3::Cr3Action& a, size_t source, float actionTime);
+    void startCr3Cover(const cr3::Cr3Hit& hit, float flight);
     void announceCr3FieldToggle(const cr3::Cr3Action& a, float actionTime);
     bool cr3GeneVoiceUsed = false; // (BtlVoiceManager::DisableCategory(0x39): a Gene Switch's voice once a battle)
     // the damage shown (DamageInfo: btNumMenu over the target, btNumMenu_in)
@@ -2142,7 +2156,27 @@ struct Viewer {
     // flag 5053 (chapter 1's d02 .. t01) queues 72: the party's side (target 11) back whole - KO
     // (status effect 1) taken away, HP its power's percentage of the max
     std::vector<std::pair<int, int>> cr3ScriptCommands; // (command, target fighter - -1 the command's own)
-    bool playCr3ScriptCommands();
+    // a turn's end, in the original's order (BtlSysStateAction: phaseCallTurnEndEvent 0x9d002c - Battle_Turn_End_Base -,
+    // VUpdate 0x9d261c case 0x12 - its commands played -, phaseStatusEffect 0x9d0098 - PlayGetSet and the turn-end list
+    // played, then the ticks, end timing 11 and the field's step): 0 the script to run, 1 its commands played, 2 the list
+    // played, 3 a new wave's script's commands played (then the next turn)
+    int cr3TurnEndStep = 0;
+    bool cr3DefeatPlayed = false; // (Battle_Defeat_Base's commands played this turn: a second fall lost)
+    // the actions given played as the turn end's (Cr3BattleStage::Action, from the first); false: none
+    bool playCr3TurnEndActions(std::vector<cr3::Cr3Action> actions);
+    // the opening (BtlOpeningDirection: Add 0x999840, vPlay 0x9993ec, Play 0x9995a8, VUpdate 0x999790): the opening skills'
+    // commands grouped - the players', the monsters' -, each group's camera (PlayMagicToPlayer - Cam_bt_all_PC_00 - /
+    // PlayMagicToEnemy), in rounds - each unit's next command's effect (CommandDirection +0x2c at its point +0x38, scale 1)
+    // at once, a unit's commands of the same effect once (Param::Add) -, the next once every effect of the round is over
+    struct Cr3Opening {
+        bool on = false;
+        std::vector<std::vector<std::pair<int, int>>> rounds; // (fighter, command) each
+        std::vector<int> roundGroup;                          // (0 the players', 1 the monsters')
+        size_t at = 0;
+        float roundEnd = -1;
+    } cr3Opening;
+    bool startCr3Opening(const std::vector<std::pair<int, int>>& commands);
+    void stepCr3Opening();
 
     // the result (BattleResultV2Menu: the EXP and money - the monsters' MbMonsterInfo::GetExp /
     // GetMoney at their levels: +0x3c / +0x40 + (level - 1) x the s16 at +0x44 / +0x46)
