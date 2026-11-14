@@ -38,8 +38,10 @@
 // effects (skill_para StatusEffect) scale the stats and the damage, stop a unit acting, forbid
 // commands and change HP each turn; a downed unit's command waits. The break gauge, the status
 // effects' kinds and the misses: docs/FORMATS.md "Battles (CR3)". Not in yet: skills' conditional
-// effects and the rarer multipliers (Damage Multi, Team Play, Target Skill), evasion, the status
-// effects' triggers, end timings and stacks.
+// effects and the rarer multipliers (Damage Multi, Team Play, Target Skill), evasion, a command
+// change (status kind 120). The status effects' triggers and end timings (BtlStatusEffect::Trigger /
+// End): Cr3BattleRules::triggerEffects / endEffects; a skill's fixed damage (kind 91) and blocks (3 / 6
+// / an element's, 89 piercing) in turn(); the assists - calculateAssist - after a turn's commands.
 //
 // A turn (BtlCommandManager::Calculate: a command list per side, in order): the party's chosen
 // commands, then each living monster's; a dead target's attack goes to another living one. A
@@ -68,7 +70,8 @@ struct Cr3Command {
     int repeat = 1;       // (+0x20: its attacks, each of its hits - Rakshasa Lotus 3 x the weapon's 1)
     int breakPoint = -1;  // (+0x22, s16: its break points a hit - below 0 none; with flag bit 1 the unit's weapon's instead)
     uint32_t flags = 0;   // (+0xbc: bit 0 a gene's, 1 the weapon's break, 2 always hits, 3 its status effects always land, 4 can be critical, 5 always critical, 6 always downs,
-                          //  7 can be cooperated in)
+                          //  7 can be cooperated in; 16 - +0xbe bit 0 - never on the Auto Battle: noAuto)
+    bool noAuto = false;  // (+0xbe bit 0: BtlAutomaticCommandList::EnumerateCommand 0x970edc passes it over)
     float hitRate = 1;    // (+0x1c: x the hit chance)
     std::vector<int> effects; // (+0x40 / +0x48: the status effects it gives - Guard's 2)
     std::vector<int> removes; // (+0x50 / +0x58: the status effects it takes away - MbCommandInfo::HaveRemovesStatusEffect; battle 7's release 1844)
@@ -94,7 +97,7 @@ struct Cr3Command {
     bool usable() const {
         return (damage < 0 && (!effects.empty() || !removes.empty())) || damage == 1 || damage == 2 || ally() || damage == 8 ||
                damage == 10 || damage == 11 || damage == 12 || damage == 13 || damage == 20 || damage == 21 || damage == 22 ||
-               damage == 23 || damage == 24;
+               damage == 23 || damage == 24 || direction == 0x16; // (0x16: BtlAnalyzeDirection - Analyze, command 393, no formula)
     }
     float multiplier = 1;
     int priority = 0;   // (+0xa0: BtlCommandManager bucket / BtlCommandList::Sort primary order; -8 / -9 delayed buckets)
@@ -141,6 +144,7 @@ struct Cr3Fighter {
     int attackCommand = -1;                     // (a character's +0x10; a monster's mode's +0x14)
     std::vector<int> geneCommands;              // (a character's gene's: a guest's GuestGene row)
     int geneMaster = -1;                        // (the equipped gene's master ID for the battle card)
+    int geneOrder = 0; // (the worn gene's MbGeneInfo +0x54 - BtlStatus::GetOrderType 0x9b7290: battle.mbe OrderType's row, its guard chance)
     int geneLevel = 0;                          // (VGetGeneLevel: the "Level" step's - a character's gene's, a monster's level)
     std::vector<Cr3MonsterCommand> commands;   // (a monster's mode's)
     int actionsPerTurn = 1; // (vGetResetRatio: a monster's MonsterCommand +0x10 - MbMonsterInfo::GetRatio -, a character's 1)
@@ -151,6 +155,11 @@ struct Cr3Fighter {
     // until removed) and per-effect accumulation count (col 7 maxAccumulation)
     std::vector<std::pair<int, int>> effects;
     std::map<int, int> effectStacks;
+    // (BtlStatusEffect +4 / +0x10: each effect's uses left - StatusEffect +0x10, -1 unlimited - and the
+    // ones not enabled - a triggered one, StatusEffect +0x20 not 0, dormant until BtlStatusEffect::Trigger
+    // 0x9c7ad8 enables it; BtlStatusEffectVisitor::Visit 0x9b9e3c reads only the enabled), by id
+    std::map<int, int> effectUses;
+    std::set<int> effectsDormant;
     std::array<int, 6> effectResist{}; // (a monster's resistances to battle.mbe's listed effects)
     bool comboChance = false; // (BtlBasicStatus +0x6d: downed - every later hit on it downs too, until the acting side changes)
     int combo = 0;            // (its combo count: +1 a downing hit; the magic chain bonus's)
@@ -167,10 +176,13 @@ struct Cr3Hit {
     int target = -1;
     std::vector<int> hits; // each hit's HP delta (a heal's: below 0)
     std::vector<int> mpHits; // each hit's MP delta (an MP heal's: below 0; MP drain/damage: above 0)
-    std::vector<uint8_t> flags; // each hit's: bit 0 critical, bit 1 down, bit 2 a miss
+    std::vector<uint8_t> flags; // each hit's: bit 0 critical, bit 1 down, bit 2 a miss, bit 3 blocked (calculateFluctuation 0x7e122c: +0xa7 / +0xa8)
     std::vector<uint8_t> colors; // BtlDamageUI::getDamageColor: 0 normal, 1 weak, 2 resist, 3 HP heal, 4 MP heal
     std::vector<int> gauge; // the break gauge after each hit
     std::vector<int> effectsGiven; // the status effects it gave (StatusEffect ids)
+    // (BtlDamageTarget::Calculate 0x983a44: the target's enabled kind 49 - Mental Wall - turned the
+    // command back, +0x110 bit 1: target is then the caster, this the unit whose wall it was; -1 none)
+    int reflectedFrom = -1;
     int hpAfter = 0, mpAfter = 0;
     bool killed = false;
     // (calculateStealGold 0x7e20e8 - formula 21, command 1647: BtlDamage +0x72 / +0x1c) -1 not a
@@ -192,6 +204,11 @@ struct Cr3Action {
     bool combo = false, broke = false;
     bool finisher = false; // (BtlCommandManager::addLastAttack's: a Last Attack or a Finest Arts, played as its command's own)
     bool cooperated() const { return !partners.empty(); } // (BtlDamageChunk::IsCooperation)
+    // (source -1: a command with no actor - an assist, BtlCommandManager::calculateAssist 0x7dbbf4, or a
+    // status effect's kind 98 / 101 one, AddNoSourceInterruptCommand / AddNoSourceCommand: Regenerate's 306)
+    bool assist = false; // (calculateAssist's: its direction BtlAssistDirection, the announcement's {assistant})
+    std::vector<std::vector<int>> effectsAfter; // (every fighter's status effects once it is calculated - Cr3BattleRules::snapshotAfter)
+    std::vector<int> elementsAfter;             // (every fighter's element then - ChangeElementToCalculation's)
 };
 
 class Cr3BattleRules {
@@ -284,6 +301,36 @@ public:
     // from the back IsSelected prefers (preferred: true), else the front; -1 none (or kind 138 against
     // select types 3 / 9). selectType -1: a script's (BattleCommand.Add - IsSelected's default)
     int chooseTarget(int fighter, int command, int selectType, bool* preferred = nullptr);
+    // BtlTargetList::Collect 0x009ca648: the fighter's targets for the command by its target kind (a
+    // provoked one's: its provoker alone), as collected - no order, no random
+    std::vector<int> collectTargets(int fighter, const Cr3Command& c) const;
+    // BtlTargetList::GetRandomTarget: one of them at random (a kind 51 unit's - IsAutoAttack -
+    // attack's); -1 none
+    int randomTarget(int fighter, int command);
+    // the get-set's Mass Attack (BtlSysStateSelect::phaseAllAttack 0x9d3e2c): the command menu's
+    // members (InitializeMenu: living, none under kind 31) each with its own attack command
+    // (GetAttackCommandId), on one target for all - BtlStatusList::GetLowestHpTarget 0x9c388c: the
+    // lowest HP among the first member's attack's targets, the first collected on ties -, a kind 51
+    // unit's at random; (fighter, command, target) as turn() takes them
+    std::vector<std::array<int, 3>> massAttackChoices();
+    // the get-set's Auto Battle (BtlAutomaticUtility::ExecuteAutomaticToPlayer 0x974bf4, with false
+    // ExecuteAutomaticToEnemy 0x975070 - the colosseum's ghosts'): a side's plan over predicted
+    // outcomes (BtlAutomaticManager). Each actor - living, not under kind 31 (IsNoAction) - offers its
+    // attack and its gene's commands (a monster its mode's; never an item) the select type allows
+    // (CanUseSelectType: kind 138 no heals), unsealed (kind 47), not noAuto, within its HP and MP, one
+    // candidate a target; each predicted (BtlAutomaticCommand::Calculate 0x971e94: damage() / heal()
+    // on a copy of the rules - the battle's RNG untouched -, every hit). Then the passes, a later
+    // one's pick taking the actor's place (DeleteSameActorByCommands): attack (select types 0 .. 2:
+    // the most kills on the simulated HP, the most HP rate taken, the least MP, the fastest, the
+    // least damage, the lowest HP), and unless IsEasyPrey 0x975bdc - every foe dead or losing half its
+    // HP - guard, debuff and buff (none: 1.1.3's reject turns down every one - an order type row is
+    // there), cure (type 4, the erased effects' GetAutomaticChance weight), heal (types 3 and 9: the
+    // revives first, then by the lowest HP rate's gate - 50 % half the time, 35 % three quarters, 20 %
+    // always). Each pick's predicted HP and MP changes reflected for the next. An actor with no pick
+    // guards; a kind 51 unit attacks one at random. (fighter, command - -1 a guard -, target)
+    std::vector<std::array<int, 3>> autoChoices(bool player);
+    // battle.mbe OrderType's chances (+0x24 buffer, +0x28 debuffer, +0x2c guard) of a row; 0 none
+    int orderChance(int row, int which) const;
     // BtlStatus::IsSelected 0x009b6cbc: whether the AI prefers the target for the command
     bool isSelected(int fighter, int target, const Cr3Command& c, int selectType);
     // (BtlStatus::IsNonTarget: a kind 32 status effect; BtlStatusEffectList::HasProhibitedTarget: a
@@ -314,6 +361,8 @@ public:
     void giveEffect(int fighter, int id, bool lasting = false); // (lasting: no end - a field's)
     void removeEffect(int fighter, int id);
     bool hasEffect(int fighter, int id) const;
+    int effectIcon(int id) const; // (StatusEffect col 2, +0x08: the panel's btStIcon_fr00 frame; -1 none)
+    void snapshotAfter(Cr3Action& a) const;
     bool hasKind(const Cr3Fighter& f, int kind) const;
     bool hasSkillKind(const Cr3Fighter& f, int kind) const;
     float effectMultiplier(const Cr3Fighter& f, int kind) const;
@@ -330,6 +379,48 @@ public:
     // the turn's end: the effects' HP (kinds 45 / 46, a percentage of the max HP) and their turns
     std::vector<std::pair<int, int>> endTurn(); // (fighter, HP change)
     std::vector<Cr3Fighter> fighters;
+    // the battle's field status effects (Battle.AddFieldStatusEffect 0x9a8108 -> BtlFieldEffectManager::Add:
+    // the boot script's ids; kept across a reinforcement's setup). BtlStatusList::GiveFieldStatusEffect
+    // 0x9c21f4 at every turn's start (phaseStart 0x9d35d4) - GiveFieldStatusEffectToCalculation 0x9c2220:
+    // the players alone, living; an effect it is immune to passed over (HasStatusEffectInvalid), taken away
+    // from one with a skill of kind 0x6a under the gauge as it stands, else given for good (-1 turns)
+    std::vector<int> fieldEffects;
+    void giveFieldEffects();
+    // the assists (BtlCommandManager::calculateAssist 0x7dbbf4, at most one a turn, after the turn's
+    // commands): the cheer points (crx_game_data + 0x1e77c, GameState::cr3Cheer - in at the battle's start,
+    // what is left out again; kept across a reinforcement's setup) and none in a coupling with MbCouplingInfo
+    // +0x44 bit 6 (boss and script battles)
+    int cheer = 0;
+    bool noAssist = false;
+    // getAssistChance 0x7dca58: under 10 points none, under 25 0.1, under 50 0.2, under 80 0.3, under 100 0.4, else 0.5
+    static float assistChance(int points);
+    // the ten handlers in the BtlCommandManager ctor's order (0x7da0ac, +0xf0), the first that holds:
+    // its command (61 .. 71), target (-1 the players' all) and cost (halved, toward 0, while a player has
+    // an enabled status effect of kind 79); -1 none
+    int pickAssist(int* target = nullptr, int* cost = nullptr) const;
+    // calculateAssist itself: the roll (CrxRandom::GenerateReal() <= the chance - none drawn at 0) and the
+    // handler's command resolved with no actor, its points spent; false none
+    bool assistAfterTurn(Cr3Action& out);
+    // BtlStatusList::GetLowHpPlayer 0x9c3e44 / GetLowMpPlayer 0x9c40fc: a living player at 20 % HP / 10 % MP
+    // or under, the lowest rate's (ties: the first); -1 none. IsLowHpAllPlayer 0x9c4428 / IsLowMpAllPlayer
+    // 0x9c44b4: every player - the fallen too - at 20 % / 10 % or under
+    int lowHpPlayer(bool mp) const;
+    bool lowAllPlayers(bool mp) const;
+    // a command with no actor (source -1: an assist, a status effect's kind 98 / 101 command), on the target
+    // given - -1 every one its target kind takes of the players' side: heals (formula 6 -> damage 7 a
+    // percentage of the max HP, 7 -> 17 of the max MP), revives, removes and gives ("always lands" with +0xbc bit 3)
+    Cr3Action resolveSourceless(int command, int target);
+    // BtlStatusEffect::Trigger 0x9c7ad8 for a unit's effects at an event (the table in docs: 3 its own command
+    // worked out, 4 before it takes damage, 7 after each damaging hit, 8 after the hits, 9 no hits, 10 after
+    // its command, 11 every unit after any command, 12 the turn's end): one whose +0x20 is the event's, with
+    // uses left and its +0x24 condition holding (0 always, 3 HP at or under +0x28 %, 6 / 7 a physical / magic
+    // command - +0xc4 1 / 2 -, 17 its turns at or under +0x28, 18 / 22 HP at or over / at or under +0x28, 20 the
+    // hit downed it) is enabled and a use spent; the commands its kinds 97 .. 101 add, returned (kind, command)
+    std::vector<std::pair<int, int>> triggerEffects(int fighter, int trigger, int attackKind = 0, bool downed = false);
+    // BtlStatusEffect::End 0x9c7bd4: the unit's effects ending at that timing (+0x2c) disabled (unless +0x8c
+    // bit 3), and removed with no uses or turns left
+    void endEffects(int fighter, int timing);
+    bool effectEnabled(const Cr3Fighter& f, int id) const { return !f.effectsDormant.count(id); }
 
 private:
     const Cr3BattleTables* tables_ = nullptr;
@@ -338,6 +429,11 @@ private:
     void rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool& crit, bool& down, float& rate);
     int hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool crit, bool down, float rate);
     bool effectLands(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, int id);
+    bool effectInvalid(const Cr3Fighter& t, int id) const; // (HasStatusEffectInvalid: kind 68 - a status effect's or a skill's - of the id)
+    // a skill effect of the kind enabled for this hit (BtlSkillList::HasEnableEffect): a skill without a
+    // condition whose trigger (+0x1c) is 0 or the one given, its chance (+0x2c, +0x40 with the gauge's
+    // advantage, out of 256) rolled below 256; its constants (the highest - GetFixedDamage 0x9b02a0)
+    bool skillEnabled(const Cr3Fighter& f, int kind, int trigger, int* most = nullptr);
     std::array<int, 4> breakWith_{0, 25, 25, 50}, breakWithout_{100, 50, 50, 100}; // (battle.mbe Battle +0x50 / +0x60: base, critical, down, kill)
     std::vector<int> resistIds_;
     std::set<std::pair<int, int>> usedSkills_; // (fighter, skill: the added commands fired)
@@ -346,6 +442,7 @@ private:
     int statusTurnBoost_ = 0;                    // (skill kind 84: GetStatusEffectContinueTurn added on giveEffect)
     int livingTarget(bool player, int preferred, const Cr3Command* by = nullptr);
     std::vector<std::array<int, 8>> orderTypes_;  // (battle.mbe OrderType: each order type's points a turn, by select type)
+    std::vector<std::array<int, 3>> orderChances_; // (its +0x24 / +0x28 / +0x2c: the buffer, debuffer and guard chances out of 256)
     std::array<int, 8> thinkEvery3_{0, 0, 0, 0, 0, 0, 0, 50}; // (ThinkPointAddition row 2: every third turn's)
     void loadMode(Cr3Fighter& f, const MbeFile::Row& m); // (a MonsterCommand row: initializeCommandSkill 0x009c6960)
     // BtlStatusList::addCommandByAI 0x009c0df4: one pick for the monster - appended to raw (fighter,

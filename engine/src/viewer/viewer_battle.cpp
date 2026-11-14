@@ -153,8 +153,8 @@ bool Viewer::runCr3BattleScript(const char* fn, bool quiet) {
             cr3Cam.actor = {float(c.number(0)), float(c.number(1)), float(c.number(2))};
         });
         // (Battle::StopAuto 0x009a82f4 -> BtlInterfaceSystem::StopAuto 0x009a4028: the player's
-        // auto battle off before a scripted event - CR3-U has no auto battle to stop)
-        vm.setNative("Battle", "StopAuto", [](cr3::NativeCall&) {});
+        // Auto Battle / Mass Attack off - battle_0000's BattleEventStartSet, before a scripted event)
+        vm.setNative("Battle", "StopAuto", [this](cr3::NativeCall&) { stopCr3Auto("the script"); });
         // (BattleUnit::GetAttachId 0x009a8080 -> BtlUnitList::GetAttachId 0x009da9a8: the id of the
         // unit it holds - BtlUnit +0x238's +0xe0 -, -1 none: battle 7's every direction end)
         vm.setNative("BattleUnit", "GetAttachId", [this](cr3::NativeCall& c) {
@@ -512,8 +512,8 @@ void Viewer::setCr3Announce(const std::string& text, float seconds) {
     cr3Announce.text = text, cr3Announce.at = cr3BattleClock, cr3Announce.seconds = seconds < 0 ? 1e9f : seconds;
 }
 
-// (a name's "{source}" - BtlDamageChunk::OpenAnnounce - and "{assistant}": the actor, the
-// partner)
+// (a name's "{source}" - BtlDamageChunk::OpenAnnounce: the actor; "{assistant}" is OpenAssist's -
+// cr3AssistantName)
 std::string Viewer::cr3FighterName(const cr3::Cr3Fighter& f) {
     return f.player ? cr3NameOf("char_name.mbe", "CharName", f.id) : cr3NameOf("mon_name.mbe", "MonsterName", f.id);
 }
@@ -523,6 +523,7 @@ std::string Viewer::cr3FighterName(const cr3::Cr3Fighter& f) {
 // line, "{target}" the target; several on one the command's (+0xe8), else 99 (a monster) / 0x6a;
 // one alike on several targets its +0x76 / +0x7a; else as several
 void Viewer::announceCr3Effects(const cr3::Cr3Action& a) {
+    showCr3ActionState(a); // (BtlStatusEffectList::Add on the direction side: the icons as the effects land)
     auto lines = [&](int id, int& single, int& multi, bool player) {
         cr3::MbeFile::Row r;
         if (!cr3BattleTables.skill.find("StatusEffect", id, "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r)) return false;
@@ -557,6 +558,125 @@ void Viewer::announceCr3Effects(const cr3::Cr3Action& a) {
     SDL_Log("battle %.2f s: status effects on %zu - line %d", cr3BattleClock, got.size(), id);
 }
 
+// the panels' state before a turn's calculation - the rules run it whole up front (BtlCommandManager::Calculate)
+void Viewer::freezeCr3Shown() {
+    cr3EffectsShown.assign(cr3Rules.fighters.size(), {}), cr3ElementShown.assign(cr3Rules.fighters.size(), 0);
+    for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
+        for (const auto& e : cr3Rules.fighters[k].effects) cr3EffectsShown[k].push_back(e.first);
+        cr3ElementShown[k] = cr3Rules.fighters[k].element;
+    }
+}
+
+// an action's effects and elements shown (BtlStatus::UpdateInterface 0x009b3a3c's Update{.. +0xb8 the element},
+// BtlStatusUI::AddStatusEffectIcon / RemoveStatusEffectIcon 0x009a36d8 / 0x009a370c)
+void Viewer::showCr3ActionState(const cr3::Cr3Action& a) {
+    if (a.effectsAfter.empty() || cr3EffectsShown.empty()) return; // (a script's inserted direction: none; choosing: the rules' own)
+    cr3EffectsShown = a.effectsAfter, cr3ElementShown = a.elementsAfter;
+}
+
+// btStPanel::SetAbnormalityStatusIcon 0x00a0f0b4 / Step 0x00a0e860: the icon a party panel shows now, -1 none
+int Viewer::cr3StatusIcon(size_t f) {
+    if (f >= cr3Rules.fighters.size()) return -1;
+    if (cr3StIcons.size() != cr3Rules.fighters.size()) cr3StIcons.assign(cr3Rules.fighters.size(), {});
+    Cr3StIcon& st = cr3StIcons[f];
+    uint64_t mask = 0;
+    auto add = [&](int id) { // (MbStatusEffectInfo +0x08; the loop's 0 .. 0x38)
+        const int icon = cr3Rules.effectIcon(id);
+        if (icon >= 0 && icon < 57) mask |= uint64_t(1) << icon;
+    };
+    if (f < cr3EffectsShown.size())
+        for (int id : cr3EffectsShown[f]) add(id);
+    else
+        for (const auto& e : cr3Rules.fighters[f].effects) add(e.first);
+    if (mask & (uint64_t(1) << 9)) mask = uint64_t(1) << 9; // (icon 9 - ids 1, 51: no action - the others cleared while it's on)
+    if (st.last < 0 || cr3BattleClock < st.last) st.last = cr3BattleClock;
+    st.timer += cr3BattleClock - st.last, st.last = cr3BattleClock; // (+0x194: never reset - it runs on)
+    if (mask != st.mask) { // (SetAbnormalityStatusIcon: the highest set)
+        st.mask = mask, st.shown = -1;
+        for (int i = 56; i >= 0 && st.shown < 0; --i)
+            if (mask & (uint64_t(1) << i)) st.shown = i;
+        if (mask) SDL_Log("battle: fighter %zu's status icon %d (mask 0x%llx)", f, st.shown, static_cast<unsigned long long>(mask));
+    }
+    if (!mask) return st.timer = 0, -1;
+    while (st.timer >= 1.0f) { // (Step: every 1.0 s the next set bit, (i + 1) % 57)
+        st.timer -= 1.0f;
+        for (int k = 1; k <= 57; ++k) {
+            const int i = (st.shown + k) % 57;
+            if (mask & (uint64_t(1) << i)) {
+                st.shown = i;
+                break;
+            }
+        }
+    }
+    return st.shown;
+}
+
+// BtlTotalDamageUI::AddTotalDamage 0x009a48bc (CR3-U's sign: damage above 0): the unit's slot - addComboCharaDataView
+// 0x009a497c -, raw += the damage where it is damage, actual += the HP lost, its hits + 1
+void Viewer::addCr3Total(int fighter, int damage, int hpBefore, int hpAfter) {
+    Cr3TotalSlot* slot = nullptr;
+    for (Cr3TotalSlot& sl : cr3Totals)
+        if (sl.fighter == fighter) slot = &sl;
+    if (!slot) {
+        for (Cr3TotalSlot& sl : cr3Totals)
+            if (!slot && sl.fighter < 0) slot = &sl;
+        if (!slot) slot = &cr3Totals[size_t(cr3TotalNext)], cr3TotalNext = (cr3TotalNext + 1) % 3; // (full: round-robin)
+        *slot = Cr3TotalSlot();
+        slot->fighter = fighter, slot->startHp = hpBefore;
+    }
+    if (damage > 0) slot->raw += damage;
+    slot->actual += hpBefore - hpAfter;
+    ++slot->hits;
+    slot->numbers = damage > 0 || slot->hits > 1;
+    if (cr3ComboSince < 0) cr3ComboSince = cr3BattleClock;
+    SDL_Log("battle %.2f s: total damage - fighter %d, slot %d, %d hits, %d", cr3BattleClock, fighter, int(slot - cr3Totals.data()), slot->hits, slot->raw);
+}
+
+// BtlAnalyzeDirection's end (VUpdate 0x0098b5b0 -> BtlMonsterStatus::VAnalyze 0x009c6804): false while its lines
+// are up; a character's VAnalyze (0x009b2e24) is empty
+bool Viewer::stepCr3Analyze(const cr3::Cr3Action& a) {
+    if (cr3AnalyzeDone || a.command < 0) return true;
+    cr3::Cr3Command c;
+    if (!cr3Rules.command(a.command, c) || c.direction != 0x16) return true;
+    if (cr3AnalyzeLines.empty()) {
+        const int ti = a.targets.empty() ? a.target : a.targets.front().target;
+        if (ti < 0 || size_t(ti) >= cr3Rules.fighters.size() || cr3Rules.fighters[size_t(ti)].player) return cr3AnalyzeDone = true;
+        const cr3::Cr3Fighter& m = cr3Rules.fighters[size_t(ti)];
+        std::string hp = announceText("AnnounceBattle", 32); // (OpenHpAndMaxHp 0x0099e594)
+        const int shownHp = size_t(ti) < cr3HpShown.size() ? cr3HpShown[size_t(ti)] : m.hp;
+        if (const size_t at = hp.find("{hp}"); at != std::string::npos) hp.replace(at, 4, std::to_string(shownHp));
+        if (const size_t at = hp.find("{max_hp}"); at != std::string::npos) hp.replace(at, 8, std::to_string(m.maxHp));
+        cr3AnalyzeLines = {cr3FighterName(m), hp, cr3NameOf("mon_help.mbe", "MonsterHelp", m.id)}; // (vGetName, the HP, vGetHelp)
+        cr3AnalyzeAt = 0, cr3AnalyzeSince = cr3BattleClock;
+        cr3Analyzed.insert(m.id); // (BtlMonsterAnalyzation::Add: its species)
+        setCr3Announce(cr3AnalyzeLines[0], -1);
+        SDL_Log("battle %.2f s: analyze - monster %d: \"%s\" / \"%s\" / \"%s\"", cr3BattleClock, m.id, cr3AnalyzeLines[0].c_str(),
+                cr3AnalyzeLines[1].c_str(), cr3AnalyzeLines[2].c_str());
+        return false;
+    }
+    // (BattleAnnouncementMenu::Update: the next queued line once its timer reaches 10 s; the last until a tap -
+    // --input runs, nobody to tap, it too after 10 s)
+    const bool last = cr3AnalyzeAt + 1 >= cr3AnalyzeLines.size();
+    if (cr3BattleClock - cr3AnalyzeSince >= 10.0f && (!last || autoBattle || manualCommands)) tapCr3Analyze();
+    return cr3AnalyzeLines.empty();
+}
+
+// a tap while the Analyze's lines are up (TouchGestureTap 0x00a0ada0, the skip flag on): the next line, after the
+// last the menu closed and the direction over
+bool Viewer::tapCr3Analyze() {
+    if (cr3AnalyzeLines.empty() || cr3BattleStage != Cr3BattleStage::Action) return false;
+    if (++cr3AnalyzeAt < cr3AnalyzeLines.size()) {
+        cr3AnalyzeSince = cr3BattleClock;
+        setCr3Announce(cr3AnalyzeLines[cr3AnalyzeAt], -1);
+        SDL_Log("battle %.2f s: analyze line %zu", cr3BattleClock, cr3AnalyzeAt);
+    } else {
+        cr3AnalyzeLines.clear(), cr3AnalyzeDone = true;
+        cr3Announce = Cr3Announce(); // (BtlAnnounceUI::Close)
+        SDL_Log("battle %.2f s: analyze closed", cr3BattleClock);
+    }
+    return true;
+}
+
 // BtlMonsterStatus::vDrop (0x9c75dc): each monster's drop rolled once, as its wave is made - two slots {kind, id, rate}
 // (Monster +0x70 / +0x7c), one roll of 256 against slot 0's rate plus the drop bonus (BtlStatusList::GetDropRateCorrection
 // 0x9b01e0: the largest skill-85 constant of any unit, then), then slot 1's; a status effect of kind 0x83 on any unit
@@ -576,6 +696,14 @@ void Viewer::rollCr3Drops() {
         cr3::MbeFile::Row r;
         if (!cr3BattleTables.monster.find("Monster", f.id, "iipiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", r)) continue;
         const int kind0 = r.i(27), kind1 = r.i(30);
+        if (kind0 == 8 || kind1 == 8) { // (a season slot - vDrop: chosen with no roll iff the tournament may drop the season's
+            // token - its +0xa0 -, else nothing, slot 0 never; announced under the row's +0x9c item, taken by no one - the
+            // result's season line gives it, BtlResult::DisplayDrop finding no item for its -1)
+            const auto& list = game.cr3Db ? game.cr3Db->vsTournaments() : std::vector<cr3::Cr3OfflineDb::VsTournament>();
+            if (vs.screen == 5 && vs.chosen >= 0 && size_t(vs.chosen) < list.size() && game.cr3Vs.seasonDrop && list[size_t(vs.chosen)].seasonItem > 0)
+                cr3Drops[int(fi)] = -list[size_t(vs.chosen)].seasonItem;
+            continue;
+        }
         int pick = -1;
         if (rare && kind1 > 0) pick = 1;
         else {
@@ -593,10 +721,10 @@ void Viewer::rollCr3Drops() {
 
 void Viewer::rollCr3Drop(int fi) {
     const auto it = cr3Drops.find(fi);
-    if (it == cr3Drops.end() || it->second <= 0 || cr3DropsAnnounced.count(fi)) return;
+    if (it == cr3Drops.end() || it->second == 0 || cr3DropsAnnounced.count(fi)) return; // (below 0: a season token's - announced, not taken)
     cr3DropsAnnounced.insert(fi);
     std::string text = announceText("AnnounceBattle", 0x1d);
-    if (const size_t at = text.find("{item.name}"); at != std::string::npos) text.replace(at, 11, cr3ItemText(it->second, false));
+    if (const size_t at = text.find("{item.name}"); at != std::string::npos) text.replace(at, 11, cr3ItemText(std::abs(it->second), false));
     setCr3Announce(text, 1.0f);
     audio.playSe("com_013", false);
     SDL_Log("battle %.2f s: fighter %d drops item %d", cr3BattleClock, fi, it->second);
@@ -729,6 +857,7 @@ void Viewer::continueCr3Battle() {
     }
     cr3Rules.gauge = 0, cr3GaugeShown = 0; // (BtlBreakGaugeUI::Even)
     cr3BattleLost = false;
+    stopCr3Auto("continued"); // (VUpdate(BtlContinueUI) 0x9d2428: StopAuto)
     if (game.next.battleMusic >= 0) audio.playBgm(game.next.battleMusic, 0);
     SDL_Log("battle %d: continued (%d jems left)", cr3Battle.coupling, cr3Jems());
     beginCr3Turn();
@@ -923,7 +1052,7 @@ void Viewer::reinforceCr3Battle(int coupling) {
         }
     cr3Rules.gauge = gauge;
     cr3HpShown.clear(), cr3MpShown.clear();
-    cr3ComboStartHp.clear(), cr3ComboDamage.clear(), cr3ComboHits.clear(), cr3ComboSince = -1;
+    closeCr3Totals(), cr3EffectsShown.clear(), cr3ElementShown.clear(), cr3StIcons.clear();
     cr3VictorUnit = -1, cr3VictoryDuration = 2.5f;
     for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp), cr3MpShown.push_back(f.mp);
     for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
@@ -950,6 +1079,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     for (auto& [slot, m] : cr3ScriptModels) unload(m.figure);
     cr3FieldObjects.clear(), cr3ScriptModels.clear();
     cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
+    cr3AutoResult = 0, cr3TabLit = 0, cr3MarkerPressed = false, cr3AutoTaps.clear(); // (the battle's own BtlInterfaceSystem: no auto)
     cr3BattleVista = false;
     cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
     std::string err;
@@ -982,6 +1112,8 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     cr3PartyRules();
     cr3Rules.partyMpLeft = game.cr3Mp; // (the MP the last battle left)
     cr3Rules.lastAttackLevel = game.cr3LastAttackLevel, cr3Rules.finestArtsLevel = game.cr3FinestArtsLevel; // (the finishers' tiers: CrxCharacterData +0x14 / +0x18)
+    cr3Rules.fieldEffects.clear();
+    cr3Rules.cheer = game.cr3Cheer; // (the cheer points: calculateAssist's - crx_game_data + 0x1e77c)
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
     cr3Rules.gold = game.cr3Money; // (the party's money: a Steal Gold's to take from)
     if (gaugeArg != 0) cr3Rules.gauge = std::clamp(gaugeArg * 250, -1000, 1000), cr3Rules.gaugeStarted = true, SDL_Log("battle: the break gauge at %d (test)", cr3Rules.gauge); // (--gauge -4 .. 4: tests)
@@ -990,7 +1122,8 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
         SDL_Log("battle %d: fighter %zu - %s %d, level %d, HP %d", coupling, k, f.player ? "character" : "monster", f.id, f.level, f.maxHp);
     }
     cr3HpShown.clear(), cr3MpShown.clear();
-    cr3ComboStartHp.clear(), cr3ComboDamage.clear(), cr3ComboHits.clear(), cr3ComboSince = -1;
+    closeCr3Totals(), cr3EffectsShown.clear(), cr3ElementShown.clear(), cr3StIcons.clear();
+    cr3Analyzed.clear(), cr3AnalyzeLines.clear(), cr3AnalyzeDone = false; // (BtlMonsterAnalyzation: empty as BtlSystem is made)
     cr3VictorUnit = -1, cr3VictoryDuration = 2.5f;
     for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp), cr3MpShown.push_back(f.mp);
     applyVsBattleStart(); // (VS: the lifeline items, the wildcards)
@@ -1009,12 +1142,10 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     initEventDrawing(); // (its script's windows: the tutorials)
     if (runCr3BattleScript("Battle_Boot_Base")) // (BtlSysStateStart::phaseBoot: CallBoot, to its end)
         for (int k = 0; k < 600 && cr3BattleEvents->running(); ++k) cr3BattleEvents->tick();
-    // (BtlSysStateStart::phaseStart - GiveFieldStatusEffect: the field's effects on every unit, for
-    // good; none on one with a skill of kind 0x6a)
-    for (size_t k = 0; k < cr3Rules.fighters.size() && !cr3FieldEffects.empty(); ++k) {
-        if (!cr3Rules.skillConstants(cr3Rules.fighters[k], 0x6a).empty()) continue;
-        for (int e : cr3FieldEffects) cr3Rules.giveEffect(int(k), e, true);
-    }
+    // (phaseStart - BtlStatusList::GiveFieldStatusEffect 0x9c21f4: the field's effects on the living players,
+    // for good - none on one with a skill of kind 0x6a -, again at every turn's start: Cr3BattleRules::turn)
+    cr3Rules.fieldEffects = cr3FieldEffects;
+    cr3Rules.giveFieldEffects();
     if (!cr3FieldEffects.empty()) SDL_Log("battle %d: %zu field status effects", coupling, cr3FieldEffects.size());
     cr3DropsAnnounced.clear();
     rollCr3Drops(); // (the first wave's drops, as it's made)
@@ -1070,7 +1201,7 @@ void Viewer::updateCr3Battle(float dt) {
             cr3Choices.clear();
             if (cr3StartCommand[0] >= 0)
                 cr3Choices.push_back({cr3StartCommand[0], cr3StartCommand[1], -1}), cr3StartCommand = {-1, -1}, cr3Rules.monstersWait = false;
-            cr3Actions = cr3Rules.turn(cr3Choices);
+            freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
             cr3CountRecords();
             cr3ActionAt = 0;
             cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
@@ -1088,6 +1219,18 @@ void Viewer::updateCr3Battle(float dt) {
             inputScript.pop_front();
             SDL_Log("battle %d: won by the test input", cr3Battle.coupling);
             cr3ForcedEnd = 0;
+            return;
+        }
+        // (--input tab:mass / tab:auto: the get-set's tabs, for tests)
+        if (!scripted && cr3BattleStage == Cr3BattleStage::Menu && cr3AutoResult == 0 && !inputScript.empty() &&
+            (inputScript.front() == "tab:mass" || inputScript.front() == "tab:auto") && cr3BattleClock - cr3StageStart > 0.6f) {
+            const int b = inputScript.front() == "tab:mass" ? 5 : 6;
+            inputScript.pop_front();
+            chooseCr3GetSet(b);
+            return;
+        }
+        if (cr3BattleStage == Cr3BattleStage::Menu && cr3AutoResult != 0) { // (the Auto Battle / Mass Attack: the turn chosen alone)
+            if (!scripted) beginCr3AutoTurn();
             return;
         }
         const bool own = !inputScript.empty() && isCr3BattleToken(inputScript.front());
@@ -1235,6 +1378,9 @@ void Viewer::updateCr3Battle(float dt) {
 // My Page's records of a turn (CrxGameActivities::KillMonster - 999999 at most - and Damage:
 // the party's most in one hit)
 void Viewer::cr3CountRecords() {
+    // (the cheer points an assist spent - crx_game_data's, kept: GameState::cr3Cheer)
+    if (game.cr3Cheer != cr3Rules.cheer) SDL_Log("battle: an assist - cheer points %d -> %d", game.cr3Cheer, cr3Rules.cheer);
+    game.cr3Cheer = cr3Rules.cheer;
     cr3::GameState::Cr3Records& r = game.cr3Records;
     for (const cr3::Cr3Action& a : cr3Actions) {
         if (a.source < 0 || size_t(a.source) >= cr3Rules.fighters.size() || !cr3Rules.fighters[size_t(a.source)].player) continue;
@@ -1574,21 +1720,57 @@ int Viewer::cr3FighterOfUnit(size_t k) const {
 
 void Viewer::beginCr3Turn(bool countTurn) {
     if (countTurn) ++cr3Turn; // (BtlSysStateSelect::phaseStart)
+    if (countTurn) cr3Rules.giveFieldEffects(); // (phaseStart: GiveFieldStatusEffect - the menu's icons; the rules' turn again, the same)
     if (countTurn) playVsComment(6); // (PlayBattleStartByTurn 0x9a85b4)
     cr3Choices.clear(), cr3TurnItems.clear();
-    cr3ComboStartHp.clear(), cr3ComboDamage.clear(), cr3ComboHits.clear(), cr3ComboSince = -1;
+    closeCr3Totals();
+    cr3EffectsShown.clear(), cr3ElementShown.clear(); // (the rules' own while choosing)
     cr3Chooser = -1;
-    cr3BattleStage = Cr3BattleStage::Menu, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+    cr3BattleStage = Cr3BattleStage::Menu, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0, cr3TabLit = 0;
     playCr3Camera(cr3Battle.cameras[0], cr3Battle.getSetEnd, false, {0, 0, 0}, 0, 0);
     cr3Cam.held = true;
     if (!cr3GetSetSeen) audio.playSe("bt_001", false), cr3GetSetSeen = true;
+    SDL_Log("battle %.2f s: turn %d, the get-set", cr3BattleClock, cr3Turn);
+    // (with the Auto Battle / Mass Attack on - phaseGetSetStartOut 0x9d3bf0, HasAutoResult: no touch
+    // waited for, GetGetSetResult its 5 or 6 again - the turn is chosen alone once no script runs:
+    // updateCr3Battle)
 }
 
-bool Viewer::cr3EscapeAllowed() const { return (cr3Battle.couplingFlags & 2) == 0; }
+// (phaseGetSetStartOut: EntryGetSet(!(Coupling +0x44 & 2) && !game flag 5064) - battle_2001 .. 2006's)
+bool Viewer::cr3EscapeAllowed() const { return (cr3Battle.couplingFlags & 2) == 0 && !game.flag(5064); }
 
-// the get-set menu's choice: 0 Battle, 1 Escape, 2 Options
+bool Viewer::cr3TabsShown() const { return !game.flag(5060); }
+
+// a turn of the Mass Attack / Auto Battle (phaseAllAttack 0x9d3e2c / phaseAutomatic 0x9d48c8: the
+// party's picks, then phaseCalculate - the monsters' own as ever)
+void Viewer::beginCr3AutoTurn() {
+    cr3Choices = cr3AutoResult == 5 ? cr3Rules.massAttackChoices() : cr3Rules.autoChoices(true);
+    std::string picks;
+    for (const auto& c : cr3Choices) picks += " " + std::to_string(c[0]) + ":" + std::to_string(c[1]) + ">" + std::to_string(c[2]);
+    SDL_Log("battle %.2f s: %s - turn %d:%s", cr3BattleClock, cr3AutoResult == 5 ? "Mass Attack" : "Auto Battle", cr3Turn, picks.c_str());
+    playCr3Choices();
+}
+
+void Viewer::stopCr3Auto(const char* why) {
+    if (cr3AutoResult == 0) return;
+    cr3AutoResult = 0, cr3MarkerPressed = false, cr3AutoTaps.clear(); // (StopAuto: +0xd4 0, CloseComButtonList)
+    SDL_Log("battle: auto off (%s)", why);
+}
+
+// the get-set menu's choice: 0 Battle, 1 Escape, 2 Options; 5 Mass Attack, 6 Auto Battle (its tabs -
+// phaseGetSetSelect 0x9d3cbc: SetAutoResult, then the first time's tutorial - phaseAllAttackEvent
+// 0x9d3ddc / phaseAutomaticEvent 0x9d4878 -> BtlScriptSystem::CallTutorial: Battle_Tuto_061 / 062,
+// shown once - flag 61 / 62 -, none under flag 5056 -, the turn once it is over)
 void Viewer::chooseCr3GetSet(int b) {
+    if (cr3AutoResult != 0) return; // (EntryGetSet: none while it runs)
     if (b == 1 && !cr3EscapeAllowed()) return (void)audio.playSe("com_005", false);
+    if ((b == 5 || b == 6) && cr3TabsShown()) {
+        audio.playSe("com_003", false); // (comBtnMenu::TouchSimpleRelease: a tab's, as Battle's)
+        cr3AutoResult = b, cr3TabLit = 0;
+        SDL_Log("battle: %s on", b == 5 ? "Mass Attack" : "Auto Battle");
+        runCr3BattleScript(b == 5 ? "Battle_Tuto_061" : "Battle_Tuto_062"); // (its window first: updateCr3Battle waits for it)
+        return;
+    }
     if (b == 2) return openCr3OptionsFrom(2); // (the Options: CR3-U's - the camp's Options screen over the battle)
     if (b == 0) {
         audio.playSe(0x153, false);
@@ -1637,7 +1819,7 @@ void Viewer::stepCr3Escape() {
         }
         SDL_Log("battle %d: the escape failed", cr3Battle.coupling);
         cr3Choices.clear();
-        cr3Actions = cr3Rules.turn(cr3Choices);
+        freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
         cr3CountRecords();
         cr3ActionAt = 0;
         cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
@@ -1692,7 +1874,7 @@ void Viewer::openCr3List(bool items, bool keepCategory) {
         }
         for (int id : f.geneCommands) {
             cr3::Cr3Command c;
-            if (!cr3Rules.command(id, c) || c.type < 1 || c.type > 4) continue;
+            if (!cr3Rules.command(id, c) || ((c.type < 1 || c.type > 4) && c.direction != 0x16)) continue; // (Analyze - 393 - is type 7, listed)
             Cr3ListRow row;
             row.command = id, row.name = cr3NameOf("command_name.mbe", "CommandName", id), row.cost = cr3Rules.mpCost(f, c), row.icon = c.icon;
             const int hCost = cr3Rules.hpCost(f, c);
@@ -1765,6 +1947,10 @@ void Viewer::nextCr3Chooser() {
             playCr3Camera("Cam_bt_command_PC_00", 26.6667f, true, unitPoint(k, "DummyCP", 1.2f), cr3Battle.units[k].yaw, -1.0f / 3.0f);
             return;
         }
+    playCr3Choices();
+}
+
+void Viewer::playCr3Choices() {
     // (all chosen: BtlSysStateSelect::phaseCalculate - BtlStatusList::CallMonsterScript, each
     // living monster's Battle_Monster_NNNN where its script has one - its BattleCommand.Add in
     // place of its own pick -, then the turn worked out and played)
@@ -1778,7 +1964,7 @@ void Viewer::nextCr3Chooser() {
             for (int k = 0; k < 600 && cr3BattleEvents->running(); ++k) cr3BattleEvents->tick();
     }
     cr3ArgSource = -1;
-    cr3Actions = cr3Rules.turn(cr3Choices);
+    freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
     cr3CountRecords();
     cr3ActionAt = 0;
     cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
@@ -2183,6 +2369,7 @@ void Viewer::startCr3Action() {
                 cr3Actions[cr3ActionAt].target, cr3Actions[cr3ActionAt].command, cr3Actions[cr3ActionAt].hits.size(), sum);
         if (cr3Actions[cr3ActionAt].finisher) SDL_Log("battle: a finisher - command %d (addLastAttack)", cr3Actions[cr3ActionAt].command);
     }
+    if (a.source < 0) return startCr3SourcelessAction(a);
     const cr3::Cr3Fighter& s = cr3Rules.fighters[size_t(a.source)];
     if (cr3::Cr3Command ac; s.player && cr3Rules.command(a.command, ac) && (ac.extraType == 14 || ac.extraType == 15)) // (an Apple's: AddUsedItem, each once)
         if (cr3UsedApples[ac.extraType - 14].insert(a.command).second) SDL_Log("battle: %s x%d used (command %d)", ac.extraType == 14 ? "EXP" : "money", ac.extraConstants.empty() ? 1 : ac.extraConstants[0], a.command);
@@ -2198,25 +2385,20 @@ void Viewer::startCr3Action() {
         cr3ActionPlay.end = std::max(left, 0.3f);
         return;
     }
-    if (!s.player) { // (BtlTotalDamageUI: reset player combo chain when an enemy acts)
-        cr3ComboStartHp.clear(), cr3ComboDamage.clear(), cr3ComboHits.clear(), cr3ComboSince = -1;
-    } else if (cr3ComboStartHp.size() != cr3Rules.fighters.size()) {
-        cr3ComboStartHp = cr3HpShown;
-        cr3ComboDamage.assign(cr3Rules.fighters.size(), 0);
-        cr3ComboHits.assign(cr3Rules.fighters.size(), 0);
-    }
     const size_t su = size_t(s.unit);
     const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
     if (a.command >= 0) { // (BtlDirection::openAnnounce: the command's name - an item's, used - for a second)
         const auto item = cr3TurnItems.find(a.source);
         std::string text = item != cr3TurnItems.end() ? cr3ItemText(item->second, false) : cr3NameOf("command_name.mbe", "CommandName", a.command);
         if (const size_t at = text.find("{source}"); at != std::string::npos) text.replace(at, 8, cr3FighterName(s));
-        if (const size_t at = text.find("{assistant}"); at != std::string::npos)
-            for (const cr3::Cr3Fighter& o : cr3Rules.fighters)
-                if (o.player == s.player && &o != &s) {
-                    text.replace(at, 11, cr3FighterName(o));
-                    break;
-                }
+        if (const size_t at = text.find("{assistant}"); at != std::string::npos) text.replace(at, 11, cr3AssistantName()); // (OpenAssist's: never a party member)
+        // (BtlDamageChunk::OpenAnnounce 0x0097c924: no item, a command that can be cooperated in - +0xbc bit 7 - and
+        // more than one unit in its cooperation - AddCooperation's list, the actor counted -: BtlAnnounceUI::
+        // OpenAdditionNum 0x0099e490 - AnnounceBattle 0x1c + the count appended: 30 " II", 31 " III")
+        if (cr3::Cr3Command ac; item == cr3TurnItems.end() && cr3Rules.command(a.command, ac) && (ac.flags & 0x80) && !a.partners.empty()) {
+            text += announceText("AnnounceBattle", 0x1c + 1 + int(a.partners.size()));
+            SDL_Log("battle %.2f s: cooperation name \"%s\"", cr3BattleClock, text.c_str());
+        }
         if (!text.empty()) setCr3Announce(text, 1.0f);
     }
     if (a.command < 0) { // (Guard: bg01; -2 unable to act - a kind 31 effect -: a moment)
@@ -2292,6 +2474,7 @@ void Viewer::stepCr3Action() {
     if (cr3ActionAt >= cr3Actions.size()) return endCr3Actions();
     stepCr3LastAttack();
     const cr3::Cr3Action& a = cr3Actions[cr3ActionAt];
+    if (a.source < 0) return stepCr3SourcelessAction(a);
     const size_t source = size_t(cr3Rules.fighters[size_t(a.source)].unit);
     const float t = cr3BattleClock - cr3ActionStart;
     const auto& timing = cr3ActionPlay.timing;
@@ -2321,6 +2504,7 @@ void Viewer::stepCr3Action() {
             if (h < th.gauge.size()) cr3GaugeShown = th.gauge[h];
             const size_t tu = size_t(cr3Rules.fighters[size_t(th.target)].unit);
             int& shown = cr3HpShown[size_t(th.target)];
+            const int shownBefore = shown;
             shown = std::clamp(shown - d, 0, cr3Rules.fighters[size_t(th.target)].maxHp);
             if (size_t(th.target) < cr3MpShown.size() && mpD != 0)
                 cr3MpShown[size_t(th.target)] = std::clamp(cr3MpShown[size_t(th.target)] - mpD, 0, cr3Rules.fighters[size_t(th.target)].maxMp);
@@ -2332,14 +2516,19 @@ void Viewer::stepCr3Action() {
                 cr3Popups.push_back({-1, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock, 1});
                 continue;
             }
+            if (flags & 8) { // (blocked - calculateFluctuation's +0xa7 / +0xa8: the word alone, DamageInfoMes kind 3, bt_093)
+                SDL_Log("battle %.2f s: blocked", cr3BattleClock);
+                cr3Popups.push_back({-1, unitPoint(tu, "DummyDP01", 1.2f), cr3BattleClock, 3});
+                audio.playSe("bt_093", false);
+                continue;
+            }
+            if (th.reflectedFrom >= 0 && h == 0) SDL_Log("battle %.2f s: reflected by %d onto %d (Mental Wall)", cr3BattleClock, th.reflectedFrom, th.target);
             cr3::Cr3Command hc;
             cr3Rules.command(a.command, hc);
-            if (cr3Rules.fighters[size_t(a.source)].player && !cr3Rules.fighters[size_t(th.target)].player && d >= 0 && !hc.ally() &&
-                size_t(th.target) < cr3ComboHits.size()) {
-                ++cr3ComboHits[size_t(th.target)];
-                cr3ComboDamage[size_t(th.target)] += d;
-                if (cr3ComboSince < 0) cr3ComboSince = cr3BattleClock;
-            }
+            // (TakeDamageToDirection: AddTotalDamage where the damage isn't 0 and the two are on opposite sides -
+            // the party struck by a monster as much as a monster by the party)
+            if (d != 0 && th.reflectedFrom < 0 && cr3Rules.fighters[size_t(a.source)].player != cr3Rules.fighters[size_t(th.target)].player)
+                addCr3Total(th.target, d, shownBefore, shown);
             if (th.stolen >= 0 && h == 0) { // (BtlStatus::TakeDamageToDirection 0x9b42a0: a Steal Gold hit - OpenStealGold, 1 s)
                 std::string text = announceText("AnnounceBattle", th.stolen >= 1 ? 0x28 : 0x29);
                 if (const size_t at = text.find("{gold}"); at != std::string::npos) text.replace(at, 6, std::to_string(th.stolen));
@@ -2391,7 +2580,9 @@ void Viewer::stepCr3Action() {
         announceCr3Effects(a);
     }
     stepCr3MeleeReturn(source, t);
+    if (t >= cr3ActionPlay.end && !cr3ActionPlay.melee && !stepCr3Analyze(a)) return; // (an Analyze's lines first)
     if (t >= cr3ActionPlay.end && !cr3ActionPlay.melee) {
+        showCr3ActionState(a);
         for (const cr3::Cr3Hit& th : a.targets) {
             cr3HpShown[size_t(th.target)] = th.hpAfter;
             if (size_t(th.target) < cr3MpShown.size()) cr3MpShown[size_t(th.target)] = th.mpAfter;
@@ -2416,6 +2607,19 @@ void Viewer::stepCr3Action() {
             }
         }
         ++cr3ActionAt;
+        cr3AnalyzeDone = false;
+        { // (BtlDirectionManager::playSequenceNext 0x00991ae0: BtlTotalDamageUI::Close as the sequence ends, unless
+          // the next direction chains on - its data's +0xa5, here the same side's next action - and its command
+          // hasn't +0xbd bit 2)
+            bool chains = false;
+            if (cr3ActionAt < cr3Actions.size() && cr3Actions[cr3ActionAt].command >= 0) {
+                const cr3::Cr3Action& n = cr3Actions[cr3ActionAt];
+                cr3::Cr3Command nc;
+                chains = n.source >= 0 && cr3Rules.fighters[size_t(n.source)].player == cr3Rules.fighters[size_t(a.source)].player &&
+                         (!cr3Rules.command(n.command, nc) || !(nc.flags & 0x400));
+            }
+            if (!chains) closeCr3Totals();
+        }
         // (BtlSysStateAction: the battle's script after each direction - battle_0002's cut-in
         // once the spider endures at 1 HP - and the next action after it; BattleArgument its
         // action - CallDirectionEnd: SetSource, SetDamageChunk)
@@ -2432,6 +2636,63 @@ void Viewer::stepCr3Action() {
     }
 }
 
+// BtlAssistDirection (CommandDirection action 13 -> factory type 37) vPlay 0x9956a0: playCameraByType, Pose,
+// playSingleEffect and openAssistAnnounce - their order unsettled; here the announcement first, the direction
+// row's effect (+0x2c) on each target with the popups, the camera left as it is. A status effect's no-actor
+// command (Regenerate's 306) the same, its name the announcement
+void Viewer::startCr3SourcelessAction(const cr3::Cr3Action& a) {
+    std::string text = cr3NameOf("command_name.mbe", "CommandName", a.command);
+    if (const size_t at = text.find("{assistant}"); at != std::string::npos) text.replace(at, 11, cr3AssistantName());
+    if (const size_t at = text.find("{target}"); at != std::string::npos && a.target >= 0 && size_t(a.target) < cr3Rules.fighters.size())
+        text.replace(at, 8, cr3FighterName(cr3Rules.fighters[size_t(a.target)]));
+    if (!text.empty()) setCr3Announce(text, 1.5f); // (InterfaceMain::AddBattleAnnouncementMenuMessage)
+    SDL_Log("battle %.2f s: %s - command %d on %zu: \"%s\"", cr3BattleClock, a.assist ? "an assist" : "a command with no actor", a.command, a.targets.size(), text.c_str());
+    cr3ActionPlay.directionCommand = a.command;
+    cr3ActionPlay.timing.hits = {0.6f};
+    cr3ActionPlay.end = 1.6f;
+}
+
+void Viewer::stepCr3SourcelessAction(const cr3::Cr3Action& a) {
+    const float t = cr3BattleClock - cr3ActionStart;
+    if (cr3ActionPlay.hitsShown == 0 && t >= cr3ActionPlay.timing.hits.front()) {
+        cr3ActionPlay.hitsShown = 1;
+        for (const cr3::Cr3Hit& th : a.targets) {
+            const size_t tu = size_t(cr3Rules.fighters[size_t(th.target)].unit);
+            const cr3::Vec3 dp = unitPoint(tu, "DummyDP01", 1.2f);
+            const int d = th.hits.empty() ? 0 : th.hits[0], mpD = th.mpHits.empty() ? 0 : th.mpHits[0];
+            if (d != 0) cr3Popups.push_back({std::abs(d), dp, cr3BattleClock, 0, 3});
+            if (mpD != 0) cr3Popups.push_back({std::abs(mpD), d != 0 ? cr3::Vec3{dp[0], dp[1] - 0.35f, dp[2]} : dp, cr3BattleClock, 0, 4});
+            cr3HitEffects(a.command, 0, tu, false);
+            cr3HpShown[size_t(th.target)] = th.hpAfter;
+            if (size_t(th.target) < cr3MpShown.size()) cr3MpShown[size_t(th.target)] = th.mpAfter;
+            if (th.hpAfter > 0 && cr3BattleUnits[tu].knockedOut) restoreCr3Unit(tu); // (a revive)
+        }
+        announceCr3Effects(a);
+    }
+    if (t < cr3ActionPlay.end) return;
+    showCr3ActionState(a);
+    cr3GaugeShown = a.gaugeAfter;
+    ++cr3ActionAt;
+    closeCr3Totals();
+    // (no CallDirectionEnd: the scripts' BattleArgument source would be no unit)
+    startCr3Action();
+}
+
+std::string Viewer::cr3AssistantName() {
+    std::vector<std::string> names;
+    if (const cr3::MbeFile::Table* t = cr3BattleTables.battle.table("Assistant"))
+        for (size_t r = 0; r < t->rows.size() && r < 8; ++r) {
+            cr3::MbeFile::Row row;
+            if (!cr3BattleTables.battle.row(*t, r, "i_ppi", row)) continue;
+            const int flag = row.i(3); // (+0x18: Patty's -1, Marco .. Haruko 5101 .. 5105)
+            if (flag != -1 && !game.flag(flag)) continue;
+            names.push_back(optionLanguage == 0 || row.s(2).empty() ? row.s(1) : row.s(2));
+        }
+    if (names.empty()) return {};
+    // (std::shuffle with uniform_int - the device's, not CrxRandom: the cameras' stream, seeded from the battle's seed)
+    return names[std::uniform_int_distribution<size_t>(0, names.size() - 1)(cr3CamRng)];
+}
+
 void Viewer::endCr3Actions() {
     if (cr3ForcedEnd == 3) { // (Battle.ForceEnd: over - no victory, no result)
         SDL_Log("battle %d: ended by its script", cr3Battle.coupling);
@@ -2440,6 +2701,8 @@ void Viewer::endCr3Actions() {
     }
     const int outcome = cr3ForcedEnd == 0 ? 1 : cr3Rules.outcome(); // (Battle.ForceVictory)
     cr3ForcedEnd = -1;
+    closeCr3Totals(); // (phaseCheck 0x009cfaa0, phaseVictoryEventStart, phaseDefeatEventStart: BtlTotalDamageUI::Close)
+    if (outcome != 0) stopCr3Auto(outcome == 1 ? "won" : "lost"); // (BtlSysStateAction::phaseCheck 0x9cfaa0: StopAuto)
     if (outcome != 0) // (InterfaceMain::SaveCharacterMp: what the party has left kept)
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
             if (f.player) {
@@ -2878,8 +3141,22 @@ void Viewer::enterCr3Result() {
         if (!full) game.cr3Items[item] += 1;
         SDL_Log("battle %d: item %d %s", cr3Battle.coupling, item, full ? "not taken - the bag full" : "into the bag");
     }
+    // (SetDropItemText's season line, after the drops and outside their 16: a VS tournament's result where it may drop the
+    // season's token, flag 33 set and EndVSTournament gave the season a point - vsseasonscorerewards' itemId, one)
+    if (vs.result && game.cr3Db && game.cr3Vs.seasonDrop && game.flag(33) && game.cr3Db->vsRewards().seasonPoint) {
+        const int token = game.cr3Db->month().seasonItem;
+        if (token > 0 && !cr3ItemText(token, false).empty()) {
+            const bool full = 99 - game.cr3Items[token] < 1;
+            cr3ResultDropLines.push_back(full ? -token : token);
+            if (!full) game.cr3Items[token] += 1;
+            SDL_Log("battle %d: the season's token %d %s", cr3Battle.coupling, token, full ? "not taken - the bag full" : "into the bag");
+        }
+    }
     if (game.next.battleMusicAfter >= 0) audio.stopBgm(30); // (phaseResult: FadeBgm, a second at 30 updates/s)
     cr3BattleStage = Cr3BattleStage::Result, cr3StageStart = cr3BattleClock;
+    // (BattleResultV2Menu::SetParamNumber 0xb20b98 case 7, as CreateBattleResultMenu makes it: the Information bar's
+    // "You won the battle!" - every result's, there till the drops' lines)
+    cr3ResultLine = menuAnnounce(0x121), cr3ResultLineAt = cr3BattleClock;
     SDL_Log("battle %d: result - %d EXP, %d money", cr3Battle.coupling, cr3ResultExp, cr3ResultMoney);
 }
 
@@ -2890,6 +3167,34 @@ bool Viewer::cr3BattleKey(SDL_Keycode k) {
     if (cr3BattleEvents && cr3BattleEvents->running()) return false;
     const bool enter = k == SDLK_RETURN || k == SDLK_KP_ENTER;
     if (enter && (cr3BattleStage == Cr3BattleStage::Won || cr3BattleStage == Cr3BattleStage::Result)) return cr3BattleTap(), true;
+    if (enter && tapCr3Analyze()) return true;
+    // (the marker up: the Vita's × - FUN_8112bdc4, PadTrigger 5 -, the back key - GetHardReturnTap -:
+    // tap 100, com_004, and BtlInterfaceSystem::OnUpdate 0x9a3c54's StopAuto; the turn in course plays out)
+    if (k == SDLK_BACKSPACE && cr3AutoResult != 0) {
+        audio.playSe("com_004", false);
+        stopCr3Auto("the back key");
+        return true;
+    }
+    // (the get-set with its tabs - FUN_8112bdc4 and its tab helpers FUN_8112a8c4 / 8112a8da: top to bottom
+    // Mass Attack, Auto Battle, Battle, Escape, Options, round; a lit tab at its pressed frame, ○ its tap)
+    if (cr3BattleStage == Cr3BattleStage::Menu && cr3AutoResult == 0 && cr3TabsShown() && (k == SDLK_UP || k == SDLK_DOWN || (enter && cr3TabLit))) {
+        if (enter) return chooseCr3GetSet(cr3TabLit == 2 ? 5 : 6), true;
+        if (k == SDLK_UP) {
+            if (cr3TabLit == 2) cr3TabLit = 0, cr3Focus = 2;
+            else if (cr3TabLit == 1) cr3TabLit = 2;
+            else if (cr3Focus == 0) cr3TabLit = 1;
+            else --cr3Focus;
+        } else {
+            if (cr3TabLit == 2) cr3TabLit = 1;
+            else if (cr3TabLit == 1) cr3TabLit = 0;
+            else if (cr3Focus == 2) cr3Focus = 0, cr3TabLit = 2;
+            else ++cr3Focus;
+        }
+        audio.playSe("com_002", false);
+        if (cr3TabLit) SDL_Log("battle: cursor on the %s tab", cr3TabLit == 2 ? "Mass Attack" : "Auto Battle");
+        else SDL_Log("battle: cursor %d", cr3Focus);
+        return true;
+    }
     cr3::Cr3Command targetCommand;
     const bool allTargets = cr3BattleStage == Cr3BattleStage::Target && cr3Rules.command(cr3ChosenCommand, targetCommand) && targetCommand.all;
     const int n = cr3BattleStage == Cr3BattleStage::Menu ? 3 : cr3BattleStage == Cr3BattleStage::Command ? 4
@@ -2945,6 +3250,7 @@ bool Viewer::cr3BattleKey(SDL_Keycode k) {
 
 // a click (fx, fy: the screen's fractions) on a button
 bool Viewer::cr3BattleClick(float fx, float fy) {
+    if (tapCr3Analyze()) return true; // (a tap anywhere: the Analyze's next line)
     if (cr3BattleStage == Cr3BattleStage::Result && cr3ResultPhase == 2 && (cr3GeneUp.step == 6 || cr3GeneUp.step == 7)) {
         // (the replace list's rows - another's tap its focus, the focused one's it chosen -, its question's Yes / No)
         if (cr3BattleClock - cr3GeneUp.at < 0.2f) return true;
@@ -2968,6 +3274,18 @@ bool Viewer::cr3BattleClick(float fx, float fy) {
             if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1))
                 return chooseCr3Continue(it->id), true;
         return true;
+    }
+    if (cr3AutoResult != 0 && !(cr3BattleEvents && cr3BattleEvents->running())) {
+        // (the marker - comBtnMenu::TouchSimpleRelease inside comBtnTab_fr03: tap 100, com_004 - in any
+        // stage, the turn in course played out; a tap anywhere else does not stop it)
+        const float k = std::min(float(screenW) / 9.6f, float(screenH) / 6.4f);
+        const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
+        for (const Cr3Tap& t : cr3AutoTaps)
+            if (ux >= std::min(t.x0, t.x1) && ux <= std::max(t.x0, t.x1) && uy >= std::min(t.y0, t.y1) && uy <= std::max(t.y0, t.y1)) {
+                audio.playSe("com_004", false);
+                stopCr3Auto("the marker");
+                return true;
+            }
     }
     if (cr3BattleStage != Cr3BattleStage::Menu && cr3BattleStage != Cr3BattleStage::Command && cr3BattleStage != Cr3BattleStage::Target &&
         cr3BattleStage != Cr3BattleStage::List && !(cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk))
@@ -3010,6 +3328,7 @@ std::array<float, 3> Viewer::cameraPoint(size_t k) {
 
 void Viewer::cr3BattleTap() {
     if (cr3BattleEvents && cr3BattleEvents->running()) return cr3BattleEvents->touch(); // (its window's page)
+    if (tapCr3Analyze()) return; // (an Analyze's lines: the next)
     if (cr3BattleStage == Cr3BattleStage::Result) {
         // (TouchGestureTap: the tally completed; a window's alert closed - CheckTapAlertWindowMenu -; the
         // cards' moves and the window's own parts take none; then the drops' lines, at the last the end)
@@ -3027,7 +3346,7 @@ void Viewer::cr3BattleTap() {
         return;
     }
     if (cr3BattleStage == Cr3BattleStage::In) cr3Cam.start = cr3BattleClock - cr3Cam.end, cr3BattleInSkipped = true; // (phaseBattleIn: a tap ends it)
-    else if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(cr3Focus);
+    else if (cr3BattleStage == Cr3BattleStage::Menu && cr3AutoResult == 0) chooseCr3GetSet(cr3TabLit ? (cr3TabLit == 2 ? 5 : 6) : cr3Focus);
     else if (cr3BattleStage == Cr3BattleStage::Escape) chooseCr3Escape(cr3Focus);
     else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(cr3Focus);
     else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(cr3Focus);
@@ -3436,6 +3755,11 @@ void Viewer::drawCr3SpellCards(int w, int h, float elapsed, const std::vector<in
         }
     }
     cr3UiZ = previousZ;
+    // (the announcement banner - OpenAnnounce's name, a cooperation's " II" - over the cut-in: footage, Part 9 28:29)
+    if (!cr3Announce.text.empty() && cr3BattleClock < cr3Announce.at + cr3Announce.seconds) {
+        dev->clearDepth();
+        drawCr3Announce(view, w, h);
+    }
 }
 
 void Viewer::drawCr3BattleHud(int w, int h) {
@@ -3484,6 +3808,13 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                 const float white[3] = {1, 1, 1}, low[3] = {1, 0.5f, 0.5f}, out[3] = {1, 0.25f, 0.25f};
                 if (cr3UiCall(panel, "btStHpno", cx, cy)) cr3SpriteNum(hp, 5, cx, cy, w, h, hpPct <= 0 ? out : hpPct < 20 ? low : white);
                 if (cr3UiCall(panel, "btStMpno", cx, cy)) cr3SpriteNum(mp, 4, cx, cy, w, h, white);
+                // (btStPanel::SetCharaAttribute 0x00a0f2f4 - SetParamNumber kind 8 -: btStAtbIcon_fr00 at the unit's
+                // element / 30 - the worn gene's to begin with, then ChangeElement's)
+                const int element = f < cr3ElementShown.size() ? cr3ElementShown[f] : ft.element;
+                if (cr3UiCall(panel, "call_btStAtbIcon_fr00", cx, cy)) cr3UiPut("btstatbicon_fr00", "", float(element) / 30, cx, cy, view);
+                // (SetAbnormalityStatusIcon 0x00a0f0b4: one btStIcon_fr00 at its icon / 30, hidden with none)
+                if (const int icon = cr3StatusIcon(f); icon >= 0 && cr3UiCall(panel, "call_btStIcon_fr00", cx, cy))
+                    cr3UiPut("btsticon_fr00", "", float(icon) / 30, cx, cy, view);
             }
         }
         // the break gauge (btBrkMenu: btBrkWinPanel looping, btBrkGauge at ((v + 1000) / 20) / 30 s -
@@ -3512,68 +3843,81 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                 }
             }
         }
-        // BtlTotalDamageUI (btToMenu: cumulative damage & hit counter per struck enemy across
-        // consecutive player actions in the current chain @ 0x009a4744 / 0x00a47584)
+        // BtlTotalDamageUI (btToMenu: a btToPanel a slot, top to bottom - call_btToPanel_001..003 -, the unit's
+        // hits and total, its HP before and now; @ 0x009a4744 / 0x00a47584)
         if (cr3BattleStage == Cr3BattleStage::Action && cr3ComboSince >= 0 && cr3ActionPlay.spellCardAge < 0) {
-            std::vector<size_t> struck;
-            for (size_t f = 0; f < cr3Rules.fighters.size() && f < cr3ComboHits.size() && struck.size() < 3; ++f)
-                if (!cr3Rules.fighters[f].player && cr3ComboHits[f] > 0) struck.push_back(f);
-            if (!struck.empty()) {
-                UiFig& tpos = cr3UiPut("bttoposition", "bttoposition_io", cr3BattleClock - cr3ComboSince, 0, 0, view);
-                if (cr3UiCall(tpos, "call_btToMenu", x, y, w, h)) {
-                    UiFig& tmenu = cr3UiPut("bttomenu", "", 0, x, y, view);
-                    for (size_t i = 0; i < struck.size(); ++i) {
-                        const size_t f = struck[i];
-                        const cr3::Cr3Fighter& ft = cr3Rules.fighters[f];
-                        const cr3::Cr3BattleUnit& bu = cr3Battle.units[size_t(ft.unit)];
-                        float px, py, cx, cy;
-                        if (!cr3UiCall(tmenu, "call_btToPanel_00" + std::to_string(i + 1), px, py)) continue;
-                        UiFig& panel = cr3UiPut("bttopanel", "", 0, px, py, view);
-                        if (cr3UiCall(panel, "call_btToChara_id00", cx, cy)) {
-                            UiFig& icon = uiFig("bttochara_id00");
-                            cr3UiTexture(icon, "bt_targicon_" + bu.name + (bu.variant.empty() ? std::string("a") : bu.variant), "bt_targicon_" + bu.name + "_a");
-                            cr3UiPut("bttochara_id00", "", 0, cx, cy, view);
+            UiFig& tpos = cr3UiPut("bttoposition", "bttoposition_io", cr3BattleClock - cr3ComboSince, 0, 0, view);
+            if (cr3UiCall(tpos, "call_btToMenu", x, y, w, h)) {
+                UiFig& tmenu = cr3UiPut("bttomenu", "", 0, x, y, view);
+                for (size_t i = 0; i < cr3Totals.size(); ++i) {
+                    const Cr3TotalSlot& sl = cr3Totals[i];
+                    if (sl.fighter < 0 || size_t(sl.fighter) >= cr3Rules.fighters.size()) continue;
+                    const size_t f = size_t(sl.fighter);
+                    const cr3::Cr3Fighter& ft = cr3Rules.fighters[f];
+                    const cr3::Cr3BattleUnit& bu = cr3Battle.units[size_t(ft.unit)];
+                    float px, py, cx, cy;
+                    if (!cr3UiCall(tmenu, "call_btToPanel_00" + std::to_string(i + 1), px, py)) continue;
+                    // (btcoPanel::ChangeCharaFace2 0x00a48f00: bt_targIcon_<model><variation> - vGetVariation: a
+                    // character's "a", a monster's own -, its alpha bt_targIcon_<model>_At; hidden without both)
+                    const std::string colour = "bt_targicon_" + bu.name + (ft.player || bu.variant.empty() ? std::string("a") : bu.variant);
+                    const std::string alpha = "bt_targicon_" + bu.name + "_at";
+                    if (!texture(colour) || !texture(alpha)) continue;
+                    UiFig& panel = cr3UiPut("bttopanel", "", 0, px, py, view);
+                    if (cr3UiCall(panel, "call_btToChara_id00", cx, cy)) {
+                        UiFig& icon = uiFig("bttochara_id00");
+                        cr3UiTexture(icon, colour, alpha);
+                        cr3UiPut("bttochara_id00", "", 0, cx, cy, view);
+                    }
+                    if (cr3UiCall(panel, "call_btToHpBg", cx, cy)) cr3UiPut("bttohpbg", "", 0, cx, cy, view);
+                    const int hp1 = f < cr3HpShown.size() ? cr3HpShown[f] : ft.hp;
+                    const float pct0 = ft.maxHp > 0 ? std::clamp(float(sl.startHp) * 100 / float(ft.maxHp), 0.0f, 100.0f) : 0;
+                    const float pct1 = ft.maxHp > 0 ? std::clamp(float(hp1) * 100 / float(ft.maxHp), 0.0f, 100.0f) : 0;
+                    if (cr3UiCall(panel, "call_btToHp02_per", cx, cy)) cr3UiPut("bttohp02_per", "", pct0 / 30, cx, cy, view);
+                    if (cr3UiCall(panel, "call_btToHp01_per", cx, cy)) cr3UiPut("bttohp01_per", "", pct1 / 30, cx, cy, view);
+                    if (!sl.numbers) continue; // (SetNumberViewComboDamageNum: a lone hit that isn't damage - the bar alone)
+                    if (cr3UiCall(panel, "call_btToNum_num00", cx, cy)) {
+                        const std::string digits = std::to_string(std::clamp(sl.raw, 0, 999999));
+                        const int n = std::clamp(int(digits.size()), 1, 6);
+                        char lay[24];
+                        std::snprintf(lay, sizeof lay, "bttonum_num%02d", n);
+                        UiFig& num = cr3UiPut(lay, "", 0, cx, cy, view);
+                        for (int d = 0; d < n; ++d) {
+                            float dx, dy;
+                            if (cr3UiCall(num, "call_btToNum_fr00_00" + std::to_string(d + 1), dx, dy))
+                                cr3UiPut("bttonum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
                         }
-                        if (cr3UiCall(panel, "call_btToHpBg", cx, cy)) cr3UiPut("bttohpbg", "", 0, cx, cy, view);
-                        const int hp0 = f < cr3ComboStartHp.size() ? cr3ComboStartHp[f] : ft.hp;
-                        const int hp1 = f < cr3HpShown.size() ? cr3HpShown[f] : ft.hp;
-                        const float pct0 = ft.maxHp > 0 ? std::clamp(float(hp0) * 100 / float(ft.maxHp), 0.0f, 100.0f) : 0;
-                        const float pct1 = ft.maxHp > 0 ? std::clamp(float(hp1) * 100 / float(ft.maxHp), 0.0f, 100.0f) : 0;
-                        if (cr3UiCall(panel, "call_btToHp02_per", cx, cy)) cr3UiPut("bttohp02_per", "", pct0 / 30, cx, cy, view);
-                        if (cr3UiCall(panel, "call_btToHp01_per", cx, cy)) cr3UiPut("bttohp01_per", "", pct1 / 30, cx, cy, view);
-                        if (cr3UiCall(panel, "call_btToNum_num00", cx, cy)) {
-                            const std::string digits = std::to_string(std::clamp(cr3ComboDamage[f], 0, 999999));
-                            const int n = std::clamp(int(digits.size()), 1, 6);
-                            char lay[24];
-                            std::snprintf(lay, sizeof lay, "bttonum_num%02d", n);
-                            UiFig& num = cr3UiPut(lay, "", 0, cx, cy, view);
-                            for (int d = 0; d < n; ++d) {
-                                float dx, dy;
-                                if (cr3UiCall(num, "call_btToNum_fr00_00" + std::to_string(d + 1), dx, dy))
-                                    cr3UiPut("bttonum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
-                            }
-                        }
-                        if (cr3UiCall(panel, "call_btHitNum_num00", cx, cy)) {
-                            const std::string digits = std::to_string(std::clamp(cr3ComboHits[f], 1, 999));
-                            const int n = std::clamp(int(digits.size()), 1, 3);
-                            char lay[24];
-                            std::snprintf(lay, sizeof lay, "bthitnum_num%02d", n);
-                            UiFig& num = cr3UiPut(lay, "", 0, cx, cy, view);
-                            for (int d = 0; d < n; ++d) {
-                                float dx, dy;
-                                if (cr3UiCall(num, "call_btHitNum_fr00_00" + std::to_string(d + 1), dx, dy))
-                                    cr3UiPut("bthitnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
-                            }
+                    }
+                    if (cr3UiCall(panel, "call_btHitNum_num00", cx, cy)) {
+                        const std::string digits = std::to_string(std::clamp(sl.hits, 1, 999));
+                        const int n = std::clamp(int(digits.size()), 1, 3);
+                        char lay[24];
+                        std::snprintf(lay, sizeof lay, "bthitnum_num%02d", n);
+                        UiFig& num = cr3UiPut(lay, "", 0, cx, cy, view);
+                        for (int d = 0; d < n; ++d) {
+                            float dx, dy;
+                            if (cr3UiCall(num, "call_btHitNum_fr00_00" + std::to_string(d + 1), dx, dy))
+                                cr3UiPut("bthitnum_fr00", "", float(digits[size_t(d)] - '0') / 30, dx, dy, view);
                         }
                     }
                 }
             }
         }
     }
-    cr3Taps.clear();
+    cr3Taps.clear(), cr3AutoTaps.clear();
     const bool waiting = !(cr3BattleEvents && cr3BattleEvents->running());
     const bool asking = cr3BattleStage == Cr3BattleStage::Escape && cr3EscapeAsk;
-    if ((cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Menu || asking) && waiting) {
+    if (cr3AutoResult != 0 && cr3BattleStage != Cr3BattleStage::Won && cr3BattleStage != Cr3BattleStage::Result && cr3BattleStage != Cr3BattleStage::Lost) {
+        // the marker while it runs (comBtnMenu::SetParamNumber 6 0xa4cdc0, the last tab pattern: comBackPosition,
+        // comBtnTab_fr03 at its call_comBackMenu_fit3 - frame 0 Mass Attack, 1 Auto Battle, + 2 pressed - its
+        // tapAreaS03 / E03 the tap; in every stage)
+        UiFig& bp = cr3UiPut("combackposition", "", 0, 0, 0, view);
+        if (cr3UiCall(bp, "call_comBackMenu_fit3", x, y, w, h)) {
+            UiFig& tab = cr3UiPut("combtntab_fr03", "", float((cr3AutoResult == 6 ? 1 : 0) + (cr3MarkerPressed ? 2 : 0)) / 30, x, y, view);
+            float ax, ay, bx, by;
+            if (cr3UiCall(tab, "tapAreaS03", ax, ay) && cr3UiCall(tab, "tapAreaE03", bx, by)) cr3AutoTaps.push_back({ax, ay, bx, by, 100});
+        }
+    }
+    if ((cr3BattleStage == Cr3BattleStage::Command || (cr3BattleStage == Cr3BattleStage::Menu && cr3AutoResult == 0) || asking) && waiting) {
         // the command buttons (comBtnMenu, its io animator as it opens; four at panels 004..007 -
         // comBtnMenu::SetParamNumber 5 - each comBtnPanel with comBtnBg_fr00 (its slot's frame),
         // comBtnIcon_fr00 and comBtnText_fr00 (the button's), comBtnR; the focused one's text
@@ -3595,17 +3939,35 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                 // diffuse (0.549, 0.549, 0.655))
                 const bool off = asking ? false : getSet ? (b == 1 && !cr3EscapeAllowed()) : !cr3Rules.menuEnabled(cr3Chooser, b);
                 cr3UiTint[0] = cr3UiTint[1] = off ? 0.549f : 1.0f, cr3UiTint[2] = off ? 0.655f : 1.0f; // (cr3UiPut's tint)
-                if (vitaButtons() && b == cr3Focus) {
+                const bool focused = b == cr3Focus && !(getSet && cr3TabLit); // (a lit tab: the cursor off the buttons)
+                if (vitaButtons() && focused) {
                     cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
                     cr3UiTintMaterial = "mat_com_menuBtn_02";
                     cr3UiMaterialTint[0] = off ? 0.17f : 0.5f, cr3UiMaterialTint[1] = off ? 0.33f : 1.0f, cr3UiMaterialTint[2] = off ? 0.5f : 1.5f;
+                }
+                if (getSet && b == 0 && cr3TabsShown()) {
+                    // (Battle's tabs - comBtn::Pose 0xa4a66c, cross-placed: comBtnTab_fr01 - Mass Attack - at the
+                    // panel's call_comBtnTab_fr02, comBtnTab_fr02 - Auto Battle - at call_comBtnTab_fr01; comBtn::
+                    // Render 0xa4a8dc: before the panel, behind it. Frame 0, lit 1; their own tap areas, ahead of
+                    // the panel's)
+                    const UiFig& at = cr3UiPose("combtnpanel", "", 0, px, py);
+                    float m[2][2];
+                    const bool placed = cr3UiCall(at, "call_comBtnTab_fr02", m[0][0], m[0][1]) && cr3UiCall(at, "call_comBtnTab_fr01", m[1][0], m[1][1]);
+                    for (int tab = 0; tab < 2 && placed; ++tab) { // (0 Mass Attack, 1 Auto Battle)
+                        const bool lit = cr3TabLit == (tab == 0 ? 2 : 1);
+                        const std::string n = std::to_string(tab + 1);
+                        UiFig& tf = cr3UiPut("combtntab_fr0" + n, "", lit ? 1.0f / 30 : 0, m[tab][0], m[tab][1], view);
+                        float ax, ay, bx, by;
+                        if (cr3UiCall(tf, "tapAreaS0" + n, ax, ay) && cr3UiCall(tf, "tapAreaE0" + n, bx, by))
+                            cr3Taps.insert(cr3Taps.begin(), {ax, ay, bx, by, tab == 0 ? 5 : 6});
+                    }
                 }
                 UiFig& panel = cr3UiPut("combtnpanel", "", 0, px, py, view);
                 float cx, cy;
                 if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", float(b) / 30, cx, cy, view);
                 if (cr3UiCall(panel, "call_comBtnIcon_fr00", cx, cy)) cr3UiPut("combtnicon_fr00", "", float(id) / 30, cx, cy, view);
                 if (cr3UiCall(panel, "call_comBtnText_fr00", cx, cy))
-                    cr3UiPut(b == cr3Focus ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
+                    cr3UiPut(focused ? "combtntexttap_fr00" : "combtntext_fr00", "", float(id) / 30, cx, cy, view);
                 if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
                 float ax, ay, bx, by;
                 if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, b});
@@ -3649,6 +4011,22 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                 }
                 float ax, ay, bx, by;
                 if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(i)});
+            }
+            // (BtlMonsterStatus::VAddTargetListInterface 0x009c6d94: the monster's help - TargetParam +0x28 - only where
+            // its species was analyzed this battle - BtlMonsterAnalyzation::Has -, else none; on the top banner while
+            // it is targeted)
+            if (!all && cr3Focus >= 0 && size_t(cr3Focus) < alive.size() && !announcing) {
+                const cr3::Cr3Fighter& ft = cr3Rules.fighters[size_t(alive[size_t(cr3Focus)])];
+                const std::string text = !ft.player && cr3Analyzed.count(ft.id) ? cr3NameOf("mon_help.mbe", "MonsterHelp", ft.id) : std::string();
+                UiFig& hp = cr3UiPut("bthelpposition", "", 0, 0, 0, view);
+                float hx, hy, tx, ty;
+                if (!text.empty() && cr3UiCall(hp, "call_btHelpMenu", hx, hy, w, h)) {
+                    UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view);
+                    if (cr3UiCall(help, "typeM_L01", tx, ty)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        drawUiText(text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+                    }
+                }
             }
             if (cr3TargetCanChange()) {
                 const bool focused = cr3Focus == (all ? 1 : int(alive.size()));

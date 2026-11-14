@@ -169,6 +169,7 @@ public:
         float expBonus = 1, dropBonus = 1, goldBonus = 1;
         std::vector<int> geneBoxes; // (geneBoxSchedules' _id)
         std::string vsScoreSheet, vsSeasonSheet; // (the VS score / season rewards' item sheets)
+        int seasonItem = -1;                     // (vsseasonscorerewards' itemId: the season's token, 661 .. 672)
     };
     const Month& month() const { return month_; }
     // CheckDateChanged: a new day's - the day's marks cleared, then GetThisMonthMaster
@@ -372,9 +373,11 @@ public:
         int gold = 0, gp = 0, item = 0, scoreSheetDraws = 0;
         std::vector<Cr3Gene> genes;
         bool won = false, mission = false;
+        bool seasonPoint = false; // (EndVSTournament gave the season a point)
     };
     int endVSTournament(GameState& s, std::time_t now);
     const VsRewards& vsRewards() const { return vsRewards_; }
+    std::vector<int> vsScoreTotals() const;
     // GetVSMission: the day's mission (once a day - the daily mark 8): the last one not done lowers
     // its rank (to the best - 5, 1 at least); one drawn among those whose count of missions done is
     // reached (not the last), its goal drawn from its scores at the rank, a boost item 1 .. 8

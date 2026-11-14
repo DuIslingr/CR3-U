@@ -62,13 +62,13 @@ int main() {
         for (const auto [id, target, formula] : {std::array<int,3>{80,8,1}, {90,9,1}, {50,5,1}, {30,3,1}, {81,8,5}, {91,9,5}})
             commands.rows.push_back({{0,uint32_t(id)}, {1,1}, {4,uint32_t(target)}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {33,uint32_t(formula)}});
         // Guard command 51 (priority +2), fast cost command 60 (speedCost +80), bucket-2 command 61 (priority -8),
-        // bucket-5 command 62 (priority -9), fire attack 70 (element 1), 3-hit chain attack 71 (repeat 3, formula 2).
+        // bucket-5 command 62 (priority -9), fire attack 1070 (element 1), 3-hit chain attack 1071 (repeat 3, formula 2).
         commands.rows.push_back({{0,51}, {1,1}, {4,0}, {25,2}, {33,1}});
         commands.rows.push_back({{0,60}, {1,1}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {25,0}, {26,80}, {33,1}});
         commands.rows.push_back({{0,61}, {1,1}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {25,uint32_t(-8)}, {33,1}});
         commands.rows.push_back({{0,62}, {1,1}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {25,uint32_t(-9)}, {33,1}});
-        commands.rows.push_back({{0,70}, {1,1}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {9,1}, {24,100}, {32,4}, {33,1}});
-        commands.rows.push_back({{0,71}, {1,1}, {4,3}, {5,800}, {6,bits(1)}, {7,bits(1)}, {8,0x103}, {24,100}, {32,4}, {33,2}});
+        commands.rows.push_back({{0,1070}, {1,1}, {4,3}, {5,10}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {9,1}, {24,100}, {32,4}, {33,1}});
+        commands.rows.push_back({{0,1071}, {1,1}, {4,3}, {5,800}, {6,bits(1)}, {7,bits(1)}, {8,0x103}, {24,100}, {32,4}, {33,2}});
         // Round 2 audited formulas, costs, and revive/status target eligibility:
         // 203: HP-consumption physical (hpKind=1, hpCost=50%, mpKind=3, mpCost=5, formula=13 -> damage=13)
         // 302: Revive ally other (target=12, power=50, removes={1}, requiredEffects={1}, formula=7 -> damage=7)
@@ -135,11 +135,43 @@ int main() {
         // Round 21: 1647 Money Collector - CommandFomula 20 (here 21): damage formula 21 calculateStealGold, chain -1
         commands.rows.push_back({{0,1647}, {1,0}, {4,3}, {5,140}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {24,100}, {32,4}, {33,21}});
         commands.chunks.push_back({});
+        // Round 22 (the Auto Battle): 950 a heal of select type 3 on an ally (calculateHpHeal, power 50); 951 a strong
+        // attack never on auto (+0xbe bit 0 - flags bit 16); 952 a stronger attack of select type 1 costing 30 MP
+        commands.rows.push_back({{0,950}, {1,3}, {4,1}, {5,50}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {10,uint32_t(-1)}, {32,4}, {33,5}, {35,3}});
+        commands.chunks.push_back({});
+        commands.rows.push_back({{0,951}, {1,1}, {4,3}, {5,500}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {10,uint32_t(-1)}, {32,0x10004}, {33,1}, {35,1}});
+        commands.chunks.push_back({});
+        commands.rows.push_back({{0,952}, {1,1}, {4,3}, {5,50}, {6,bits(1)}, {7,bits(1)}, {8,0x101}, {10,uint32_t(-1)}, {30,0}, {31,30}, {32,4}, {33,1}, {35,1}});
+        commands.chunks.push_back({});
+        // Round 23 (status-effect triggers, fixed damage, blocks, assists): 1100 a physical attack (+0xc4 1 - col 34),
+        // 1101 a magic one (+0xc4 2, formula 30 -> damage 2), 1107 a physical one of 3 hits; 1102 .. 1106 givers on
+        // oneself (no damage, +0xbc bits 2 and 3) of Mental Wall 17, Moonlight Shadow 18, Rally 23, Counter 25,
+        // Regenerate 92; 56 Counter's attack (formula 10, +0xc4 0); 306 Regenerate's revive (target 0, 50 % -
+        // damage 7 -, removes 1 and 92, requires 1); the assists' 63 / 65 (heals of 50 %), 67 / 69 / 70 (removes
+        // 13 / 14 / 15) and 71 (gives 3 .. 6, always landing)
+        auto row = [&](std::map<int, uint32_t> r, std::map<int, std::vector<uint32_t>> chunk = {}) {
+            r.emplace(6, bits(1)), r.emplace(7, bits(1));
+            commands.rows.push_back(r), commands.chunks.push_back(chunk);
+        };
+        row({{0,1100}, {1,1}, {4,3}, {5,10}, {8,0x101}, {32,4}, {33,1}, {34,1}});
+        row({{0,1101}, {1,2}, {4,3}, {5,10}, {8,0x101}, {32,4}, {33,30}, {34,2}});
+        row({{0,1107}, {1,1}, {4,3}, {5,10}, {8,0x301}, {32,4}, {33,1}, {34,1}});
+        int effectGiver = 1102;
+        for (uint32_t e : {17u, 18u, 23u, 25u, 92u}) row({{0,uint32_t(effectGiver++)}, {1,4}, {4,0}, {8,0x100}, {13,1}, {32,0xc}, {33,40}}, {{14, {e}}});
+        row({{0,56}, {1,7}, {4,3}, {5,100}, {8,0x101}, {25,uint32_t(-7)}, {32,0x404}, {33,10}});
+        row({{0,306}, {1,3}, {4,0}, {5,50}, {8,0x100}, {15,2}, {21,1}, {25,9}, {32,0x4800c}, {33,7}}, {{16, {1, 92}}, {22, {1}}});
+        row({{0,63}, {1,7}, {4,11}, {5,50}, {8,0x100}, {32,0x404}, {33,7}});
+        row({{0,65}, {1,7}, {4,10}, {5,50}, {8,0x100}, {32,0x404}, {33,7}});
+        row({{0,67}, {1,7}, {4,11}, {8,0x100}, {15,1}, {32,0x404}, {33,40}}, {{16, {13}}});
+        row({{0,69}, {1,7}, {4,11}, {8,0x100}, {15,1}, {32,0x404}, {33,40}}, {{16, {14}}});
+        row({{0,70}, {1,7}, {4,11}, {8,0x100}, {15,1}, {32,0x404}, {33,40}}, {{16, {15}}});
+        row({{0,71}, {1,7}, {4,11}, {8,0x100}, {13,4}, {32,0x40c}, {33,40}}, {{14, {3, 4, 5, 6}}});
         Table formulas{"CommandFomula", "iiii", {
             {{0,21},{2,21},{3,uint32_t(-1)}},
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
             {{0,8},{2,8}}, {{0,12},{2,12}}, {{0,13},{2,13}}, {{0,16},{2,16}}, {{0,17},{2,18}},
             {{0,18},{2,6},{3,19}}, {{0,20},{2,20}}, {{0,24},{2,24}}, {{0,40},{2,uint32_t(-1)}},
+            {{0,10},{2,10}}, {{0,30},{2,2}},
         }};
         check(t.command.parse(tables({commands, formulas})), "parse synthetic commands");
         Table skills{"Skill", "iiiiiiiiiiiiiiiiiiiii", {
@@ -153,6 +185,12 @@ int main() {
             {{0,98}, {8,0}, {12,70}, {13,1}, {17,70}, {18,1}},     // Break Reset on disadvantage (kind 70)
             {{0,99}, {8,0}, {12,80}, {13,200}, {17,80}, {18,200}}, // +200 cooperation chance (kind 80)
             {{0,421}, {8,0}, {12,116}, {13,200}, {17,116}, {18,200}}, // the Mimics' gold release x2.0 (kind 0x74)
+            // Round 23: 479 the Eggons' fixed damage (trigger 4 - +0x1c -, chance 256, kind 91 -1); 329 a physical block
+            // (kind 3, no trigger); 107 a pierce (kind 89); 143 field-effect immunity (kind 0x6a)
+            {{0,479}, {7,4}, {8,0}, {10,6}, {11,256}, {12,91}, {13,uint32_t(-1)}, {16,256}, {17,91}, {18,uint32_t(-1)}},
+            {{0,329}, {8,0}, {11,256}, {12,3}, {13,0}, {16,256}, {17,3}, {18,0}},
+            {{0,107}, {8,0}, {11,256}, {12,89}, {13,0}, {16,256}, {17,89}, {18,0}},
+            {{0,143}, {8,0}, {11,256}, {12,106}, {13,0}, {16,256}, {17,106}, {18,0}},
         }};
         Table statusEffects{"StatusEffect", "iiiiiiiiiiiiiiiiiiiiiii_ipiiiiiiii", {
             {{0,1}, {1,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}},
@@ -162,6 +200,23 @@ int main() {
             {{0,303}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}, {14,68}, {15,301}}, // status immunity to 301 (kind 68)
             {{0,304}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}, {14,82}, {15,300}}, // +300/256 evasion (CR3 kind 82)
             {{0,305}, {1,uint32_t(-1)}, {5,9}, {6,9}, {12,256}, {13,256}, {14,36}, {15,120}}, // +20% attack for 9 turns (kind 36)
+            {{0,306}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}, {14,51}, {15,1}},   // berserk - attacks at random (kind 51)
+            // Round 23, as the release's skill_para StatusEffect rows (4 uses +0x10, 8 trigger +0x20, 9 condition +0x24,
+            // 10 its constant, 11 end timing +0x2c): 17 Mental Wall (4 / magic, kind 49, 1 use, end 10), 18 Moonlight
+            // Shadow (4 / physical, kind 123), 23 Rally (3 / physical, kind 54 x200, end 9), 25 Counter (8 / physical,
+            // kind 99 -> 56, 1 turn, end 7), 92 Regenerate (11 / HP at 0 %, kind 98 -> 306, end 10), 46 the field's
+            // speed x0.66 (no trigger), 400 an assist-cost halving (kind 79); 3 .. 6 and 13 .. 15 plain ones
+            {{0,17}, {1,uint32_t(-1)}, {4,1}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,4}, {9,7}, {11,10}, {12,256}, {13,256}, {14,49}, {32,0x21}},
+            {{0,18}, {1,uint32_t(-1)}, {4,1}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,4}, {9,6}, {11,10}, {12,256}, {13,256}, {14,123}, {32,0x21}},
+            {{0,23}, {1,uint32_t(-1)}, {4,1}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,3}, {9,6}, {11,9}, {12,256}, {13,256}, {14,54}, {15,200}, {32,1}},
+            {{0,25}, {1,uint32_t(-1)}, {4,1}, {5,1}, {6,1}, {8,8}, {9,6}, {11,7}, {12,256}, {13,256}, {14,99}, {15,56}, {32,1}},
+            {{0,92}, {1,uint32_t(-1)}, {4,1}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {8,11}, {9,3}, {10,0}, {11,10}, {12,256}, {13,256}, {14,98}, {15,306}, {16,128}, {32,1}},
+            {{0,46}, {1,uint32_t(-1)}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}, {14,40}, {15,66}},
+            {{0,400}, {1,uint32_t(-1)}, {4,uint32_t(-1)}, {5,uint32_t(-1)}, {6,uint32_t(-1)}, {12,256}, {13,256}, {14,79}, {15,0}},
+            {{0,3}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}}, {{0,4}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}},
+            {{0,5}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}}, {{0,6}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}},
+            {{0,13}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}}, {{0,14}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}},
+            {{0,15}, {1,uint32_t(-1)}, {5,3}, {6,3}, {12,256}, {13,256}},
         }};
         check(t.skill.parse(tables({skills, statusEffects})), "parse synthetic skills and status effects");
         Table elements{"Element", "ifffffff", {
@@ -277,7 +332,7 @@ int main() {
             rules.fighters[2].element = 2; // Ice: weak to Fire (element 1 -> 150%)
             rules.fighters[3].element = 1; // Fire: resists Fire (element 1 -> 50%)
             rules.monstersWait = true;
-            const auto elemActions = rules.turn({{0, 70, 2}, {1, 70, 3}});
+            const auto elemActions = rules.turn({{0, 1070, 2}, {1, 1070, 3}});
             check(elemActions.size() == 2 && elemActions[0].targets[0].colors == std::vector<uint8_t>{1}, "elemental weakness records popup color 1");
             check(elemActions[1].targets[0].colors == std::vector<uint8_t>{2}, "elemental resistance records popup color 2");
 
@@ -286,7 +341,7 @@ int main() {
             check(!healActions.empty() && healActions[1].targets[0].colors == std::vector<uint8_t>{3}, "HP heal records popup color 3");
 
             rules.monstersWait = true;
-            const auto chainActions = rules.turn({{0, 71, 2}, {1, -1, -1}});
+            const auto chainActions = rules.turn({{0, 1071, 2}, {1, -1, -1}});
             const auto& hits = chainActions[1].targets[0].hits;
             check(hits.size() == 3 && hits[2] > hits[0], "multi-hit repeat command escalates chain bonus per hit");
 
@@ -664,6 +719,263 @@ int main() {
             buff.scripted[1].push_back({1, 760});
             check(buffTurn() == std::vector<int>({760}), "a script's command takes the turn's action");
         }
+        // Round 22: the get-set's Mass Attack (phaseAllAttack: one target for all - GetLowestHpTarget, the lowest
+        // absolute HP among the first member's attack's targets; a kind 51 unit's at random) and Auto Battle
+        // (BtlAutomaticManager: the attack pass - kills first -, IsEasyPrey, the heal gate; never an item, a buff
+        // or a noAuto command; the battle's RNG left alone)
+        {
+            cr3::Cr3Battle autoBattle;
+            for (int m : {1, 1, 2, 2, 2}) { cr3::Cr3BattleUnit u; u.monster = m; autoBattle.units.push_back(u); }
+            auto fresh = [&](cr3::Cr3BattleRules& r, uint32_t seed) {
+                check(r.setup(t, autoBattle, 1, seed), "setup auto battle");
+                for (size_t k = 0; k < r.fighters.size(); ++k) {
+                    cr3::Cr3Fighter& f = r.fighters[k];
+                    f.player = k < 2, f.attackCommand = 900, f.maxHp = 100000, f.hp = 100000, f.mp = f.maxMp = 100;
+                    if (f.player) f.geneCommands = {950, 951, 902, 511, 517};
+                }
+            };
+            cr3::Cr3BattleRules mass;
+            fresh(mass, 3);
+            mass.fighters[2].hp = 500, mass.fighters[3].hp = 120, mass.fighters[4].hp = 120;
+            auto massPicks = mass.massAttackChoices();
+            check(massPicks.size() == 2 && massPicks[0] == std::array<int, 3>{0, 900, 3} && massPicks[1] == std::array<int, 3>{1, 900, 3},
+                  "Mass Attack: every member's own attack on the lowest HP foe, the first collected on ties");
+            mass.fighters[1].hp = 0;
+            check(mass.massAttackChoices().size() == 1, "Mass Attack: the fallen take no part");
+            mass.fighters[1].hp = 100000;
+            mass.giveEffect(1, 306);
+            bool spread = false;
+            for (int n = 0; n < 40; ++n) {
+                const auto p = mass.massAttackChoices();
+                check(p[0][2] == 3, "Mass Attack: the target is kept for the others");
+                spread |= p[1][2] != 3;
+            }
+            check(spread, "Mass Attack: a kind 51 unit's target is at random");
+            // the attack pass: a foe it can kill is taken first (the most kills), not the strongest hit elsewhere;
+            // 951 (never on auto) nor the buff 902 nor the items' 511 / 517 taken
+            cr3::Cr3BattleRules plan;
+            fresh(plan, 5);
+            plan.fighters[3].hp = 2;
+            auto picks = plan.autoChoices(true);
+            check(picks.size() == 2 && picks[0][2] == 3 && picks[0][1] != 951, "Auto Battle: a kill is preferred");
+            check(picks[1][2] != 3, "Auto Battle: a foe already killed by the plan is not attacked again");
+            for (int n = 0; n < 30; ++n) {
+                fresh(plan, uint32_t(100 + n));
+                for (size_t k = 2; k < 5; ++k) plan.fighters[k].hp = 1000 + n * 37;
+                plan.fighters[0].hp = 5000 + n * 1000; // (5 % .. 34 %: heals on and off)
+                for (const auto& c : plan.autoChoices(true))
+                    check(c[1] == -1 || c[1] == 900 || c[1] == 950, "Auto Battle: never an item, a buff or a noAuto command");
+            }
+            // the heal gate on the lowest living HP rate: above 50 % never; 20 % or less always (the foes not easy prey)
+            fresh(plan, 7);
+            plan.fighters[0].hp = 60000;
+            picks = plan.autoChoices(true);
+            check(picks[0][1] == 900 && picks[1][1] == 900, "Auto Battle: no heal above 50 % HP");
+            fresh(plan, 7);
+            plan.fighters[0].hp = 15000;
+            picks = plan.autoChoices(true);
+            check((picks[0][1] == 950 && picks[0][2] == 0) || (picks[1][1] == 950 && picks[1][2] == 0), "Auto Battle: a heal on the one at 15 % HP");
+            // easy prey: every foe dead or losing half its HP to the plan - attacks only, no heal at 15 %
+            fresh(plan, 7);
+            plan.fighters[0].hp = 15000;
+            plan.fighters[2].hp = plan.fighters[3].hp = 2, plan.fighters[4].hp = 0;
+            picks = plan.autoChoices(true);
+            check(picks[0][1] == 900 && picks[1][1] == 900, "Auto Battle: the foes easy prey - attacks alone");
+            // the predictions on a copy: the battle's RNG is where it was
+            cr3::Cr3BattleRules a, b;
+            fresh(a, 99), fresh(b, 99);
+            (void)a.autoChoices(true);
+            const auto ta = a.turn({{0, 900, 2}}), tb = b.turn({{0, 900, 2}});
+            check(ta.size() == tb.size() && !ta.empty() && ta[0].hits == tb[0].hits && ta.back().hits == tb.back().hits, "Auto Battle: the battle's RNG untouched");
+        }
+        // Round 23: the status effects' triggers (BtlStatusEffect::Trigger 0x9c7ad8 / End 0x9c7bd4), fixed damage and
+        // blocks (calculateHpFluctuation 0x7e35e0, CanBlockBySkill 0x7e2924), the field's effects at every turn's start
+        // (GiveFieldStatusEffectToCalculation 0x9c2220) and the assists (calculateAssist 0x7dbbf4)
+        {
+            auto fresh = [&](cr3::Cr3BattleRules& r, uint32_t seed) {
+                check(r.setup(t, battle, 1, seed), "setup round 23 battle");
+                for (size_t k = 0; k < r.fighters.size(); ++k) {
+                    cr3::Cr3Fighter& f = r.fighters[k];
+                    f.player = k < 2, f.hp = f.maxHp = 5000, f.mp = f.maxMp = 100, f.attack = f.defence = 100, f.luck = 10, f.geneLevel = 0;
+                    f.speed = 100 - int(k), f.attackCommand = 1100, f.skills.clear(), f.commands.clear();
+                }
+                r.monstersWait = true;
+            };
+            auto actionOf = [](const std::vector<cr3::Cr3Action>& acts, int source, int command) -> const cr3::Cr3Action* {
+                for (const auto& a : acts) if (a.source == source && a.command == command) return &a;
+                return nullptr;
+            };
+            // Mental Wall: dormant until a magic command reaches it, then that command is turned on the caster - its
+            // damage on the caster, the wall's bearer untouched - and the wall is gone (1 use, end timing 10)
+            {
+                cr3::Cr3BattleRules r; fresh(r, 31);
+                r.giveEffect(2, 17);
+                check(r.hasEffect(2, 17) && !r.hasKind(r.fighters[2], 49), "Mental Wall is dormant (kind 49 not read) until triggered");
+                auto acts = r.turn({{0, 1100, 2}});
+                check(r.hasEffect(2, 17) && r.fighters[2].hp < 5000, "a physical command neither triggers Mental Wall nor is reflected");
+                r.fighters[2].hp = 5000;
+                r.monstersWait = true;
+                acts = r.turn({{0, 1101, 2}});
+                const cr3::Cr3Action* m = actionOf(acts, 0, 1101);
+                check(m && m->targets.size() == 1 && m->targets[0].target == 0 && m->targets[0].reflectedFrom == 2 && r.fighters[0].hp < 5000 &&
+                          r.fighters[2].hp == 5000, "Mental Wall reflects the magic command onto its caster");
+                check(!r.hasEffect(2, 17), "Mental Wall is used up once it has reflected");
+                r.monstersWait = true;
+                acts = r.turn({{0, 1101, 2}});
+                m = actionOf(acts, 0, 1101);
+                check(m && m->targets[0].target == 2 && m->targets[0].reflectedFrom < 0 && r.fighters[2].hp < 5000, "the next magic command lands");
+            }
+            // Moonlight Shadow: one physical command evaded, then gone; magic leaves it be
+            {
+                cr3::Cr3BattleRules r; fresh(r, 32);
+                r.giveEffect(2, 18);
+                auto acts = r.turn({{0, 1101, 2}});
+                check(r.hasEffect(2, 18) && r.fighters[2].hp < 5000, "magic does not trigger Moonlight Shadow");
+                r.fighters[2].hp = 5000, r.monstersWait = true;
+                acts = r.turn({{0, 1107, 2}});
+                const cr3::Cr3Action* a = actionOf(acts, 0, 1107);
+                check(a && a->targets[0].flags.size() == 3 && std::all_of(a->targets[0].flags.begin(), a->targets[0].flags.end(), [](uint8_t f) { return (f & 4) != 0; }) &&
+                          r.fighters[2].hp == 5000, "Moonlight Shadow evades every hit of one physical command");
+                check(!r.hasEffect(2, 18), "Moonlight Shadow is used up after one command");
+                r.monstersWait = true;
+                acts = r.turn({{0, 1107, 2}});
+                check(r.fighters[2].hp < 5000, "the next physical command lands");
+            }
+            // Rally: x2 on the next physical command alone, then gone; a magic one leaves it dormant
+            {
+                cr3::Cr3BattleRules a, b; fresh(a, 33), fresh(b, 33);
+                a.giveEffect(0, 23);
+                const int plain = actionOf(b.turn({{0, 1100, 2}}), 0, 1100)->targets[0].hits[0];
+                const int rallied = actionOf(a.turn({{0, 1100, 2}}), 0, 1100)->targets[0].hits[0];
+                check(rallied == plain * 2 && !a.hasEffect(0, 23), "Rally doubles the next physical command, then is used up");
+                a.monstersWait = b.monstersWait = true;
+                check(actionOf(a.turn({{0, 1100, 3}}), 0, 1100)->targets[0].hits[0] == actionOf(b.turn({{0, 1100, 3}}), 0, 1100)->targets[0].hits[0],
+                      "Rally applies once");
+                cr3::Cr3BattleRules c; fresh(c, 33);
+                c.giveEffect(0, 23);
+                (void)c.turn({{0, 1101, 2}});
+                check(c.hasEffect(0, 23) && !c.hasKind(c.fighters[0], 54), "a magic command leaves Rally dormant");
+            }
+            // Counter: the bearer, hit by a physical command of the other side, answers with 56 on the attacker - once
+            {
+                cr3::Cr3BattleRules r; fresh(r, 34);
+                r.giveEffect(2, 25);
+                auto acts = r.turn({{0, 1100, 2}});
+                check(acts.size() == 2 && acts[0].source == 0 && acts[1].source == 2 && acts[1].command == 56 && acts[1].target == 0 && r.fighters[0].hp < 5000,
+                      "Counter: command 56 on the attacker right after its command");
+                check(!r.hasEffect(2, 25), "Counter is used up");
+                r.monstersWait = true;
+                acts = r.turn({{0, 1100, 2}});
+                check(acts.size() == 1, "no second counter");
+            }
+            // Regenerate: a bearer knocked out is revived at 50 % by 306 with no actor, right after the command
+            {
+                cr3::Cr3BattleRules r; fresh(r, 35);
+                r.giveEffect(1, 92);
+                r.fighters[0].speed = 1000, r.fighters[1].hp = 1, r.fighters[1].speed = 1;
+                auto acts = r.turn({{0, 80, 1}});
+                const cr3::Cr3Action* rev = actionOf(acts, -1, 306);
+                check(rev && rev->target == 1 && !rev->assist && r.fighters[1].hp == 2500 && !r.hasEffect(1, 92), "Regenerate revives its KO'd bearer at 50 %");
+            }
+            // kind 91: every hit on an Eggon (skill 479) does 1; a block (skill 329, kind 3) stops a physical hit - not a
+            // magic one -, a pierce (attacker kind 89) gets through
+            {
+                cr3::Cr3BattleRules r; fresh(r, 36);
+                r.fighters[2].skills = {479};
+                const cr3::Cr3Action* a = nullptr;
+                auto acts = r.turn({{0, 1107, 2}});
+                a = actionOf(acts, 0, 1107);
+                check(a && a->targets[0].hits == std::vector<int>({1, 1, 1}) && r.fighters[2].hp == 4997, "kind 91: 1 damage a hit");
+                r.fighters[2].skills = {329}, r.monstersWait = true;
+                acts = r.turn({{0, 1100, 2}});
+                a = actionOf(acts, 0, 1100);
+                check(a && a->targets[0].hits == std::vector<int>{0} && (a->targets[0].flags[0] & 8) && r.fighters[2].hp == 4997, "kind 3 blocks a physical hit");
+                r.monstersWait = true;
+                acts = r.turn({{0, 1101, 2}});
+                check(r.fighters[2].hp < 4997, "kind 3 lets magic through");
+                const int before = r.fighters[2].hp;
+                r.fighters[0].skills = {107}, r.monstersWait = true;
+                acts = r.turn({{0, 1100, 2}});
+                check(r.fighters[2].hp < before, "the attacker's kind 89 pierces a block");
+            }
+            // the field's effects: the living players alone, again at every turn's start; none for one with skill kind 0x6a
+            {
+                cr3::Cr3BattleRules r; fresh(r, 37);
+                r.fieldEffects = {46};
+                r.fighters[1].hp = 0;
+                r.giveFieldEffects();
+                check(r.hasEffect(0, 46) && !r.hasEffect(1, 46) && !r.hasEffect(2, 46) && !r.hasEffect(3, 46),
+                      "field effects: the living players alone, no monster, no fallen one");
+                r.fighters[1].hp = 100, r.removeEffect(0, 46);
+                (void)r.turn({{0, -1, -1}});
+                check(r.hasEffect(0, 46) && r.hasEffect(1, 46) && r.fighters[0].effectStacks[46] == 1, "field effects: given again at the next turn's start, not stacked");
+                r.fighters[0].skills = {143}, r.monstersWait = true;
+                (void)r.turn({{0, -1, -1}});
+                check(!r.hasEffect(0, 46) && r.hasEffect(1, 46), "field effects: taken away from one with skill kind 0x6a");
+            }
+            // the assists: the chance by the cheer points, the ten handlers in order, the costs (halved under kind 79)
+            {
+                using R = cr3::Cr3BattleRules;
+                check(R::assistChance(9) == 0 && R::assistChance(10) == 0.1f && R::assistChance(24) == 0.1f && R::assistChance(25) == 0.2f &&
+                          R::assistChance(49) == 0.2f && R::assistChance(50) == 0.3f && R::assistChance(79) == 0.3f && R::assistChance(80) == 0.4f &&
+                          R::assistChance(99) == 0.4f && R::assistChance(100) == 0.5f && R::assistChance(1000) == 0.5f,
+                      "assist chance: <10 0, 10 0.1, 25 0.2, 50 0.3, 80 0.4, 100+ 0.5");
+                cr3::Cr3BattleRules r; fresh(r, 38);
+                int target = -2, cost = -1;
+                auto pick = [&](int points) { r.cheer = points; return r.pickAssist(&target, &cost); };
+                r.fighters[0].hp = r.fighters[1].hp = 0;
+                check(pick(100) == 61 && target == -1 && cost == 50, "assist 1: two fallen, 50 points - AllResurrection 61");
+                check(pick(49) == 62 && target == 0 && cost == 25, "assist 2: under 50 points - Resurrection 62 on the first fallen");
+                r.fighters[0].hp = 5000;
+                check(pick(100) == 62 && target == 1, "assist 2: one fallen - Resurrection 62");
+                r.fighters[0].hp = 1000;
+                check(pick(24) == 63 && cost == 10, "assist 3: under 25 points, every player at 20 % or under (the fallen too) - AllHealHp 63");
+                r.fighters[0].hp = r.fighters[1].hp = 5000;
+                r.fighters[0].mp = r.fighters[1].mp = 5;
+                check(pick(100) == 64 && cost == 20, "assist 4: every player at 10 % MP - AllHealMp 64");
+                r.fighters[0].mp = 100, r.fighters[1].hp = 900;
+                check(pick(100) == 65 && target == 1 && cost == 5, "assist 5: one at 20 % HP - HealHp 65");
+                check(pick(4) == -1, "assist 5: under 5 points none");
+                r.fighters[1].hp = 5000;
+                check(pick(100) == 66 && target == 1 && cost == 10, "assist 6: one at 10 % MP - HealMp 66");
+                r.fighters[1].mp = 100;
+                r.giveEffect(0, 14);
+                check(pick(100) == 69 && cost == 5, "assist 8: a player with 14 - RemoveDisableGene 69");
+                r.giveEffect(1, 13);
+                check(pick(100) == 67, "assist 7 before 8: RemovePoison 67");
+                r.removeEffect(0, 14), r.removeEffect(1, 13);
+                check(pick(20) == 71 && cost == 20 && pick(19) == -1, "assist 10: Enhance 71 at 20 points");
+                r.giveEffect(0, 400);
+                check(pick(19) == 71 && cost == 10, "assist costs halved while a player has an enabled kind 79");
+                // the roll: at the turn's end, after its commands, source -1, the points spent
+                cr3::Cr3BattleRules a; fresh(a, 39);
+                a.cheer = 100, a.fighters[1].hp = 900;
+                cr3::Cr3Action got;
+                bool seen = false;
+                for (int n = 0; n < 40 && !seen; ++n) {
+                    a.monstersWait = true;
+                    const auto acts = a.turn({{0, 1100, 2}});
+                    if (acts.back().source == -1) {
+                        seen = true, got = acts.back();
+                        check(acts.size() == 2 && acts[0].source == 0, "the assist comes after the turn's commands");
+                    }
+                }
+                check(seen && got.assist && got.command == 65 && got.target == 1 && a.fighters[1].hp == 3400 && a.cheer == 95,
+                      "an assist: HealHp 65 - 50 % of the max HP -, 5 points spent");
+                cr3::Cr3BattleRules none; fresh(none, 39);
+                none.cheer = 100, none.fighters[1].hp = 900, none.noAssist = true;
+                for (int n = 0; n < 40; ++n) {
+                    none.monstersWait = true;
+                    check(none.turn({{0, 1100, 2}}).back().source == 0, "no assist with MbCouplingInfo +0x44 bit 6");
+                }
+                cr3::Cr3BattleRules low; fresh(low, 39);
+                low.cheer = 9, low.fighters[1].hp = 900;
+                for (int n = 0; n < 40; ++n) {
+                    low.monstersWait = true;
+                    check(low.turn({{0, 1100, 2}}).back().source == 0, "no assist under 10 points");
+                }
+            }
+        }
         // Round 20 against the release's tables (CR3_DATA): monster 913 mode 2's 2 actions, 865's Augmented Core
         // costing 2, and battle 22's monster 1408 (weights 15 / 10 / 10 / 5 / 5: each U(0,1) x w / sum, the
         // highest - 54.4 / 21.2 / 21.2 / 1.7 / 1.7 %)
@@ -700,6 +1012,34 @@ int main() {
                 check(f865.actionsPerTurn == 2 && f865.commands.size() == 3 && f865.commands[2].command == 267 && f865.commands[2].cost == 2 &&
                           f865.commands[0].cost == 1 && f865.commands[1].cost == 1,
                       "monster 865: two actions a turn, Augmented Core (267) costing 2");
+                // Round 23 against the release: coupling 501's Eggon has skill 479 (kind 91 -1) - every landed hit 1; the
+                // release's StatusEffect 17 (Mental Wall) comes dormant with 1 use, 46 (a field's) on at once
+                {
+                    cr3::Cr3BattleRules egg;
+                    battleOf(501, egg, 5);
+                    int eggon = -1, hero = -1;
+                    for (size_t k = 0; k < egg.fighters.size(); ++k) {
+                        const auto& sk = egg.fighters[k].skills;
+                        if (eggon < 0 && std::find(sk.begin(), sk.end(), 479) != sk.end()) eggon = int(k);
+                        if (hero < 0 && egg.fighters[k].player) hero = int(k);
+                    }
+                    check(eggon >= 0 && hero >= 0, "coupling 501: an Eggon with skill 479");
+                    int landed = 0;
+                    for (int n = 0; n < 10 && landed == 0; ++n) {
+                        for (auto& f : egg.fighters) f.hp = f.maxHp = 100000;
+                        egg.monstersWait = true;
+                        for (const auto& a : egg.turn({{hero, egg.attackCommandOf(hero), eggon}}))
+                            if (a.source == hero)
+                                for (const auto& th : a.targets)
+                                    for (size_t h = 0; h < th.hits.size(); ++h)
+                                        if (!(th.flags[h] & 4)) check(th.hits[h] == 1, "an Eggon takes 1 a hit"), ++landed;
+                    }
+                    check(landed > 0, "a hit landed on the Eggon");
+                    egg.giveEffect(hero, 17), egg.giveEffect(hero, 46);
+                    check(egg.hasEffect(hero, 17) && egg.fighters[size_t(hero)].effectsDormant.count(17) && egg.fighters[size_t(hero)].effectUses[17] == 1 &&
+                              !egg.fighters[size_t(hero)].effectsDormant.count(46),
+                          "release StatusEffect 17 dormant with 1 use, 46 enabled");
+                }
                 cr3::Cr3BattleRules r22;
                 battleOf(22, r22, 12345);
                 int boss = -1;

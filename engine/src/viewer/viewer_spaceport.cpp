@@ -5921,11 +5921,37 @@ void Viewer::drawVs(int w, int h) {
         if (cr3UiCall(ftr, "call_VsFtrTop", cx, cy)) {
             UiFig& top = cr3UiPut("vsftrtop", "", 0, cx, cy, view);
             float px, py;
-            // (VsModeMenu::SetTotalScore / SetNowScore: the week's in ten, the tournament's in seven - _01 ..)
-            if (cr3UiCall(top, "call_VsFteTotal", px, py))
-                cr3UiNumber(cr3UiPut("vsftetotal", "", 0, px, py, view), "call_VsFtrNumL_fr00", "vsftrnuml_fr00", game.cr3Vs.weekScore, 10, 0, view, 1, -1, 2);
-            if (cr3UiCall(top, "call_VsFtrNow", px, py))
-                cr3UiNumber(cr3UiPut("vsftrnow", "", 0, px, py, view), "call_VsFtrNumS_fr00", "vsftrnums_fr00", game.cr3Vs.score, 7, 0, view, 1, -1, 2);
+            // (CreateScreenMode1 0xb5eb28: SetTotalScore 0xb672f0 - the week's in nine, to 999,999,999 - and SetNowScore
+            // 0xb673bc - "Get prize after:", the next vsscore total above it less it, and the gauge's (span - left) x 100 /
+            // span frames, span the gap from the total before; none above: both 0, the gauge full. Pose 0xb60be4 puts the
+            // digits backwards - the first joint the units -, leading zeros hidden (SetViewNumbers 0x8f8a9c), each panel
+            // posed by its count: 1 .. 3 at 0, 4 .. 6 at 1/30, 7 .. 9 at 2/30 - its commas)
+            long left = 0, span = 0, below = 0;
+            for (int total : game.cr3Db->vsScoreTotals()) {
+                if (total > game.cr3Vs.weekScore) {
+                    left = total - game.cr3Vs.weekScore, span = total - below;
+                    break;
+                }
+                below = total;
+            }
+            if (left == 0) span = 0;
+            auto digitsFirstUnits = [&](const std::string& panel, const std::string& prefix, const std::string& fig, long value, int places) {
+                value = std::clamp(value, 0L, places >= 9 ? 999999999L : 9999999L);
+                int n = 1;
+                for (long v = value; v >= 10; v /= 10) ++n;
+                UiFig& p = cr3UiPut(panel, "", float(std::min((n - 1) / 3, 2)) / 30, px, py, view);
+                long v = value;
+                for (int k = 0; k < n && k < places; ++k, v /= 10) {
+                    char joint[64];
+                    std::snprintf(joint, sizeof joint, "%s_%02d", prefix.c_str(), k + 1);
+                    float dx, dy;
+                    if (cr3UiCall(p, joint, dx, dy)) cr3UiPut(fig, "", float(v % 10) / 30, dx, dy, view);
+                }
+            };
+            if (cr3UiCall(top, "call_VsFtrBar", px, py)) // (the tournament's gauge, under the numbers)
+                cr3UiPut("vsftrbar", "", span < 1 ? 100.0f / 30 : float(int((span - left) * 100 / span)) / 30, px, py, view);
+            if (cr3UiCall(top, "call_VsFteTotal", px, py)) digitsFirstUnits("vsftetotal", "call_VsFtrNumL_fr00", "vsftrnuml_fr00", game.cr3Vs.weekScore, 9);
+            if (cr3UiCall(top, "call_VsFtrNow", px, py)) digitsFirstUnits("vsftrnow", "call_VsFtrNumS_fr00", "vsftrnums_fr00", left, 7);
         }
     }
     const auto& ts = game.cr3Db->vsTournaments();

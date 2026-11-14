@@ -1845,10 +1845,54 @@ struct Viewer {
     cr3::Cr3BattleRules cr3Rules;
     std::vector<int> cr3HpShown;            // (each fighter's HP as shown: the hits land one by one)
     std::vector<int> cr3MpShown;            // (each fighter's MP as shown: costs and MP heals/drains)
-    std::vector<int> cr3ComboStartHp;       // (BtlTotalDamageUI: enemy HP at start of player combo chain)
-    std::vector<int> cr3ComboDamage;        // (BtlTotalDamageUI: total damage across consecutive player actions)
-    std::vector<int> cr3ComboHits;          // (BtlTotalDamageUI: total hits across consecutive player actions)
-    float cr3ComboSince = -1;               // (BtlTotalDamageUI: when first combo hit landed)
+    // BtlTotalDamageUI (AddTotalDamage 0x009a48bc from BtlStatus::TakeDamageToDirection 0x009b42a0: a hit of
+    // non-zero damage between opposite sides - BtlDamage::IsDisplayTotalDamage, !BtlStatusList::IsParty -;
+    // addComboCharaDataView 0x009a497c: 3 slots keyed by the unit struck, in order of first hit, the next
+    // overwritten round-robin - +0xd0 - when full; Close 0x009a4bfc - CloseComboDamageView - as a direction's
+    // sequence ends without chaining on - BtlDirectionManager::playSequenceNext 0x00991ae0 -, at phaseCheck
+    // 0x009cfaa0, the victory, the defeat)
+    struct Cr3TotalSlot {
+        int fighter = -1;
+        int startHp = 0;      // (the HP before its first hit: the bar's back - btToHp02_per)
+        int raw = 0;          // (+= the damage, where it is damage: SetDamageNum's number)
+        int actual = 0;       // (+= the HP actually lost)
+        int hits = 0;         // (BtlStatus +0xec)
+        bool numbers = false; // (SetNumberViewComboDamageNum: dmg < 1 || hits > 1 - damage, or more than one hit)
+    };
+    std::array<Cr3TotalSlot, 3> cr3Totals{};
+    int cr3TotalNext = 0;                   // (+0xd0: the slot a fourth unit overwrites)
+    float cr3ComboSince = -1;               // (BtlTotalDamageUI: when its first hit landed - the panel's io)
+    void addCr3Total(int fighter, int damage, int hpBefore, int hpAfter);
+    void closeCr3Totals() { cr3Totals = {}, cr3TotalNext = 0, cr3ComboSince = -1; }
+    // the party panels' element and status icons as the directions show them (BtlStatus::UpdateInterface /
+    // BtlStatusUI::AddStatusEffectIcon - set as each action's effects land, from Cr3Action::effectsAfter /
+    // elementsAfter; empty: the rules' own - while choosing)
+    std::vector<std::vector<int>> cr3EffectsShown;
+    std::vector<int> cr3ElementShown;
+    void freezeCr3Shown();
+    void showCr3ActionState(const cr3::Cr3Action& a);
+    // btStPanel's status icon (SetAbnormalityStatusIcon 0x00a0f0b4 / Step 0x00a0e860: a 64-bit mask - +0x188,
+    // the bit the icon -, the highest shown as it changes, every 1.0 s - +0x194 - the next set one, (i + 1) % 57;
+    // icon 9 alone while on - AddStatusEffectIcon 0x009b79c0)
+    struct Cr3StIcon {
+        uint64_t mask = 0;
+        int shown = -1;
+        float timer = 0, last = -1;
+    };
+    std::vector<Cr3StIcon> cr3StIcons;
+    int cr3StatusIcon(size_t fighter);
+    // Analyze (BtlAnalyzeDirection, CommandDirection kind 0x16 - command 393 -, ctor 0x0098b2e8: its effect over,
+    // BtlAnnounceUI::AddObserver - tap to skip - then BtlStatusList::Analyze 0x009c1bc4 -> BtlMonsterStatus::VAnalyze
+    // 0x009c6804: three lines queued - the name, AnnounceBattle 32 "HP: {hp}/{max_hp}", mon_help.mbe's -, each the
+    // next after 10 s or a tap - BattleAnnouncementMenu::Update 0x00a0aa04 -, the last until a tap; then
+    // BtlMonsterAnalyzation::Add - its species, for this battle: the target list's help)
+    std::vector<std::string> cr3AnalyzeLines;
+    size_t cr3AnalyzeAt = 0;
+    float cr3AnalyzeSince = 0;
+    bool cr3AnalyzeDone = false;  // (this action's lines shown)
+    std::set<int> cr3Analyzed;    // (BtlMonsterAnalyzation: the mon_para ids analyzed this battle)
+    bool stepCr3Analyze(const cr3::Cr3Action& a);
+    bool tapCr3Analyze();
     int cr3VictorUnit = -1;                 // (BtlStatusList::PlayVictory: solo finisher unit during phaseVictory)
     float cr3VictoryDuration = 2.5f;
     int cr3GaugeShown = 0;                  // (the break gauge as shown - BtlBreakGaugeUI's direction point: hit by hit)
@@ -1968,6 +2012,21 @@ struct Viewer {
     // Battle, Escape - not where the coupling's +0x44 bit 1 forbids it -, Options; SE bt_001 the
     // first time)
     bool cr3GetSetSeen = false;
+    // the get-set's two tabs on Battle (comBtn +0x150 comBtnTab_fr01 - tab_AAT, Mass Attack - and
+    // +0x158 comBtnTab_fr02 - tab_CPU, Auto Battle -, cross-placed at call_comBtnTab_fr02 / _fr01,
+    // behind the panel; comBtn::SetButtonParamerter 0xa4b13c: game flag 5060 off) and what they
+    // start (BtlInterfaceSystem +0xd4 - SetAutoResult 0x9a3ff0: 5 Mass Attack, 6 Auto Battle, 0
+    // none): every turn chosen alone, the get-set skipped (EntryGetSet a no-op), the marker -
+    // comBtnTab_fr03 at comBackPosition - up, until StopAuto (0x9a4028): its tap or the Vita's ×,
+    // a victory, a defeat, a continue, the script's Battle.StopAuto. Not saved, not carried over
+    int cr3AutoResult = 0;
+    int cr3TabLit = 0;              // (the Vita's cursor on a tab - FUN_8112a8c4: 0 none, 1 Auto, 2 Mass)
+    bool cr3MarkerPressed = false;  // (TouchSimplePress 0xa4d308: the marker's frame + 2)
+    std::vector<Cr3Tap> cr3AutoTaps; // (the marker's tapAreaS03 / E03 as last drawn, UI units)
+    bool cr3TabsShown() const;
+    void beginCr3AutoTurn();
+    void stopCr3Auto(const char* why);
+    void playCr3Choices(); // (the choices made: the monsters' scripts, the turn worked out and played)
     std::map<int, int> cr3TurnItems; // (the items chosen this turn, by fighter: their names announced)
     void beginCr3Turn(bool countTurn = true);
     bool cr3EscapeAllowed() const;
@@ -2043,6 +2102,14 @@ struct Viewer {
     float stepCr3SpellCardClock(float dt);
     bool finishCr3SpellHandoff(const cr3::Cr3Action& action, size_t source, float time);
     void startCr3Action();
+    // a command with no actor (Cr3Action source -1: an assist - BtlAssistDirection -, a status effect's
+    // kind 98 / 101 command - Regenerate's 306): its announcement, its direction row's effect, its popups
+    void startCr3SourcelessAction(const cr3::Cr3Action& a);
+    void stepCr3SourcelessAction(const cr3::Cr3Action& a);
+    // BtlAnnounceUI::OpenAssist 0x99ea18's {assistant}: offline no friends, so battle.mbe Assistant rows 0 .. 7
+    // whose flag (+0x18, -1 always) is set - MbAssistantInfo::CanAssist 0x90c908 -, shuffled, the first; its
+    // name by the language (+0x08 / +0x10 - GetName 0x90c988)
+    std::string cr3AssistantName();
     bool cr3PendingStart = false; // (an action to start once the battle's script is over)
     void stepCr3Action();
     void endCr3Actions();

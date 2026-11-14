@@ -356,6 +356,7 @@ int Cr3OfflineDb::getThisMonthMaster(GameState& s, std::time_t now) {
             for (const BsonValue& r : t->items)
                 if (checkDate(r.integer("sdate"), r.integer("edate"), now)) {
                     *out = r.string("bingo");
+                    if (out == &month_.vsSeasonSheet) month_.seasonItem = r.integer("itemId", -1); // (DAT_0144e1a8: the season's token)
                     break;
                 }
     return kDbOk;
@@ -1347,7 +1348,7 @@ int Cr3OfflineDb::endVSTournament(GameState& s, std::time_t now) {
                             break;
                         }
                 const std::vector<int> sc = activeSeason ? ints(*activeSeason, "scores") : std::vector<int>();
-                vs.seasonPoints += 1;
+                vs.seasonPoints += 1, vsRewards_.seasonPoint = true; // (SetVsScoreBeforeSave's +0x724 snapshot differs: the result's season line)
                 while (vs.seasonCount > 0 && vs.seasonPoints >= vs.seasonCount) {
                     vs.seasonPoints -= vs.seasonCount;
                     ++vs.seasonLevel;
@@ -1529,6 +1530,13 @@ int Cr3OfflineDb::sync2(GameState& s, const std::string& name) {
         return finish(kDbOk);
     }
     return finish(kDbBad);
+}
+
+// vsscore's totals: the week's score thresholds, a prize at each (500, 2000, 5000 ..)
+std::vector<int> Cr3OfflineDb::vsScoreTotals() const {
+    const BsonValue* sc = table("vsscore");
+    if (sc && sc->isArray()) sc = sc->items.empty() ? nullptr : &sc->items[0];
+    return sc ? ints(*sc, "totals") : std::vector<int>();
 }
 
 } // namespace cr3

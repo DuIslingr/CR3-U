@@ -785,6 +785,24 @@ void EventRuntime::bindNatives(ScriptVM& vm) {
     // PutParameterI / S(window, key, value): the window's next message has each key ("{next}") in it
     // replaced by the value (EvtWindowMessage::PutParameter - "%d" for a number -, FilterMessage:
     // after the names, then the window's parameters are gone)
+    // (utils::GetCollectCount 0x92fd18 / GetCollectMaxCount 0x92fde0: an item sheet by its name - the dungeon's, "d02" -,
+    // its entries won / its entries; the gold boxes' "(Collected in this dungeon: {count}/{max_count})", AnnounceField 46 / 47)
+    for (const bool won : {true, false})
+        vm.setNative("Cr3System", won ? "GetCollectCount" : "GetCollectMaxCount", [this, won](NativeCall& c) {
+            int n = 0;
+            const std::string name = c.string(0);
+            if (state_.cr3Db && !name.empty())
+                for (const Cr3ItemSheet& sheet : state_.cr3Db->itemSheets()) {
+                    if (sheet.id != name) continue;
+                    const auto it = state_.cr3Sheets.find(sheet.id);
+                    for (size_t k = 0; k < sheet.entries.size(); ++k) {
+                        if (sheet.entries[k].item <= 0) continue;
+                        if (!won) ++n;
+                        else if (it != state_.cr3Sheets.end() && k < it->second.opened.size() && it->second.opened[k] > 0) ++n;
+                    }
+                }
+            c.result(n);
+        });
     vm.setNative("EvtWindow", "PutParameterI", [this](NativeCall& c) { parameters_[c.integer(0, Vista)].push_back({c.string(1), std::to_string(c.integer(2, 0))}); });
     vm.setNative("EvtWindow", "PutParameterS", [this](NativeCall& c) { parameters_[c.integer(0, Vista)].push_back({c.string(1), c.string(2)}); });
     // SetMessageText(window, text): the text itself as the message (EvtWindow::SetMessage(char*))
