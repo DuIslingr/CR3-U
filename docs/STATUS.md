@@ -39,8 +39,8 @@ or, with a save, carries on from it. What works today:
 - **Scripts**: all 194 of CR3's compiled scripts in the game's own Squirrel 2.2.4, with its 600
   natives bound; every one of its 4,127 events plays through to its end (`cr3tool events`)
 
-Not yet: much of what's later in the story is untested; the Spark particles' forces, trails and
-other emitter shapes, a few battle directions' details (some guessed motions),
+Not yet: much of what's later in the story is untested; the Spark particles' trails and forces
+(no shipped effect uses them), a few battle directions' details (some guessed motions),
 a few menus' rarer screens; see `docs/FORMATS.md` for each system's notes and
 what each still leaves out.
 

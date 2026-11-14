@@ -447,7 +447,7 @@ Six delegated read-only passes took the *Not settled* list apart (reports in `/t
 | Two crossfading faces | Edge's op 3 composes each over the motion | Mixed after composing | Unchanged: a slerp is invariant under a common left rotation and a lerp under a common offset, so mixing the composed results equals composing the mixed deltas |
 | Vulkan's bloom (`RenderBloom` `0x00b90908`) | RGB565 targets; the 32 x 32 read back a frame late (black pixels skipped: `if (s <= 0)`) | RGBA8, the luminance key taken as 1 | `filter.frag` rounds each pass to 5 / 6 / 5 bits; `readTexture` records a copy in the frame and returns it when that frame's slot comes round (`kFrames` later - the original's is one frame). `s902_d02_01103_evt`: Vulkan and GL frames differ by `0.17` / 255 on average; no validation messages |
 | `PostEffectBloom2` / `PostEffectBloom3` | Empty (`0x0096c6e0`) / never called (`0x0096db74`) | - | Nothing to do |
-| `PostEffectBloomMask` (`GS +0x55`) | Set by `Fld2TaskMap::CreateArea` `0x0086a81c` when the area's `<area>m1` builds (d0651, d0652, d12xx - d14xx; `d0600m2` at graphic level 1 / 2): the scene copied (RT10), the m1 model (layer 10, drawn only here) and the player and gimmicks in mask mode (`Fld2Main::SetMaskMode` `0x87dc50`: the player's diffuse `(0, 0, 0)` - `Fld2TaskPlayer::SetMaskMode` `0x8795a8` -, the gimmicks' vfunc `+0x50` mode 1) over the uncleared scene, blurred (`0.013`, `3.3`) and added over the copy at `0.3`; RT10 shown | None | Not in (*Not settled*): it needs a second 3D pass after the scene |
+| `PostEffectBloomMask` (`GS +0x55`) | Set by `Fld2TaskMap::CreateArea` `0x0086a81c` when the area's `<area>m1` builds (d0651, d0652, d12xx - d14xx; `d0600m2` at graphic level 1 / 2): the scene copied (RT10), the m1 model (layer 10, drawn only here) and the player and gimmicks in mask mode (`Fld2Main::SetMaskMode` `0x87dc50`: the player's diffuse `(0, 0, 0)` - `Fld2TaskPlayer::SetMaskMode` `0x8795a8` -, the gimmicks' vfunc `+0x50` mode 1) over the uncleared scene, blurred (`0.013`, `3.3`) and added over the copy at `0.3`; RT10 shown | None | In since round 31 (section 35) for the field's m1 areas |
 
 **The 2D areas and the toy camera.**
 
@@ -734,6 +734,23 @@ The parity audit's item 1 and backlog `round28-remaining.md` items 19, 21, 17 (#
 | The Lucky Box's carousel slide (`LuckyBoxMenu::Initialize` 0xacde1c, `BoxReturnToStatusQuo` 0xacee78, `Update` 0xacf37c states 1 / 2, `SetBoxLeftMove` 0xacfe20 / `SetBoxRightMove` 0xad003c, `ChangeBgAndBox` 0xad1ef4, `SetBgAndBox` 0xacf194, `TouchGestureTap` 0xad1868) | Five panels - the boxes focus - 2 .. + 2 -, the middle three on `call_mpBoxImagePanel`, the outer two at x -6 / +6; at rest the focus 1.35 x, the last at alpha 0. A slide: 0.3 s, linear; each panel to its neighbour's place (x alone), the focus 1.35 -> 1 and the next 1 -> 1.35, the leaving one faded out and the coming one in; the background, the name and the header's help out over 0.15 s, the next box's in over the next 0.15 s; the focus one on (state 1) / back (2) at the end; the panels not taken meanwhile (+0xd8) | The focus changed at once, three panels | As traced (`sp-box-slide`; a headless slide's frames looked at). Not in: the swipe (`TouchSimplePress` 0xad1ca4 / `Move` 0xad1dc4 / `Release` 0xad1d04: 20 to start, `|dx| > 80` over `|dy|` within 0.5 s - their units' basis unsettled) and the arrows' own taps during a slide (they restart it) |
 | The goods button's swipe slide (`FieldGoodsMenu`, backlog #16) | The other goods round the arc only while it slides | The panel alone | Unchanged: not traced this round |
 
+### 35. Round 31 parity audit (the Spark particles' remaining features, the m1 areas' glow)
+
+Backlog `round28-remaining.md` items 14 and 13. A census of the 21 shipped `.sprk` files (Android, `tools/mvgl.py`
+into `/tmp/cr3-opening-audit/r31/sprk`) first: what they use decided what went in.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| What the `.sprk` files use (census) | 21 files: 24 emitters (shape 0 x 11, 1 x 13), 39 quad sprites (pivot 4 x 38, 7 x 1), no SparkForce, trail (type 8), model or camera node, no start delay; every texture crop curve (`0x87..0x8a`, 31) the whole image | - | Forces, trails, the circle / ring / point shapes, the crop curves: left out (unused). The rest below |
+| Acceleration (`+0x90`, channels `0x13..0x15`; `SparkNode::UpdateKineLocalPos` 0xbb11f8) | Its curve's value plus its random part integrated into a velocity sum each update, then velocity (curve + random + that sum) into the place - 12 sprites (the fire bullets' embers, fe201am02's clouds, be004spr01's sparks) | Not read; velocity applied as `vel x age` | Integrated a step at a time as traced; turning and scale's change too (`UpdateKineLocalRot` / `Scl`: their random parts - all spun at the least before - and the change never below 0) |
+| The follow bits (`+0x16c` bits 4..6; `UpdateMatrix` 0xbafd74, `ControlParticles` 0xbaab2c, `ControlActivate` 0xbb0668, `UpdateWPos` 0xbb1134) | `0x70`: parent x the shape's offset (`+0x2a0`) x its own. `0`: the root when it was made (`+0x430`) x its parent's position then plus that offset (`+0x2b0`) x its own - never moved, turned or scaled by the parent again. 10 nodes: the fire bullets' (`be003fire08..14`, Effect 40..46 / 61..67) and `ee104` / `ee113` / `ee159`'s embers, `ee102tako03`'s emitter and sprites | Every node followed its parent: the bullets' embers flew with the bullet | As traced (the root and position taken at the node's first draw - `SparkEffect::collect`); the partial modes (none shipped) keep the position rule only. Battle 2, `--cr3-party 4,3,1`, command 4: the embers stay along the flight on Vulkan and GL |
+| The global transform (`+0x120 / +0x138 / +0x150`, channels `0x1c..0x24`; `UpdateKineGlobal` 0xbb177c) | Outside the local one: global T R S x local T R S (be004spr01: the sparks' ±30 degrees about x and z, a cone) | Not read | As traced, with links 6 / 7, 14 / 15, 22 / 23 |
+| Pivots (`+0x263`, `+0x1c0 / +0x1c8`; `SparkSprite::UpdatePivot` 0xba60c8, `DrawSprite` 0xba6a28) | The quad (±0.5) plus the pivot's place (`DAT_00f7bd7c` / `DAT_00f7bda0`: 0 top left .. 8 bottom right) plus its offset, times the size | The centre always | As traced (be004spr01's 7: the streak stands on its point) |
+| A billboard's roll (`DrawSprite`) | Its local turn left out of its matrix (`+0x34` bit 4); the camera's axes rolled by its rotation's z - degrees passed to `sincosf` as they are - times the world scale | No roll | As traced, degrees-as-radians included (fe201am02 / 06 / 08 / 09 / 12) |
+| Sprite flags (`+0x268` bits 0 .. 3, bit 16; material `+0x170` bit 11; `UpdateSize` 0xba5ff8, `OnActivated` 0xba73b0) | The size's / pivot's y taking x's; bit 16 one colour (corner 0's); the material's bit 11 a square sprite | Not read | As traced (no visible change in the shipped data: their corners and sizes are already equal) |
+| An emitter's end (`+0x172`; `SparkNode::Update` 0xbafb14) | 1: past its life it emits no more and is gone once its particles are (`ee113cru02`) | Gone at once with its particles | As traced |
+| `PostEffectBloomMask` (`0x0096c704`; `Fld2TaskPlayer::OnDraw` 0x877398's layers 10 / 11; `RenderContext::BeginScene` 0xb9919c - its 4th flag clears depth and stencil; `SM_SetupGraphics` 0x969360 - RT1 256 x 256 at graphic level 1; `PostEffectRenderer::Build` 0xef856c - pass 2 is the bloom's blur, CustomFigure type 6) | After the bloom: the scene copied (RT10); the depth cleared; `<area>m1` (one untextured black mesh: a stand-in of the field) and the player and gimmicks black drawn over the scene - what m1 doesn't cover (the sky, the openings) stays lit; that blurred into RT1 (five taps up and down, `0.013` apart, x `3.3`), RT10 back and RT1 added at `0.3` (SRC_ALPHA, ONE). Not with a feedback blur on | `<area>m1` not loaded | `Viewer::applyBloomMask` / `drawBloomMask` on both renderers (`copyFrame`, `clearDepth`, the area's projection and lighting kept from `drawArea`, the bloom's `Filter::Blur` into 256 x 256, `blurQuad`s). d1201's sky glows over the skyline; d1301 / d1401 (m1 covers nearly all): almost nothing. Vulkan and GL frames agree (the sky's mean `0.972 / 0.521 / 0.169` on both). `CR3_BLOOM_MASK=1 / 2` shows the mask pass / its blur. d0651 / d0652 and `d0600m2`: see *Not settled* |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -834,10 +851,13 @@ Deterministic REA evidence bundles are stored outside the repository at
   key is not traced - round 29).
 - **Finishers (Round 10, 17)**: the Finest Arts' `PlayGlobal(1.0)` is the battle's global camera
   for 1 s; `CollectDamageTarget`'s per-action picks are in, its shuffle's generator is CR3-U's.
-- **Bloom (Round 10, 18)**: Vulkan rounds to 5 / 6 / 5 in its shader (RGBA8 images) and reads the
-  luminance `kFrames + 1` frames late (the original one). `PostEffectBloomMask` - the m1 areas'
-  glow (d0651, d0652, d12xx - d14xx, `d0600m2`): traced (section 21) but not in; it needs a second 3D
-  pass after the scene (the m1 model, the player and gimmicks black) and footage to check against.
+- **Bloom (Round 10, 18, 31)**: Vulkan rounds to 5 / 6 / 5 in its shader (RGBA8 images) and reads the
+  luminance `kFrames + 1` frames late (the original one). `PostEffectBloomMask` (round 31) is in for
+  the field's m1 areas (d12xx - d14xx) without footage to check against; not for d0651 / d0652 (battle
+  stages with no field of their own in CR3-U - whether `+0x55` stays on into a battle is UNKNOWN) nor
+  `d0600m2` (graphic level 1 / 2's random floors: layer 10 alone, depth not cleared, `GL_GREATER` - the
+  devices have no depth function). Each gimmick's mask draw (vfunc `+0x50` mode 1, e.g. `Fld2Rock`'s
+  `+0x33` layers 10 / 11) is taken as its scene draw in black, NPCs included.
 - **The field (Round 11, 18)**: the season event and colosseum menus are unreachable (inert stubs).
   The ace couplings aren't fought in CR3-U, so `SetBoxDrawing`'s redraw of them is moot. Whether
   `SetBoxDrawing`'s flag survives a battle in between is UNKNOWN (CR3-U keeps it).

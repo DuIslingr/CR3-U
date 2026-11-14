@@ -377,7 +377,9 @@ placed at `<area>c`'s - `<piece>f` and `<piece>s` drawn there (d0600_00: the kit
 and the lights, at the origin). `<area>f` itself is drawn at the origin; d0600m2 (blackened) isn't in
 CR3-U. A piece placed mirrored draws with culling off (Fld2TaskMap::OnDraw: EntryCullFaceEnable(false)).
 `<area>m1` is never the scene's: OnDraw renders it into layer 10 alone - a post effect's mask, a black
-stand-in of the whole field (Primordia's, the Edge of the World's) - so CR3-U leaves it undrawn. The
+stand-in of the whole field (Primordia's, the Edge of the World's: one untextured black mesh) - drawn
+by Viewer::applyBloomMask (PostEffectBloomMask: what it leaves uncovered, the sky, glows; CR3_BLOOM_MASK
+1 / 2 shows the mask pass's frame / its blur, a test aid). The
 floors chain by the exit crystal (`cobj_00`: Cr3System.GetRandom - utils::GetRandom,
 CrxRandom's modulo |n| - picks the next map, the global work's 51 the floors climbed). A script's map
 names may be upper case (q058_d07_00109's SetBattleToVista "D0712f"); the field takes them lower.
@@ -511,11 +513,24 @@ curves, and random values stored as a base and radius. Each chunk gives its tag 
 - `TERM`: the end.
 
 Every tree node has the same kinematics (SparkNode::OnActivated; every value a random (min, max)
-pair, f32): +0x48 position x y z, +0x60 rotation (degrees), +0x78 scale, +0xd8 velocity (units a
-second). +0x168 links them (ProcessTRSRndLink): bits 0 / 1 make position y / z take x's value, bits
-4 / 5 velocity's, 8 / 9 rotation's, 16 / 17 scale's. +0x16c bits 4..6 make the node follow its
-parent each frame. +0x174 is the start delay and +0x178 the life, both s16 (min, max) in frames
-(-1 for ever). +0x188 / +0x190 are the children it starts with (an NLST index and a count).
+pair, f32): +0x48 position x y z, +0x60 rotation (degrees), +0x78 scale, +0x90 acceleration
+(channels 0x13..0x15), +0xd8 velocity (units a second), +0xf0 turning (degrees a second), +0x108
+scale's change a second, and a global transform outside the local one (SparkNode::UpdateKineGlobal:
++0x120 position, +0x138 rotation, +0x150 scale; channels 0x1c..0x24). UpdateKineLocalPos / Rot / Scl
+integrate each update: acceleration into a velocity sum, then velocity, turning and scale's change
+(the last never below 0) into the place; each rate is its curve's value (else its least) plus its
+random part. UpdateMatrix: global (T R S) times local (T R S), turned x then y then z; a billboard
+leaves its local turn out (+0x34 bit 4, from +0x26a bits 2 / 3). +0x168 links them
+(ProcessTRSRndLink): bits 0 / 1 make position y / z take x's value, 4 / 5 velocity's, 6 / 7 global
+position's, 8 / 9 rotation's, 12 / 13 turning's, 14 / 15 global rotation's, 16 / 17 scale's, 20 / 21
+scale's change's, 22 / 23 global scale's. +0x16c bits 4 / 5 / 6 make the node follow its parent's
+position / turn / scale (0x70: the parent's place, then +0x2a0 - where its emitter's shape put it -,
+then its own). 0: it stays where it was made - the effect's root then (+0x430, copied at
+ControlParticles / ControlActivate) and its parent's position then plus that offset (+0x2b0), never
+turned or scaled by the parent. +0x172: at the life's end 0 gone (its particles with it), 1 no more
+particles, gone once they are (CheckCompleted). +0x174 is the start delay and +0x178 the life, both
+s16 (min, max) in frames (-1 for ever). +0x188 / +0x190 are the children it starts with (an NLST
+index and a count).
 
 An emitter (SparkEmitter::UpdateWork) has these fields:
 
@@ -533,9 +548,16 @@ A sprite (SparkSprite) has these fields:
 
 - +0x1a8 / +0x1b0: its size x / y (min, max).
 - +0x1d8: its four corners' r g b a.
+- +0x1c0 / +0x1c8: the pivot's offset x / y (min, max; channels 0x30 / 0x31).
 - +0x258: its material's id.
-- +0x263: its pivot (4 is the centre).
-- +0x268: flags. Bit 18 billboards it; with +0x26a bit 3 it stays upright.
+- +0x263: its pivot (SparkSprite::UpdatePivot, DAT_00f7bd7c / DAT_00f7bda0: 0 top left .. 8 bottom
+  right - the quad moved by (0.5, -0.5) .. (-0.5, 0.5) so that corner or edge sits on the node; 4
+  the centre). DrawSprite draws the quad (+-0.5) plus the pivot, times the size.
+- +0x268: flags. Bits 0 / 1 the size's y / z take x's, 2 / 3 the pivot's; bits 4 .. 15 link each
+  corner's g b a to its r; bit 16 (+0x26a bit 0) one colour, corner 0's; bit 18 billboards it - turned
+  to the camera, rolled by its rotation's z passed to sincosf as it is (degrees taken as radians, as
+  the original does) -; with +0x26a bit 3 it stays upright.
+- A material's +0x170 bit 11: its sprites' height is their width (UpdateSize).
 - The corner colours are drawn only when the material's +0x170 bit 7 is set (UpdateColor). The
   material's colour is always drawn (DiffuseColor).
 - +0x274: the shape (0 a quad - BuildBox's +-0.5, 1 a circle, 2 a ring, 3 a point).
@@ -551,11 +573,17 @@ z, and emits 3 sprites every frame. `Emitter2` sits at (-5, 8..12, 0), turned 30
 depth-tested but not written. The emitters' x offsets put the slanted fall back over the player. The
 result is a few dozen thin diagonal streaks around the player.
 
-CR3-U plays the subset this needs (assets/spark.hpp): the kinematics and their links, the
-emitters' three modes and both shapes, and quad sprites (turned or billboarded) with their
-materials, and the curves on all the channels above (the textures' crops aside). Particles live in
-their emitter's place, which follows the effect's root each frame. Forces, trails, other shapes and
-the other pivots are not in. The other environment effects fade by their materials' alpha curves:
+CR3-U plays what the 21 shipped files use (Android; assets/spark.hpp): the kinematics with
+acceleration, turning, the global transform and all their links, the follow bits, +0x172, the
+emitters' three modes and both shapes, and quad sprites (turned or billboarded with their roll)
+with their pivots, size and pivot links, one-colour flag and materials, and the curves on all
+the channels above (not: the corners' colour links, bits 4 .. 15 - no shipped sprite with corner
+colours on sets them).
+A census of the files (round 31): no SparkForce node, no trail (type 8), no model or camera node,
+emitter shapes 0 / 1 only, sprite shape 0 only, pivots 4 and 7 (be004spr01), no start delay, and
+every texture crop curve (0x87..0x8a, 31 of them) the whole image - so those stay out. The battle's
+fire bullets (be003fire08 .. 14, Effect 40 .. 46 / 61 .. 67) leave their embers (not following,
+accelerated) behind them along the flight. The other environment effects fade by their materials' alpha curves:
 Primordia's fe201am09 (ash darkened out - blend 1 - and glow added, alpha 0 -> 0.49 -> 0 over 60
 frames), fe201am02's clouds (field 26), fe201am05's orange sparks (fields 45 / 46 / 55 / 59, corner
 colours on). CR3_SPARK=1 logs the quads drawn twice a second (a test aid). The field draws effects
@@ -1666,7 +1694,7 @@ attacker's size's attack_<size> at the target's front (x, 0, Battle +0 / 10), 0.
 (or a click on a button), Backspace back from the targets; `--input attack,t0,guard,...` chooses
 for captures. `cr3tool cr3battle <release> <coupling> <field> [party]` prints its set-up and
 simulates it; `--input battle,escape,attack,gene<n>,item<n>,t<n>,guard,result` chooses for
-captures. Not in yet: the Sparks' forces, trails and other emitter shapes.
+captures.
 
 ### The result's EXP (CR3)
 

@@ -595,6 +595,23 @@ struct Viewer {
         bool logged = false, unsupported = false;
     } sceneBloom;
     void applySceneBloom(int fw, int fh);
+    // GameMain::PostEffectBloomMask (0x0096c704; GameSystem +0x55, which Fld2TaskMap::CreateArea
+    // turns on where <area>m1 builds - d12xx .. d14xx): after the bloom, the scene copied (RT10);
+    // the depth cleared, <area>m1 (layer 10, drawn only here) and the player and the gimmicks
+    // black (Fld2Main::SetMaskMode: their diffuse 0; layers 10 / 11) over the scene; that blurred
+    // into RT1 (256 x 256: SetBlur(2, 0, +0x48 x 0.001, +0x4c x 0.1) - the bloom's five-tap blur
+    // up and down, 0.013 apart, x 3.3), then the copy put back and RT1 added over it at +0x44
+    // (0.3, pass 1: SRC_ALPHA, ONE). Not with a feedback blur on (+0x68 .. +0x6a)
+    struct BloomMask {
+        cr3::Texture scene, masked, blur;
+        bool due = false;              // (the field drawn this frame: drawArea)
+        bool logged = false, unsupported = false;
+        Mat4 vp{};
+        cr3::SceneLighting lighting;
+    } bloomMask;
+    ViewFigure areaMask;               // (<area>m1: Cr3Area::mask)
+    void applyBloomMask(int fw, int fh);
+    void drawBloomMask();
     void blurQuad(const cr3::Texture& t, int fw, int fh, float scale, float roll, float alpha, bool additive);
     void grabCrossFade(int fw, int fh, cr3::EventRuntime& ev);
     void draw(int fw, int fh);

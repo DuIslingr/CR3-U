@@ -2777,6 +2777,12 @@ bool Viewer::loadArea(std::string name, const std::string& player) { // (a copy:
         f.absolute = true; // (CrxSimpleModel: its own animation, looped)
         areaFigures.push_back(std::move(f));
     }
+    unload(areaMask);
+    areaMask = ViewFigure();
+    if (!area.mask.empty()) {
+        if (loadFigure(area.mask + ".geom", areaMask, &err)) areaMask.absolute = true, SDL_Log("area %s: bloom mask %s", name.c_str(), area.mask.c_str());
+        else SDL_Log("area %s: %s", area.mask.c_str(), err.c_str()), areaMask = ViewFigure();
+    }
     // the lights: Fld2TaskMap::EntryLight's, the <map>f model's figure (Fld2CameraBase::SetLight: else <map>c)
     // (a random area's: its d0600_00 piece's figure - CreateAreaRandom's +0x378 -, d0600f)
     const bool randomArea = name.compare(0, 3, "d06") == 0 || name.compare(0, 3, "d18") == 0;
@@ -4053,6 +4059,39 @@ void Viewer::drawArea(int w, int h) {
         drawFigure(f, vp.data());
     }
     drawAreaRide(vp);
+    if (!areaMask.meshes.empty() && !area2D.on) bloomMask.due = true, bloomMask.vp = vp, bloomMask.lighting = l;
+}
+
+// GameMain::PostEffectBloomMask's second 3D pass (Viewer::BloomMask): over the scene, its depth
+// cleared, <area>m1 as it is, then the gimmicks and the player as drawArea posed them, black
+// (Fld2TaskGimmick::SetMaskMode's vfunc +0x50 mode 1, Fld2TaskPlayer::SetMaskMode's diffuse 0)
+void Viewer::drawBloomMask() {
+    const BloomMask& b = bloomMask;
+    dev->setLighting(b.lighting);
+    areaMask.place = cr3::Mat34();
+    pose(areaMask, areaMask.animLoaded && areaMask.anim.duration() > 0 ? std::fmod(areaClock, areaMask.anim.duration()) : 0.0f, false);
+    drawFigure(areaMask, b.vp.data());
+    auto black = [&](ViewFigure& f) {
+        if (f.meshes.empty()) return;
+        const std::array<float, 4> was = {f.tint[0], f.tint[1], f.tint[2], f.tint[3]};
+        f.tint[0] = f.tint[1] = f.tint[2] = 0;
+        drawFigure(f, b.vp.data());
+        for (int k = 0; k < 4; ++k) f.tint[k] = was[size_t(k)];
+    };
+    for (AreaNpc& npc : areaNpcs) {
+        if (!game.gimmickVisible(npc.name) || npc.broken) continue;
+        if (npc.box) {
+            if (npc.fade > 0) black(npc.body);
+        } else if (npc.stepSwitch || npc.door) {
+            black(npc.body);
+        } else if (npc.bombSwitch && game.switchesOn.count(npc.name) && !npc.alt.meshes.empty()) {
+            black(npc.alt);
+        } else {
+            black(npc.body), black(npc.head);
+        }
+    }
+    if (areaPlayerShown)
+        for (ViewFigure* fp : {&areaPlayer, &areaPlayerHead}) black(*fp);
 }
 
 // the dungeon and area the map is in (cr3_field_data +0 / +4: FldMap's table maps them to the

@@ -96,7 +96,7 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                 const uint32_t f = u32(nd + (vita ? 0x11c : 0x170));
                 m.blend = f >> 15 & 1, m.depthTest = f >> 17 & 1, m.depthWrite = f >> 18 & 1, m.alphaTest = f >> 19 & 1;
                 m.alphaRef = f32(nd + (vita ? 0x12c : 0x180)), m.blendMode = d[nd + (vita ? 0x132 : 0x186)];
-                m.spriteColor = f >> 7 & 1;
+                m.spriteColor = f >> 7 & 1, m.square = f >> 11 & 1;
                 m.anim = int(int32_t(u32(nd + (vita ? 0x1b0 : 0x240))));
                 m.shaderKey = text(nd + (vita ? 0x134 : 0x188), 0x40);
                 m.texture = std::to_string(u32(nd + (vita ? 0xd4 : 0xe0))); // (an id until the textures are known)
@@ -111,11 +111,14 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                     n.rotation[size_t(a)] = range(nd + 0x60 + size_t(a) * 8);
                     n.scale[size_t(a)] = range(nd + 0x78 + size_t(a) * 8);
                     n.velocity[size_t(a)] = range(nd + 0xd8 + size_t(a) * 8);
+                    n.accel[size_t(a)] = range(nd + 0x90 + size_t(a) * 8);
+                    n.spin[size_t(a)] = range(nd + 0xf0 + size_t(a) * 8);
+                    n.grow[size_t(a)] = range(nd + 0x108 + size_t(a) * 8);
+                    n.globalPosition[size_t(a)] = range(nd + 0x120 + size_t(a) * 8);
+                    n.globalRotation[size_t(a)] = range(nd + 0x138 + size_t(a) * 8);
+                    n.globalScale[size_t(a)] = range(nd + 0x150 + size_t(a) * 8);
                 }
-                n.link = u32(nd + 0x168);
-                for (int a = 0; a < 3; ++a)
-                    for (int k = 0; k < 2; ++k)
-                        n.spin[a][k] = f32(nd + 0xf0 + size_t(a) * 8 + size_t(k) * 4), n.grow[a][k] = f32(nd + 0x108 + size_t(a) * 8 + size_t(k) * 4);
+                n.link = u32(nd + 0x168), n.follow = u32(nd + 0x16c), n.endMode = d[nd + 0x172];
                 n.anim = int(int32_t(u32(nd + (vita ? 0x190 : 0x198))));
                 n.lifeMin = i16(nd + 0x178), n.lifeMax = i16(nd + 0x17a);
                 if (vita) { // GetRandomValueI: base + (rand % spread) - spread / 2.
@@ -143,6 +146,7 @@ bool parseSpark(const std::vector<uint8_t>& d, SparkAsset& out, std::string* err
                     n.maxParticles = int(uint16_t(i16(nd + 0x1e0)));
                 } else if (type == 3) {
                     n.sizeX = range(nd + (vita ? 0x198 : 0x1a8)), n.sizeY = range(nd + (vita ? 0x1a0 : 0x1b0));
+                    n.pivotX = range(nd + (vita ? 0x1b0 : 0x1c0)), n.pivotY = range(nd + (vita ? 0x1b8 : 0x1c8));
                     for (int c = 0; c < 4; ++c)
                         for (int k = 0; k < 4; ++k) n.color[size_t(c)][size_t(k)] = range(nd + (vita ? 0x1c8 : 0x1d8) + size_t(c) * 0x20 + size_t(k) * 8);
                     n.material = u32(nd + (vita ? 0x248 : 0x258));
@@ -218,6 +222,45 @@ float SparkEffect::random(float a, float b) {
     return a + (b - a) * float(rng_ >> 8) / float(1u << 24);
 }
 
+namespace {
+
+constexpr float kDeg = 3.14159265f / 180;
+
+// y / z taking x's value (SparkNode::ProcessLink): `bit` for y, `bit + 1` for z
+void linkXyz(uint32_t link, int bit, float* v) {
+    if (link >> bit & 1) v[1] = v[0];
+    if (link >> (bit + 1) & 1) v[2] = v[0];
+}
+
+// a translation, Euler turn (x, then y, then z - radians) and scale as a matrix (T R S)
+Mat34 trs(const float* t, const float* r, const float* s) {
+    const float cx = std::cos(r[0]), sx = std::sin(r[0]);
+    const float cy = std::cos(r[1]), sy = std::sin(r[1]);
+    const float cz = std::cos(r[2]), sz = std::sin(r[2]);
+    const float m[9] = {cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz, //
+                        cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz, //
+                        -sy, sx * cy, cx * cy};
+    Mat34 out;
+    for (int row = 0; row < 3; ++row) {
+        for (int c = 0; c < 3; ++c) out.m[row * 4 + c] = m[row * 3 + c] * s[c];
+        out.m[row * 4 + 3] = t[row];
+    }
+    return out;
+}
+
+Mat34 translation(float x, float y, float z) {
+    Mat34 m;
+    m.m[3] = x, m.m[7] = y, m.m[11] = z;
+    return m;
+}
+
+// SparkSprite::UpdatePivot's places by +0x263 (DAT_00f7bd7c / DAT_00f7bda0: 0 top left .. 8 bottom
+// right, the quad moved so that corner or edge sits on the node; 4 the centre, not moved)
+constexpr float kPivotX[9] = {0.5f, 0, -0.5f, 0.5f, 0, -0.5f, 0.5f, 0, -0.5f};
+constexpr float kPivotY[9] = {-0.5f, -0.5f, -0.5f, 0, 0, 0, 0.5f, 0.5f, 0.5f};
+
+} // namespace
+
 // SparkNode::OnActivated (its kinematics' random values, ProcessTRSRndLink's links), OnInit (its
 // life, its children)
 SparkEffect::Inst SparkEffect::make(int node) {
@@ -225,26 +268,35 @@ SparkEffect::Inst SparkEffect::make(int node) {
     Inst in;
     in.node = node;
     for (int a = 0; a < 3; ++a) {
-        in.pos[a] = random(n.position[size_t(a)]);
-        in.rot[a] = random(n.rotation[size_t(a)]) * 3.14159265f / 180;
-        in.scale[a] = random(n.scale[size_t(a)]);
-        in.vel[a] = random(n.velocity[size_t(a)]);
+        const size_t k = size_t(a);
+        in.pos[a] = random(n.position[k]);
+        in.rot[a] = random(n.rotation[k]);
+        in.scale[a] = random(n.scale[k]);
+        in.vel[a] = random(n.velocity[k]);
+        in.accel[a] = random(n.accel[k]);
+        in.spin[a] = random(n.spin[k]);
+        in.grow[a] = random(n.grow[k]);
+        in.gpos[a] = random(n.globalPosition[k]);
+        in.grot[a] = random(n.globalRotation[k]);
+        in.gscale[a] = random(n.globalScale[k]);
     }
-    auto link = [&](float* v, int bit) { // (bit: y = x, bit + 1: z = x)
-        if (n.link >> bit & 1) v[1] = v[0];
-        if (n.link >> (bit + 1) & 1) v[2] = v[0];
-    };
-    link(in.pos, 0), link(in.vel, 4), link(in.rot, 8), link(in.scale, 16);
+    linkXyz(n.link, 0, in.pos), linkXyz(n.link, 4, in.vel), linkXyz(n.link, 6, in.gpos), linkXyz(n.link, 8, in.rot);
+    linkXyz(n.link, 12, in.spin), linkXyz(n.link, 14, in.grot), linkXyz(n.link, 16, in.scale), linkXyz(n.link, 20, in.grow);
+    linkXyz(n.link, 22, in.gscale);
     if (n.lifeMax >= 0) {
         const int frames = int(random(float(n.lifeMin), float(n.lifeMax) + 0.999f));
         in.life = float(frames) / asset_->fps;
         const int base = asset_->centeredRandom ? n.lifeMin + (n.lifeMax - n.lifeMin + 1) / 2 : n.lifeMin;
         if (base > 0 && n.lifeMax > 0 && frames > 0) in.lifeScale = float(base) / float(frames); // (SparkNode::OnInit +0x474)
     }
-    if (n.type == 3) {
-        in.size[0] = random(n.sizeX), in.size[1] = random(n.sizeY);
+    if (n.type == 3) { // (SparkSprite::OnActivated: the size's and the pivot's links, +0x268 bits 0 / 1 and 2 / 3)
+        in.size[0] = random(n.sizeX), in.size[1] = n.flags & 1 ? in.size[0] : random(n.sizeY);
+        in.pivot[0] = random(n.pivotX), in.pivot[1] = n.flags >> 2 & 1 ? in.pivot[0] : random(n.pivotY);
         for (int c = 0; c < 4; ++c)
             for (int k = 0; k < 4; ++k) in.color[c][k] = random(n.color[size_t(c)][size_t(k)]);
+        if (n.flags >> 16 & 1) // (+0x26a bit 0: one colour - corner 0's)
+            for (int c = 1; c < 4; ++c)
+                for (int k = 0; k < 4; ++k) in.color[c][k] = in.color[0][k];
         if (const SparkMaterial* m = asset_->materialById(n.material))
             for (int k = 0; k < 4; ++k) in.matColor[k] = random(m->color[size_t(k)]);
     }
@@ -256,8 +308,8 @@ SparkEffect::Inst SparkEffect::make(int node) {
     return in;
 }
 
-// an emitter's new nodes (SparkEmitter::UpdateWork): `count` of its kinds in turn (or at random),
-// each where its shape puts it (SparkUtils::GetGenPos: a box - each axis -e .. +e)
+// an emitter's new nodes (SparkEmitter::ControlParticles): `count` of its kinds in turn (or at
+// random), each where its shape puts it (SparkUtils::GetGenPos: a box - each axis -e .. +e; +0x2a0)
 void SparkEffect::emit(Inst& in, int count) {
     const SparkNode& n = asset_->nodes[size_t(in.node)];
     if (n.emits.empty()) return;
@@ -269,46 +321,80 @@ void SparkEffect::emit(Inst& in, int count) {
         if (n.shape == 1)
             for (int a = 0; a < 3; ++a) {
                 const float e = std::fabs(random(n.extent[size_t(a)]));
-                p.pos[a] += random(-e, e);
+                p.gen[a] = random(-e, e);
             }
         group.push_back(std::move(p));
     }
+}
+
+// past its life (SparkNode::Update: +0x172 1 waits for its particles and children - CheckCompleted)
+bool SparkEffect::done(const Inst& in) const {
+    if (in.life < 0 || in.age < in.life) return false;
+    if (asset_->nodes[size_t(in.node)].endMode != 1) return true;
+    if (!in.children.empty()) return false;
+    for (const std::vector<Inst>& group : in.spawned)
+        if (!group.empty()) return false;
+    return true;
 }
 
 void SparkEffect::stepInst(Inst& in, float dt) {
     const SparkNode& n = asset_->nodes[size_t(in.node)];
     const int before = int(std::floor(in.age * asset_->fps + 1e-4f));
     in.age += dt;
-    if (n.type == 2) {
+    // SparkNode::UpdateKineLocalPos / Rot / Scl: at the node's frame, each rate its curve's value
+    // (else its least) plus its random part, its curves' links (the random parts' were made at
+    // the start); acceleration into velocity, then velocity, turning and scale's change into the
+    // place, a step at a time
+    const int f = frame(in);
+    auto rate = [&](int channel, const std::array<SparkRange, 3>& r, const float* value, int bit, float* out) {
+        for (int a = 0; a < 3; ++a) {
+            const float base = asset_->rangeBase(r[size_t(a)]);
+            out[a] = asset_->animate(n.anim, channel + a, f, base) - base;
+        }
+        if (bit >= 0) linkXyz(n.link, bit, out);
+        for (int a = 0; a < 3; ++a) out[a] += value[a];
+    };
+    float accel[3], vel[3], spin[3], grow[3];
+    rate(0x13, n.accel, in.accel, -1, accel);
+    for (int a = 0; a < 3; ++a) in.accVel[a] += accel[a] * dt;
+    rate(10, n.velocity, in.vel, 4, vel);
+    rate(13, n.spin, in.spin, 12, spin);
+    rate(16, n.grow, in.grow, 20, grow);
+    for (int a = 0; a < 3; ++a) {
+        in.move[a] += (vel[a] + in.accVel[a]) * dt;
+        in.turn[a] += spin[a] * dt;
+        in.growth[a] += std::max(grow[a], 0.0f) * dt; // (SparkUtils::LowerBounds(.., 0))
+    }
+    const bool ending = in.life >= 0 && in.age >= in.life; // (+0x34 bit 2: no more particles)
+    if (n.type == 2 && !ending) {
         // the frames this step began (an emitter's work runs once a frame: SparkEmitter::Update)
         const int now = int(std::floor(in.age * asset_->fps + 1e-4f));
-        for (int f = in.age - dt <= 0 ? 0 : before + 1; f <= now; ++f) {
+        for (int fr = in.age - dt <= 0 ? 0 : before + 1; fr <= now; ++fr) {
             if (asset_->centeredRandom && n.mode == 2) {
                 // Vita's ControlParticles uses the one-based frame to compute a cumulative count.
-                const int target = std::max(n.countMin * (f + 1) / in.interval, 1);
+                const int target = std::max(n.countMin * (fr + 1) / in.interval, 1);
                 if (target > in.emitted) emit(in, target - in.emitted), in.emitted = target;
             } else if (n.mode == 2) {
-                if (f >= in.lastFrame) {
+                if (fr >= in.lastFrame) {
                     emit(in, int(random(float(n.countMin), float(n.countMax) + 0.999f)));
-                    in.lastFrame = f + in.interval;
+                    in.lastFrame = fr + in.interval;
                     in.interval = int(random(float(n.intervalMin), float(n.intervalMax) + 0.999f));
                 }
             } else if (n.mode == 1) {
                 if (in.emitted == 0) emit(in, n.countMin), in.emitted = 1;
             } else if (n.mode == 0) {
-                const int target = int(float(f) / asset_->fps * float(n.countMin)) + 1;
+                const int target = int(float(fr) / asset_->fps * float(n.countMin)) + 1;
                 if (target > in.emitted) emit(in, target - in.emitted), in.emitted = target;
             }
         }
-        for (std::vector<Inst>& group : in.spawned) {
-            for (Inst& p : group) stepInst(p, dt);
-            group.erase(std::remove_if(group.begin(), group.end(), [](const Inst& p) { return p.life >= 0 && p.age >= p.life; }),
-                        group.end());
-        }
+    }
+    auto gone = [this](const Inst& p) { return done(p); };
+    for (std::vector<Inst>& group : in.spawned) {
+        for (Inst& p : group) stepInst(p, dt);
+        group.erase(std::remove_if(group.begin(), group.end(), gone), group.end());
     }
     for (Inst& c : in.children) stepInst(c, dt);
-    in.children.erase(std::remove_if(in.children.begin(), in.children.end(), [](const Inst& p) { return p.life >= 0 && p.age >= p.life; }),
-                      in.children.end());
+    in.children.erase(std::remove_if(in.children.begin(), in.children.end(), gone), in.children.end());
 }
 
 void SparkEffect::step(float dt) {
@@ -323,81 +409,118 @@ int SparkEffect::frame(const Inst& in) const {
     return int(in.age * asset_->fps * in.lifeScale + 0.001f) + 1;
 }
 
-// a node's place in its parent's (SparkNode::UpdateKineLocalPos / Rot / Scl): each its curve's value
-// (channels 1..3 position, 4..6 rotation, 7..9 scale) - else its least - + its random part, plus its
-// velocity (10..12), turning (13..15, degrees) and scale's change (16..18) over its age; turned x,
-// then y, then z
+// a node's place in its parent's (SparkNode::UpdateKineLocal* / UpdateKineGlobal / UpdateMatrix):
+// the global transform (+0x120 / +0x138 / +0x150 and channels 0x1c .. 0x24) times the local one -
+// each its curve's value (channels 1..3 position, 4..6 rotation, 7..9 scale) - else its least -,
+// its random part and what velocity, turning and scale's change have added. Turned x, then y, then
+// z; a billboard's local turn is left out (+0x34 bit 4: DrawSprite rolls it instead)
 Mat34 SparkEffect::local(const Inst& in) const {
     const SparkNode& n = asset_->nodes[size_t(in.node)];
     const int f = frame(in);
-    auto curve = [&](int ch, const std::array<SparkRange, 3>& r, float* out) { // (the curves' part: links too)
+    auto value = [&](int ch, const std::array<SparkRange, 3>& r, const float* random, int bit, float* out) {
         for (int a = 0; a < 3; ++a) {
             const float base = asset_->rangeBase(r[size_t(a)]);
             out[a] = asset_->animate(n.anim, ch + a, f, base) - base;
         }
+        linkXyz(n.link, bit, out);
+        for (int a = 0; a < 3; ++a) out[a] += random[a];
     };
-    float dp[3], dr[3], ds[3], dv[3];
-    curve(1, n.position, dp), curve(4, n.rotation, dr), curve(7, n.scale, ds), curve(10, n.velocity, dv);
-    float pos[3], rot[3], scale[3];
+    float pos[3], rot[3], scale[3], gpos[3], grot[3], gscale[3];
+    value(1, n.position, in.pos, 0, pos), value(4, n.rotation, in.rot, 8, rot), value(7, n.scale, in.scale, 16, scale);
+    value(0x1c, n.globalPosition, in.gpos, 6, gpos), value(0x1f, n.globalRotation, in.grot, 14, grot);
+    value(0x22, n.globalScale, in.gscale, 22, gscale);
+    const bool billboard = n.type == 3 && (n.flags >> 18 & 3) != 0;
     for (int a = 0; a < 3; ++a) {
-        pos[a] = in.pos[a] + dp[a] + (in.vel[a] + dv[a]) * in.age;
-        rot[a] = in.rot[a] + (dr[a] + n.spin[a][0] * in.age) * 3.14159265f / 180;
-        scale[a] = in.scale[a] + ds[a] + n.grow[a][0] * in.age;
+        pos[a] += in.move[a];
+        rot[a] = billboard ? 0 : (rot[a] + in.turn[a]) * kDeg;
+        scale[a] = std::max(scale[a] + in.growth[a], 0.0f);
+        grot[a] *= kDeg;
     }
-    if (n.link >> 16 & 1) scale[1] = scale[0];
-    if (n.link >> 17 & 1) scale[2] = scale[0];
-    const float cx = std::cos(rot[0]), sx = std::sin(rot[0]);
-    const float cy = std::cos(rot[1]), sy = std::sin(rot[1]);
-    const float cz = std::cos(rot[2]), sz = std::sin(rot[2]);
-    const float r[9] = {cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz, //
-                        cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz, //
-                        -sy, sx * cy, cx * cy};
-    Mat34 m;
-    for (int row = 0; row < 3; ++row) {
-        for (int c = 0; c < 3; ++c) m.m[row * 4 + c] = r[row * 3 + c] * scale[c];
-        m.m[row * 4 + 3] = pos[row];
-    }
-    return m;
+    return trs(gpos, grot, gscale) * trs(pos, rot, scale);
 }
 
-// SparkSprite::DrawSprite: the quad (BuildBox: +-0.5) scaled by its size in the node's place, or
-// (+0x268 bit 18) turned to the camera at the node's position, its scale kept
-void SparkEffect::collect(const Inst& in, const Mat34& parent, const Mat34& camera, std::vector<Quad>& out) const {
+// SparkSprite::DrawSprite: the quad (BuildBox: +-0.5) moved by its pivot and scaled by its size in
+// the node's place, or (+0x268 bit 18) turned to the camera at the node's position, rolled by its
+// turn about z, its scale kept. Where the node is: SparkNode::UpdateMatrix by +0x16c - following
+// its parent, the parent's place, then where its emitter's shape put it, then its own; not
+// following, the root and the parent's position (with that shape's offset) it was made under, never
+// moved after, then its own (the original's partial modes keep only the position rule here)
+void SparkEffect::collect(const Inst& in, const Mat34& root, const Mat34& parent, const Mat34& camera, std::vector<Quad>& out) const {
     const SparkNode& n = asset_->nodes[size_t(in.node)];
-    const Mat34 w = parent * local(in);
+    const uint32_t follow = n.follow & 0x70;
+    Mat34 placed; // (in the effect's space - +0x3f0)
+    const Mat34* nodeRoot = &root;
+    if (follow == 0x70) {
+        placed = parent * translation(in.gen[0], in.gen[1], in.gen[2]) * local(in);
+    } else if (follow & 0x10) {
+        placed = translation(parent.m[3] + in.gen[0], parent.m[7] + in.gen[1], parent.m[11] + in.gen[2]) * local(in);
+    } else if (follow) {
+        placed = local(in);
+    } else {
+        if (!in.anchored) {
+            in.anchored = true, in.anchorRoot = root;
+            in.anchorPos[0] = parent.m[3] + in.gen[0], in.anchorPos[1] = parent.m[7] + in.gen[1], in.anchorPos[2] = parent.m[11] + in.gen[2];
+        }
+        placed = translation(in.anchorPos[0], in.anchorPos[1], in.anchorPos[2]) * local(in);
+        nodeRoot = &in.anchorRoot;
+    }
+    const Mat34 w = *nodeRoot * placed;
     if (n.type == 3 && n.quadShape == 0) {
         Quad q;
         q.material = asset_->materialById(n.material);
+        const int f = frame(in);
         float ax[3], ay[3];
         if (n.flags >> 18 & 1) {
             float sx = 0, sy = 0;
             for (int r = 0; r < 3; ++r) sx += w.m[r * 4] * w.m[r * 4], sy += w.m[r * 4 + 1] * w.m[r * 4 + 1];
             sx = std::sqrt(sx), sy = std::sqrt(sy);
-            for (int r = 0; r < 3; ++r) ax[r] = camera.m[r * 4] * sx, ay[r] = camera.m[r * 4 + 1] * sy;
+            // (its roll: the turn's z - degrees, passed to sincosf as they are, as the original does)
+            float rc[3];
+            for (int a = 0; a < 3; ++a) {
+                const float base = asset_->rangeBase(n.rotation[size_t(a)]);
+                rc[a] = asset_->animate(n.anim, 4 + a, f, base) - base;
+            }
+            linkXyz(n.link, 8, rc);
+            const float roll = rc[2] + in.rot[2] + in.turn[2];
+            const float c = std::cos(roll), s = std::sin(roll);
+            for (int r = 0; r < 3; ++r) {
+                ax[r] = (camera.m[r * 4] * c + camera.m[r * 4 + 1] * s) * sx;
+                ay[r] = (camera.m[r * 4 + 1] * c - camera.m[r * 4] * s) * sy;
+            }
         } else {
             for (int r = 0; r < 3; ++r) ax[r] = w.m[r * 4], ay[r] = w.m[r * 4 + 1];
         }
-        // (SparkSprite::UpdateSize: channels 0x2d / 0x2e; UpdateColor: 0x6f + corner x 4 + r g b a;
-        // SparkMaterial::Update: 0x35 .. 0x38 - each at the sprite's frame)
-        const int f = frame(in);
+        // (SparkSprite::UpdateSize: channels 0x2d / 0x2e, the material's +0x170 bit 11 square;
+        // UpdatePivot: 0x30 / 0x31 plus the pivot's place; UpdateColor: 0x6f + corner x 4 + r g b a,
+        // +0x26a bit 0 corner 0's for all four; SparkMaterial::Update: 0x35 .. 0x38 - each at the
+        // sprite's frame)
         const float sizeX = asset_->rangeBase(n.sizeX), sizeY = asset_->rangeBase(n.sizeY);
-        const float size[2] = {in.size[0] + asset_->animate(n.anim, 0x2d, f, sizeX) - sizeX,
-                               in.size[1] + asset_->animate(n.anim, 0x2e, f, sizeY) - sizeY};
+        float size[2] = {in.size[0] + asset_->animate(n.anim, 0x2d, f, sizeX) - sizeX,
+                         in.size[1] + asset_->animate(n.anim, 0x2e, f, sizeY) - sizeY};
+        if (n.flags & 1) size[1] = in.size[1] + asset_->animate(n.anim, 0x2d, f, sizeX) - sizeX;
+        if (q.material && q.material->square) size[1] = size[0];
+        const float pivotX = asset_->rangeBase(n.pivotX), pivotY = asset_->rangeBase(n.pivotY);
+        float pivot[2] = {in.pivot[0] + asset_->animate(n.anim, 0x30, f, pivotX) - pivotX,
+                          in.pivot[1] + asset_->animate(n.anim, 0x31, f, pivotY) - pivotY};
+        if (n.flags >> 2 & 1) pivot[1] = in.pivot[1] + asset_->animate(n.anim, 0x30, f, pivotX) - pivotX;
+        if (n.pivot >= 0 && n.pivot < 9) pivot[0] += kPivotX[n.pivot], pivot[1] += kPivotY[n.pivot];
         float mat[4] = {1, 1, 1, 1};
         if (q.material)
             for (int k = 0; k < 4; ++k) {
                 const float lo = asset_->rangeBase(q.material->color[size_t(k)]);
                 mat[k] = std::clamp(in.matColor[k] + asset_->animate(q.material->anim, 0x35 + k, f, lo) - lo, 0.0f, 1.0f);
             }
+        const bool oneColor = n.flags >> 16 & 1;
         static const float kCorner[4][2] = {{-0.5f, 0.5f}, {0.5f, 0.5f}, {-0.5f, -0.5f}, {0.5f, -0.5f}};
         for (int c = 0; c < 4; ++c) {
-            for (int r = 0; r < 3; ++r)
-                q.corner[c][r] = w.m[r * 4 + 3] + ax[r] * kCorner[c][0] * size[0] + ay[r] * kCorner[c][1] * size[1];
+            const float cx = (kCorner[c][0] + pivot[0]) * size[0], cy = (kCorner[c][1] + pivot[1]) * size[1];
+            for (int r = 0; r < 3; ++r) q.corner[c][r] = w.m[r * 4 + 3] + ax[r] * cx + ay[r] * cy;
+            const int from = oneColor ? 0 : c;
             for (int k = 0; k < 4; ++k) {
                 float v = 1;
                 if (q.material && q.material->spriteColor) {
-                    const float lo = asset_->rangeBase(n.color[size_t(c)][size_t(k)]);
-                    v = std::clamp(in.color[c][k] + asset_->animate(n.anim, 0x6f + c * 4 + k, f, lo) - lo, 0.0f, 1.0f);
+                    const float lo = asset_->rangeBase(n.color[size_t(from)][size_t(k)]);
+                    v = std::clamp(in.color[from][k] + asset_->animate(n.anim, 0x6f + from * 4 + k, f, lo) - lo, 0.0f, 1.0f);
                 }
                 q.color[c][k] = v * mat[k];
             }
@@ -405,12 +528,12 @@ void SparkEffect::collect(const Inst& in, const Mat34& parent, const Mat34& came
         out.push_back(q);
     }
     for (const std::vector<Inst>& group : in.spawned)
-        for (const Inst& p : group) collect(p, w, camera, out);
-    for (const Inst& c : in.children) collect(c, w, camera, out);
+        for (const Inst& p : group) collect(p, root, placed, camera, out);
+    for (const Inst& c : in.children) collect(c, root, placed, camera, out);
 }
 
 void SparkEffect::quads(const Mat34& root, const Mat34& camera, std::vector<Quad>& out) const {
-    for (const Inst& r : roots_) collect(r, root, camera, out);
+    for (const Inst& r : roots_) collect(r, root, Mat34(), camera, out);
 }
 
 size_t SparkEffect::count(const Inst& in) {

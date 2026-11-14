@@ -1176,6 +1176,7 @@ void Viewer::draw(int fw, int fh) {
     drawScene(frameW, frameH); // (the scene: all of the frame)
     dev->endScene();
     applySceneBloom(fw, fh); // (PostEffectBloom: GameMain::Render's, before the blurs)
+    applyBloomMask(fw, fh);  // (PostEffectBloomMask: after the bloom)
     applySceneBlur(fw, fh); // (PostEffectBlur: before the cross-fade, under the UI)
     if (const cr3::EventRuntime* ev = activeEvents(); ev && ev->crossFade().active && crossFadeTexture.id) {
         const float alpha = ev->crossFade().alpha(eventLead());
@@ -1264,6 +1265,47 @@ void Viewer::applySceneBloom(int fw, int fh) {
     if (!b.logged)
         SDL_Log("scene bloom: on at %.2f s - offset %.2f, limit %.2f, scale %.2f", double(uiClock), double(offset), double(limit), double(scale)), b.logged = true;
     blurQuad(b.rt[2], fw, fh, 1.0f, 0, 1.0f, true); // (RenderBloom's +0x98: RT2 added, ONE / ONE)
+}
+
+void Viewer::applyBloomMask(int fw, int fh) {
+    BloomMask& b = bloomMask;
+    const bool due = b.due;
+    b.due = false;
+    if (!due || game.motionBlur || game.zoomBlur || game.specialBlur || b.unsupported) return;
+    // (RT10: the scene as it is)
+    if (!dev->copyFrame(b.scene)) {
+        b.unsupported = true;
+        SDL_Log("bloom mask: not on this renderer");
+        return;
+    }
+    // (BeginScene(main, .., false, true): the depth cleared, the colour kept; layers 10 and 11)
+    dev->setViewport(float(frameX), float(frameY), float(frameW), float(frameH));
+    dev->clearDepth();
+    drawBloomMask();
+    // (SetBlur(2, 0, 0.013, 3.3); pass 2 - CustomFigure type 6, the bloom's blur - into RT1)
+    using Filter = cr3::RenderDevice::Filter;
+    cr3::RenderDevice::FilterParams blur;
+    blur.offset[0] = 0, blur.offset[1] = 13 * 0.001f, blur.scale = 33 * 0.1f;
+    bool ok = dev->copyFrame(b.masked) && dev->beginFilters();
+    if (ok) {
+        ok = dev->filterPass(Filter::Blur, b.masked, b.blur, 256, 256, blur);
+        dev->endFilters(b.masked);
+    }
+    dev->clearDepth();
+    if (!ok) {
+        b.unsupported = true;
+        SDL_Log("bloom mask: not on this renderer");
+        blurQuad(b.scene, fw, fh, 1.0f, 0, 1.0f, false);
+        return;
+    }
+    if (!b.logged) SDL_Log("bloom mask: %s at %.2f s", area.mask.c_str(), double(uiClock)), b.logged = true;
+    if (const char* show = SDL_getenv("CR3_BLOOM_MASK")) { // (tests: 1 the mask pass's frame, 2 its blur)
+        blurQuad(show[0] == '2' ? b.blur : b.masked, fw, fh, 1.0f, 0, 1.0f, false);
+        return;
+    }
+    // (RT10 back, RT1 added over it at +0x44 - pass 1: SRC_ALPHA, ONE)
+    blurQuad(b.scene, fw, fh, 1.0f, 0, 1.0f, false);
+    blurQuad(b.blur, fw, fh, 1.0f, 0, 0.3f, true);
 }
 
 // GameMain::PostEffectBlur (0x0096ca54), after the scene (its bloom) and before the cross-fade and
