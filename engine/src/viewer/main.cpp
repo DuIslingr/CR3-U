@@ -98,6 +98,33 @@ std::vector<std::string> dataPlaces() {
 #endif
     return out;
 }
+// Your own fonts: the .ttf / .otf / .ttc files in a game folder's font/ - the first game folder
+// holding one, its files by name; one FreeType can't read said and left out. The first is the
+// text's font (after --font / CR3_FONT, before the release's own), the rest fallbacks ahead of the
+// system's. None there: nothing changes
+std::vector<std::string> ownFonts() {
+    namespace fs = std::filesystem;
+    std::vector<std::string> out;
+    for (const std::string& place : dataPlaces()) {
+        std::error_code ec;
+        std::vector<fs::path> files;
+        for (const fs::directory_entry& e : fs::directory_iterator(fs::path(place + "font"), ec)) {
+            std::string ext = e.path().extension().string();
+            for (char& c : ext) c = char(std::tolower((unsigned char)c));
+            if (e.is_regular_file(ec) && (ext == ".ttf" || ext == ".otf" || ext == ".ttc")) files.push_back(e.path());
+        }
+        if (files.empty()) continue;
+        std::sort(files.begin(), files.end());
+        for (const fs::path& f : files) {
+            cr3::TextRasterizer probe;
+            std::string err;
+            if (probe.load(f.string(), &err)) out.push_back(f.string());
+            else SDL_Log("font/: %s left out (%s)", f.string().c_str(), err.c_str());
+        }
+        break;
+    }
+    return out;
+}
 // The fan translations in a folder - a folder each (translation/en/, translation/es/, a download's
 // extracted/ ...), else the folder one itself - over the release, each once (a folder already
 // over it, the same one by another way, left). `loud`: a folder that holds none said
@@ -1324,11 +1351,16 @@ int main(int argc, char** argv) {
     if (continueSave && !cr3Continue && fieldName.empty()) fieldName = "d1020"; // (the windows and fonts set up for the field)
     v.skipBattles = skipBattlesOpt; // (a new game: every flag clear)
     if (!fieldName.empty() || !eventName.empty() || battleId > 0 || cr3Title || cr3Continue || !areaName.empty()) {
-        // the font: --font, CR3_FONT, the Vita's beside its archive, the Android release's APK beside
-        // its OBB (assets/00001: the Regular face it draws English in), else the system's
+        // the font: --font, CR3_FONT, the game folder's font/ (ownFonts: its others the first
+        // fallbacks), the Vita's beside its archive, the Android release's APK beside its OBB
+        // (assets/00001: the Regular face it draws English in), else the system's
         std::string dataDir = data.substr(0, data.find_last_of("/\\") == std::string::npos ? 0 : data.find_last_of("/\\") + 1);
         const char* envFont = SDL_getenv("CR3_FONT");
-        std::string fp = cr3::TextRasterizer::firstFont({fontPath, envFont ? envFont : "", dataDir + "font/TBGoPro-Bold.otf"});
+        std::vector<std::string> own = ownFonts();
+        std::string fp = cr3::TextRasterizer::firstFont({fontPath, envFont ? envFont : ""});
+        if (fp.empty() && !own.empty()) fp = own.front(), own.erase(own.begin()), SDL_Log("font/: %s", fp.c_str());
+        for (const std::string& f : own) SDL_Log("font/: %s (a fallback)", f.c_str());
+        if (fp.empty()) fp = cr3::TextRasterizer::firstFont({dataDir + "font/TBGoPro-Bold.otf"});
         std::vector<uint8_t> apkFont;
         std::string apkFontFrom;
         // CR3: the release's own (Database: F0001.bin - iOS, Android -, the Vita's font\TBGB_0KP.TTC):
@@ -1343,7 +1375,7 @@ int main(int argc, char** argv) {
                 }
         if (fp.empty() && apkFont.empty() && cr3::androidFile(data, "assets/F0001.bin", apkFont, &apkFontFrom))
             fontFace = 1; // (the APK's own, an .apks' too: TB Gothic B, its proportional face)
-        v.loadMessageWindow(fp, std::move(apkFont), apkFontFrom, fontFace);
+        v.loadMessageWindow(fp, std::move(apkFont), apkFontFrom, fontFace, own);
         v.initEventDrawing();
         v.pageSeconds = page;
     }
@@ -1729,8 +1761,10 @@ int main(int argc, char** argv) {
         // CR3_PAD_SCRIPT (tests): a virtual controller, its buttons and stick set at their times - "1.5:east
         // 2:down 3:lx=1 4:lx=0" (a button is held 0.1 s; east / south / north / west, up / down / left /
         // right, l / r, start, back; lx / ly the left stick, rx / ry the right, -1 .. 1, y up positive; blur the window's focus
-        // lost; shot=<file.bmp> the frame then; until=<text> the later steps held till a log line has it -
-        // '_' a space -, their times from then; quit the end). Each press of a held direction is logged
+        // lost; plug another controller connected (pressed from then), unplug the first taken out (with
+        // another left); key=<name> a key, alt+ with Alt; shot=<file.bmp> the frame then; until=<text> the
+        // later steps held till a log line has it - '_' a space -, their times from then; quit the end).
+        // Each press of a held direction is logged
         struct PadStep {
             float at;
             std::string what;
@@ -1748,14 +1782,15 @@ int main(int argc, char** argv) {
         static PadWait padWait;
         float padShift = 0;
         SDL_Joystick* testPad = nullptr;
+        std::vector<SDL_Joystick*> testPads; // (plug's: the virtual controllers attached, the first the one at the start)
+        SDL_VirtualJoystickDesc testDesc;
+        SDL_INIT_INTERFACE(&testDesc);
+        testDesc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+        testDesc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+        testDesc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+        testDesc.name = "CR3-U test controller";
         if (const char* ps = SDL_getenv("CR3_PAD_SCRIPT")) {
-            SDL_VirtualJoystickDesc desc;
-            SDL_INIT_INTERFACE(&desc);
-            desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
-            desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
-            desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
-            desc.name = "CR3-U test controller";
-            if (const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc)) testPad = SDL_OpenJoystick(id);
+            if (const SDL_JoystickID id = SDL_AttachVirtualJoystick(&testDesc)) testPad = SDL_OpenJoystick(id), testPads.push_back(testPad);
             SDL_GetLogOutputFunction(&padWait.next, &padWait.nextData);
             SDL_SetLogOutputFunction(
                 [](void*, int category, SDL_LogPriority priority, const char* message) {
@@ -1831,6 +1866,12 @@ int main(int argc, char** argv) {
                 else if (e.type == SDL_EVENT_KEY_DOWN) {
                     // (Android's Back: the menus' back, as Backspace)
                     const SDL_Keycode k = e.key.key == SDLK_AC_BACK ? SDLK_BACKSPACE : e.key.key;
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+                    if (k == SDLK_F11 || ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && (e.key.mod & SDL_KMOD_ALT))) {
+                        if (!e.key.repeat) v.toggleFullscreen(); // (windowed <-> fullscreen: the Options' Display; anywhere, a held key once)
+                        continue;
+                    }
+#endif
                     if (v.eventMode && v.event && v.event->vistaPaused) continue;
                     if (k == SDLK_BACKSPACE && v.toyCam.on && v.areaMode && v.cr3Camp.stage == 0) { // (the toy camera's back key: latched)
                         v.toyCamHardBack();
@@ -1979,10 +2020,24 @@ int main(int argc, char** argv) {
                     if (to != v.current) v.load(to);
                     if ((k == SDLK_UP || k == SDLK_DOWN) && !f.anims.empty())
                         v.loadAnim(f, (f.animIndex + (k == SDLK_DOWN ? 1 : f.anims.size() - 1)) % f.anims.size());
-                } else if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
-                    if (!pad && (pad = SDL_OpenGamepad(e.gdevice.which))) SDL_Log("controller: %s", SDL_GetGamepadName(pad));
+                } else if (e.type == SDL_EVENT_GAMEPAD_ADDED) { // (taken while none is in use - or the one held went quiet: a wireless pad's receiver keeps a dead handle)
+                    if (!pad || !SDL_GamepadConnected(pad))
+                        if (SDL_Gamepad* added = SDL_OpenGamepad(e.gdevice.which)) {
+                            if (pad) SDL_CloseGamepad(pad), padDir = 0;
+                            pad = added;
+                            SDL_Log("controller: %s", SDL_GetGamepadName(pad));
+                        }
                 } else if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
-                    if (pad && SDL_GetGamepadID(pad) == e.gdevice.which) SDL_CloseGamepad(pad), pad = nullptr, padDir = 0;
+                    if (pad && SDL_GetGamepadID(pad) == e.gdevice.which) {
+                        SDL_CloseGamepad(pad), pad = nullptr, padDir = 0;
+                        int count = 0; // (another still connected: that one goes on, not none until a new one comes)
+                        if (SDL_JoystickID* ids = SDL_GetGamepads(&count)) {
+                            for (int k = 0; k < count && !pad; ++k)
+                                if (ids[k] != e.gdevice.which) pad = SDL_OpenGamepad(ids[k]);
+                            SDL_free(ids);
+                        }
+                        SDL_Log("controller: %s", pad ? SDL_GetGamepadName(pad) : "none (taken out)");
+                    }
                 } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && pad) {
                     const SDL_GamepadButton b = SDL_GamepadButton(e.gbutton.button);
                     const SDL_GamepadButton circle = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
@@ -2182,6 +2237,23 @@ int main(int argc, char** argv) {
                         focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
                         focus.window.windowID = SDL_GetWindowID(win);
                         SDL_PushEvent(&focus);
+                    } else if (w == "plug") { // (another virtual controller connected; the steps press it from now)
+                        if (const SDL_JoystickID id = SDL_AttachVirtualJoystick(&testDesc))
+                            if (SDL_Joystick* j = SDL_OpenJoystick(id)) testPads.push_back(j), testPad = j, testReleases.clear();
+                    } else if (w == "unplug") { // (the first one still connected taken out - with another left: the steps press the last)
+                        if (testPads.size() > 1) {
+                            const SDL_JoystickID id = SDL_GetJoystickID(testPads.front());
+                            SDL_CloseJoystick(testPads.front()), testPads.erase(testPads.begin());
+                            SDL_DetachVirtualJoystick(id);
+                            testPad = testPads.back(), testReleases.clear();
+                        }
+                    } else if (w.rfind("key=", 0) == 0) { // (a key pressed: key=F11, key=alt+Return)
+                        std::string name = w.substr(4);
+                        SDL_Event key{};
+                        key.type = SDL_EVENT_KEY_DOWN, key.key.down = true, key.key.windowID = SDL_GetWindowID(win);
+                        if (name.rfind("alt+", 0) == 0) key.key.mod = SDL_KMOD_LALT, name = name.substr(4);
+                        key.key.key = SDL_GetKeyFromName(name.c_str());
+                        SDL_PushEvent(&key);
                     } else if (w.rfind("shot=", 0) == 0) {
                         padShot = w.substr(5);
                     } else if (w == "quit") {

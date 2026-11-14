@@ -140,7 +140,7 @@ jobs:
           cp tools/import_vita_save.py dist/tools/
           cp docs/VITA_SAVES.md dist/docs/
           n="${{ github.event.repository.name }}"
-          cp -R packaging/folders/. dist/  # (the game folder's ios/, android/, vita/, textures/: each with what goes in it)
+          cp -R packaging/folders/. dist/  # (the game folder's ios/, android/, vita/, textures/, font/ ...: each with what goes in it)
           case "$RUNNER_OS" in
             Linux) mv dist/*.AppImage "upload/$n-x86_64.AppImage"; tar -czf "upload/$n-linux-x86_64.tar.gz" -C dist . ;;
             Windows) 7z a -tzip -bso0 "upload/$n-windows-x64.zip" ./dist/* ;;
@@ -165,7 +165,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: SDL3 source (its Java glue and the engine's SDL)
-        run: git clone --depth 1 -b release-3.2.0 https://github.com/libsdl-org/SDL.git android/SDL
+        run: git clone --depth 1 -b release-3.4.20 https://github.com/libsdl-org/SDL.git android/SDL
       - name: Release key (the repository's secrets; a fork's pull request has none - the debug key)
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

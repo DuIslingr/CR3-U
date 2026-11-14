@@ -196,6 +196,7 @@ code references: [docs/CONTROLS.md](docs/CONTROLS.md).
 | O | Options, on the title; R there resets the open tab |
 | Space | pause |
 | F1 / F2 | cycle output resolution / upscaler mode |
+| F11 or Alt+Enter | window / fullscreen (Options' Display; the fullscreen kind last chosen there, borderless at first; desktop only) |
 | Esc | back in menus; quits from the field |
 
 ## Settings
@@ -289,6 +290,16 @@ Exported textures and models are made from the game's art: keep them, and anythi
 for personal use. The full steps, limits and the add-on manifest:
 [docs/HD_ASSETS.md](docs/HD_ASSETS.md).
 
+### Fonts
+
+The text is drawn in your copy's own font (TB Gothic; the Spanish translation's while it's in use),
+with a system CJK font (Noto Sans CJK, Malgun Gothic, Microsoft YaHei, PingFang) for the characters
+it lacks. To use your own, put .ttf / .otf / .ttc files in the game folder's `font/`: the first by
+file name draws the text in every language (the Spanish translation's too), and the others stand in
+for the characters it lacks, ahead of the system's. A file that isn't a font is left out (the log
+says so); with the folder empty nothing changes. `--font <file>` and `CR3_FONT` still come first.
+Its `README.txt` has the details.
+
 ## Troubleshooting
 
 - **Android: no sound, missing or broken text:** the asset packs are missing. Give the port the
@@ -328,7 +339,7 @@ that drive the Vita controls headless (`viewer-pad-vita`, `viewer-vista-pause`) 
 | Linux | as above | Vulkan, OpenGL 3.3; FSR 3.1, FSR 4, DLSS (with the SDK) |
 | Windows 10+ x64 | MSVC and Ninja from a Developer prompt, with the [Vulkan SDK](https://vulkan.lunarg.com/); or from Linux with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw): `-DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-x86_64.cmake` | Vulkan, OpenGL 3.3; FSR 3.1, FSR 4, DLSS (MSVC, with the SDK) |
 | macOS 11+ | Xcode command-line tools, Ninja and the [Vulkan SDK](https://vulkan.lunarg.com/) (MoltenVK is copied into the `.app`); `"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"` for a universal build | Vulkan (MoltenVK), OpenGL 3.3; FSR 3.1, MetalFX (macOS 13+) |
-| Android 7+ (arm64, x86-64) | Android SDK and NDK: `git clone -b release-3.2.0 https://github.com/libsdl-org/SDL android/SDL`, then `gradle assembleRelease` in `android/` | OpenGL ES 3.0 |
+| Android 7+ (arm64, x86-64) | Android SDK and NDK: `git clone -b release-3.4.20 https://github.com/libsdl-org/SDL android/SDL`, then `gradle assembleRelease` in `android/` | OpenGL ES 3.0 |
 
 - `-DCR3_GLES=ON` builds the desktop version on OpenGL ES 3.0, as Android runs it.
 - **DLSS:** add `-DCR_DLSS_SDK=<NVIDIA's DLSS SDK checkout>` (or put it in

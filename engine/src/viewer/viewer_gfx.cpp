@@ -39,7 +39,10 @@ void Viewer::loadSettings() {
         int v = 0;
         if (std::sscanf(line, " %63[a-z_] = %d", key, &v) != 2) continue;
         const std::string k = key;
-        if (k == "display") s.display = std::clamp(v, 0, 2);
+        if (k == "display") {
+            s.display = std::clamp(v, 0, 2);
+            if (s.display) s.fullscreenKind = s.display; // (an older settings.ini, without fullscreen_kind=)
+        } else if (k == "fullscreen_kind") s.fullscreenKind = std::clamp(v, 1, 2);
         else if (k == "resolution") s.resolution = std::clamp(v, 0, int(std::size(kResolutions)) - 1);
         else if (k == "vsync") s.vsync = v != 0;
         else if (k == "fps") s.fps = std::clamp(v, 0, 1000);
@@ -79,6 +82,7 @@ void Viewer::saveSettings() const {
     SDL_free(serialized);
     text += "lock_orientation=" + std::to_string(int(s.lockOrientation)) + "\nlandscape_flipped=" + std::to_string(int(s.landscapeFlipped)) + "\n";
     text += "original_card_art=" + std::to_string(int(s.originalCardArt)) + "\n";
+    text += "fullscreen_kind=" + std::to_string(s.fullscreenKind) + "\n";
     if (s.language) text += "language=" + std::to_string(s.language) + "\n";
     if (!keepData.empty()) text += "data=" + keepData + "\n";
     if (!keepPatch.empty()) text += "patch=" + keepPatch + "\n";
@@ -131,6 +135,19 @@ void Viewer::applySettings() {
     hdModels = s.hdModels; // (from the next figure loaded)
 }
 
+// F11 / Alt+Enter (a desktop's): windowed <-> fullscreen - the kind Display last chose, borderless at
+// first -, the Options' Display setting itself (shown there, applied and saved as it is)
+void Viewer::toggleFullscreen() {
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+    Settings& s = settings;
+    if (s.display) s.fullscreenKind = s.display;
+    s.display = s.display ? 0 : std::clamp(s.fullscreenKind, 1, 2);
+    SDL_Log("display: %s (F11 / Alt+Enter)", s.display == 0 ? "windowed" : s.display == 1 ? "fullscreen" : "borderless");
+    applySettings();
+    saveSettings();
+#endif
+}
+
 bool Viewer::loadHd(const cr3::Image& img, cr3::Image& hd) {
     std::string why;
     if (cr3::loadHdImage(hdDir, img, hd, &why)) return true;
@@ -181,7 +198,10 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
     auto onOff = [](bool b) { return std::string(b ? "On" : "Off"); };
     static const char* const kDisplay[] = {"Window", "Fullscreen", "Borderless"};
     rows.push_back({"Display", kDisplay[std::clamp(s.display, 0, 2)], "A window, fullscreen at the display's own mode, or borderless over the desktop",
-                    true, [&s](int d) { s.display = (s.display + d + 3) % 3; }});
+                    true, [&s](int d) {
+                        s.display = (s.display + d + 3) % 3;
+                        if (s.display) s.fullscreenKind = s.display; // (F11's from now on)
+                    }});
     {
         const int r = std::clamp(s.resolution, 0, int(std::size(kResolutions)) - 1);
         const std::string v = s.resolution < 0 ? std::to_string(resW) + " x " + std::to_string(resH) // (--resolution's own)

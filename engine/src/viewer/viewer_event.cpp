@@ -844,7 +844,8 @@ void Viewer::loadPosition(WindowLayout& w, const char* figure, const char* call,
     w.positionCall = call, w.positionY = y;
 }
 
-void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t> fontBytes, const std::string& fontName, int fontFace) {
+void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t> fontBytes, const std::string& fontName, int fontFace,
+                               const std::vector<std::string>& ownFallbacks) {
     if (archive.contains("comMsgVMenu.geom")) {
         // CR3's vista window (EvtVistaWindow: VistaWindowMenu) - comMsgVMenu, two centred lines
         // at typeM_C01 / C02, placed by comMsgVPosition; the speaker's name in comMsgVNameMenu
@@ -984,8 +985,8 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
     if (!fontPath.empty() && !font.load(fontPath, &err)) SDL_Log("font: %s", err.c_str());
     else if (fontPath.empty() && !fontBytes.empty() && !font.loadMemory(std::move(fontBytes), fontName, &err, fontFace)) SDL_Log("font: %s", err.c_str());
     // (the code points the game's font lacks - Hangul, simplified Chinese - from the system's, as
-    // Android's: CR3_FONT_FALLBACK, else a Noto CJK where the distributions put it, else Windows'
-    // or macOS's own - one for each script there)
+    // Android's: the game folder's font/ files the text isn't drawn in, then CR3_FONT_FALLBACK, else a Noto
+    // CJK where the distributions put it, else Windows' or macOS's own - one for each script there)
     const char* fb = std::getenv("CR3_FONT_FALLBACK");
     const char* windir = std::getenv("WINDIR");
     const std::string winFonts = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
@@ -1009,6 +1010,7 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
                                                      "/System/Library/Fonts/AppleSDGothicNeo.ttc"}),
                      cr3::TextRasterizer::firstFont({winFonts + "msyhbd.ttc", winFonts + "msyh.ttc",
                                                      "/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"})};
+    fallbacks.insert(fallbacks.begin(), ownFallbacks.begin(), ownFallbacks.end()); // (the game folder's font/ first)
     std::string fallback;
     for (const std::string& f : fallbacks) {
         if (f.empty() || !font.loaded()) continue;

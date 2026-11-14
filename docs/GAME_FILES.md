@@ -75,6 +75,9 @@ the program - it finds it by itself. The game folder is:
 │   └── es/                             the .rar / .zip / .7z, unpacked into en/ or es/): over an unpatched Vita copy,
 │                                       "English (fan translation)" and "Spanish (fan translation)" in the Options' Language
 ├── movies/                          cNN.mp4 your release lacks, from another (the iPad lacks c04..c11): "Movies"
+├── font/                            your own .ttf / .otf / .ttc (optional): the first by name draws the text in every
+│                                    language (after --font / CR3_FONT; a translation's own font doesn't replace it),
+│                                    the others fill in the characters it lacks ahead of the system's; empty: as before
 ├── fsr4/                            AMD FSR 4 (optional; Linux and Windows, an AMD GPU): AMD's amd_fidelityfx_loader_vk.dll
 │                                    and amd_fidelityfx_upscaler_vk.dll (FSR SDK 2.4), the driver's amdvkffx64.dll
 │                                    (AMD Software 26.10.1+), and on Linux ffx-vk-linux's libffx_vk_linux.so: "FSR 4"

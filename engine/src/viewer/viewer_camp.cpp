@@ -4599,10 +4599,10 @@ void Viewer::cr3OptionsReset() {
         audio.setVolumes(1, 1, 1);
     } else if (co.tab == 1) co.hands = 0;
     else if (co.tab == 2) optionQuality = 0;
-    else { // (the window's type and resolution kept)
-        const int display = settings.display, resolution = settings.resolution;
+    else { // (the window's type - F11's fullscreen kind with it - and resolution kept)
+        const int display = settings.display, kind = settings.fullscreenKind, resolution = settings.resolution;
         settings = Settings();
-        settings.display = display, settings.resolution = resolution;
+        settings.display = display, settings.fullscreenKind = kind, settings.resolution = resolution;
         applySettings();
         saveSettings();
     }

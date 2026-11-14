@@ -251,6 +251,7 @@ struct Viewer {
     // neither reads nor writes it); the command line's flags over them
     struct Settings {
         int display = 0;          // 0 a window, 1 fullscreen (the display's own mode), 2 borderless (the desktop)
+        int fullscreenKind = 2;   // F11 / Alt+Enter's fullscreen: the one Display last chose (1 or 2; borderless at first)
         int resolution = 0;       // kResolutions: 0 the window's own size
         bool vsync = true;
         int fps = 60;             // frames drawn a second at most (0: as many as the display takes)
@@ -282,6 +283,7 @@ struct Viewer {
     void loadSettings();
     void saveSettings() const;
     void applySettings();
+    void toggleFullscreen(); // (F11 / Alt+Enter: Display windowed <-> the fullscreen last chosen; a desktop's)
     // The HD replacement for a picture; one that doesn't fit it is left out, said once
     std::set<std::string> hdRefused;
     bool loadHd(const cr3::Image& img, cr3::Image& hd);
@@ -2413,7 +2415,9 @@ struct Viewer {
     int namePx = 0;
     void loadWindow(WindowLayout& w, const char* figure);
     void loadPosition(WindowLayout& w, const char* figure, const char* call, float y);
-    void loadMessageWindow(const std::string& fontPath, std::vector<uint8_t> fontBytes = {}, const std::string& fontName = {}, int fontFace = 0);
+    // (`ownFallbacks`: the game folder's font/ files the text isn't drawn in - ahead of the system's fallbacks)
+    void loadMessageWindow(const std::string& fontPath, std::vector<uint8_t> fontBytes = {}, const std::string& fontName = {}, int fontFace = 0,
+                           const std::vector<std::string>& ownFallbacks = {});
     static Mat4 uiProjection(int w, int h, float unit = 1);
     static void fitOffset(const std::string& joint, int w, int h, float unit, float& dx, float& dy);
     bool windowJoint(const WindowLayout& wl, const std::string& name, float& x, float& y);

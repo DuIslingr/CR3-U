@@ -20,8 +20,24 @@ Square holds message fast-forward, Triangle opens the field bar, the left stick
 walks and the right stick turns the follow camera. Each screen can give these
 buttons its own action, as listed below. START also starts the Vita title.
 
-`CR3_PAD_SCRIPT` drives an SDL virtual controller for headless tests. Controller
-focus uses the game's existing parts, cyan tint and sounds where available.
+One controller is in use at a time: the first connected. When it is taken out
+while another is connected, that one takes over; a controller connected while
+the one in use has gone quiet (a wireless pad's receiver can keep a dead handle)
+replaces it.
+
+`CR3_PAD_SCRIPT` drives an SDL virtual controller for headless tests (`plug` /
+`unplug` connect a second one and take the first out; `key=F11`, `key=alt+Return`
+press keys). Controller focus uses the game's existing parts, cyan tint and sounds
+where available.
+
+## Windowed and fullscreen keys
+
+On a desktop (not Android or iOS), **F11** or **Alt+Enter** switches between a
+window and fullscreen, anywhere in the game, the logos included; holding the key
+switches once. This is the Options' Graphics → Display setting itself, saved in
+`settings.ini` and shown there: fullscreen means the kind Display last chose,
+Fullscreen (the display's own mode) or Borderless (borderless at first), kept as
+`fullscreen_kind=`.
 
 ## CR3's field by touch or the mouse
 
