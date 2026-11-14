@@ -166,6 +166,11 @@ int main() {
         row({{0,69}, {1,7}, {4,11}, {8,0x100}, {15,1}, {32,0x404}, {33,40}}, {{16, {14}}});
         row({{0,70}, {1,7}, {4,11}, {8,0x100}, {15,1}, {32,0x404}, {33,40}}, {{16, {15}}});
         row({{0,71}, {1,7}, {4,11}, {8,0x100}, {13,4}, {32,0x40c}, {33,40}}, {{14, {3, 4, 5, 6}}});
+        // Round 24: the steals - 1390 an HP steal on one (+0xbc 0x2004: +0xbd bit 5, always hits), 1391 on every enemy
+        // (target 4), 1392 an MP steal (0x4004: bit 6, formula 20 - calculateMpDamage)
+        row({{0,1390}, {1,2}, {4,3}, {5,100}, {8,0x101}, {32,0x2004}, {33,1}});
+        row({{0,1391}, {1,2}, {4,4}, {5,100}, {8,0x101}, {32,0x2004}, {33,1}});
+        row({{0,1392}, {1,2}, {4,3}, {5,100}, {8,0x101}, {32,0x4004}, {33,20}});
         Table formulas{"CommandFomula", "iiii", {
             {{0,21},{2,21},{3,uint32_t(-1)}},
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
@@ -313,7 +318,7 @@ int main() {
             check(sources == std::vector<int>({3, 2, 4, 0, 1}),
                   "BtlCommandList::Sort orders Guard (+2) > speed+speedCost (100) > normal (60) > bucket -8 > bucket -9");
 
-            rules.reverseSpeed = true; rules.reverseSpeedTurns = 1;
+            rules.reverseSpeed = true; rules.reverseSpeedTurns = 5; // (not over this turn: no command 58 at its end)
             const auto rev = rules.turn({{0, 30, 4}, {1, 30, 4}, {2, 30, 4}, {3, -1, -1}});
             std::vector<int> revSources;
             for (const auto& a : rev) revSources.push_back(a.source);
@@ -466,12 +471,17 @@ int main() {
             // Gravity (800: 25% current HP less target skill 35's 10% = 15%), MP damage (1646), and Constant HP=1 (1650).
             rules.fighters[2].hp = 2000; rules.fighters[2].mp = 80; rules.fighters[2].skills = {93};
             rules.monstersWait = true;
+            cr3::Cr3BattleRules probe = rules; // (calculateMpDamage 0x7e2010: calculateMagicDamage's own number, at the gauge then)
             const auto gravAct = rules.turn({{0, 800, 2}, {1, 1646, 2}});
             check(gravAct[0].targets[0].hits == std::vector<int>{300} && rules.fighters[2].hp == 1700,
                   "calculatePercentDamage applies (power - skill 35)% of current HP");
-            check(gravAct[1].targets[0].mpHits == std::vector<int>{30} && gravAct[1].targets[0].colors == std::vector<uint8_t>{4} &&
-                  rules.fighters[2].mp == 50,
-                  "calculateMpDamage drains target MP with popup color 4");
+            cr3::Cr3Command c1646;
+            check(probe.command(1646, c1646), "command 1646");
+            probe.gauge = gravAct[0].gaugeAfter, probe.gaugeStarted = true;
+            const int mpWant = std::min(probe.damage(probe.fighters[1], probe.fighters[2], c1646), 80);
+            check(mpWant > 0 && mpWant != 30 && gravAct[1].targets[0].mpHits == std::vector<int>{mpWant} &&
+                      gravAct[1].targets[0].colors == std::vector<uint8_t>{4} && rules.fighters[2].mp == 80 - mpWant,
+                  "calculateMpDamage drains the magic damage's number from the target's MP (at most its MP), popup color 4");
             rules.monstersWait = true;
             const auto constHpAct = rules.turn({{0, 1650, 2}, {1, -1, -1}});
             check(constHpAct[1].targets[0].hits == std::vector<int>{1699} && rules.fighters[2].hp == 1 && !rules.fighters[2].dead(),
@@ -976,6 +986,49 @@ int main() {
                 }
             }
         }
+        // Round 24: the steals (BtlDamageTargetList::Calculate 0x97f81c / SetStealDamage 0x988eb4): the caster's own entry
+        // last, its hit k the targets' landed hit-k damage summed - an HP steal at most each target's HP, an MP steal its MP
+        {
+            cr3::Cr3BattleRules r;
+            check(r.setup(t, battle, 1, 24), "setup the steals' battle");
+            for (size_t k = 0; k < r.fighters.size(); ++k) {
+                cr3::Cr3Fighter& f = r.fighters[k];
+                f.player = k < 2, f.hp = f.maxHp = 5000, f.mp = f.maxMp = 100, f.attack = 200, f.defence = 1, f.speed = k == 0 ? 100 : 1;
+                f.attackCommand = 30;
+            }
+            auto stealOf = [](const std::vector<cr3::Cr3Action>& acts) -> const cr3::Cr3Action& {
+                for (const cr3::Cr3Action& a : acts)
+                    if (a.source == 0 && a.command >= 1390) return a;
+                throw std::runtime_error("the steal's action missing");
+            };
+            r.fighters[0].hp = 1000, r.fighters[2].hp = 7;
+            r.monstersWait = true;
+            const auto one = r.turn({{0, 1390, 2}, {1, -1, -1}});
+            const cr3::Cr3Action& a1 = stealOf(one);
+            check(a1.targets.size() == 2 && !a1.targets[0].stealBack && a1.targets[0].hits == std::vector<int>{7} && r.fighters[2].hp == 0,
+                  "an HP steal takes no more than the target's HP (calculateHpFluctuation's cap)");
+            check(a1.targets[1].stealBack && a1.targets[1].target == 0 && a1.targets[1].hits == std::vector<int>{-7} &&
+                      a1.targets[1].colors == std::vector<uint8_t>{3} && r.fighters[0].hp == 1007 && a1.targets[1].hpAfter == 1007 && a1.target == 2,
+                  "an HP steal: the caster's own entry last, healed by what landed");
+            r.fighters[2].hp = 30, r.fighters[3].hp = 40, r.fighters[0].hp = 1000;
+            r.monstersWait = true;
+            const auto turna2 = r.turn({{0, 1391, 2}, {1, -1, -1}});
+            const cr3::Cr3Action& a2 = stealOf(turna2);
+            check(a2.targets.size() == 3 && a2.targets[2].stealBack && a2.targets[2].hits == std::vector<int>{-70} && r.fighters[0].hp == 1070,
+                  "an HP steal on all: one heal, the sum of the targets' (30 + 40)");
+            r.fighters[2].hp = r.fighters[3].hp = 5000, r.fighters[2].mp = 5, r.fighters[0].mp = 10;
+            r.monstersWait = true;
+            const auto turna3 = r.turn({{0, 1392, 2}, {1, -1, -1}});
+            const cr3::Cr3Action& a3 = stealOf(turna3);
+            check(a3.targets[0].mpHits == std::vector<int>{5} && a3.targets[1].stealBack && a3.targets[1].mpHits == std::vector<int>{-5} &&
+                      a3.targets[1].hits == std::vector<int>{0} && a3.targets[1].colors == std::vector<uint8_t>{4} && r.fighters[0].mp == 15 &&
+                      r.fighters[2].mp == 0,
+                  "an MP steal: at most the target's MP, the caster's MP back (colour 4)");
+            r.fighters[2].hp = 5000, r.fighters[0].hp = 4990;
+            r.monstersWait = true;
+            (void)r.turn({{0, 1390, 2}, {1, -1, -1}});
+            check(r.fighters[0].hp == 5000 && r.fighters[2].hp < 4800, "an HP steal heals the caster to its max at most");
+        }
         // Round 20 against the release's tables (CR3_DATA): monster 913 mode 2's 2 actions, 865's Augmented Core
         // costing 2, and battle 22's monster 1408 (weights 15 / 10 / 10 / 5 / 5: each U(0,1) x w / sum, the
         // highest - 54.4 / 21.2 / 21.2 / 1.7 / 1.7 %)
@@ -1061,6 +1114,135 @@ int main() {
                 check(std::abs(share(1608) - 54.4) < 2.5 && std::abs(share(1611) - 21.2) < 2.0 && std::abs(share(1612) - 21.2) < 2.0 &&
                           std::abs(share(1613) - 1.7) < 1.0 && std::abs(share(1501) - 1.7) < 1.0,
                       "battle 22's 1408 picks by max(U x weight / sum): 54 / 21 / 21 / 2 / 2 %");
+                // Round 24 against the release's tables: a call for help (Rainforcement, extraType 0x11), Reverse Gravity
+                // (387, extraType 0xb) and the Mimics' escape (1741 -> status effect 51): battle 2612's party, its monster
+                // made the caster (one action a turn), any other gone; the party unhurt, guarding, no assist
+                auto special = [&](cr3::Cr3BattleRules& r, uint32_t seed, int caster) {
+                    battleOf(2612, r, seed);
+                    int m = -1;
+                    for (size_t k = 0; k < r.fighters.size(); ++k) {
+                        if (r.fighters[k].player) continue;
+                        if (m < 0) m = int(k);
+                        else r.fighters[k].hp = 0;
+                    }
+                    cr3::Cr3Fighter f;
+                    check(m >= 0 && r.monsterFighter(caster, 10, f), "a release monster as the caster");
+                    f.unit = r.fighters[size_t(m)].unit, f.actionsPerTurn = 1;
+                    r.fighters[size_t(m)] = f;
+                    r.noAssist = true, r.partyUnhurt = true;
+                    return m;
+                };
+                auto guards = [](const cr3::Cr3BattleRules& r) {
+                    std::vector<std::array<int, 3>> g;
+                    for (size_t k = 0; k < r.fighters.size(); ++k)
+                        if (r.fighters[k].player) g.push_back({int(k), -1, -1});
+                    return g;
+                };
+                {
+                    // 1742 (Pigtapir Tank 1405's): its own species at 180 / 256; the fallen banked first
+                    cr3::Cr3BattleRules r;
+                    const int m = special(r, 77, 1405);
+                    cr3::Cr3Fighter fallen = r.fighters[size_t(m)];
+                    fallen.hp = 0, fallen.level = 7;
+                    r.fighters.push_back(fallen);
+                    const int slot = int(r.fighters.size()) - 1;
+                    int came = 0, tries = 0;
+                    for (int n = 0; n < 3000; ++n) {
+                        r.fighters[size_t(slot)] = fallen, r.banked.clear();
+                        r.scripted[m].push_back({1, 1742});
+                        for (const cr3::Cr3Action& a : r.turn(guards(r))) {
+                            if (a.source != m || a.command != 1742) continue;
+                            ++tries;
+                            check(a.reinforced.fighter == slot, "1742 aims at the fallen slot");
+                            const cr3::Cr3Fighter& now = r.fighters[size_t(slot)];
+                            if (a.reinforced.success) {
+                                ++came;
+                                check(a.reinforced.monster == 1405 && now.id == 1405 && now.hp == now.maxHp && now.mp == now.maxMp && now.effects.empty() &&
+                                          now.mode == 0 && r.banked.size() == 1 && r.banked[0].dead() && r.banked[0].level == 7,
+                                      "1742: the caster's species, full, mode 0, no effects; the fallen banked as it was");
+                            } else {
+                                check(now.dead() && r.banked.empty(), "1742 failed: the slot still fallen, nothing banked");
+                            }
+                        }
+                    }
+                    const double share = 100.0 * came / std::max(tries, 1);
+                    std::cout << "1742's call for help over " << tries << " tries: " << share << " % came\n";
+                    check(tries == 3000 && std::abs(share - 70.3) < 2.5, "1742 calls its own species at 180 / 256 (70.3 %)");
+                }
+                {
+                    // 1773 (Ark Raptor 1555's): the constant's species - 1554 Raptor -, always; its level the row's or the slot's
+                    cr3::Cr3BattleRules r;
+                    const int m = special(r, 78, 1555);
+                    cr3::Cr3Fighter fallen = r.fighters[size_t(m)];
+                    fallen.hp = 0, fallen.level = 9;
+                    r.fighters.push_back(fallen);
+                    const int slot = int(r.fighters.size()) - 1;
+                    r.scripted[m].push_back({1, 1773});
+                    bool seen = false;
+                    for (const cr3::Cr3Action& a : r.turn(guards(r)))
+                        if (a.source == m && a.command == 1773) seen = a.reinforced.success && a.reinforced.monster == 1554;
+                    cr3::Cr3Fighter want;
+                    check(r.monsterFighter(1554, 9, want), "monster 1554");
+                    const cr3::Cr3Fighter& now = r.fighters[size_t(slot)];
+                    check(seen && now.id == 1554 && now.level == want.level && now.hp == want.maxHp && r.outcome() == 0 && r.banked.size() == 1 &&
+                              r.banked[0].id == 1555,
+                          "1773 calls a Raptor 1554 into the fallen slot, at full HP");
+                }
+                {
+                    // 387: the order reversed for the rest of the cast turn and four more, then command 58 with no source
+                    cr3::Cr3BattleRules r;
+                    const int m = special(r, 79, 554);
+                    check(r.fighters[size_t(m)].unlimitedMp && r.fighters[size_t(m)].maxMp == 0,
+                          "554's MP -1: unlimited (HaveEnoughMp 0x7e2828 passes MP below 0) - 387's 16 MP not wanted");
+                    int p = -1;
+                    for (size_t k = 0; k < r.fighters.size() && p < 0; ++k)
+                        if (r.fighters[k].player) p = int(k);
+                    r.fighters.push_back(r.fighters[size_t(p)]);
+                    const int q = int(r.fighters.size()) - 1;
+                    r.fighters[size_t(p)].speed = 300, r.fighters[size_t(q)].speed = 3, r.fighters[size_t(p)].weight = r.fighters[size_t(q)].weight = 0;
+                    auto guardOrder = [&](const std::vector<cr3::Cr3Action>& acts) {
+                        std::vector<int> order;
+                        for (const cr3::Cr3Action& a : acts)
+                            if (a.source == p || a.source == q) order.push_back(a.source);
+                        return order;
+                    };
+                    r.scripted[m].push_back({1, 387});
+                    const auto cast = r.turn(guards(r));
+                    bool opened = false;
+                    for (const cr3::Cr3Action& a : cast) opened |= a.source == m && a.command == 387 && a.fieldToggle == 1;
+                    check(opened && r.reverseSpeed && r.reverseSpeedTurns == 4 && guardOrder(cast) == std::vector<int>({p, q}),
+                          "387 opens the strange space after the turn's guards (bucket 2) - 4 turns left at the cast turn's end");
+                    for (int n = 1; n <= 4; ++n) {
+                        r.monstersWait = true;
+                        const auto acts = r.turn(guards(r));
+                        check(guardOrder(acts) == std::vector<int>({q, p}), "reverse gravity: the slowest first");
+                        const bool over = !acts.empty() && acts.back().source == -1 && acts.back().command == 58;
+                        check(over == (n == 4) && r.reverseSpeed == (n < 4) && r.reverseSpeedTurns == 4 - n,
+                              "reverse gravity over at the end of the fourth turn after the cast, with command 58");
+                    }
+                    r.monstersWait = true;
+                    check(guardOrder(r.turn(guards(r))) == std::vector<int>({p, q}), "reverse gravity over: the fastest first again");
+                    // a recast within its turns closes it - no command 58
+                    r.scripted[m].push_back({1, 387});
+                    (void)r.turn(guards(r));
+                    r.scripted[m].push_back({1, 387});
+                    const auto again = r.turn(guards(r));
+                    bool closed = false, line58 = false;
+                    for (const cr3::Cr3Action& a : again) closed |= a.command == 387 && a.fieldToggle == -1, line58 |= a.command == 58;
+                    check(closed && !line58 && !r.reverseSpeed && r.reverseSpeedTurns == 0, "387 again within its turns: closed (line 183), no command 58");
+                }
+                {
+                    // 1741 (the Mimics' Escape): status effect 51 - kinds 72 + 33, not 76 -: defeated, not dead - the battle won
+                    cr3::Cr3BattleRules r;
+                    const int m = special(r, 80, 1810);
+                    r.scripted[m].push_back({1, 1741});
+                    bool gave = false;
+                    for (const cr3::Cr3Action& a : r.turn(guards(r)))
+                        if (a.source == m && a.command == 1741 && !a.targets.empty())
+                            gave = std::find(a.targets[0].effectsGiven.begin(), a.targets[0].effectsGiven.end(), 51) != a.targets[0].effectsGiven.end();
+                    check(gave && r.hasEffect(m, 51) && !r.fighters[size_t(m)].dead() && r.defeated(r.fighters[size_t(m)]) && r.outcome() == 1,
+                          "1741: the Mimic escaped - status effect 51, alive (no EXP, money or drop: not IsDead), the battle won");
+                }
             } else {
                 std::cout << "CR3_DATA: " << err << " - the release checks skipped\n";
             }

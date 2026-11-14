@@ -29,14 +29,16 @@ want battle && run battle-result-confirm \
 
 # BtlLastAttackDirection (kind 9): battle 22's finisher (command 13, Daisuke) plays his motion's own camera,
 # AnimDirection's Cam_t01_j003_00, posed on him at the boss's front, the others hidden
+export CR3_BATTLE_SEED=1 # (its draw: unseeded, the boss's monster AI and the assists sometimes left no finisher within 120 s)
 want battle && run last-attack \
     "0.1:until=a_last_attack 1:quit" \
     "a finisher - command 13|a last attack (kind 9, motion 18) - camera Cam_t01_j003_00" \
     -- --battle 22 --team-level 20 --cr3-party 1,2,3 --input "auto"
+unset CR3_BATTLE_SEED
 
 # BtlFinestArtsDirection (kind 12): the gauge at the party's full advantage (+1000), a participant's Finest Arts -
 # the stage hidden, its own camera, white at its frame, under the white home and all shown, the white lifted 1 s on
-export CR3_BATTLE_SEED=6 # (its draw: a Finest Arts within 30 s)
+export CR3_BATTLE_SEED=1 # (its draw: a Finest Arts within 40 s - the boss's MP unlimited, its MP commands in its picks)
 want battle && run finest-arts \
     "0.1:until=the_finest_arts'_white_lifted 1:quit" \
     "a finisher - command 1|a finest arts (kind 12|the finest arts' white lifted" \
@@ -90,10 +92,12 @@ unset CR3_BATTLE_SEED
 
 # BtlTotalDamageUI for the party struck (TakeDamageToDirection: opposite sides, damage not 0): a slot each, in order of
 # first hit
+export CR3_BATTLE_SEED=1 # (its draw: 913's attack on all on turn 1 - its MP -1 unlimited, 311 and the rest among its picks)
 want battle && run battle-party-totals \
     "0.1:until=total_damage_-_fighter_2 0.5:quit" \
     "total damage - fighter 0, slot 0, 1 hits|total damage - fighter 1, slot 1, 1 hits|total damage - fighter 2, slot 2, 1 hits" \
     -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --input "battle guard guard guard"
+unset CR3_BATTLE_SEED
 
 # OpenAnnounce's cooperation suffix (OpenAdditionNum: AnnounceBattle 0x1c + the count): two Cremates (241, +0xbc bit 7)
 # taken in together under the gauge's advantage - "Cremate II"
@@ -102,4 +106,46 @@ want battle && run battle-cooperation-name \
     "0.1:until=cooperation_name 0.5:quit" \
     "cooperation name \"Cremate II\"|a cooperation of 2" \
     -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --cr3-gene 1:19 --cr3-gene 3:19 --gauge 4 --input "guard:party battle gene1 t0 guard gene1 t0"
+unset CR3_BATTLE_SEED
+
+# Round 24's monster specials. The Mimic (battle 510): its 1646 Scrumptious MP - BtlStealMagicDirection, kind 23: cast
+# as magic, the bullet from the target back to it, its MP recovery and be141heal11 as it lands -, then from mode 1 its
+# Escape 1741 (BtlEscapeDirection: status effect 51 - kinds 72 + 33 -, faded out): the battle won with no EXP or money
+export CR3_BATTLE_SEED=2
+want battle && run mimic-steal-escape \
+    "0.1:until=result_- 1:quit" \
+    "command 1646|a steal back - 0 HP, 3 MP to fighter 3 (effect 161)|fighter 3 escapes - command 1741|battle 510: won|battle 510: result - 0 EXP, 0 money" \
+    -- --battle 510 --team-level 30 --cr3-party 1,2,3 --input "battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard"
+unset CR3_BATTLE_SEED
+
+# Reverse Gravity (387, extraType 0xb - the Death Mask 554, battle 152; its MP -1 unlimited): AnnounceBattle 182 after it,
+# the order slowest first from turn 2 (fighter 2 first), and at the end of turn 5 - the cast turn and four more - command
+# 58 with no source (BtlGravityInversionDirection: line 183). --input foe: the cast forced on turn 1
+export CR3_BATTLE_SEED=1
+want battle && run reverse-gravity \
+    "0.1:until=turn_6,_the_get-set 0.5:quit" \
+    "fighter 3 given command 387 on turn 1|action 0 - 1 -> -1|command 387|the reverse gravity on - line 182|turn 2, the get-set|action 0 - 2 -> -1|action 4 - -1 -> -1, command 58|the reverse gravity over - command 58, line 183|turn 6, the get-set" \
+    -- --battle 152 --team-level 30 --cr3-party 1,2,3 --input "guard:party foe:1:3:387 battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard battle guard guard guard"
+
+# Call for Help (1773, Rainforcement - the Ark Raptor 1555, battle 1109): the Raptor in slot 3 felled over two turns, then
+# 1773 on it - its name, AnnounceBattle 92, a Raptor 1554 faded in at the slot, acting the turn after (flag 5056: no
+# battle tutorials)
+want battle && run call-for-help \
+    "0.1:until=turn_5,_the_get-set 0.5:quit" \
+    "fighter 4 given command 1773 on turn 3|a call for help - command 1773 by fighter 4 on fighter 3|a call for help - line 92 (reinforcements)|reinforcements - fighter 3 is monster 1554 now (m229)|turn 4, the get-set|action 3 - 3 -> 2, command 1001" \
+    -- --battle 1109 --team-level 99 --cr3-party 1,2,3 --flag 5056 --input "guard:party battle attack t0 attack t0 attack t0 battle attack t0 attack t0 attack t0 foe:3:4:1773 battle guard guard guard battle guard guard guard battle guard guard guard"
+unset CR3_BATTLE_SEED
+
+# Avatar (1730 Inauspicious Rain, BtlAvatarDirection - forced on battle 2612's monster): its motion's event 2 - white-out
+# 1 s, ev_018 -, Effect +0x28's movie (c56, where the release has it; skipped here), white-in, camera 5 and the group
+# effect with the hits. Gene Switch (1744, BtlGeneChangeDirection): no cast - camera 2, effect 51 on itself, the name
+export CR3_BATTLE_SEED=1
+want battle && run avatar \
+    "0.1:until=turn_2,_the_get-set 0.5:quit" \
+    "fighter 3 given command 1730 on turn 1|an avatar - command 1730, motion 9|an avatar's white-out|an avatar's white-in|turn 2, the get-set" \
+    -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --flag 5056 --input "guard:party foe:1:3:1730 battle guard guard guard movie:skip"
+want battle && run gene-switch \
+    "0.1:until=turn_2,_the_get-set 0.5:quit" \
+    "fighter 3 given command 1744 on turn 1|action 0 - 3 -> 3, command 1744|a gene switch - command 1744 by fighter 3 (camera 2, effect 51)|turn 2, the get-set" \
+    -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --input "guard:party foe:1:3:1744 battle guard guard guard"
 unset CR3_BATTLE_SEED

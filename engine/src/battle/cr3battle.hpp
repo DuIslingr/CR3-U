@@ -70,6 +70,11 @@ struct Cr3BattleTables {
         std::string castCamera;
         std::string castSound;
         std::vector<CastEffect> castEffects;
+        // (BtlStealMagicDirection - kind 23: its bullets fly from each target back to the caster - BtlDamageTarget::
+        // PlayStealEffect 0x986fcc, the target's popups at their launch -, and as they land the caster's recovery
+        // popup and its hit effect, +0x28 - PlayStealHitEffect 0x9871ac - at its point +0x38)
+        bool steal = false;
+        int stealEffect = -1, stealPoint = 0;
     };
     // Source animation cues followed by any delay in the hit effect's own timer. Empty hits means
     // the direction or its timing data could not be resolved.
@@ -134,6 +139,9 @@ struct Cr3Battle {
     // armours, weapons: theirs where the game has set one (else Cr3BattleTables::defaultArmour, weaponOf)
     bool setup(const Cr3BattleTables& t, int coupling, int fieldId, const std::vector<int>& party, uint32_t seed,
                std::string* error = nullptr, const std::map<int, int>* armours = nullptr, const std::map<int, int>* weapons = nullptr);
+    // BtlUnit::Rainforce 0x9dc3f4 (a call for help that came): the slot's model made anew for the monster - its model,
+    // its texture variation -, on the slot's x and its side's line; false: no such monster or model
+    bool replaceMonster(const Cr3BattleTables& t, size_t slot, int monsterId);
 };
 
 // BtlCameraMotion: a camera figure (Cam_bt: every battle camera a joint of it, all animated by

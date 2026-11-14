@@ -1830,7 +1830,7 @@ struct Viewer {
     void rollCr3StartMode();
     void drawCr3Announce(const Mat4& view, int w, int h);
     std::vector<int> cr3BattlePartyIds() const;
-    void loadCr3BattleUnits(size_t from);
+    void loadCr3BattleUnits(size_t from, size_t to = size_t(-1)); // (the units' figures in [from, to))
     // the next wave (BattleCoupling.SetId in a victory script - BtlSysStateAction::phaseVictoryEvent's
     // end: AcquireRemuneration, then reinforceByCoupling - BtlSystem::CreateMonster: the monsters
     // gone, the coupling's in their place -, the coupling's script loaded (not booted), the units
@@ -1915,7 +1915,28 @@ struct Viewer {
         std::vector<int> spellCards;
         float spellCardAge = -1;
         bool spellHandoffPending = false, cardWatchesCamera = false, cardPaused = false;
+        // the special directions (CommandDirection +0x04 - BtlDirectionFactory's: 14 GeneChange, 23 StealMagic, 31 Escape,
+        // 37 Rainforcement, 38 Avatar - their own steps; -1 none)
+        int kind = -1;
+        size_t stealShown = 0; // (a steal's: the caster's recoveries landed - PlayStealHitEffect)
+        int stage = 0;         // (37: 1 the result's line up; 38: 1 white, 2 its movie, 3 after it)
+        float cue = 0, pausedAt = 0; // (38: the motion's event 2; the clock its movie began at)
+        std::string movie;           // (38: the movie - Effect +0x28's file)
     } cr3ActionPlay;
+    // BtlDamageChunk::PlayCameraByType 0x97c2cc by a CommandDirection's +0x0c type, on the action's target
+    void playCr3CameraType(int type, const cr3::Cr3Action& action, size_t source);
+    // BtlUnitList::PlayUpCamera (playCameraByType 2's): the unit's "up" camera - a monster's its camera size's
+    // Camera +0x58, a party member's Cam_bt_up_PC_00, the colosseum's own
+    void playCr3UpCamera(size_t unit);
+    // the special directions' own starts (false: the generic one plays it) and steps
+    bool startCr3SpecialAction(const cr3::Cr3Action& a, size_t source, const cr3::Cr3Command& c);
+    bool startCr3Avatar(const cr3::Cr3Action& a, size_t source);
+    bool stepCr3Avatar(const cr3::Cr3Action& a, size_t source);
+    void stepCr3Reinforcement(const cr3::Cr3Action& a, float actionTime);
+    void reinforceCr3Slot(int fighter, int monster);
+    void stepCr3StealBack(const cr3::Cr3Action& a, size_t source, float actionTime);
+    void announceCr3FieldToggle(const cr3::Cr3Action& a, float actionTime);
+    bool cr3GeneVoiceUsed = false; // (BtlVoiceManager::DisableCategory(0x39): a Gene Switch's voice once a battle)
     // the damage shown (DamageInfo: btNumMenu over the target, btNumMenu_in)
     struct Cr3Popup {
         int value = 0; // (below 0: none - a word alone)

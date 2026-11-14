@@ -106,6 +106,9 @@ struct Cr3Command {
     int element = 0;    // (+0x24: its attack element - the Element table's row)
     int extraType = 0;  // (+0xd4: MbCommandInfo::GetExtraType - 1/2 random subcommand, 13 force break, 18 status power)
     std::vector<int> extraConstants; // (+0xd8 / +0xe0: MbCommandInfo::GetExtraConstantByIndex)
+    // (+0x30 / +0x38: its first chance out of 256 - CalculateStatusEffect 0x9844a8's for extraType 0x11, a call for
+    // help: 1742's 180, the others' 256; 256 where it has none)
+    int effectChance = 256;
     // the enemy AI's (BtlStatusList::Select / getCommandTarget / BtlStatus::IsSelected)
     int selectType = 0;     // (+0xc8: 0 attack, 1 physical skill, 2 magic, 3 heal, 4 cure, 5 buff, 6 debuff, 7 special)
     int selectPriority = 0; // (+0xcc: its weight - BtlPriorityCommandIdList::sortBySelectPriority)
@@ -168,6 +171,9 @@ struct Cr3Fighter {
     // a monster's finishers (MbMonsterInfo::GetLastAttackCommandId / GetFinestArtsCommandId 0x00913b98 /
     // 0x00913ba8: its mode's MonsterCommand row +0x18 / +0x1c; -1 none)
     int lastAttack = -1, finestArts = -1;
+    // (a monster's Monster +0x20 MP below 0 - Death Mask 554's -1: BtlCalculator::HaveEnoughMp 0x7e2828 passes a unit
+    // whose MP is below 0, nothing spent; its MP here 0 of 0)
+    bool unlimitedMp = false;
     int stolenGold = 0; // (BtlStatus +0x1e0 - AddGold 0x9b63b0: what its Steal Gold hits took from the party)
     bool dead() const { return hp <= 0; }
 };
@@ -188,6 +194,10 @@ struct Cr3Hit {
     // (calculateStealGold 0x7e20e8 - formula 21, command 1647: BtlDamage +0x72 / +0x1c) -1 not a
     // steal; 0 the party broke (AnnounceBattle 0x29); else the money taken (0x28)
     int stolen = -1;
+    // (an HP / MP steal's - +0xbd & 0x60, flags 0x2000 / 0x4000 -: BtlDamageTargetList::Calculate 0x97f81c's last
+    // BtlDamageTarget, the source's on itself - SetStealDamage 0x988eb4: hit k the targets' landed hit-k HP / MP damage
+    // summed, a recovery; not a target's: no break points, chain, combo or total)
+    bool stealBack = false;
 };
 struct Cr3Action {
     int source = -1, target = -1, command = -1; // (fighters' indices - the first target; command -1: a guard, -2: unable to act)
@@ -209,6 +219,14 @@ struct Cr3Action {
     bool assist = false; // (calculateAssist's: its direction BtlAssistDirection, the announcement's {assistant})
     std::vector<std::vector<int>> effectsAfter; // (every fighter's status effects once it is calculated - Cr3BattleRules::snapshotAfter)
     std::vector<int> elementsAfter;             // (every fighter's element then - ChangeElementToCalculation's)
+    // (a field toggle - extraType 0xb, Reverse Gravity 387: BtlFieldEffectList::Add's type 0 - 1 opened, -1 closed; 0 none)
+    int fieldToggle = 0;
+    // (a call for help - extraType 0x11, action 37: the fallen slot it aimed at, the monster now in it - -1 none -, and
+    // whether its roll came up - +0x110 bit 4: AnnounceBattle 92, else 91)
+    struct Reinforced {
+        int fighter = -1, monster = -1;
+        bool success = false;
+    } reinforced;
 };
 
 class Cr3BattleRules {
@@ -251,6 +269,14 @@ public:
     long partyDamage = 0;
     int partyMp = 0, killed = 0;
     bool setup(const Cr3BattleTables& tables, const Cr3Battle& battle, int monsterLevel, uint32_t seed, std::string* error = nullptr);
+    // a monster's fighter (BtlMonsterStatus::vInitialize 0x9c74b4): its Monster row's numbers at its own level (+0x14),
+    // else levelIfNone, full HP and MP, mode 0's MonsterCommand row (initializeCommandSkill); false: no such monster
+    bool monsterFighter(int monsterId, int levelIfNone, Cr3Fighter& out);
+    // (VRainforceToCalculation 0x9c6ef0's VAcquireExperience / VAcquireMoney / VAcquireDrop: the fallen a call for help
+    // replaced, banked as they were - their EXP and money for the result, with the dead at the end; the viewer takes them)
+    std::vector<Cr3Fighter> banked;
+    // BtlStatus::IsDefeat 0x9b6b54: dead, or an enabled kind 33 unless kind 128 (the Mimics' escape - status effect 51)
+    bool defeated(const Cr3Fighter& f) const;
     bool command(int id, Cr3Command& out) const;
     // a turn: the party's choices (a fighter's index -> command (-1 a guard), target), then the
     // monsters' own; returns the actions in order, applied
@@ -275,7 +301,10 @@ public:
     // none - the next turn() the party's alone)
     bool monstersWait = false;
     bool bootCharacter = false; // (MbCouplingInfo +0x44 bit 3: IsBootCharacter, 10x calculateBasicDamage)
-    bool reverseSpeed = false;  // (BtlFieldEffectList effect 0: reverse turn speed sort for 5 turns)
+    // (BtlFieldEffectList's type 0 - Reverse Gravity's, extraType 0xb: a toggle, 5 turns from its cast - the rest of
+    // that turn and four more -, stepped at each turn's end, before the assist; on, BtlCommandList::Sort's slowest first
+    // in lists 0 and 2. Its end a command 58 with no actor - BtlGravityInversionDirection)
+    bool reverseSpeed = false;
     int reverseSpeedTurns = 0;
     bool partyUnhurt = false; // (a test aid - --input guard:party: hits on the party do no damage)
     // the party's money (DAT_014c6e74, live: a Steal Gold hit takes from it at once -

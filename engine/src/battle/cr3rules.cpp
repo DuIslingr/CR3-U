@@ -124,6 +124,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     bootCharacter = (b.couplingFlags & 8) != 0;
     noAssist = (b.couplingFlags & 0x40) != 0; // (MbCouplingInfo +0x44 bit 6: calculateAssist none)
     reverseSpeed = false, reverseSpeedTurns = 0;
+    banked.clear();
     usedSkills_.clear();
     // the enemy AI (BtlOrderPoint: the points 0 to begin with; the coupling's order type, tolerance
     // and element skip; battle.mbe OrderType / ThinkPointAddition)
@@ -160,32 +161,13 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     for (size_t k = 0; k < b.units.size(); ++k) {
         const Cr3BattleUnit& u = b.units[k];
         Cr3Fighter f;
-        f.unit = int(k), f.player = u.player;
-        MbeFile::Row r;
         if (u.player) {
+            f.player = true;
             if (!playerStats(t, u.character, f)) continue;
-        } else {
-            if (!t.monster.find("Monster", u.monster, kMonsterStats, r)) continue;
-            // (BtlMonsterStatus::vInitialize: its own level, +0x14, where it has one - Gunner's and
-            // Axer's 50, the target list's - else the reservation's)
-            f.id = u.monster, f.level = r.i(4) > 0 ? r.i(4) : std::max(monsterLevel, 1), f.element = r.i(5);
-            f.geneLevel = f.level; // (BtlMonsterStatus::VGetGeneLevel: its level)
-            // (MbMonsterInfo::GetStatusEffectResistance: an s16 each at +0x48, in battle.mbe's
-            // list's order - 13, 14, 15, 16, 1)
-            for (size_t k = 0; k < 6; ++k)
-                f.effectResist[k] = (k & 1) ? high16(r.i(17 + k / 2)) : low16(r.i(17 + k / 2));
-            f.maxHp = grown(r.i(6), r.i(10), f.level), f.maxMp = std::max(grown(r.i(7), r.i(11), f.level), 0);
-            f.attack = grown(low16(r.i(8)), low16(r.i(12)), f.level), f.defence = grown(high16(r.i(8)), high16(r.i(12)), f.level);
-            f.speed = grown(low16(r.i(9)), low16(r.i(13)), f.level), f.luck = grown(high16(r.i(9)), high16(r.i(13)), f.level);
-            // (MbMonsterInfo's mode 0: its MonsterCommand row - the element stays the Monster row's)
-            if (const MbeFile::Table* mc = t.monster.table("MonsterCommand"))
-                for (size_t row = 0; row < mc->rows.size(); ++row) {
-                    MbeFile::Row m;
-                    if (!t.monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != u.monster || m.i(1) != 0) continue;
-                    loadMode(f, m);
-                    break;
-                }
+        } else if (!monsterFighter(u.monster, std::max(monsterLevel, 1), f)) {
+            continue;
         }
+        f.unit = int(k);
         f.hp = f.maxHp, f.mp = f.maxMp;
         if (const auto left = partyMpLeft.find(f.id); f.player && left != partyMpLeft.end()) f.mp = std::clamp(left->second, 0, f.maxMp);
         fighters.push_back(f);
@@ -194,6 +176,34 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
         if (error) *error = "no fighters";
         return false;
     }
+    return true;
+}
+
+bool Cr3BattleRules::monsterFighter(int monsterId, int levelIfNone, Cr3Fighter& f) {
+    MbeFile::Row r;
+    if (!tables_ || !tables_->monster.find("Monster", monsterId, kMonsterStats, r)) return false;
+    f = Cr3Fighter();
+    // (BtlMonsterStatus::vInitialize: its own level, +0x14, where it has one - Gunner's and
+    // Axer's 50, the target list's - else the reservation's, or a reinforced slot's)
+    f.id = monsterId, f.level = r.i(4) > 0 ? r.i(4) : std::max(levelIfNone, 1), f.element = r.i(5);
+    f.geneLevel = f.level; // (BtlMonsterStatus::VGetGeneLevel: its level)
+    // (MbMonsterInfo::GetStatusEffectResistance: an s16 each at +0x48, in battle.mbe's
+    // list's order - 13, 14, 15, 16, 1)
+    for (size_t k = 0; k < 6; ++k)
+        f.effectResist[k] = (k & 1) ? high16(r.i(17 + k / 2)) : low16(r.i(17 + k / 2));
+    f.maxHp = grown(r.i(6), r.i(10), f.level), f.maxMp = std::max(grown(r.i(7), r.i(11), f.level), 0);
+    f.unlimitedMp = r.i(7) < 0;
+    f.attack = grown(low16(r.i(8)), low16(r.i(12)), f.level), f.defence = grown(high16(r.i(8)), high16(r.i(12)), f.level);
+    f.speed = grown(low16(r.i(9)), low16(r.i(13)), f.level), f.luck = grown(high16(r.i(9)), high16(r.i(13)), f.level);
+    // (MbMonsterInfo's mode 0: its MonsterCommand row - the element stays the Monster row's)
+    if (const MbeFile::Table* mc = tables_->monster.table("MonsterCommand"))
+        for (size_t row = 0; row < mc->rows.size(); ++row) {
+            MbeFile::Row m;
+            if (!tables_->monster.row(*mc, row, kMonsterCommand, m) || m.i(0) != monsterId || m.i(1) != 0) continue;
+            loadMode(f, m);
+            break;
+        }
+    f.hp = f.maxHp, f.mp = f.maxMp;
     return true;
 }
 
@@ -237,6 +247,7 @@ bool Cr3BattleRules::command(int id, Cr3Command& c) const {
     c.changeElement = r.i(10), c.elementC4 = r.i(34);
     c.selectType = r.i(35), c.selectPriority = r.i(36), c.targetOrder = r.i(37);
     for (int k = 0; k < r.i(39) && k < 16; ++k) c.extraConstants.push_back(r.element(40, size_t(k)));
+    if (r.i(11) > 0) c.effectChance = r.element(12, 0); // (+0x30 / +0x38)
     MbeFile::Row f;
     if (tables_->command.find("CommandFomula", r.i(33), kFormula, f)) c.action = f.i(1), c.formula = f.i(2), c.chain = f.i(3);
     else c.formula = 1;
@@ -591,8 +602,7 @@ bool Cr3BattleRules::hits(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Com
 }
 
 std::vector<std::pair<int, int>> Cr3BattleRules::endTurn() {
-    std::vector<std::pair<int, int>> out;
-    if (reverseSpeed && reverseSpeedTurns > 0 && --reverseSpeedTurns == 0) reverseSpeed = false;
+    std::vector<std::pair<int, int>> out; // (the field effects' step: turn()'s end, BtlCommandManager::Calculate's)
     for (size_t k = 0; k < fighters.size(); ++k) {
         // (BtlCommandManager::TriggerTurnEnd 0x7dbdec / phaseStatusEffect 0x9d0098: trigger 12 - poison and
         // regeneration enabled for their HP change - and end timing 11 after it; the kind 100 command 55's
@@ -696,7 +706,8 @@ int Cr3BattleRules::hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr
     // ("Resistance": the attacker's lowered element resistance - (the target's physical or magic
     // resistance + its element resistance) + the attacker's lowered physical or magic one; the
     // element's skill kinds BtlElement's: 3 + 4e a resistance, 4 + 4e a lowered one)
-    const bool magic = c.damage == 2 || c.damage == 11 || c.damage == 22 || c.damage == 23;
+    // (calculateMpDamage 0x7e2010 - damage 20 - is calculateMagicDamage's own, its result the MP's: magic too)
+    const bool magic = c.damage == 2 || c.damage == 11 || c.damage == 20 || c.damage == 22 || c.damage == 23;
     const int lowerElem = (e > 0 ? skillConstant(s, 4 + 4 * e) : 0) + s.lowerElement[size_t(e)];
     const int lower = magic ? skillConstant(s, 5) + s.lowerMagic : skillConstant(s, 2) + s.lowerPhysical;
     const int resist = magic ? skillConstant(t, 4) + t.magic : skillConstant(t, 1) + t.physical;
@@ -714,7 +725,7 @@ int Cr3BattleRules::hitDamage(const Cr3Fighter& s, const Cr3Fighter& t, const Cr
     out = int(float(out) * effectMultiplier(s, magic ? 55 : 54));
     if (c.spread > 0) out = int(((random() - 0.5f) * float(c.spread) * 2 + 100.0f) / 100.0f * float(out));
     // (calculateMagicChainBonus / calculatePhisicalChainBonus: x (1 + combo/chain x 0.001))
-    if (magic) out = int((float(t.combo) * 0.001f + 1.0f) * float(out));
+    if (magic && c.damage != 20) out = int((float(t.combo) * 0.001f + 1.0f) * float(out)); // (formula 19's chain -1: none)
     else if (c.chain == 3) out = int((float(t.chain) * 0.001f + 1.0f) * float(out));
     return std::max(out, 1);
 }
@@ -783,9 +794,10 @@ int Cr3BattleRules::livingTarget(bool player, int preferred, const Cr3Command* b
     std::vector<int> alive;
     for (size_t k = 0; k < fighters.size(); ++k)
         if (fighters[k].player == player && targetable(int(k), by)) alive.push_back(int(k));
-    if (alive.empty() && !(by && !by->requiredEffects.empty())) // (none to take: a living one all the same, unless a status is required)
+    // (none to take: a living one all the same, unless a status is required - never one defeated, the escaped)
+    if (alive.empty() && !(by && !by->requiredEffects.empty()))
         for (size_t k = 0; k < fighters.size(); ++k)
-            if (fighters[k].player == player && !fighters[k].dead()) alive.push_back(int(k));
+            if (fighters[k].player == player && !defeated(fighters[k])) alive.push_back(int(k));
     if (alive.empty()) return -1;
     return alive[size_t(random() * float(alive.size())) % alive.size()];
 }
@@ -847,7 +859,7 @@ bool Cr3BattleRules::isSelected(int fi, int ti, const Cr3Command& c, int type) {
     // (MP short - the command's cost with the status effects' percentage, where the MP is not below
     // 0 - does not rule the command out, it is only not preferred; nor is a target already of the
     // element it changes to, or a gene command under kind 47)
-    if ((s.mp >= 0 && s.mp < mpCost(s, c)) || t.element == c.changeElement || ((c.flags & 1) && hasKind(s, 47))) return false;
+    if ((!s.unlimitedMp && s.mp >= 0 && s.mp < mpCost(s, c)) || t.element == c.changeElement || ((c.flags & 1) && hasKind(s, 47))) return false;
     const auto has = [&](int e) { return (e == 1 && t.dead()) || hasEffect(ti, e); };
     switch (type) {
     case 1:
@@ -1065,7 +1077,6 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         }
         return command(cmdId, info) ? std::make_pair(info.priority, info.speedCost) : std::make_pair(0, 0);
     };
-    const bool revSpeed = reverseSpeed || std::any_of(fighters.begin(), fighters.end(), [&](const Cr3Fighter& f) { return !f.dead() && hasKind(f, 11); });
     auto sortBucket = [&](std::vector<std::array<int, 4>>& bucket) {
         for (size_t i = 1; i < bucket.size(); ++i) {
             const size_t j = size_t(random() * float(i + 1)) % (i + 1);
@@ -1079,7 +1090,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             const Cr3Fighter& fb = fighters[size_t(b[0])];
             const int sa = speedOf(fa) - fa.weight + ca;
             const int sb = speedOf(fb) - fb.weight + cb;
-            return revSpeed ? sa < sb : sa > sb;
+            return reverseSpeed ? sa < sb : sa > sb; // (bit 3: FUN_007e7120's slowest first, else FUN_007e84c0's fastest)
         });
     };
     std::vector<std::array<int, 4>> bucket0, bucket2, bucket5, order;
@@ -1260,7 +1271,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         if (!command(cmd, c)) c.power = s.attack, c.hits = 1, c.damage = 1;
         // HaveEnoughMp & IsDisableGeneCommand / IsDisableHealCommand (0x0097b0a0): abort mid-turn if MP/status blocks it.
         const int neededMp = c.damage == 22 ? 1 : mpCost(s, c);
-        if (s.mp < neededMp || (!fromSkill && (((c.flags & 1) && hasKind(s, 47)) || (c.ally() && hasKind(s, 67))))) {
+        if ((!s.unlimitedMp && s.mp < neededMp) || (!fromSkill && (((c.flags & 1) && hasKind(s, 47)) || (c.ally() && hasKind(s, 67))))) {
             a.command = -2, a.gaugeAfter = gauge;
             snapshotAfter(a), out.push_back(a);
             continue;
@@ -1307,7 +1318,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         coopNow_ = coopScale_[std::min(a.partners.size() + 1, coopScale_.size() - 1)];
         const int actualHpCost = hpCost(s, c);
         int mpReleased = 0;
-        if (c.damage == 22) { // (calculateMpRelease: spends all remaining MP)
+        if (s.unlimitedMp) {
+            a.mpCost = 0;
+        } else if (c.damage == 22) { // (calculateMpRelease: spends all remaining MP)
             mpReleased = s.mp;
             a.mpCost = s.mp, s.mp = 0;
         } else {
@@ -1440,9 +1453,10 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     landed = true;
                     lastContinued |= t.comboChance;
                     a.combo |= t.comboChance; // (BtlDamageTarget::notifyCombo: HaveComboChanceById - event 2)
-                    if (c.damage == 20) { // (calculateMpDamage: reduces target MP, colour 4)
-                        int m = c.power;
-                        if (c.spread > 0) m = int(((random() - 0.5f) * float(c.spread) * 2.0f + 100.0f) / 100.0f * float(m));
+                    if (c.damage == 20) { // (calculateMpDamage 0x7e2010: reduces target MP, colour 4)
+                        // (calculateMagicDamage's body - calculateBasicDamage, x GetMagicDamageMultipliers - into the MP's
+                        // +0x58, the HP's +0x50 0; calculateMpFluctuation 0x7e38a4: the spread, at most the target's MP)
+                        int m = hitDamage(u, t, c, critUnit, downUnit, rate);
                         m = partyUnhurt && t.player ? 0 : std::clamp(m, 0, t.mp);
                         hit.hits.push_back(0), hit.mpHits.push_back(m), hit.flags.push_back(0), hit.colors.push_back(4);
                         t.mp = std::max(t.mp - m, 0);
@@ -1496,7 +1510,10 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     }
                     if (blocked) rawDmg = 0;
                     const bool downHit = downUnit && !blocked; // (calculateDown 0x7e0ddc: CanBlockBySkill - no down)
-                    const int d = partyUnhurt && t.player ? 0 : rawDmg;
+                    int d = partyUnhurt && t.player ? 0 : rawDmg;
+                    // (calculateHpFluctuation 0x7e35e0: an HP steal - +0xbd bit 5 - skips the element's absorb test and
+                    // takes no more than the target has)
+                    if (c.flags & 0x2000) d = std::min(d, std::max(t.hp, 0));
                     const bool markCrit = critUnit && !critShown && c.damage != 8 && c.damage != 24 && !blocked;
                     if (markCrit) critShown = true;
                     hit.hits.push_back(d);
@@ -1540,6 +1557,24 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                                 if (er.i(14 + q * 2) == 52) t.forcedBy = src;
                     }
                 statusTurnBoost_ = 0;
+            }
+            // (a call for help - extraType 0x11, Rainforcement: BtlCalculator::CalculateStatusEffect 0x9844a8 - +0x110 bit 4
+            // from a byte under the command's chance, +0x38[0] of 256 -, then GiveStatusEffectToCalculation 0x985740 ->
+            // BtlMonsterStatus::VRainforceToCalculation 0x9c6ef0 on the fallen target: its EXP, money and drop banked
+            // first, the slot made the source's own species - or the command's first constant -, vInitialize - its own
+            // level or the slot's, HP and MP full, mode 0 -, its status effects cleared; the skills' opening trigger not in)
+            if (c.extraType == 17 && t.dead() && !t.player) {
+                a.reinforced.fighter = ti;
+                a.reinforced.success = int(random() * 256.0f) < c.effectChance;
+                const int species = c.extraConstants.empty() ? s.id : c.extraConstants[0];
+                if (Cr3Fighter nf; a.reinforced.success && monsterFighter(species, t.level, nf)) {
+                    banked.push_back(t);
+                    nf.unit = t.unit;
+                    t = nf;
+                    a.reinforced.monster = species;
+                } else {
+                    a.reinforced.success = false;
+                }
             }
             // (the same, once after the hits: trigger 8 - unless a hit was blocked; its summed-field test is
             // unsettled and left out - and end timing 7: Counter / Magic Counter, Braveheart's 1525; a target with
@@ -1609,6 +1644,26 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         coopNow_ = 1;
         for (Cr3Hit& th : a.targets)
             while (th.gauge.size() < th.hits.size()) th.gauge.push_back(gauge);
+        // (an HP / MP steal - +0xbd & 0x60: BtlDamageTargetList::Calculate 0x97f81c's BtlDamageTarget for the source on
+        // itself, appended last; BtlDamageTarget::SetStealDamage 0x988eb4 for each hit k of the first target's - its HP
+        // change minus the targets' hit-k HP damage summed, its MP the same, the landed hits alone -, a recovery where not
+        // 0; TakeDamage's clamp at the max)
+        if ((c.flags & 0x6000) && !s.dead()) {
+            Cr3Hit back;
+            back.target = src, back.stealBack = true;
+            int hpSum = 0, mpSum = 0;
+            for (size_t k = 0; k < a.targets.front().hits.size(); ++k) {
+                int hp = 0, mp = 0;
+                for (const Cr3Hit& th : a.targets)
+                    if (k < th.hits.size() && !(th.flags[k] & 4)) hp += th.hits[k], mp += k < th.mpHits.size() ? th.mpHits[k] : 0;
+                back.hits.push_back(-hp), back.mpHits.push_back(-mp), back.flags.push_back(0);
+                back.colors.push_back(hp == 0 && mp != 0 ? 4 : 3), back.gauge.push_back(gauge);
+                hpSum += hp, mpSum += mp;
+            }
+            s.hp = std::min(s.hp + std::max(hpSum, 0), s.maxHp), s.mp = std::min(s.mp + std::max(mpSum, 0), s.maxMp);
+            back.hpAfter = s.hp, back.mpAfter = s.mp;
+            a.targets.push_back(back);
+        }
         a.gaugeAfter = gauge;
         a.target = a.targets[0].target, a.hits = a.targets[0].hits, a.hpAfter = a.targets[0].hpAfter, a.killed = a.targets[0].killed;
         // (the command's end: the actor's end timing 9 - a Rally used up -, its trigger 10, then every unit's
@@ -1616,6 +1671,25 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         endEffects(src, 9);
         if (ownCommand) queueEffectCommands(src, triggerEffects(src, 10, c.elementC4), -1);
         afterAnyCommand(c.elementC4);
+        // (calculateCommands 0x7db93c, after a command of extraType 0xb - Reverse Gravity 387: BtlFieldEffectList::Add
+        // 0x7deaac - type 0, 5 turns: a toggle, cleared where it is on -, then lists 0 and 2's bit 3 to match; their
+        // BtlCommandList::Sort before every next command - the rest of this turn re-sorted here, the inserted left be)
+        if (c.extraType == 11) {
+            if (reverseSpeedTurns > 0) reverseSpeedTurns = 0, reverseSpeed = false;
+            else reverseSpeedTurns = 5, reverseSpeed = true;
+            a.fieldToggle = reverseSpeed ? 1 : -1;
+            for (const bool late : {false, true}) {
+                std::vector<size_t> slots; // (the list's own entries still to come: bucket 0, then bucket 2 - -8)
+                std::vector<std::array<int, 4>> rest;
+                for (size_t k = at + 1; k < order.size(); ++k) {
+                    if (order[k][3] != 0 || order[k][0] < 0) continue;
+                    const int pri = cmdPriorityAndCost(order[k][0], order[k][1]).first;
+                    if (pri != -9 && (pri == -8) == late) slots.push_back(k), rest.push_back(order[k]);
+                }
+                sortBucket(rest);
+                for (size_t k = 0; k < slots.size(); ++k) order[slots[k]] = rest[k];
+            }
+        }
         snapshotAfter(a), out.push_back(a);
         if (decided(at)) break;
         // (BtlSkill::Trigger: a skill adding a command - kind 100 - whose condition now holds, once;
@@ -1682,8 +1756,18 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
                     break;
                 }
     }
-    // (BtlCommandManager::Calculate 0x7db674: the turn's commands worked out, the assist - +0x182, set at every
-    // phaseStart - appended: calculateAssist, after them)
+    // (BtlCommandManager::Calculate 0x7db674: the turn's commands worked out, the field effects stepped -
+    // BtlFieldEffectList::Step, a turn off each, gone at 0 -; Reverse Gravity's over, the lists' bit 3 cleared and a
+    // chunk with no source for command 58 - BtlDamageParam {-1, -1, -1, 0x3a}: its BtlGravityInversionDirection)
+    if (reverseSpeedTurns > 0 && --reverseSpeedTurns == 0) {
+        reverseSpeed = false;
+        if (outcome() == 0) {
+            Cr3Action back;
+            back.source = -1, back.command = 58, back.gaugeAfter = gauge;
+            snapshotAfter(back), out.push_back(back);
+        }
+    }
+    // (then the assist - +0x182, set at every phaseStart - appended: calculateAssist, after them)
     if (Cr3Action assist; assistAfterTurn(assist)) out.push_back(assist);
     return out;
 }
@@ -2197,10 +2281,14 @@ bool Cr3BattleRules::skillEnabled(const Cr3Fighter& f, int kind, int trigger, in
     return on;
 }
 
+bool Cr3BattleRules::defeated(const Cr3Fighter& f) const { return f.dead() || (hasKind(f, 33) && !hasKind(f, 128)); }
+
+// (BtlStatusList::HasVictory 0x9c2ae0 / HasDefeat: every unit of a side IsDefeat - an escaped Mimic, status effect 51's
+// kinds 72 + 33 but not 76, is out: the battle won)
 int Cr3BattleRules::outcome() const {
     bool party = false, monsters = false;
     for (const Cr3Fighter& f : fighters)
-        if (!f.dead()) (f.player ? party : monsters) = true;
+        if (!defeated(f)) (f.player ? party : monsters) = true;
     return !monsters ? 1 : !party ? 2 : 0;
 }
 

@@ -158,7 +158,10 @@ Cr3BattleTables::ActionTiming Cr3BattleTables::actionTiming(int modelId, int com
     const int kind = commandRow.i(1);
     const bool melee = kind == 1;
     const bool ranged = kind == 2 || kind == 3;
-    const bool cast = (kind >= 5 && kind <= 8) || (kind >= 32 && kind <= 36);
+    // (23: BtlStealMagicDirection - an Announce, a MagicCast and the card queued before it, as a SingleMagic's)
+    const bool steal = kind == 23;
+    const bool cast = (kind >= 5 && kind <= 8) || (kind >= 32 && kind <= 36) || steal;
+    const bool castCamera = (kind >= 5 && kind <= 8) || steal;
     const bool groupedEffect = melee || kind == 3 || cast || kind == 10 || kind == 21 || kind == 38;
     const int motion = melee ? 11 : ranged ? 15 : commandRow.i(2);
     if (motion <= 0 || motion >= 32) return {};
@@ -179,9 +182,9 @@ Cr3BattleTables::ActionTiming Cr3BattleTables::actionTiming(int modelId, int com
     const uint32_t flags = uint32_t(commandRow.i(20));
     timing.scaleToTarget = (flags & 4) != 0;
     if (flags & 0x80) timing.sizeSpread = commandRow.f(24);
-    if (kind == 7 || kind == 34) timing.placement = ActionTiming::Placement::Group;
+    if (kind == 7 || kind == 34 || kind == 38) timing.placement = ActionTiming::Placement::Group; // (38: playGroupEffect)
     if (kind == 8 || kind == 35) timing.placement = ActionTiming::Placement::Field;
-    const bool shot = kind == 3 || kind == 6 || kind == 33;
+    const bool shot = kind == 3 || kind == 6 || kind == 33 || steal;
     const int bulletCount = commandRow.i(6);
     if (shot && bulletCount > 0) {
         Projectile& p = timing.projectile;
@@ -199,9 +202,13 @@ Cr3BattleTables::ActionTiming Cr3BattleTables::actionTiming(int modelId, int com
         if (p.duration > 0 && p.duration < 10) timing.targetPoint = commandRow.i(12);
         else p = Projectile();
     }
+    if (steal && timing.projectile.duration > 0) {
+        timing.steal = true;
+        timing.stealEffect = commandRow.i(8), timing.stealPoint = commandRow.i(12); // (+0x28, +0x38)
+    }
     const bool scheduleEffect = timing.projectile.duration > 0 || kind == 5 || kind == 7 || kind == 8 ||
-                                kind == 32 || kind == 34 || kind == 35;
-    if (kind >= 5 && kind <= 8) {
+                                kind == 32 || kind == 34 || kind == 35 || kind == 38;
+    if (castCamera) {
         timing.receiverCamera = commandRow.i(3);
         std::string layout = "iippiifi";
         for (int slot = 0; slot < 5; ++slot) layout += "ipffii";
@@ -226,7 +233,7 @@ Cr3BattleTables::ActionTiming Cr3BattleTables::actionTiming(int modelId, int com
         const int motionType = motion + int(swing);
         MbeFile::Row anim;
         if (!animationRow(battleAnim, "Anim", modelId, motionType, kAnimTiming, anim)) return {};
-        if (kind >= 5 && kind <= 8) {
+        if (castCamera) {
             const float change = anim.f(11);
             timing.spellHandoff = std::isfinite(change) ? std::max(change, 0.0f) * kBattleFrame : 0;
         }
@@ -240,7 +247,8 @@ Cr3BattleTables::ActionTiming Cr3BattleTables::actionTiming(int modelId, int com
             for (size_t i = 0; i < cues.size(); ++i) {
                 const size_t perEffect = damageLeft / (cues.size() - i);
                 const float release = start + cues[i];
-                const float arrival = release + timing.projectile.duration;
+                // (a steal's: the targets' damage at the launch - PlayStealEffect's PlayDamage -, the caster's as they land)
+                const float arrival = release + (timing.steal ? 0.0f : timing.projectile.duration);
                 if (timing.projectile.duration > 0) timing.effects.push_back({release, true});
                 if (scheduleEffect && timing.hitEffect > 0) timing.effects.push_back({arrival, false});
                 appendEventGroups(timing.hits, perEffect, effectGroups, arrival + effectDelay, effectInterval);
@@ -298,6 +306,37 @@ bool Cr3BattleTables::weaponModel(int weapon, std::string& figure, std::string& 
     return !figure.empty();
 }
 
+namespace {
+
+bool makeUnit(const Cr3BattleTables& t, int modelId, bool player, int armour, Cr3BattleUnit& u) {
+    MbeFile::Row m;
+    if (!t.model.find("Model", modelId, kModel, m)) return false;
+    u = Cr3BattleUnit();
+    u.model = modelId, u.name = m.s(2), u.player = player;
+    u.width = m.f(4) * 0.1f, u.depth = m.f(5) * 0.1f, u.cameraSize = m.i(6), u.scale = m.f(7);
+    u.effectScale = m.f(8), u.modelFlags = m.i(10);
+    // CrxModel::Build: a parts model is two figures, <name>b<costume> (FUN_009467ac's "%sb%02d";
+    // b01 without a costume) and <name>h01
+    if (u.modelFlags & 1) u.figure = t.body(u.name, armour), u.head = u.name + "h01";
+    else u.figure = u.name;
+    return true;
+}
+
+} // namespace
+
+bool Cr3Battle::replaceMonster(const Cr3BattleTables& t, size_t slot, int monsterId) {
+    MbeFile::Row mon;
+    Cr3BattleUnit u;
+    if (slot >= units.size() || !t.monster.find("Monster", monsterId, kMonster, mon) || !makeUnit(t, mon.i(1), false, 0, u)) return false;
+    const Cr3BattleUnit& old = units[slot];
+    u.monster = monsterId, u.variant = mon.s(2);
+    // (its home: the slot's x, the monsters' line - BtlUnit::initializeHome - less its own half depth)
+    const float line = old.home[2] + old.depth * 0.5f;
+    u.home = {old.home[0], old.home[1], line - u.depth * 0.5f}, u.yaw = old.yaw;
+    units[slot] = u;
+    return true;
+}
+
 bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, const std::vector<int>& party, uint32_t seed, std::string* error,
                       const std::map<int, int>* armours, const std::map<int, int>* weapons) {
     *this = Cr3Battle();
@@ -312,16 +351,8 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
     fieldSpan = partyLine - monsterLine;
     int armour = 0; // (the party member being added's)
     auto addUnit = [&](int modelId, bool player) -> Cr3BattleUnit* {
-        MbeFile::Row m;
-        if (!t.model.find("Model", modelId, kModel, m)) return nullptr;
         Cr3BattleUnit u;
-        u.model = modelId, u.name = m.s(2), u.player = player;
-        u.width = m.f(4) * 0.1f, u.depth = m.f(5) * 0.1f, u.cameraSize = m.i(6), u.scale = m.f(7);
-        u.effectScale = m.f(8), u.modelFlags = m.i(10);
-        // CrxModel::Build: a parts model is two figures, <name>b<costume> (FUN_009467ac's "%sb%02d";
-        // b01 without a costume) and <name>h01
-        if (u.modelFlags & 1) u.figure = t.body(u.name, armour), u.head = u.name + "h01";
-        else u.figure = u.name;
+        if (!makeUnit(t, modelId, player, armour, u)) return nullptr;
         units.push_back(u);
         return &units.back();
     };

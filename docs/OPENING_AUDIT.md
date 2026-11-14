@@ -630,6 +630,19 @@ quest board, mounts, the top-band messages, letterboxed subtitles); its gaps are
 `battle_2612`'s `Battle_Turn_End` calls `Battle_Monster_0913_End`, which the shipped script doesn't define: the original's
 Squirrel prints the same error each turn and carries on. A data bug, not CR3-U's.
 
+### 28. Round 24 parity audit (the monsters' special actions)
+
+A delegated pass (`/tmp/cr3-opening-audit/round24-special.md`), implemented by another, one at a time under memory caps.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| Steal HP / MP (command flags `0x2000` HP: 390, 391, 1748, 1868; `0x4000` MP: 1646; `BtlDamageTargetList::Calculate` `0x97f81c`, `SetStealDamage` `0x988eb4`, `BtlStealMagicDirection`) | Cast like magic; each hit capped at the target's HP / MP (no absorb test); a last entry heals the caster by what landed; at the motion's event 2 the targets' popups, bullets (effect 147) flying to the caster, its recovery popup and effect (151 / 161) when they land | No steal back; the heal effect on the targets | As traced (Mimic 1646, battle 510). `calculateMpDamage` (`0x7e2010`) is the magic formula written into MP, not a flat power |
+| Call for Help / Muster / summons (action 37, extraType 17; `VRainforceToCalculation` `0x9c6ef0`) | Aimed at a fallen ally's slot; 1742 its own species at 180/256, 1773 .. 1780 the extra constant's (Raptor 1554, Hellhound 513, Awareness 619 .. 624); the fallen's EXP, money and drop banked; the slot remade full; AnnounceBattle 91 "...But no one came." / 92 "Reinforcements arrived!", the new model faded in over 1.0 s | Not in (`reinforceCr3Battle` is the scripts' wave) | As traced (battle 1109); the new monster's drop re-rolled, its opening skill trigger untraced |
+| Reverse Gravity (command 387, extraType 11; Death Mask of Envy 554, coupling 152) | A toggle: slowest first from the rest of the cast turn for 4 more, then a source-less command 58; lines 182 "A strange space opened up nearby!" / 183 | Never set | As traced. Monsters with MP -1 (554, 913, 1408) always have enough MP (`HaveEnoughMp` `0x7e2828`) - CR3-U had clamped them to 0, so 554 never cast it |
+| Mimic Escape (couplings 510 .. 512, command 1741 -> status 51: kinds 72 + 33) | Kind 33 is out of the battle (unless 128): the battle won, no EXP, money or drop for the escaped, its stolen gold kept; it fades over 0.8 s moving away | Battle went on, an invisible Mimic | As traced (the run motion untraced: it keeps its stance) |
+| Avatar (action 38: 1730 / 1731 / 1830) | Name, motion, a 1.0 s white-out and `ev_018`, the movie (c56 / c53 / c58), a 1.0 s white-in, the group effect with the all-foes damage | A motion and effect | As traced (Android's `CRDBmov` has the movies) |
+| Gene Switch (command 1744, action 14; battles 37, 52, 53) | No announce or cast: camera 2, effect 51 on itself, its name 1.0 s, commentary category 57 once a battle | "bs01" | As traced |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -797,9 +810,9 @@ Deterministic REA evidence bundles are stored outside the repository at
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
   passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`52/52` cases, `0 problems`)**:
+- **Controller & UI integration suite (`57/57` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 52 headless controller cases (round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
+  passes all 57 headless controller cases (round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
   `CR3_EVTANIM`), `ladder` (d0202: a fall onto the floor, the ladder from the foot, a rung, off at the
   top), `ranged-camera` (battle 22's ranged direction's global clips, seed 1), `camp-event-ask` (the
   event camp's Yes / No: No, the hard back's stall, Yes) and `camp-event-nogene` (the `0x307` alert);
