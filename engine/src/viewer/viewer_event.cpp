@@ -1577,6 +1577,7 @@ void Viewer::updateCr3Title(float dt) {
             for (ViewFigure& f : t.maps) unload(f);
             unload(t.logo.position), unload(t.logo.fig);
             SDL_Log("title: mode %s", t.modePicked == 2 ? "VS" : "story");
+            if (t.modePicked == 2) vsGreeting = true; // (TitleMenuMain 0x18: SetVS(true), InterfaceMain +0x74d = 1)
             enterCr3Save(t.modePicked == 2);
         } else if (t.mode == 7 && age >= 0.2f) { // (0x14: EndModeSelectMenu, a new reel, CreateTitleMenu, Cr3FadeIn(1, 30))
             resetForNewSession();

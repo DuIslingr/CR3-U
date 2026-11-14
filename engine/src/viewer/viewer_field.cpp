@@ -1724,6 +1724,31 @@ void Viewer::stepAreaFootsteps(bool stepping, bool run, float dt) {
     if (SDL_getenv("CR3_EVTANIM")) SDL_Log("area %s: step on \"%s\": %s", area.name.c_str(), under.c_str(), se);
 }
 
+// Fld2TaskPlayer::StepSimulation 0x876af4's void guard - every step with dt, no event (Fld2GetMain()+0x288 -> +0xbc) and the
+// area's collision up (Fld2System +0x341): on a ladder (state 10) none; falling (3) the place kept as it is; else a ray 20 down
+// from the controller (Fld2World::HitTest, mask 0x100 - the floors): ground, the place kept; none, a ray from 1 above the kept
+// place to 1 below it - a hit: back to it + 0.2001 up (the model's 0.2 under the controller), else to the kept place itself
+// (Fld2CharaCtrl::SetPosition, +0x248 = 1)
+void Viewer::stepAreaVoidGuard(float dt, bool scripted) {
+    if (!areaWalker || dt <= 0 || scripted || areaClimb.on || areaHeld || area.walls.triangles() == 0) return;
+    const cr3::Vec3 p = areaWalker->position();
+    if (areaSafeArea != area.name) areaSafeArea = area.name, areaSafePos = p; // (+0x1f0: the area's first place)
+    if (areaFall.on && !areaRide.on) { // (SM_Fall - a ride's fall, 8, tested as the rest)
+        areaSafePos = p;
+        return;
+    }
+    if (area.walls.distanceBelow(p, 20.0f) >= 0) {
+        areaSafePos = p;
+        return;
+    }
+    cr3::Vec3 back = areaSafePos;
+    if (const float d = area.walls.distanceBelow({areaSafePos[0], areaSafePos[1] + 1.0f, areaSafePos[2]}, 2.0f); d >= 0)
+        back[1] = areaSafePos[1] + 1.0f - d + 0.2001f, areaSafePos = back;
+    areaWalker->setPosition(back), areaWalker->setVelocity({0, 0, 0});
+    SDL_Log("area %s: the void guard - no floor 20 under (%.2f %.2f %.2f), back to (%.2f %.2f %.2f)", area.name.c_str(), p[0], p[1], p[2], back[0],
+            back[1], back[2]);
+}
+
 void Viewer::stepAreaFall() {
     if (!areaWalker) return;
     AreaFall& f = areaFall;
@@ -3820,6 +3845,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         else setAreaMotion(k < 1 ? cr3::Cr3Motion::Walk : cr3::Cr3Motion::Idle);
         if (k >= 1) mv.on = false, SDL_Log("area %s: the player's move over", area.name.c_str());
     }
+    stepAreaVoidGuard(dt, scripted);
     const cr3::Vec3 p = areaWalker->position();
     const bool touchMove = moving && areaDrag.on && areaDragFree() && !areaCam.on && !areaCamSticking;
     areaCamera.step({p[0], p[1] - areaWalker->radius, p[2]}, moveAngle, moving, dt, &area.cameraWalls, &area.walls, touchMove);

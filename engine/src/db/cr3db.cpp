@@ -379,17 +379,24 @@ int Cr3OfflineDb::earnItemPrize(GameState& s, int item, int count, bool toPresen
     return kDbOk;
 }
 
-int Cr3OfflineDb::earnGenePrize(GameState& s, const Cr3Gene& gene) {
+int Cr3OfflineDb::earnGenePrize(GameState& s, const Cr3Gene& gene, bool toPresents) {
     if (gene.master <= 0) return kDbBad;
-    // (CrxGameData::AddGene: GENE_CAPACITY held, then the gene stock's room; else the presents)
-    if (int(s.cr3Genes.size()) < constant("GENE_CAPACITY", 50) + s.cr3GeneStock) {
+    // (dbutils::EarnGenePrize 0x816a30 / DBEmu::OpenGeneBox 0x81c69c: CrxGameData::AddGene(g, 0) - the box, its
+    // GENE_CAPACITY slots -, failing that AddGene(g, 1) - the gene stock's -, failing that a present; with toPresents false
+    // - Sync2's, ReceivePresent's - kDbFull instead, the present kept)
+    const int boxed = int(std::count_if(s.cr3Genes.begin(), s.cr3Genes.end(), [](const Cr3Gene& g) { return !g.stocked; }));
+    const int stocked = int(s.cr3Genes.size()) - boxed;
+    const bool toBox = boxed < constant("GENE_CAPACITY", 50);
+    if (toBox || stocked < s.cr3GeneStock) {
         s.cr3Genes.push_back(gene);
         s.cr3Genes.back().fresh = true;
+        s.cr3Genes.back().stocked = !toBox;
         initGene(s.cr3Genes.back()); // (CrxGameData::AddGene: its slots, where it has none)
         s.cr3GeneBook.insert(gene.master);
         ++s.cr3Records.genesObtained;
         return kDbOk;
     }
+    if (!toPresents) return kDbFull;
     Cr3Present p;
     p.gene = true, p.geneData = gene, p.from = constant("PRESENT_FROM_SERVICE");
     sendPresent(s, p);
@@ -413,7 +420,7 @@ int Cr3OfflineDb::receivePresent(GameState& s, int k) {
     if (k < 0 || size_t(k) >= s.cr3Presents.size()) return finish(kDbBad);
     const Cr3Present p = s.cr3Presents[size_t(k)];
     int r = kDbOk;
-    if (p.gene) r = earnGenePrize(s, p.geneData);
+    if (p.gene) r = earnGenePrize(s, p.geneData, false);
     else if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) {
         const int64_t bonus = constant("LOGIN_BONUS_COIN"), most = constant("COIN_MAX", 99999999);
         if (int64_t(s.cr3Coins) + bonus > most) r = kDbFull;
@@ -429,7 +436,7 @@ int Cr3OfflineDb::receivePresents(GameState& s) {
     for (size_t k = 0; k < s.cr3Presents.size();) {
         const Cr3Present& p = s.cr3Presents[k];
         bool taken = true;
-        if (p.gene) taken = earnGenePrize(s, p.geneData) == kDbOk;
+        if (p.gene) taken = earnGenePrize(s, p.geneData, false) == kDbOk;
         else if (p.item == constant("LOGIN_BONUS_COIN_MASTER_ID")) {
             const int64_t bonus = constant("LOGIN_BONUS_COIN"), most = constant("COIN_MAX", 99999999);
             if (int64_t(s.cr3Coins) + bonus > most) taken = false;

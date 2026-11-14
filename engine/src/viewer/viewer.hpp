@@ -1507,6 +1507,10 @@ struct Viewer {
         float lastY = 0;
     } areaFall;
     void stepAreaFall();
+    // the void guard (Fld2TaskPlayer::StepSimulation 0x876af4: +0x1f0 the last place with a floor within 20 below)
+    cr3::Vec3 areaSafePos{};
+    std::string areaSafeArea;
+    void stepAreaVoidGuard(float dt, bool scripted);
     // Ladders (Fld2Ladder 0x9fb4dc; SM_Ladder 0x8749b4): ragdoll_ldr_NN_ups (the foot), _dws (the
     // top), _upe (the top's end); the "!" at either end on foot, none riding (CollisionEventF /
     // CollisionEventB / GetHitBalloon refuse flag 4105)
@@ -4217,6 +4221,10 @@ struct Viewer {
         int lineKind[3] = {0, 0, 0};
         long lineBonus[3] = {0, 0, 0};
         float stageAt = 0, drainClock = 0;
+        // (8: phaseColosseumContinue 0x9d0b48's PlayContinue - cut 0x83, FadeOut(0.5) - then ContinueOut (phase 0x25): the
+        // next battle once the fade is over and the commentary quiet - voice and queue)
+        bool continuePending = false;
+        bool retired = false; // (phaseColosseumEscapeSelect 0x9d4dac: the escape's yes in a VS battle - result 2, retire)
         // (8 the Sp Shop, 9 the tournament's results - then 7 its prizes)
         std::vector<int> boosts; // (the lifeline items chosen: vsboostitems ids, four at most)
         int boostFocus = 0;      // (the last touched: its name shown)
@@ -4285,10 +4293,27 @@ struct Viewer {
             float delay = 0, waited = 0;
         };
         std::vector<Request> queue;
+        float waited = 0; // (+0xf0: the queue head's wait - CancelRequest empties the queue but leaves it)
     } vsCommentary;
     void startVsCommentary(int a, int b);
     void playVsComment(int category);
+    // (BtlColosseumVoiceUtility's usual pair: CancelRequest 0x9aa9c0 - the queue dropped, even when the Play then fails on
+    // its priority or chance - then Play)
+    void cutInVsComment(int category);
+    bool vsCommentaryBusy() const; // (IsPlaying: a voice speaking or the queue not empty)
     void requestVsComment(int category, float delay);
+    // the battle's commentary calls (viewer_battle.cpp): PlayGetSetByTurn 0x9a8610, PlayBattleStartByTurn 0x9a85b4,
+    // PlayCooperation 0x9a8788, PlayCommandHit 0x9a9228, BtlDamageTargetList::PlayAfterDamageVoice 0x9807b8
+    void commentCr3GetSet();
+    void commentCr3TurnStart();
+    void commentCr3Cooperation(const cr3::Cr3Action& a);
+    void commentCr3CommandHit(const cr3::Cr3Action& a, int kind);
+    void commentCr3AfterDamage(const cr3::Cr3Action& a);
+    int vsGetSets = 0, vsGetSetTurn = 0; // (BtlResult +0: the get-sets since the battle - or a new wave - began)
+    // (InterfaceMain +0x74d: set by TitleMenuMain 0x18 - VS chosen at the title -, read by VSMain::OnUpdate 0x96e2dc state 5:
+    // the menu's fade-in over, story flag 36 - the VS tutorial - clear: cleared, c121_701 played)
+    bool vsGreeting = false;
+    float vsGreetingAt = -1; // (uiClock: the VS menu up - its banner and FadeIn(1, 20 frames) - then state 5)
     void stepVsCommentary(float dt);
     bool vsMoreBattlesAfter() const;
     bool vsCampOpened = false, vsLabOpened = false;

@@ -444,8 +444,9 @@ public:
     // an enabled status effect of kind 79); -1 none
     int pickAssist(int* target = nullptr, int* cost = nullptr) const;
     // calculateAssist itself: the roll (CrxRandom::GenerateReal() <= the chance - none drawn at 0) and the
-    // handler's command resolved with no actor, its points spent; false none
-    bool assistAfterTurn(Cr3Action& out);
+    // handler's command resolved with no actor, its points spent (a finisher of the turn's last chunk first, when its
+    // chance resets); empty none
+    std::vector<Cr3Action> assistAfterTurn();
     // BtlStatusList::GetLowHpPlayer 0x9c3e44 / GetLowMpPlayer 0x9c40fc: a living player at 20 % HP / 10 % MP
     // or under, the lowest rate's (ties: the first); -1 none. IsLowHpAllPlayer 0x9c4428 / IsLowMpAllPlayer
     // 0x9c44b4: every player - the fallen too - at 20 % / 10 % or under
@@ -505,6 +506,16 @@ private:
     std::array<int, 3>& skillUsesOf(Cr3Fighter& f, int skill, const MbeFile::Row& row); // (the row's +0x10 / +0x14 / +0x18 at first)
     int skillMost(const Cr3Fighter& f, int kind) const; // (the enabled skills' highest constant of the kind - BtlSkillUtility::GetLeastHp 0x9b0368's 53; 0 none)
     std::vector<std::array<int, 3>> turnEndQueue_; // (BtlCommandManager +0x48: source - -1 none -, command, target)
+    // BtlCommandManager +0x188 (the last chunk not inserted) and +0xb8 (the combo's actors): cleared by Clear 0x7da8f8 - the
+    // turn's start - alone, so they last into the assist and turn-end passes
+    struct FinisherChunk {
+        bool set = false;
+        int attacker = -1, firstTarget = -1, command = -1;
+        bool combo = false;
+        std::vector<int> hit;
+    };
+    FinisherChunk finisherChunk_;
+    std::vector<int> comboActors_;
     bool turnEndTriggered_ = false;                // (turn() ran trigger 12; endTurn() then doesn't)
     uint32_t rng_ = 1;
     float random(); // [0, 1)

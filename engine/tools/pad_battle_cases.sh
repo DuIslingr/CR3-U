@@ -183,3 +183,13 @@ want battle && run battle-vip-result "0.1:until=result_- 3:quit" \
     "battle: result - VIP: the base 1300 EXP, 1000 money first|battle: VIP x|battle 22: result -" \
     -- --battle 22 --team-level 60 --cr3-party 1,2,3 --vip-days 30 --input "auto"
 unset CR3_BATTLE_SEED
+
+# Round 28: BtlExpansionMeleeDirection (CommandDirection kind 21 - battle 4's 1601) and BtlShowDirection (kind 28 - battle 139's
+# 1765), forced on battle 2612's monster (battles 4 and 139 open with their story scenes): 1601 - bt01 in place, the hits by its
+# effect, camera +0x0c (0), bo04 at bt01's end; 1765 - every hit at once, bt01, camera type 2, no announcement
+want battle && run expansion-melee "0.1:until=turn_2,_the_get-set 0.5:quit" \
+    "fighter 3 given command 1601 on turn 1|an expansion melee (kind 21, motion bt01, camera type 0)|an expansion melee's bo04|turn 2, the get-set" \
+    -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --flag 5056 --input "guard:party foe:1:3:1601 battle guard guard guard"
+want battle && run show-hide "0.1:until=turn_2,_the_get-set 0.5:quit" \
+    "fighter 3 given command 1765 on turn 1|a show / hide direction (kind 28, motion bt01, camera type 2)|turn 2, the get-set" \
+    -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --flag 5056 --input "guard:party foe:1:3:1765 battle guard guard guard"

@@ -6,7 +6,8 @@ want shops && run sp-shop-cursor "3:right 3.5:east 4.2:south 5:down 5.5:east 6.2
 
 # LuckyBoxMenu (its tutorial seen - flag 143): left/right over buy panels; up/down hands focus to its
 # check button - the first box (focus 0) a gene box: its list (GeneBoxListMenu), down scrolls, back shuts it
-want shops && run sp-box-panels "3:east 3.5:east 4:right 4.5:right 5:left 5.5:up 6:east 7:down 7.5:south 8.5:down 9:south 9.5:south 11:quit" \
+# (the second press a second after the first: under load the boxes' screen can still swallow one at +0.5 s)
+want shops && run sp-box-panels "3:east 4:east 4.5:right 5:right 5.5:left 6:up 6.5:east 7.5:down 8:south 9:down 9.5:south 10:south 11.5:quit" \
     "shop: the boxes|shop: box buy panel 1|shop: box buy panel 2|shop: box buy panel 1|shop: box focus check|shop: box contents (the gene box's list)|shop: the gene box's list - month|shop: the gene box's list at line 1|shop: the gene box's list closed|shop: box focus buy|shop: leaving the boxes|shop: back from the boxes" \
     -- --area t0101 --flag 27 --flag 143 --input "camp:field5"
 
@@ -50,3 +51,12 @@ want vs && run vs-tutorial "0:until=gene_selector:_genes 1:right 1.5:east 2:east
 want vs && run vs-tutorial-camp "0:until=event_ended 0.1:until=vs_script:_ended 1:east 1.5:quit" \
     "vs: to the vista s910_t01_00701_evt|event ended|vs: script VS_Top|vs script: ended|vs: button 1 shut" \
     -- --area t0101 --cr3-party 1 --page 0.05 --flag 3501 --flag 3502 --input "vs:open"
+# Round 28: the colosseum's commentary through tournament 1 (commentators 1, 2; flag 7001 - battle_2001's start message
+# seen): the battle-in lines, category 6 cut on the first get-set while they still speak, the after-damage cuts (0xe: the
+# battle decided), the win's 0x7c, PlayContinue's 0x83 cut and the next battle once it is quiet, the get-set's 0x86 / 0x87,
+# the perfect's 0x7f, 0x80, 0x82
+export CR3_BATTLE_SEED=1
+want vs && run vs-commentary "0.1:until=tournament_over 1:quit" \
+    "vs commentary: commentators 1, 2|vs commentary: request 1 (1.0 s)|turn 1, the get-set|vs commentary: cut 6|vs commentary: cut 14|battle 2001: won|vs commentary: request 124|vs commentary: cut 131|vs: on to battle 2 (the commentary quiet)|vs commentary: request 134|vs: on to battle 3 (the commentary quiet)|vs commentary: request 135|vs commentary: request 127|vs commentary: request 128|vs commentary: request 130" \
+    -- --area t0101 --team-level 60 $vs_done --flag 7001 --input "vs:open wait:3 vs:battle wait:2 vs:normal wait:2 vs:row0 wait:1 vs:ok wait:1 vs:yes auto wait:3 vs:wild0 vs:next wait:3 vs:wild1 vs:next wait:3 vs:wild2 vs:next"
+unset CR3_BATTLE_SEED

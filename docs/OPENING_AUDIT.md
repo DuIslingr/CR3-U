@@ -691,6 +691,28 @@ A delegated pass (`/tmp/cr3-opening-audit/round27-next.md`), implemented by anot
 | The field Options footer (mpMe) | Five panels: Download, Title Screen (0x1a3, Yes back to the title), Manual (the tutorial list), App Intro, Achievements (online) | None | As traced (`options-footer`); Download, App Intro and Achievements inert |
 | VIP on the battle result (`BattleResultV2Menu`) | The VIP banners, two "x n.n" panels, the base totals for 2.067 s then the multiplied ones with a 1/3 s pulse; the money digits at frames +10 (every result) | Plain banners, totals multiplied silently | As traced (`battle-vip-result`, `--vip-days n` a test aid); the panel's slide-in not played |
 
+### 32. Round 28 parity audit (the VS commentary, the entry greeting, the backlog's rules items, the void guard)
+
+A delegated research pass (`/tmp/cr3-opening-audit/round28-research.md`, backlog `round28-remaining.md` items 1, 2, 4 - 6, 8,
+10, 12), implemented by another under memory caps.
+
+| | The original | CR3-U before | CR3-U now |
+|---|---|---|---|
+| The commentary's cut (`BtlColosseumVoiceUtility`) | Almost every utility calls `CancelRequest` 0x9aa9c0 - the queue emptied, its wait (`+0xf0`) left - then `Play`, the queue dropped even when the `Play` fails on priority or chance | `playVsComment` never cleared the queue; each request kept its own wait | `cutInVsComment`; one shared wait, back to 0 only when the head plays |
+| Category 6 (`PlayBattleStartByTurn` 0x9a85b4) | `phaseCalculate` 0x9d490c, the commands chosen: on the first get-set alone, and only while a voice speaks or the queue isn't empty (a cut) | Every turn's `phaseStart` | As traced, at each `turn()` call |
+| The get-set (`PlayGetSetByTurn` 0x9a8610) | After `count++` and the get-set camera: the first get-set 0x86 / 0x87 for the second / third battle's ghost; later 7 / 8 / 9 (by the count) or 10 at 50 / 50, 0.3 s on, with 10 also 0xb / 0xc / 0xd | None | As traced; the count restarts with a new wave (`CreateMonster`) |
+| Cooperation, a gene command, the action's end | `PlayCooperation` 0x9a8788 (a player's: three units 0x47, two 0x46 or the pair's 0x48 .. 0x51); `PlayCommandHit` 0x9a9228 at the announcement of action types 1 - 3, 5 - 8, 0xf, 0x16, 0x17, 0x19, 0x20 - 0x24, 0x26 for a gene command (its own category, else 0x51 + the character); `PlayAfterDamageVoice` 0x9807b8 on the last target list: no damage 0x10 / 0x11, else the first row of decided, break, Last Attack, combo, critical, blocked, reflected, heal, weak, resisted, the HP left (0xe .. 0x45); then the buff / debuff line (0x63 .. 0x74, two of a family held 0x67 / 0x70) | None | As traced. The last hit's `+0x75` / `+0x76` (no writer found), chunk `+0xa4` and `HasEffectToRemove(0x4c)` rows taken as false |
+| The climax's after line (`PlayClimaxAfter` 0x9a94cc) | Event 1 of the Finest Arts' timer, just before its first hit: 0x76 or 0x76 + the character, 1.0 s on | Requested as the Finest Arts began | At its first hit |
+| Continue, perfect, retire | 0x83 cut on to the next battle (`phaseColosseumContinue`: `FadeOut(0.5)`, the BGM stopped, then `ContinueOut` waits for the fade and a quiet commentary); 0x7f, 0x80, 0x82 when the tournament is cleared; a VS escape's Yes a retire - 0x85 cut, result 2 | None; a VS escape rolled as a story one | As traced (`vs.continuePending`, a 20 s cap); a retire is a loss without the defeat lines. `PlayNoContinue` (0x84) left out: no `setPhase(0x24)` found |
+| The VS greeting `c121_701` | `TitleMenuMain` 0x18 sets `InterfaceMain +0x74d`; `VSMain` state 5 - the menu's 20-frame fade-in over - plays it once and clears it, unless story flag 36 (the VS tutorial) is set | Not in | As traced (`vsGreeting`, 20/30 s after the VS menu opens) |
+| A reinforcement (`VRainforceToCalculation` 0x9c6ef0) | Trigger 0 on the new monster's skills, then `BtlStatusEffectList::Clear`; no opening for it or a new wave (`BtlSystem +0x140` set by its constructor alone) | No trigger at all | As traced (`battle-target-tests`) |
+| Break Reset (skill kind 70, `SetBreakPointToFront` 0x988cc4) | Unblocked, the first target's first landed hit's points replaced by minus the gauge as it stood, through `BtlBreakPoint::Add` (crossing 0: a break, the gauge to the other side's 500) | The gauge zeroed after all the action's points, blocked or not | As traced (`battle-target-tests`); "unblocked" taken as no hit of the action blocked |
+| Direction kinds 21, 28, 29 | `BtlExpansionMeleeDirection` (1601): `bt01` in place, the hits by its effect, camera `+0x0c`, at `bt01`'s end `bo04` then the stay; `BtlShowDirection` / `BtlHideDirection` (1765 / 1766): all the damage at once, `bt01` / `bt02`, camera type 2, no announcement (the `m222_sub` mesh change invisible: no figure has it) | The generic path, its announcement and attack camera, no `bo04` | As traced |
+| The VS gene prize (`OpenGeneBox` 0x81c69c, `EarnGenePrize` 0x816a30) | `AddGene(g, 0)` - the box's 50 -, failing that `AddGene(g, 1)` - the stock -, failing that a present; `ReceivePresent` / `Sync2` keep the present instead | Room counted as box + stock, but the gene always into the box | As traced (`earnGenePrize(.., toPresents)`) |
+| The void guard (`Fld2TaskPlayer::StepSimulation` 0x876af4) | Not on a ladder or in an event; falling: the place kept as it is; else a ray 20 down - ground, kept; none, a ray `safe ± 1` - back to its hit + 0.2001, else to the kept place | Not in | As traced (`stepAreaVoidGuard`) |
+| A finisher after the turn's last command (`addLastAttack` 0x7dbfc8) | `+0x188` / `+0xb8` cleared by `BtlCommandManager::Clear` alone, so a combo by the turn's last command leads into a finisher before the first assist or turn-end command that resets the chance (one with no source always does); kinds 100 / 101 appended, not inserted | The chunk local to each `resolveOrder`; a sourceless next refused; every effect-added command counted as inserted | As traced (`battle-target-tests`); the assist now resolves through `resolveOrder` |
+| `BtlDamage +0x69` | A hit on a weakness (calc `+0x7c` over 1, `getDamageColor` 1) | Commented as "it downed the unit" | Comments fixed; condition 20 and trigger 7 still take the down flag |
+
 ## Original-code evidence
 
 Static inspection via REA/Ghidra against the shipped ARM64 Android shared library (`+0x100000`
@@ -773,24 +795,20 @@ Deterministic REA evidence bundles are stored outside the repository at
   seen live (no finisher tier above 0 reachable headless). Round 7's approximations: the held
   unit's rotation, the release's timing, `SetStart`'s place in the turn, `IsWildCard`, and the
   addition units.
-- **Battle rules (Round 18)**: skill kind 70's `SetBreakPointToFront(-gauge)` (whether it zeroes the
-  gauge before the action's points; its function not read). Turn-end (trigger 12) and assist
-  commands aren't in, so no finisher follows a turn's last command. The status effects' in-game
-  names aren't in any table.
+- **Battle rules (Round 18, 28)**: the status effects' in-game names aren't in any table. Break Reset's
+  "not blocked" (`BtlCalculator::WasBlocked` after `Calculate(5)`) is taken as no hit of the action blocked.
 - **The VS tutorial (Round 10, 18)**: the overlay's windows are routed as the original's; not traced:
   `DAT_0141ab10` (VSMain's results gate), the reward windows' order inside `VsAchieveProductionMenu`
-  (CR3-U's own prizes screen), and the `c121_701` greeting's `InterfaceMain +0x74d`. Never called:
+  (CR3-U's own prizes screen); whether the title is `InterfaceMain +0x74d`'s only writer. Never called:
   `s910_t01_00602 .. 00605` and `00704`. `FldUtilReserveVsBattleIN` reads the tournament row at the
   old index before looking the new id up (the tutorial's: tournament 1 anyway). The pad case stops
   when tournament 1's battles start.
-- **The commentary (Round 18)**: the categories of `PlayGetSetByTurn`, `PlayCooperation`,
-  `PlayAfterDamageToPlayer` / `ToEnemy`, `PlayCommandHit`, `PlayAfterNoDamage` and the perfect,
-  continue, no-continue and retire lines aren't in; `PlayClimaxAfter`'s line is queued at the
-  climax, not at the first hit. Live checks used commentators forced to 1, 2 (the reachable tutorial
-  tournament is silent).
+- **The commentary (Round 18, 28)**: the after-damage rows on the last hit's `+0x75` / `+0x76`
+  (no writer found), chunk `+0xa4` and `HasEffectToRemove(0x4c)` are taken as false; `PlayNoContinue`
+  (0x84) looks unreachable. The cooperation line plays at the action's start, not at the first
+  partner's cooperation effect.
 - **Gene windows (Round 9, 18)**: `GeneStatusMenu`'s `skills` taps (no shipped script uses them);
   the disposal list's header title (`CreateHeaderMenu(-1)`: which frame -1/30 s shows is UNKNOWN).
-  The VS prize check (`earnGenePrize`) still counts the stock.
 - **Finishers (Round 10, 17)**: the Finest Arts' `PlayGlobal(1.0)` is the battle's global camera
   for 1 s; `CollectDamageTarget`'s per-action picks are in, its shuffle's generator is CR3-U's.
 - **Bloom (Round 10, 18)**: Vulkan rounds to 5 / 6 / 5 in its shader (RGBA8 images) and reads the
@@ -807,8 +825,8 @@ Deterministic REA evidence bundles are stored outside the repository at
   as 0.1 a 30-Hz update (`ToyCameraMenu::Pose` steps it per drawn frame). The iris's on-screen size
   rests on the `(50, 1, 50)` scale being taken about the root's turn (no footage).
 - **The ride, falls and ladders (Round 12, 18)**: what `se06` and the other surfaces are (water is
-  likely for `se06`); `ragdoll_fall_NN`'s `+0x3a8` reader; the 20-unit void guard (`StepSimulation`
-  `0x876af4`: warped back to the last safe place) isn't in. Ladders: the top's end is found by each
+  likely for `se06`); `ragdoll_fall_NN`'s `+0x3a8` reader; the void guard's other gates (`+0x3b0`, `Fld2System
+  +0x341`) are taken as "no event, the area's collision loaded". Ladders: the top's end is found by each
   end's floor, not the `upe` box; the camera follows the player rather than the traced 1-per-rung
   ease; the exits' positions read from the traced axis maths (medium). In entry modes that don't call
   `SetRide`, the original leaves both `vct` and `vch` solid; CR3-U follows flag 4105 always.
@@ -857,10 +875,11 @@ Deterministic REA evidence bundles are stored outside the repository at
   `forbiddenEffects`, single-action `bucket0` Unison, `GetSameElementCorrection` (`103`) +
   post-damage element shift + Fix Element (`102`), 34-column `StatusEffect` stacking/priority/
   `68` immunity vs `flags & 8`, CR3 evasion (`82`) & crit (`44`), mid-turn `HaveEnoughMp` abort,
-  passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset).
-- **Controller & UI integration suite (`70/70` cases, `0 problems`)**:
+  passive regen (`45`), `extraType 13` Break force-set, and passive `70` Break Reset - round 28: its
+  first landed hit's points `-gauge` -; round 28's reinforcement trigger 0 and the finisher before the turn end's first command).
+- **Controller & UI integration suite (`73/73` cases, `0 problems`)**:
   `CR3_DATA=/home/duislingr/Downloads/Archive/CR3_android_1.1.3 sh engine/tools/pad_vita_test.sh engine/build/cr3view`
-  passes all 70 headless controller cases (round 27 added `camp-gene-skills`, `options-footer`, `battle-vip-result`; round 26 added `gem-pickup`, `gem-exchange`, `door`, `reboot`, `mode-select`, `options-credits`, `quest-clear`; round 25 added `special-support`, `target-icons`, `battle-opening`; round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
+  passes all 73 headless controller cases (round 28 added `expansion-melee`, `show-hide`, `vs-commentary`; round 27 added `camp-gene-skills`, `options-footer`, `battle-vip-result`; round 26 added `gem-pickup`, `gem-exchange`, `door`, `reboot`, `mode-select`, `options-credits`, `quest-clear`; round 25 added `special-support`, `target-icons`, `battle-opening`; round 24 added `mimic-steal-escape`, `reverse-gravity`, `call-for-help`, `avatar`, `gene-switch`; round 23 added `battle-analyze`, `battle-party-totals`, `battle-cooperation-name`; `ladder` now also sees the talk mark come and go; round 21 added `gene-level-up` and `sp-box-tutorial`, round 22 `battle-auto` and `battle-mass`). Round 18 added `footsteps` (t0101's `se08` steps, with
   `CR3_EVTANIM`), `ladder` (d0202: a fall onto the floor, the ladder from the foot, a rung, off at the
   top), `ranged-camera` (battle 22's ranged direction's global clips, seed 1), `camp-event-ask` (the
   event camp's Yes / No: No, the hard back's stall, Yes) and `camp-event-nogene` (the `0x307` alert);

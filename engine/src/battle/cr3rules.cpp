@@ -1111,6 +1111,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     modeRequests.clear();
     giveFieldEffects(); // (phaseStart: GiveFieldStatusEffect, every turn)
     turnEndQueue_.clear(); // (the last turn end's list: played or dropped)
+    finisherChunk_ = {}, comboActors_.clear(); // (BtlCommandManager::Clear 0x7da8f8: +0x188, +0xb8)
     // BtlCommandManager::AddCommandBySelected + ExecuteAIForEnemy + BtlCommandList::Sort:
     // buckets 0 (normal, sorted), 2 (priority -8, sorted), and 5 (priority -9, unsorted)
     std::vector<std::array<int, 4>> raw; // (fighter, command, target, 1: a skill's added command)
@@ -1171,8 +1172,8 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
             snapshotAfter(back), out.push_back(back);
         }
     }
-    // (then the assist - +0x182, set at every phaseStart - appended: calculateAssist, after them)
-    if (Cr3Action assist; assistAfterTurn(assist)) out.push_back(assist);
+    // (then the assist - +0x182, set at every phaseStart - appended: calculateAssist, after them - a finisher before it)
+    for (Cr3Action& assist : assistAfterTurn()) out.push_back(std::move(assist));
     // (phaseCalculate 0x9d490c, the commands worked out: BtlCommandManager::TriggerTurnEnd 0x7dbdec - trigger 12 on every
     // unit's skills and status effects, the commands their kinds 100 / 101 add into the turn-end list - +0x48 -, made unique;
     // played after the turn end's script - turnEndActions -, the poison and the regeneration then as endTurn's numbers)
@@ -1202,7 +1203,7 @@ void Cr3BattleRules::queueTurnEnd(int bearer, const std::vector<std::pair<int, i
 std::vector<Cr3Action> Cr3BattleRules::turnEndActions() {
     std::vector<std::array<int, 4>> order;
     for (const auto& [src, id, tgt] : turnEndQueue_)
-        if (id != 55) order.push_back({src, id, tgt, 4});
+        if (id != 55) order.push_back({src, id, tgt, 5});
     turnEndQueue_.clear();
     std::vector<Cr3Action> out = order.empty() ? std::vector<Cr3Action>{} : resolveOrder(std::move(order), 0);
     for (Cr3Action& a : out) markAssist(a);
@@ -1216,7 +1217,7 @@ std::vector<Cr3Action> Cr3BattleRules::scriptCommands(const std::vector<std::pai
     if (cmds.empty()) return {};
     for (size_t k = 0; k < fighters.size(); ++k) endEffects(int(k), 11);
     std::vector<std::array<int, 4>> order;
-    for (const auto& [id, target] : cmds) order.push_back({-1, id, target, 4});
+    for (const auto& [id, target] : cmds) order.push_back({-1, id, target, 5}); // (AddCommandBySelected: appended)
     std::vector<Cr3Action> out = resolveOrder(std::move(order), 0);
     for (Cr3Action& a : out) markAssist(a);
     return out;
@@ -1236,20 +1237,16 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
     bool lastHadChance = false, lastContinued = false;
     std::vector<int> lastTargets;
     // The finishers (BtlCommandManager::calculateCommands 0x007db93c: addLastAttack 0x007dbfc8 before
-    // each next command). The last action not itself inserted - this +0x188 - and the combo's
-    // participants - +0xb8: the actor added after a comboing action, alone after any other
-    // (calculateCommand 0x007dc424)
-    struct FinisherChunk {
-        bool set = false;
-        int attacker = -1, firstTarget = -1, command = -1;
-        bool combo = false;
-        std::vector<int> hit;
-    } chunk;
-    std::vector<int> comboActors;
+    // each next command). The last action not itself inserted - +0x188 - and the combo's participants - +0xb8: the
+    // actor added after a comboing action, alone after any other (calculateCommand 0x007dc424). Members: cleared
+    // only by BtlCommandManager::Clear 0x7da8f8 (turn()'s start), so the turn's last chunk reaches the assist pass
+    // (calculateAssist 0x7dbbf4) and the turn-end list (CalculateTurnEnd 0x7dbeac)
+    FinisherChunk& chunk = finisherChunk_;
+    std::vector<int>& comboActors = comboActors_;
     // (BtlStatusList::AddEffectCommand: the commands a status effect's enabled kinds add - 97 an interrupt,
     // next - AddInterruptCommand -, 98 the same with no actor, 99 a counter - AddCounterCommand 0x9b0f64: only
     // against an attacker of the other side, aimed at it -, 100 / 101 after the turn's - AddCommand /
-    // AddNoSourceCommand -; marked 4: a status effect's)
+    // AddNoSourceCommand -; marked 4: a status effect's put in at the top - BtlCommand +0x1a set -, 5 one appended - not)
     size_t nextAt = 0;
     const auto insertAt = [&](size_t pos, const std::array<int, 4>& e) {
         order.insert(order.begin() + long(std::min(pos, order.size())), e);
@@ -1261,8 +1258,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             if (kind == 97) insertAt(nextAt++, {bearer, id, -1, 4});
             else if (kind == 98) insertAt(nextAt++, {-1, id, bearer, 4});
             else if (kind == 99 && attacker >= 0 && fighters[size_t(attacker)].player != fighters[size_t(bearer)].player) insertAt(nextAt++, {bearer, id, attacker, 4});
-            else if (kind == 100) order.push_back({bearer, id, -1, 4});
-            else if (kind == 101) order.push_back({-1, id, bearer, 4});
+            else if (kind == 100) order.push_back({bearer, id, -1, 5}); // (appended - +0x1a 0: not inserted)
+            else if (kind == 101) order.push_back({-1, id, bearer, 5});
         }
     };
     // (after a command: TriggerAfterCommandToCalculation 0x97dc38 - trigger 11 on every unit - and playCommand
@@ -1277,7 +1274,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
     // (a no-actor command next - Regenerate's - is still played once the party has fallen)
     const auto decided = [&](size_t at) { return outcome() != 0 && !(outcome() == 2 && at + 1 < order.size() && order[at + 1][0] < 0); };
     size_t recorded = 0;
-    int resolvingFrom = 0; // (the order entry in course: its inserted mark - BtlCommand +0x1a)
+    int resolvingFrom = 0; // (the order entry in course: its mark - 0 / 5 not inserted, BtlCommand +0x1a 0)
+    const auto notInserted = [](int from) { return from == 0 || from == 5; };
     // (BtlStatusList::CollectDamageTarget: those the next command would hit - its chosen one, or
     // its side's where it hits them all or picks one at random)
     auto wouldHit = [&](int src, int cmd, int tgt) {
@@ -1300,29 +1298,32 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 out.push_back(int(k));
         return out;
     };
-    for (size_t at = 0; at < order.size(); ++at) {
-        if (out.size() > recorded) { // (the action just resolved: the chunk and the combo's actors)
-            const Cr3Action& done = out.back();
-            if (done.command != -2 && done.source >= 0) {
-                if (!done.combo) comboActors.clear();
-                comboActors.push_back(done.source);
-                if (resolvingFrom == 0) {
-                    chunk.set = true, chunk.attacker = done.source, chunk.firstTarget = done.target;
-                    chunk.command = done.command < 0 ? 51 : done.command, chunk.combo = done.combo, chunk.hit.clear();
-                    for (const Cr3Hit& h : done.targets) chunk.hit.push_back(h.target);
-                }
+    const auto record = [&]() { // (the action just resolved: the chunk and the combo's actors)
+        if (out.size() <= recorded) return;
+        const Cr3Action& done = out.back();
+        if (done.command != -2 && done.source >= 0) {
+            if (!done.combo) comboActors.clear();
+            comboActors.push_back(done.source);
+            if (notInserted(resolvingFrom)) {
+                chunk.set = true, chunk.attacker = done.source, chunk.firstTarget = done.target;
+                chunk.command = done.command < 0 ? 51 : done.command, chunk.combo = done.combo, chunk.hit.clear();
+                for (const Cr3Hit& h : done.targets) chunk.hit.push_back(h.target);
             }
-            recorded = out.size();
         }
+        recorded = out.size();
+    };
+    for (size_t at = 0; at < order.size(); ++at) {
+        record();
         // (addLastAttack: two linked actions at least; the last one's command able to lead into one -
         // MbCommandInfo +0xbd bit 1 -, its combo; the next not inserted and breaking the chain -
         // BtlDamageChunk::HaveChanceReset 0x0097e56c: the other side, its actor under status effect
-        // kind 31 - no action -, or none of the same units hit -; the first target standing)
-        if (chunk.set && comboActors.size() >= 2 && chunk.combo && order[at][3] == 0 && order[at][0] >= 0) {
+        // kind 31 - no action -, or none of the same units hit; a next with no source - GetStatus failing - always -;
+        // the first target standing)
+        if (chunk.set && comboActors.size() >= 2 && chunk.combo && notInserted(order[at][3])) {
             Cr3Command lc;
             const auto& [nSrc, nCmd, nTgt, nFrom] = order[at];
             bool reset = command(chunk.command, lc) && (lc.flags & 0x200);
-            if (reset) {
+            if (reset && nSrc >= 0) {
                 const bool otherSide = fighters[size_t(chunk.attacker)].player != fighters[size_t(nSrc)].player;
                 Cr3Command nc;
                 bool shared = false;
@@ -1380,7 +1381,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         // which those are) - the first enabled kind 120 - GetCommandChange: Dance's 1512, the pig form's 9 - is the command, its
         // target chosen again (+0x20 -1); then end timing 3 - the kind 120 ones' - and the no-action, MP and ban tests below,
         // all on the new command)
-        const bool ownCommand = fromSkill != 1 && fromSkill != 4;
+        const bool ownCommand = fromSkill != 1 && fromSkill != 4 && fromSkill != 5;
         if (ownCommand) {
             Cr3Command pre;
             if (!command(cmd < 0 ? 51 : cmd, pre)) pre = Cr3Command();
@@ -1394,7 +1395,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         a.finisher = fromSkill == 2 || fromSkill == 3; // (a Last Attack - 2 - or Finest Arts - 3 - addLastAttack put in)
         // (MbStatusEffectInfo::IsNoAction: a kind 31 effect - stunned, asleep - and it does nothing;
         // a skill's command plays all the same)
-        if (hasKind(s, 31) && (fromSkill == 0 || fromSkill == 4)) {
+        if (hasKind(s, 31) && (fromSkill == 0 || fromSkill == 4 || fromSkill == 5)) {
             a.command = -2, a.gaugeAfter = gauge;
             snapshotAfter(a), out.push_back(a);
             continue;
@@ -1741,7 +1742,9 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             // from a byte under the command's chance, +0x38[0] of 256 -, then GiveStatusEffectToCalculation 0x985740 ->
             // BtlMonsterStatus::VRainforceToCalculation 0x9c6ef0 on the fallen target: its EXP, money and drop banked
             // first, the slot made the source's own species - or the command's first constant -, vInitialize - its own
-            // level or the slot's, HP and MP full, mode 0 -, its status effects cleared; the skills' opening trigger not in)
+            // level or the slot's, HP and MP full, mode 0 -, then TriggerSkillToCalculation with trigger 0 - the skills of no
+            // trigger enabled, their kind 60 effects given - and BtlStatusEffectList::Clear, those effects wiped again. No
+            // opening (trigger 1 / 2): BtlSystem +0x140 is set by its constructor alone)
             if (c.extraType == 17 && t.dead() && !t.player) {
                 a.reinforced.fighter = ti;
                 a.reinforced.success = int(random() * 256.0f) < c.effectChance;
@@ -1750,14 +1753,16 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     banked.push_back(t);
                     nf.unit = t.unit;
                     t = nf;
+                    (void)triggerSkills(ti, 0);
+                    t.effects.clear(), t.effectsDormant.clear(), t.effectStacks.clear(), t.effectUses.clear();
                     a.reinforced.monster = species;
                 } else {
                     a.reinforced.success = false;
                 }
             }
             // (BtlDamageTarget::TriggerAfterDamageToCalculation 0x988498, once a target: its first hit - a miss, +0x5c, ends it
-            // with no trigger at all -: trigger 7 - its skills', its status effects'; condition 20 that hit's +0x69, it downed the
-            // unit - and end timing 6 (the hit counters, Daunted); that hit not blocked - +0x6e - and the landed hits' HP change
+            // with no trigger at all -: trigger 7 - its skills', its status effects'; condition 20 that hit's +0x69 - a hit on
+            // a weakness: BtlDamage::Calculate's calc +0x7c over 1, getDamageColor 1; the down flag passed here - and end timing 6 (the hit counters, Daunted); that hit not blocked - +0x6e - and the landed hits' HP change
             // summed no heal - calculateHpFluctuation's sign: damage below 0 -: trigger 8 and end timing 7 (Counter / Magic
             // Counter, Braveheart's 1525); no hit at all - a status command's -: trigger 9 and end timing 8)
             if (hit.hits.empty()) {
@@ -1802,6 +1807,14 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             if (anyCrit) bonus += table[1];
             if (anyDown) bonus += table[2];
             int left = bonus, targetsLeft = int(a.targets.size());
+            // (Break Reset - skill kind 70 enabled, with the advantage as the action starts - and the command not blocked -
+            // BtlCalculator::WasBlocked / WasBlockedBySkill: taken as no hit of it blocked -: SetBreakPointToFront 0x988cc4,
+            // the first target's first landed hit's points replaced by minus the gauge as it stood - BtlBreakPoint::Add's
+            // own rules then, a break where it crosses -; the later hits and the other targets their usual points)
+            bool anyBlocked = false;
+            for (const Cr3Hit& th : a.targets)
+                for (uint8_t fl : th.flags) anyBlocked |= (fl & 8) != 0;
+            bool resetFront = !a.targets.empty() && !anyBlocked && hasSkillKind(s, 70);
             for (Cr3Hit& th : a.targets) {
                 int share = targetsLeft > 0 ? left / targetsLeft : 0;
                 left -= share, --targetsLeft;
@@ -1816,13 +1829,15 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                         share -= part, --hitsLeft;
                         int points = base + part;
                         if (th.killed && int(h) == lastLanded) points += table[3];
-                        a.broke |= addBreak(points * (s.player ? 1 : -1)); // (BtlDamageTarget::AddBreakPointToCalculation: event 3)
+                        points *= s.player ? 1 : -1;
+                        if (resetFront && &th == &a.targets.front()) // (its first landed hit: -gauge, the kill bonus its own)
+                            points = -gauge + (th.killed && int(h) == lastLanded ? table[3] * (s.player ? 1 : -1) : 0), resetFront = false;
+                        a.broke |= addBreak(points); // (BtlDamageTarget::AddBreakPointToCalculation: event 3)
                     }
                     th.gauge.push_back(gauge);
                 }
             }
         }
-        if (hasSkillKind(s, 70)) gauge = 0, gaugeStarted = false; // (Break Reset passive skill 70 @ 0x0097ac10)
         // (BtlDamageChunk::CalculateForceBreakPoint 0x0097b77c -> BtlCalculator::calculateForceBreakPoint 0x007e15a8, the
         // chunk's +0x98: a Finest Arts - BtlCalculator +0xa5 - +500 for the party, -500 for the monsters; else extra
         // type 13 - command 398 - one of its constants, shuffled; ConsumeBreakPointToCalculation 0x0097b920 then sets the
@@ -1949,6 +1964,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     break;
                 }
     }
+    record(); // (the list's last action: the chunk the next list - the assist's, the turn end's - starts from)
     return out;
 }
 
@@ -2271,7 +2287,8 @@ std::vector<std::pair<int, int>> Cr3BattleRules::triggerEffects(int fi, int trig
 }
 
 // (the conditions: IsLowHp - HP / max HP at or under the constant's % -, the command's +0xc4 - 1 physical, 2 magic -, the
-// turns left, the HP against the constant, the hit's +0x69 - it downed the unit -; a skill's (BtlSkill::Trigger's switch) 2 HP
+// turns left, the HP against the constant, the hit's +0x69 - a hit on a weakness (calc +0x7c over 1, getDamageColor
+// 0x9a0c44's 1), not a down: CR3-U still passes the down flag for it -; a skill's (BtlSkill::Trigger's switch) 2 HP
 // at or over the constant's %, 4 the command the unit's own attack (param +0x48 - VGetAttackCommandId, vtable +0xb0 - against
 // +8, neither -1), 5 not downed and physical, 15 physical or magic, 19 the command the constant, 21 holding status effect
 // the constant, 23 the other unit's HP at or under it, 24 / 25 the device's hour in 6 .. 17 / outside, 28 every foe's HP at
@@ -2500,17 +2517,20 @@ int Cr3BattleRules::pickAssist(int* target, int* costOut) const {
     return pick.command;
 }
 
-bool Cr3BattleRules::assistAfterTurn(Cr3Action& out) {
-    if (noAssist || outcome() != 0) return false; // (HasVictory / HasDefeat, MbCouplingInfo +0x44 bit 6)
+std::vector<Cr3Action> Cr3BattleRules::assistAfterTurn() {
+    if (noAssist || outcome() != 0) return {}; // (HasVictory / HasDefeat, MbCouplingInfo +0x44 bit 6)
     const float chance = assistChance(cheer);
-    if (chance <= 0 || random() > chance) return false; // (CrxRandom::GenerateReal() <= the chance)
+    if (chance <= 0 || random() > chance) return {}; // (CrxRandom::GenerateReal() <= the chance)
     int target = -1, cost = 0;
     const int cmd = pickAssist(&target, &cost);
-    if (cmd < 0) return false;
+    if (cmd < 0) return {};
     cheer = std::max(cheer - cost, 0); // (the points spent; CrxGameActivities::UseAssist: a log alone)
-    out = resolveSourceless(cmd, target);
-    out.assist = true;
-    return !out.targets.empty();
+    // (calculateAssist 0x7dbbf4 -> calculateCommands: the turn's last chunk's finisher - addLastAttack - before it)
+    std::vector<std::array<int, 4>> order{std::array<int, 4>{-1, cmd, target, 5}};
+    std::vector<Cr3Action> out = resolveOrder(std::move(order), 0);
+    for (Cr3Action& a : out)
+        if (a.source < 0 && a.command == cmd) a.assist = true;
+    return out;
 }
 
 Cr3Action Cr3BattleRules::resolveSourceless(int id, int target) {

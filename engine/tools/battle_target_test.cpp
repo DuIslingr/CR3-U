@@ -643,8 +643,21 @@ int main() {
             rules.gauge = -400; // enemy advantage -> player disadvantage
             rules.fighters[0].skills = {98}; // Break Reset (70)
             rules.monstersWait = true;
-            rules.turn({{0, 30, 2}, {1, -1, -1}});
-            check(rules.gauge == 0, "passive skill kind 70 resets Break Gauge to 0 when party acts");
+            // (round 28: SetBreakPointToFront - the first target's first landed hit's points -gauge, through BtlBreakPoint::Add:
+            // -400 + 400 reaches 0 from below, a break - +500 first -, so 500 after that hit; not zeroed after the action)
+            const auto resetTurn = rules.turn({{0, 30, 2}, {1, -1, -1}});
+            const cr3::Cr3Action* resetAct = nullptr;
+            for (const auto& a : resetTurn)
+                if (a.source == 0) resetAct = &a;
+            check(resetAct && !resetAct->targets.empty() && !resetAct->targets[0].gauge.empty() &&
+                      !(resetAct->targets[0].flags[0] & 4) && resetAct->targets[0].gauge[0] == 500 && resetAct->broke,
+                  "passive skill kind 70 sets the first landed hit's break points to -gauge (a break from -400 to 500)");
+            rules.gauge = -400, rules.fighters[0].skills.clear();
+            const auto plainTurn = rules.turn({{0, 30, 2}, {1, -1, -1}});
+            for (const auto& a : plainTurn)
+                if (a.source == 0)
+                    check(!a.targets.empty() && !a.targets[0].gauge.empty() && a.targets[0].gauge[0] < 0,
+                          "without kind 70 the first hit adds its usual points");
         }
         // Round 10: BtlCommandManager::addLastAttack - two linked actions (the second a combo on the downed
         // target), the last's command able to lead into one, the next from the other side: the last
@@ -709,6 +722,29 @@ int main() {
                 check(who == std::vector<int>({0, 1}), "a random-enemy command spreads its actions over the living opponents, one entry each");
             }
             check(seen765, "the random-enemy command acts");
+            // Round 28: +0x188 / +0xb8 last the whole turn (BtlCommandManager::Clear alone resets them) - a comboing pair as
+            // the turn's last commands gets its finisher before the turn end's first command, a sourceless one resetting the
+            // chance (HaveChanceReset: no source -> 1); none within the turn itself
+            reset();
+            rules.fighters[0].speed = 400;
+            rules.scripted[2].push_back({1, 760}), rules.scripted[3].push_back({1, 760});
+            acts = rules.turn({{0, 30, 2}});
+            any = false;
+            for (const auto& a : acts) any |= a.finisher;
+            check(acts.size() == 3 && acts[0].source == 0 && acts[2].combo && !any, "the turn's last combo: no finisher within the turn");
+            const auto endActs = rules.scriptCommands({{72, -1}});
+            check(endActs.size() == 2 && endActs[0].finisher && endActs[0].command == 761 && endActs[0].source == acts[2].source &&
+                      endActs[1].source < 0 && endActs[1].command == 72,
+                  "the turn's last combo leads into a finisher before the turn end's sourceless command");
+            reset();
+            rules.fighters[0].speed = 400;
+            rules.scripted[2].push_back({1, 760}), rules.scripted[3].push_back({1, 760});
+            (void)rules.turn({{0, 30, 2}});
+            reset();
+            (void)rules.turn({{0, -1, -1}}); // (a new turn: Clear - the chunk gone)
+            any = false;
+            for (const auto& a : rules.scriptCommands({{72, -1}})) any |= a.finisher;
+            check(!any, "a new turn clears the last chunk");
         }
         // Round 20: the enemy AI (BtlStatusList::addCommandByAI / Select / getCommandTarget, BtlOrderPoint)
         {
@@ -1420,6 +1456,30 @@ int main() {
                     const double share = 100.0 * came / std::max(tries, 1);
                     std::cout << "1742's call for help over " << tries << " tries: " << share << " % came\n";
                     check(tries == 3000 && std::abs(share - 70.3) < 2.5, "1742 calls its own species at 180 / 256 (70.3 %)");
+                }
+                {
+                    // Round 28: VRainforceToCalculation's trigger 0 then BtlStatusEffectList::Clear - the Death Mask 554 (skill 454:
+                    // no trigger, kind 60 -> status effect 79) called in by 1742
+                    cr3::Cr3BattleRules r;
+                    const int m = special(r, 78, 554);
+                    (void)r.triggerSkills(m, 0); // (special() swaps the fighter in after setup's trigger 0)
+                    check(r.hasEffect(m, 79), "554's trigger 0 gives it status effect 79 at the start (skill 454)");
+                    cr3::Cr3Fighter fallen = r.fighters[size_t(m)];
+                    fallen.hp = 0;
+                    r.fighters.push_back(fallen);
+                    const int slot = int(r.fighters.size()) - 1;
+                    bool came = false;
+                    for (int n = 0; n < 50 && !came; ++n) {
+                        r.fighters[size_t(slot)] = fallen, r.banked.clear();
+                        r.scripted[m].push_back({1, 1742});
+                        for (const cr3::Cr3Action& a : r.turn(guards(r)))
+                            if (a.source == m && a.command == 1742 && a.reinforced.success) came = true;
+                    }
+                    // (79 is back afterwards: the next trigger - 11, after the command - gives a no-trigger skill's kind 60 again)
+                    const auto& got = r.fighters[size_t(slot)];
+                    check(came && got.id == 554 && got.hp == got.maxHp && r.hasEffect(slot, 79) && got.effects.size() == 1 &&
+                              got.effectStacks.count(79) && got.effectStacks.at(79) == 1,
+                          "a reinforcement: trigger 0, its status effects cleared, the no-trigger skill's 79 given again once");
                 }
                 {
                     // 1773 (Ark Raptor 1555's): the constant's species - 1554 Raptor -, always; its level the row's or the slot's

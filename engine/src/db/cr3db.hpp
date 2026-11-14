@@ -395,7 +395,7 @@ public:
     // dbutils::EarnItemPrize / EarnGenePrize: one more of it (an item past its most to the
     // presents - SendPresent, from PRESENT_FROM_SERVICE)
     int earnItemPrize(GameState& s, int item, int count, bool toPresents = true);
-    int earnGenePrize(GameState& s, const Cr3Gene& gene);
+    int earnGenePrize(GameState& s, const Cr3Gene& gene, bool toPresents = true);
     int earnGenePrize(GameState& s, int master) { return earnGenePrize(s, Cr3Gene{master}); }
     void addGold(GameState& s, int amount) const;
     void addCoins(GameState& s, int amount) const;

@@ -4560,6 +4560,7 @@ void Viewer::openVsMenu() {
     game.vsSelected = -1; // (VSMain 3: DAT_0149ef7c -1)
     audio.playSe("com_003", false);
     SDL_Log("vs: open - %zu tournaments, mission %d (goal %d)", game.cr3Db->vsTournaments().size(), game.cr3Vs.mission, game.cr3Vs.missionGoal);
+    vsGreetingAt = uiClock; // (VSMain 3 .. 5: CreateVsModeMenu, its banner, FadeIn(1, 20 frames) - stepVsScript)
     runVsScript("VS_Top");
 }
 
@@ -4648,6 +4649,16 @@ void Viewer::vsEnter() {
 
 void Viewer::stepVsScript(float dt) {
     stepSpBoxes(dt); // (the Sp Shop's boxes: LuckyBoxMain's timed states)
+    // (VSMain::OnUpdate 0x96e2dc state 5: the menu's fade-in - 20 frames at 30 a second - over; +0x74d set and story flag 36 - the
+    // VS tutorial in course - clear: +0x74d cleared, c121_701; during the tutorial the latch kept for the next pass)
+    if (vsGreetingAt >= 0 && vs.screen != 0 && uiClock - vsGreetingAt >= 20.0f / 30.0f) {
+        vsGreetingAt = -1;
+        if (vsGreeting && !game.flag(36)) {
+            vsGreeting = false;
+            audio.playVoice("c121_701");
+            SDL_Log("vs: the entry greeting c121_701");
+        }
+    }
     // (VsModeMain 0x11 / 0xd: back from the camp - on the top - or the gene lab: VS_Top)
     if (vsCampOpened && cr3Camp.stage == 0) {
         vsCampOpened = false;
@@ -6179,6 +6190,14 @@ void Viewer::stepVsScore(float dt) {
             vsBattleOver(true);
         }
         break;
+    case 8: // (ContinueOut, phase 0x25: the 0.5 s fade over and !IsPlaying - a cap of 20 s against a voice never ending)
+        if (vs.continuePending && t >= 0.5f && (!vsCommentaryBusy() || t >= 20.0f)) {
+            vs.continuePending = false;
+            SDL_Log("vs: on to battle %d (the commentary quiet)", vs.battle + 1);
+            cr3BattleMode = false, cr3BattleEvents.reset(); // (on to the next: no field between)
+            vsNextBattle();
+        }
+        break;
     default: break;
     }
 }
@@ -6262,7 +6281,7 @@ void Viewer::vsNextBattle() {
         savedPos = {p[0], p[1], p[2]}, savedYaw = areaYaw;
     }
     game.next.battleLevel = tt.level, game.next.battleMusic = tt.bgm, game.next.battleNext = 1;
-    vs.screen = 5, vs.since = 0;
+    vs.screen = 5, vs.since = 0, vs.retired = false;
     SDL_Log("vs: battle %d - coupling %d on field %d at level %d", vs.battle + 1, tt.coupling[vs.battle], tt.mapId, tt.level);
     requestCr3Battle(tt.coupling[vs.battle], tt.mapId);
 }
@@ -6296,7 +6315,7 @@ bool Viewer::vsBattleOver(bool won) {
         vs.lost = !won;
         // (PlayVictory 0x9a92dc: 0x7c, the last battle 0x7d; PlayDefeat 0x9a9380: 0x7e then 0x81)
         if (won) requestVsComment(vsMoreBattlesAfter() ? 0x7c : 0x7d, 0.0f);
-        else requestVsComment(0x7e, 0.0f), requestVsComment(0x81, 0.0f);
+        else if (!vs.retired) requestVsComment(0x7e, 0.0f), requestVsComment(0x81, 0.0f); // (a retire: PlayRetire's 0x85 alone)
         if (won) {
             vs.screen = 6, vs.since = 0, vs.scoreAt = uiClock; // (the score shown over the battle)
             // (SetParamNumber 0xb5a32c: the bonuses above 0 only, packed into the lines in order -
@@ -6319,9 +6338,14 @@ bool Viewer::vsBattleOver(bool won) {
     vs.drops.insert(vs.drops.end(), cr3WaveDrops.begin(), cr3WaveDrops.end());
     cr3WaveDrops.clear();
     if (vsMoreBattles()) {
-        cr3BattleMode = false, cr3BattleEvents.reset(); // (on to the next: no field between)
-        vsNextBattle();
+        // (phaseColosseumContinue 0x9d0b48 - phase 0x23, a won battle 1 or 2: PlayContinue 0x9a93c4 - cut 0x83 -, FadeOut(0.5),
+        // the BGM stopped; ContinueOut then waits for the fade and the commentary: stepVsScore's stage 8)
+        cutInVsComment(0x83);
+        audio.stopBgm(15); // (0.5 s at the 30 updates a second)
+        vs.continuePending = true, vs.stageAt = uiClock;
     } else {
+        // (the tournament cleared: phaseColosseumPerfect 0x9d0e28 - PlayPerfect 0x9a932c, 0x7f, 0x80 and 0x82 requested)
+        requestVsComment(0x7f, 0.0f), requestVsComment(0x80, 0.0f), requestVsComment(0x82, 0.0f);
         // (WinRating 0x9d0890: DBSystem::Request(EndVSTournament) first; then phaseVictoryOut's EntryResult -
         // the result screen -, the results after it: endCr3Battle's vsShowResults)
         vs.endScore = game.cr3Vs.score;
@@ -6713,20 +6737,32 @@ void Viewer::playVsComment(int category) {
     SDL_Log("vs commentary: %d - %s", category, name.c_str());
 }
 
-void Viewer::requestVsComment(int category, float delay) {
-    if (vsCommentary.on) vsCommentary.queue.push_back({category, delay, 0});
+void Viewer::cutInVsComment(int category) {
+    if (!vsCommentary.on) return;
+    vsCommentary.queue.clear();
+    SDL_Log("vs commentary: cut %d", category);
+    playVsComment(category);
 }
 
-// (OnUpdate 0x9aa26c: once no voice speaks, the queue's first after its delay - counted only while waiting)
+bool Viewer::vsCommentaryBusy() const { return vsCommentary.on && (audio.voicePlaying() || !vsCommentary.queue.empty()); }
+
+void Viewer::requestVsComment(int category, float delay) {
+    if (!vsCommentary.on) return;
+    vsCommentary.queue.push_back({category, delay, 0});
+    SDL_Log("vs commentary: request %d (%.1f s)", category, double(delay));
+}
+
+// (OnUpdate 0x9aa26c: once no voice speaks, the queue's first after its delay - +0xf0 counted only while waiting, back to 0
+// once the head is played; CancelRequest leaves it)
 void Viewer::stepVsCommentary(float dt) {
     VsCommentary& v = vsCommentary;
     if (!v.on || v.queue.empty() || audio.voicePlaying()) return;
     VsCommentary::Request& r = v.queue.front();
-    r.waited += dt;
-    if (r.waited < r.delay) return;
+    v.waited += dt;
+    if (v.waited < r.delay) return;
     const int category = r.category;
     v.queue.erase(v.queue.begin());
-    v.speaking = -1;
+    v.waited = 0, v.speaking = -1;
     playVsComment(category);
 }
 

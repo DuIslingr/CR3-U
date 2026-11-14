@@ -338,6 +338,21 @@ function runStaffroll() {
         gsFullDaily.cr3Items[105] = 99;
         check(db.getDailyItem(gsFullDaily, 1) == game::kDbFull && gsFullDaily.cr3Items[105] == 99 && !gsFullDaily.flag(4200),
               "getDailyItem leaves daily flag unset when stack is already at 99");
+        // Round 28: EarnGenePrize / OpenGeneBox - AddGene(g, 0) the box's 50, then AddGene(g, 1) the stock, then a present;
+        // ReceivePresent's (toPresents false) kDbFull, the present kept
+        game::GameState gsGenes;
+        gsGenes.cr3GeneStock = 1;
+        for (int k = 0; k < 50; ++k) gsGenes.cr3Genes.push_back(game::Cr3Gene{1});
+        check(db.earnGenePrize(gsGenes, 2) == game::kDbOk && gsGenes.cr3Genes.size() == 51 && gsGenes.cr3Genes.back().stocked,
+              "a gene prize with the box full goes into the stock");
+        check(db.earnGenePrize(gsGenes, 3) == game::kDbOk && gsGenes.cr3Genes.size() == 51 && gsGenes.cr3Presents.size() == 1 &&
+                  gsGenes.cr3Presents.back().gene && gsGenes.cr3Presents.back().geneData.master == 3,
+              "box and stock full: the gene prize becomes a present");
+        check(db.receivePresent(gsGenes, 0) == game::kDbFull && gsGenes.cr3Presents.size() == 1 && gsGenes.cr3Genes.size() == 51,
+              "a gene present that doesn't fit stays a present");
+        gsGenes.cr3Genes.erase(gsGenes.cr3Genes.begin());
+        check(db.receivePresent(gsGenes, 0) == game::kDbOk && gsGenes.cr3Presents.empty() && !gsGenes.cr3Genes.back().stocked,
+              "a gene present taken into the box once it has room");
     }
 
     // Round 3 audited EventRuntime & GameState: EvtWindow 8..10 vs TutorialMenu 20, default centered alignment,

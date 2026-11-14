@@ -1120,6 +1120,7 @@ void Viewer::reinforceCr3Battle(int coupling) {
     cr3Drops.clear(), cr3DropsAnnounced.clear(), cr3Choices.clear(), cr3Actions.clear(), cr3Popups.clear();
     rollCr3Drops();
     SDL_Log("battle %d: the next wave - battle %d, %zu units", cr3Battle.coupling, coupling, cr3Battle.units.size());
+    vsGetSets = 0; // (BtlSystem::CreateMonster 0x7d9960: BtlResult +0 - the get-set count - back to 0)
     playCr3Camera(cr3Battle.cameras[1], 1.0f, false, {0, 0, 0}, 0, 0);
     cr3BattleStage = Cr3BattleStage::Action; // (phaseCallTurnEndEvent: the new script's turn's end, its commands, then the next turn)
     runCr3BattleScript("Battle_Turn_End_Base");
@@ -1140,6 +1141,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     for (auto& [slot, m] : cr3ScriptModels) unload(m.figure);
     cr3FieldObjects.clear(), cr3ScriptModels.clear();
     cr3Turn = 0, cr3ForcedEnd = -1, cr3BattleFieldId = fieldId, cr3FieldEffects.clear(); // (BtlResult's: 0, +4 / +8 none, factors 1)
+    vsGetSets = vsGetSetTurn = 0; // (BtlResult +0: the get-set count)
     cr3AutoResult = 0, cr3TabLit = 0, cr3MarkerPressed = false, cr3AutoTaps.clear(); // (the battle's own BtlInterfaceSystem: no auto)
     cr3BattleVista = false;
     cr3ResultAdd[0] = cr3ResultAdd[1] = 0, cr3ResultFactor[0] = cr3ResultFactor[1] = 1;
@@ -1262,7 +1264,7 @@ void Viewer::updateCr3Battle(float dt) {
             cr3Choices.clear();
             if (cr3StartCommand[0] >= 0)
                 cr3Choices.push_back({cr3StartCommand[0], cr3StartCommand[1], -1}), cr3StartCommand = {-1, -1}, cr3Rules.monstersWait = false;
-            freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
+            commentCr3TurnStart(), freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
             cr3CountRecords();
             cr3ActionAt = 0;
             cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
@@ -1797,13 +1799,164 @@ int Viewer::cr3FighterOfUnit(size_t k) const {
     return -1;
 }
 
+namespace {
+
+// (BtlStatus vfunc +0x150: a player's character 1 .. 5; base + it, else category 0 - no row, Play a no-op)
+int cr3CommentChar(const cr3::Cr3BattleRules& r, int fighter, int base) {
+    if (fighter < 0 || size_t(fighter) >= r.fighters.size()) return 0;
+    const cr3::Cr3Fighter& f = r.fighters[size_t(fighter)];
+    return f.player && f.id >= 1 && f.id <= 5 ? base + f.id : 0;
+}
+
+// (a command's row in a CommandInfo side table - MbGetLastAttackInfoByCommandId: LastAttack's +4 the command)
+bool cr3CommandInTable(const cr3::MbeFile& m, const char* table, const char* format, int command) {
+    const cr3::MbeFile::Table* t = m.table(table);
+    if (!t) return false;
+    cr3::MbeFile::Row r;
+    for (size_t k = 0; k < t->rows.size(); ++k)
+        if (m.row(*t, k, format, r) && r.i(1) == command) return true;
+    return false;
+}
+
+} // namespace
+
+// PlayGetSetByTurn 0x9a8610 (BtlSysStateSelect::phaseStart 0x9d35d4, count++ and the get-set's camera - after any opening):
+// the first get-set 0x86 for the second battle's ghost, 0x87 the third's; later X - 7 to the 4th, 8 to the 7th, else 9 - or 10
+// at 50 / 50, 0.3 s on, and with 10 also 0xb / 0xc / 0xd at once. Nothing cut
+void Viewer::commentCr3GetSet() {
+    if (cr3Turn == vsGetSetTurn) return; // (a get-set again in the same turn - the escape's no, the opening's end)
+    vsGetSetTurn = cr3Turn, ++vsGetSets;
+    if (!vsCommentary.on) return;
+    const int n = vsGetSets;
+    if (n == 1) {
+        if (vs.battle == 1) requestVsComment(0x86, 0.0f);
+        else if (vs.battle == 2) requestVsComment(0x87, 0.0f);
+        return;
+    }
+    const bool ten = SDL_rand(2) != 0;
+    requestVsComment(ten ? 10 : n <= 4 ? 7 : n <= 7 ? 8 : 9, 0.3f);
+    if (ten) requestVsComment(n <= 4 ? 0xb : n <= 7 ? 0xc : 0xd, 0.0f);
+}
+
+// PlayBattleStartByTurn 0x9a85b4 (BtlSysStateSelect::phaseCalculate 0x9d490c, the commands chosen): the first get-set's
+// alone, and only to cut a voice still speaking or queued off - cut 6
+void Viewer::commentCr3TurnStart() {
+    if (vsGetSets == 1 && vsCommentaryBusy()) cutInVsComment(6);
+}
+
+// PlayCooperation 0x9a8788 (BtlDamageChunk::PlayCooperation 0x97a69c, its first partner's): a player's alone - three units
+// 0x47; two 0x46 or the pair's own (MbGetCooperationCommentCategory 0xf43df4, either order) at 50 / 50. Cut
+void Viewer::commentCr3Cooperation(const cr3::Cr3Action& a) {
+    if (!vsCommentary.on || a.source < 0 || !cr3Rules.fighters[size_t(a.source)].player || a.partners.empty() || a.partners.size() > 2) return;
+    if (a.partners.size() == 2) return cutInVsComment(0x47);
+    int x = cr3CommentChar(cr3Rules, a.source, 0), y = cr3CommentChar(cr3Rules, a.partners.back(), 0);
+    if (x > y) std::swap(x, y);
+    static constexpr int kPair[6][6] = {{0}, {0, 0, 0x48, 0x49, 0x4a, 0x4b}, {0, 0, 0, 0x4c, 0x4d, 0x4e}, {0, 0, 0, 0, 0x4f, 0x50}, {0, 0, 0, 0, 0, 0x51}, {0}};
+    const int pair = x >= 1 && y <= 5 ? kPair[x][y] : 0;
+    cutInVsComment(SDL_rand(2) ? 0x46 : pair);
+}
+
+// PlayCommandHit 0x9a9228 (BtlAnnounceDirection::vPlay 0x99066c: the announcement CreateDirection 0x990d98 puts first for
+// action types 1, 2, 3, 5 .. 8, 0xf, 0x16, 0x17, 0x19, 0x20 .. 0x24, 0x26): a gene command's - +0xbc bit 0 - own category
+// (MbGetPlayCommandCommentCategoryByCommandId), else a player's 0x51 + its character. Cut
+void Viewer::commentCr3CommandHit(const cr3::Cr3Action& a, int kind) {
+    static constexpr int kKinds[] = {1, 2, 3, 5, 6, 7, 8, 15, 22, 23, 25, 32, 33, 34, 35, 36, 38};
+    if (!vsCommentary.on || a.source < 0 || a.command < 0 || std::find(std::begin(kKinds), std::end(kKinds), kind) == std::end(kKinds)) return;
+    cr3::Cr3Command c;
+    if (!cr3Rules.command(a.command, c) || !(c.flags & 1)) return;
+    const int id = a.command;
+    int cat = id == 0x130 ? 0x57 : id == 0x147 ? 0x6b : id == 0x158 ? 0x58 : id >= 0x169 && id <= 0x16e ? 0x59 : id == 0x181 ? 0x5a
+            : id == 0x183 ? 0x5b : id == 0x184 ? 0x5c : id == 0x185 ? 0x5d : id == 0x186 || id == 0x187 ? 0x5e : id == 0x18a ? 0x5f
+            : id == 0x18d ? 0x61 : id == 0x18e ? 0x62 : id == 0x38 || id == 0x39 ? 0x60 : 0;
+    if (cat == 0 && cr3Rules.fighters[size_t(a.source)].player) cat = cr3CommentChar(cr3Rules, a.source, 0x51);
+    cutInVsComment(cat);
+}
+
+// BtlDamageTargetList::PlayAfterDamageVoice 0x9807b8 (BtlDamageChunk::VUpdate case 4 0x97a1b0: every target list announced),
+// on the last list - here the action's one: its last target T. No miss on T (IsDamage 0x98951c): a landed hit - PlayAfterDamage
+// 0x988b48 -, else PlayAfterNoDamage (an enemy T 0x10, a player struck by an enemy 0x11). Then every target's given effects
+// (0x989568 -> 0x9a9608): buffs on its own side, debuffs on the other's
+void Viewer::commentCr3AfterDamage(const cr3::Cr3Action& a) {
+    if (!vsCommentary.on) return;
+    const cr3::Cr3Hit* last = nullptr;
+    for (const cr3::Cr3Hit& th : a.targets)
+        if (!th.stealBack) last = &th;
+    if (!last || last->target < 0) return;
+    const auto isPlayer = [&](int f) { return f >= 0 && size_t(f) < cr3Rules.fighters.size() && cr3Rules.fighters[size_t(f)].player; };
+    const cr3::Cr3Hit& T = *last;
+    const bool tPlayer = isPlayer(T.target), srcEnemy = a.source >= 0 && !isPlayer(a.source);
+    bool miss = false, landed = false;
+    for (uint8_t fl : T.flags) miss |= (fl & 4) != 0, landed |= !(fl & 4); // (+0x5c a miss; +0x5d landed - a blocked hit too)
+    if (!miss && !landed) { // (PlayAfterNoDamage 0x9a8938)
+        if (!tPlayer) cutInVsComment(0x10);
+        else if (srcEnemy) cutInVsComment(0x11);
+    } else if (!miss && a.command != 0x37) { // (PlayAfterDamage: ToPlayer 0x9a89a8 / ToEnemy 0x9a8da0)
+        const bool finest = cr3CommandInTable(cr3BattleTables.command, "FinestArts", "iiii", a.command);
+        if (!(finest && !tPlayer)) { // (ToEnemy: none for a Finest Arts - its queued 0x76 line kept)
+            // (HasVictoryToDirection / HasDefeatToDirection: a side all fallen once this action's HP is shown)
+            bool party = false, foes = false;
+            for (size_t f = 0; f < cr3Rules.fighters.size(); ++f) {
+                int hp = f < cr3HpShown.size() ? cr3HpShown[f] : cr3Rules.fighters[f].hp;
+                for (const cr3::Cr3Hit& th : a.targets)
+                    if (size_t(th.target) == f) hp = th.hpAfter;
+                if (hp > 0) (cr3Rules.fighters[f].player ? party : foes) = true;
+            }
+            const uint8_t first = T.flags.empty() ? 0 : T.flags.front();
+            const int color = T.colors.empty() ? 0 : int(T.colors.front());
+            const bool lastAttack = cr3CommandInTable(cr3BattleTables.command, "LastAttack", "iiiii", a.command);
+            int cat = 0;
+            bool matched = true;
+            // (the last hit's +0x76 / +0x75 rows - 0x13 / 0x12, 0x3e / 0x38 .. 0x1d / 0x1c - left out: their writer is untraced,
+            // taken as false; chunk +0xa4 - 0x17 / 0x16 - and HasEffectToRemove(0x4c) - 0x21 / 0x20 - likewise)
+            if (!party || !foes) cat = tPlayer ? 0xf : 0xe;
+            else if (a.broke) cat = tPlayer ? 0x45 : 0x44;
+            else if (lastAttack) cat = tPlayer ? 0x25 : 0x24;
+            else if (a.combo) cat = tPlayer ? 0x23 : 0x22;
+            else if (first & 1) cat = tPlayer ? 0x15 : 0x14;
+            else if (first & 8) cat = tPlayer ? 0x19 : 0x18;
+            else if (T.reflectedFrom >= 0) cat = tPlayer ? 0x1b : 0x1a;
+            else if (color == 3 || color == 4) cat = tPlayer ? 0x1f : 0x1e;
+            else if (color == 1) cat = tPlayer ? 0x28 : 0x26;
+            else if (color == 2) cat = tPlayer ? 0x29 : 0x27;
+            else if (T.hpAfter > 0) {
+                const cr3::Cr3Fighter& tf = cr3Rules.fighters[size_t(T.target)];
+                const bool high = tf.maxHp > 0 && float(T.hpAfter) / float(tf.maxHp) >= 0.5f;
+                if (SDL_rand(2)) cat = tPlayer ? cr3CommentChar(cr3Rules, T.target, 0x32) : cr3CommentChar(cr3Rules, a.source, 0x2b);
+                else cat = tPlayer ? (high ? 0x31 : 0x32) : (high ? 0x2a : 0x2b);
+            } else
+                matched = false;
+            if (matched) cutInVsComment(cat); // (the first row that holds: cut - category 0 a cut with no line)
+        }
+    }
+    // (the non-damage line, 0x9a9608: a buff's on its own side - MbGetBufferCommentCategory -, a debuff's on the other -
+    // the table at 0xf43e84 -; two or more of that family held: 0x67 / 0x70, cut at once; else the collected shuffled, the first cut)
+    const auto buff = [](int e) { return e >= 3 && e <= 6 ? 0x60 + e : e == 0x11 ? 0x68 : e == 0x12 ? 0x69 : e == 0x17 || e == 0x18 ? 0x6a : e == 0x1b ? 0x6c : 0; };
+    const auto debuff = [](int e) { return e >= 7 && e <= 10 ? 0x6a + e : e >= 13 && e <= 15 ? 0x60 + e : 0; };
+    std::vector<int> picks;
+    for (const cr3::Cr3Hit& th : a.targets) {
+        if (th.stealBack || th.effectsGiven.empty() || th.target < 0) continue;
+        const bool same = a.source < 0 ? isPlayer(th.target) : isPlayer(a.source) == isPlayer(th.target);
+        const auto& map = same ? buff : debuff;
+        std::vector<int> got;
+        for (int e : th.effectsGiven)
+            if (const int c = (same ? buff(e) : debuff(e)); c != 0) got.push_back(c);
+        if (got.empty()) continue;
+        int held = 0;
+        if (size_t(th.target) < a.effectsAfter.size())
+            for (int e : a.effectsAfter[size_t(th.target)]) held += e >= 0 && e <= 255 && map(e) != 0;
+        if (held >= 2) return cutInVsComment(same ? 0x67 : 0x70);
+        picks.push_back(got[size_t(SDL_rand(int32_t(got.size())))]);
+    }
+    if (!picks.empty()) cutInVsComment(picks[size_t(SDL_rand(int32_t(picks.size())))]);
+}
+
 void Viewer::beginCr3Turn(bool countTurn) {
     cr3TurnEndStep = 0, cr3DefeatPlayed = false; // (a turn's end to come)
     if (countTurn) ++cr3Turn; // (BtlSysStateSelect::phaseStart)
     if (countTurn) cr3Rules.giveFieldEffects(); // (phaseStart: GiveFieldStatusEffect - the menu's icons; the rules' turn again, the same)
-    if (countTurn) playVsComment(6); // (PlayBattleStartByTurn 0x9a85b4)
     // (phaseStart's opening - isOpening, the first turn alone; none after a surprise attack or a script's start command, nor
-    // for a new wave - unsettled -: the opening skills' commands, BtlOpeningDirection played first - stepCr3Opening)
+    // for a new wave or a summon - BtlSystem +0x140 is set by its constructor alone, CreateMonster leaves it: a wave's rules
+    // start at turnNo 0 with cr3Turn above 1 -: the opening skills' commands, BtlOpeningDirection played first - stepCr3Opening)
     if (countTurn && cr3Turn == 1 && cr3Rules.turnNo == 0 && !cr3Opening.on) {
         freezeCr3Shown();
         if (startCr3Opening(cr3Rules.opening())) return;
@@ -1817,6 +1970,7 @@ void Viewer::beginCr3Turn(bool countTurn) {
     cr3Cam.held = true;
     if (!cr3GetSetSeen) audio.playSe("bt_001", false), cr3GetSetSeen = true;
     SDL_Log("battle %.2f s: turn %d, the get-set", cr3BattleClock, cr3Turn);
+    commentCr3GetSet();
     // (with the Auto Battle / Mass Attack on - phaseGetSetStartOut 0x9d3bf0, HasAutoResult: no touch
     // waited for, GetGetSetResult its 5 or 6 again - the turn is chosen alone once no script runs:
     // updateCr3Battle)
@@ -1886,6 +2040,13 @@ void Viewer::chooseCr3Escape(int b) {
     cr3Announce = Cr3Announce(); // (BtlAnnounceUI::Close)
     if (b != 0) return beginCr3Turn(false);
     audio.playSe(0x153, false);
+    if (vs.screen == 5) { // (phaseColosseumEscapeSelect 0x9d4dac: VS - PlayGameOverCamera, PlayRetire 0x9a9434's cut 0x85, result 2)
+        cutInVsComment(0x85);
+        vs.retired = true;
+        SDL_Log("vs: retired from battle %d", vs.battle + 1);
+        cr3BattleStage = Cr3BattleStage::Lost, cr3StageStart = cr3BattleClock, cr3BattleLost = true;
+        return;
+    }
     bool sure = cr3Rules.advantage(true); // (BtlSystem::Escape: break advantage or skill kind 0x56)
     for (const cr3::Cr3Fighter& f : cr3Rules.fighters)
         if (f.player && !f.dead() && !cr3Rules.skillConstants(f, 0x56).empty()) sure = true;
@@ -1905,7 +2066,7 @@ void Viewer::stepCr3Escape() {
         }
         SDL_Log("battle %d: the escape failed", cr3Battle.coupling);
         cr3Choices.clear();
-        freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
+        commentCr3TurnStart(), freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
         cr3CountRecords();
         cr3ActionAt = 0;
         cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
@@ -2050,7 +2211,7 @@ void Viewer::playCr3Choices() {
             for (int k = 0; k < 600 && cr3BattleEvents->running(); ++k) cr3BattleEvents->tick();
     }
     cr3ArgSource = -1;
-    freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
+    commentCr3TurnStart(), freezeCr3Shown(), cr3Actions = cr3Rules.turn(cr3Choices);
     cr3CountRecords();
     cr3ActionAt = 0;
     cr3BattleStage = Cr3BattleStage::Action, cr3StageStart = cr3BattleClock;
@@ -2234,15 +2395,7 @@ bool Viewer::startCr3LastAttack(const cr3::Cr3Action& a, size_t su) {
     }
     cr3LastAttack = Cr3LastAttack();
     cr3LastAttack.on = true, cr3LastAttack.unit = su, cr3LastAttack.finestArts = finestArts, cr3LastAttack.kind = kind;
-    if (kind == 12 && bu.player && vsCommentary.on) { // (vPlay: PlayClimax 0x9a946c - the queue dropped, category 0x75;
-        // PlayClimaxAfter 0x9a94cc at the first hit: 0x76 or 0x76 + the Char id (1 .. 5, else none), 50 / 50, a second on -
-        // queued here, the queue waiting for the climax line anyway)
-        vsCommentary.queue.clear();
-        playVsComment(0x75);
-        const int f = cr3FighterOfUnit(su), c = f >= 0 ? cr3Rules.fighters[size_t(f)].id : 0;
-        const int other = c >= 1 && c <= 5 ? 0x76 + c : 0;
-        requestVsComment(SDL_rand(2) ? 0x76 : other, 1.0f);
-    }
+    if (kind == 12 && bu.player) cutInVsComment(0x75); // (vPlay: PlayClimax 0x9a946c - cut 0x75; PlayClimaxAfter at its first hit)
     const float baseEnd = cr3ActionPlay.end; // (the hits' end)
     if (finestArts) cr3StageHidden = true; // (BtlField::Hide: the stage's update, pose and draw stopped)
     if (!camera.empty()) {
@@ -2482,7 +2635,10 @@ void Viewer::startCr3Action() {
     }
     const size_t su = size_t(s.unit);
     const cr3::Cr3BattleUnit& bu = cr3Battle.units[su];
-    if (a.command >= 0) { // (BtlDirection::openAnnounce: the command's name - an item's, used - for a second)
+    if (cr3::MbeFile::Row dir; a.command >= 0 && cr3BattleTables.direction.find("CommandDirection", a.command, "ii", dir)) cr3ActionPlay.kind = dir.i(1);
+    // (CreateDirection 0x990d98: BtlShowDirection / BtlHideDirection - action types 0x1c / 0x1d - get no BtlAnnounceDirection)
+    const bool announced = cr3ActionPlay.kind != 28 && cr3ActionPlay.kind != 29;
+    if (a.command >= 0 && announced) { // (BtlDirection::openAnnounce: the command's name - an item's, used - for a second)
         auto item = cr3TurnItems.find(a.source);
         // (a command change - status kind 120 - plays another command than the item's chosen: its own name)
         if (item != cr3TurnItems.end() && std::none_of(cr3Choices.begin(), cr3Choices.end(), [&](const std::array<int, 3>& c) { return c[0] == a.source && c[1] == a.command; }))
@@ -2498,6 +2654,7 @@ void Viewer::startCr3Action() {
             SDL_Log("battle %.2f s: cooperation name \"%s\"", cr3BattleClock, text.c_str());
         }
         if (!text.empty()) setCr3Announce(text, 1.0f);
+        commentCr3CommandHit(a, cr3ActionPlay.kind); // (BtlAnnounceDirection::vPlay 0x99066c: PlayCommandHit)
     }
     if (a.command < 0) { // (Guard: bg01; -2 unable to act - a kind 31 effect -: a moment)
         if (a.command == -1) setCr3Motion(su, "bg01", false);
@@ -2519,7 +2676,6 @@ void Viewer::startCr3Action() {
             if (hCost > 0) cr3HpShown[size_t(pi)] = std::max(cr3HpShown[size_t(pi)] - hCost, 1);
         }
     }
-    if (cr3::MbeFile::Row dir; cr3BattleTables.direction.find("CommandDirection", a.command, "ii", dir)) cr3ActionPlay.kind = dir.i(1);
     if (startCr3SpecialAction(a, su, c)) return;
     size_t mostHits = 0;
     for (const cr3::Cr3Hit& target : a.targets) mostHits = std::max(mostHits, target.hits.size());
@@ -2530,6 +2686,7 @@ void Viewer::startCr3Action() {
     setCr3Motion(su, motion, false);
     for (int pi : a.partners) setCr3Motion(size_t(cr3Rules.fighters[size_t(pi)].unit), motion, false); // (a cooperation's others: the same)
     if (a.cooperated()) SDL_Log("battle %.2f s: a cooperation of %zu", cr3BattleClock, a.partners.size() + 1);
+    if (a.cooperated()) commentCr3Cooperation(a); // (its first partner's cooperation effect, just after the start)
     const ViewFigure& f = cr3BattleUnits[su].body;
     const float length = f.animLoaded && cr3BattleUnits[su].motion == motion ? f.anim.duration() : 1.2f;
     float fallbackTail = 0;
@@ -2546,7 +2703,23 @@ void Viewer::startCr3Action() {
     }
     cr3ActionPlay.end = std::max(length, timing.hits.back() + 0.9f + fallbackTail);
     if (timing.steal) cr3ActionPlay.end = std::max(cr3ActionPlay.end, timing.hits.back() + timing.projectile.duration + 0.9f); // (the last bullet in)
+    const bool showHide = cr3ActionPlay.kind == 28 || cr3ActionPlay.kind == 29;
+    if (showHide) { // (BtlShowDirection / BtlHideDirection vPlay 0x9940e8 / 0x99b8bc: playAllDamage - every hit at once -, over at its motion's end)
+        for (float& h : timing.hits) h = 0.05f;
+        cr3ActionPlay.end = std::max(length, 0.1f);
+    }
     cr3ActionPlay.timing = std::move(timing);
+    if (cr3ActionPlay.kind == 21 || showHide) {
+        // (BtlExpansionMeleeDirection::vPlay 0x997f84: openAnnounce(1.0), generateEffectTiming - the hits by its effect's groups -,
+        // bt01 in place, playCameraByType - +0x0c, 0 -; at bt01's end bo04, then the stay: stepCr3Action. Show / Hide: bt01 / bt02,
+        // ShowMesh / HideMesh - the Model row's +0x10 sub-mesh, m222_sub: no figure has it -, playCameraByType - 2 -, no announcement)
+        cr3::MbeFile::Row dir;
+        const int camera = cr3BattleTables.direction.find("CommandDirection", a.command, "iiii", dir) ? dir.i(3) : 0;
+        playCr3CameraType(camera, a, su);
+        SDL_Log("battle %.2f s: %s (kind %d, motion %s, camera type %d)", cr3BattleClock, showHide ? "a show / hide direction" : "an expansion melee",
+                cr3ActionPlay.kind, motion.c_str(), camera);
+        return;
+    }
     if (cr3ActionPlay.kind == 38 && startCr3Avatar(a, su)) return;
     if (motion == "bo01" && a.targets.size() == 1 && a.partners.empty())
         startCr3Melee(su, size_t(cr3Rules.fighters[size_t(a.targets.front().target)].unit));
@@ -2601,6 +2774,12 @@ void Viewer::stepCr3Action() {
     while (a.target >= 0 && cr3ActionPlay.hitsShown < int(mostHits) && size_t(cr3ActionPlay.hitsShown) < timing.hits.size() &&
            t >= timing.hits[size_t(cr3ActionPlay.hitsShown)]) {
         const size_t h = size_t(cr3ActionPlay.hitsShown++);
+        // (BtlFinestArtsDirection::VUpdate(BtlEventTimer) 0x9963b8 event 1 - just before event 2, the first hit -: PlayClimaxAfter
+        // 0x9a94cc, a player's: 0x76 or 0x76 + its character - 1 .. 5, else none - at 50 / 50, requested a second on)
+        if (h == 0 && cr3LastAttack.on && cr3LastAttack.finestArts && cr3LastAttack.kind == 12 && cr3Rules.fighters[size_t(a.source)].player) {
+            const int other = cr3CommentChar(cr3Rules, a.source, 0x76);
+            requestVsComment(SDL_rand(2) ? 0x76 : other, 1.0f);
+        }
         for (const cr3::Cr3Hit& th : a.targets) { // (each target the hit lands on at once)
             if (h >= th.hits.size() || th.stealBack) continue; // (a steal's own: as its bullet lands - stepCr3StealBack)
             const int d = th.hits[h];
@@ -2668,6 +2847,7 @@ void Viewer::stepCr3Action() {
             }
             announceCr3Effects(a);
             announceCr3FieldToggle(a, t);
+            commentCr3AfterDamage(a); // (every target list announced: PlayAfterDamageVoice)
             // BtlDirection::playKnockout follows the hit sequence, including misses.
             for (const cr3::Cr3Hit& th : a.targets) {
                 if (!th.killed) continue;
@@ -2685,9 +2865,21 @@ void Viewer::stepCr3Action() {
         cr3ActionPlay.hitsShown = 1;
         announceCr3Effects(a);
         announceCr3FieldToggle(a, t);
+        commentCr3AfterDamage(a);
     }
     if (timing.steal) stepCr3StealBack(a, source, t);
     stepCr3MeleeReturn(source, t);
+    if (cr3ActionPlay.kind == 21 && cr3ActionPlay.stage == 0) { // (onAnimationEnd 0x997e40: bt01 over - ChangeTargetForBackStep, bo04)
+        Cr3BattleUnitView& view = cr3BattleUnits[source];
+        if (!view.body.animLoaded || cr3BattleClock - view.motionStart >= view.body.anim.duration()) {
+            cr3ActionPlay.stage = 1;
+            const std::string back = cr3MotionOf(14);
+            setCr3Motion(source, back, false);
+            const float len = view.motion == back && view.body.animLoaded ? view.body.anim.duration() : 0.0f;
+            cr3ActionPlay.end = std::max(cr3ActionPlay.end, t + len); // (its end: PlayStayAnimation, the direction over)
+            SDL_Log("battle %.2f s: an expansion melee's %s (%.2f s)", cr3BattleClock, back.c_str(), double(len));
+        }
+    }
     if (t >= cr3ActionPlay.end && !cr3ActionPlay.melee && !stepCr3Analyze(a)) return; // (an Analyze's lines first)
     if (t >= cr3ActionPlay.end && !cr3ActionPlay.melee) {
         for (const cr3::Cr3Hit& th : a.targets) // (a cover's coverer home again - ChangePositionToHome)
@@ -3003,6 +3195,7 @@ void Viewer::stepCr3SourcelessAction(const cr3::Cr3Action& a) {
             else if (th.killed && !cr3BattleUnits[tu].knockedOut) rollCr3Drop(th.target), knockOutCr3Unit(tu);
         }
         announceCr3Effects(a);
+        commentCr3AfterDamage(a);
     }
     if (t < cr3ActionPlay.end) return;
     showCr3ActionState(a);
