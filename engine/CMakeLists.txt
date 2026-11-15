@@ -63,6 +63,7 @@ add_library(cr3core STATIC
     src/event/runtime.cpp
     src/gfx/material.cpp
     src/gfx/text.cpp
+    src/gfx/android_fonts.cpp
     src/script/vm.cpp
     src/script/gamestate.cpp
     src/script/gamesave.cpp
@@ -618,6 +619,9 @@ if(NOT ANDROID AND NOT IOS)
     add_executable(vita-pfs-tests tools/vita_pfs_test.cpp)
     target_link_libraries(vita-pfs-tests PRIVATE cr3core)
     add_test(NAME vita-pfs COMMAND vita-pfs-tests)
+    add_executable(android-fonts-tests tools/android_fonts_test.cpp)
+    target_link_libraries(android-fonts-tests PRIVATE cr3core)
+    add_test(NAME android-fonts COMMAND android-fonts-tests)
     add_executable(tab-buttons-tests tools/tab_buttons_test.cpp)
     target_link_libraries(tab-buttons-tests PRIVATE cr3core)
     add_test(NAME tab-buttons COMMAND tab-buttons-tests)

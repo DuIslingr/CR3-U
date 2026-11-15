@@ -324,7 +324,12 @@ for personal use. The full steps, limits and the add-on manifest:
 
 The text is drawn in your copy's own font (TB Gothic; the Spanish translation's while it's in use),
 with a system CJK font (Noto Sans CJK, Malgun Gothic, Microsoft YaHei; on an iPhone, iPad or Mac
-Apple SD Gothic Neo and PingFang, found by name) for the characters it lacks. To use your own, put .ttf / .otf / .ttc files in the game folder's `font/`: the first by
+Apple SD Gothic Neo and PingFang, found by name) for the characters it lacks. On an Android phone
+whose maker ships none of the usual AOSP font files (Roboto, Noto Sans CJK in `/system/fonts`), the
+port reads the system's own font lists (`fonts.xml`, Android 15's `font_fallback.xml`, the product and
+vendor partitions') and takes its Japanese, then Chinese and Korean fonts, and its default sans-serif,
+then any font in the system's font folders; the same stands in for the game's font if that can't be
+read. To use your own, put .ttf / .otf / .ttc files in the game folder's `font/`: the first by
 file name draws the text in every language (the Spanish translation's too), and the others stand in
 for the characters it lacks, ahead of the system's. A file that isn't a font is left out (the log
 says so); with the folder empty nothing changes. `--font <file>` and `CR3_FONT` still come first.

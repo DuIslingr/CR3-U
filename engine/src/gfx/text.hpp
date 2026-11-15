@@ -28,6 +28,8 @@ public:
     // (CR3's F0001.bin / TBGB_0KP.TTC: 0 TBGothic-B, 1 TBPGothic-B - proportional)
     bool loadMemory(std::vector<uint8_t> bytes, const std::string& name, std::string* error = nullptr, int face = 0);
     bool loaded() const;
+    // the loaded font itself (not its fallbacks) has every code point of this UTF-8; false: none loaded
+    bool covers(const std::string& utf8) const;
     // a font for the code points the first lacks (as Android's Paint falls back on the system's:
     // Hangul, simplified Chinese), tried in the order added (`face` a collection's); false: none could be read
     bool addFallback(const std::string& path, std::string* error = nullptr, int face = 0);

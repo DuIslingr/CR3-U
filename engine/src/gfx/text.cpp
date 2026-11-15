@@ -144,6 +144,13 @@ bool TextRasterizer::loadMemory(std::vector<uint8_t> bytes, const std::string& n
 
 bool TextRasterizer::loaded() const { return impl_->face != nullptr; }
 
+bool TextRasterizer::covers(const std::string& utf8) const {
+    if (!impl_->face) return false;
+    for (uint32_t cp : codePoints(utf8))
+        if (!FT_Get_Char_Index(impl_->face, cp)) return false;
+    return true;
+}
+
 bool TextRasterizer::addFallback(const std::string& path, std::string* error, int face) {
     FT_Face f = nullptr;
     if (!impl_->lib || FT_New_Face(impl_->lib, path.c_str(), FT_Long(face), &f)) {
@@ -253,6 +260,7 @@ bool TextRasterizer::loadMemory(std::vector<uint8_t>, const std::string& name, s
     return false;
 }
 bool TextRasterizer::loaded() const { return false; }
+bool TextRasterizer::covers(const std::string&) const { return false; }
 bool TextRasterizer::addFallback(const std::string& path, std::string* error, int) {
     if (error) *error = path + ": built without FreeType";
     return false;

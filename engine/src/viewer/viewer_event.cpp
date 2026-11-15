@@ -1,4 +1,5 @@
 #include "viewer/viewer.hpp"
+#include "gfx/android_fonts.hpp"
 
 namespace cr3_viewer {
 
@@ -986,8 +987,9 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
     else if (fontPath.empty() && !fontBytes.empty() && !font.loadMemory(std::move(fontBytes), fontName, &err, fontFace)) SDL_Log("font: %s", err.c_str());
     // (the code points the game's font lacks - Hangul, simplified Chinese - from the system's, as
     // Android's: the game folder's font/ files the text isn't drawn in, then CR3_FONT_FALLBACK, else a Noto
-    // CJK where the distributions put it, else Windows' or Apple's own - one for each script there. Apple's by
-    // name through CoreText: iOS keeps its fonts at no path to name, newer macOS PingFang outside /System/Library/Fonts)
+    // CJK where the distributions put it, else Windows' or Apple's own - one for each script there -, Android's
+    // from the system's own font lists (a maker's names and partitions). Apple's by name through CoreText: iOS
+    // keeps its fonts at no path to name, newer macOS PingFang outside /System/Library/Fonts)
     const char* fb = std::getenv("CR3_FONT_FALLBACK");
     const char* windir = std::getenv("WINDIR");
     const std::string winFonts = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
@@ -1000,6 +1002,16 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
         cr3::TextRasterizer::appleFont(postScriptName, f.path, f.face);
         return f;
     };
+#ifdef SDL_PLATFORM_ANDROID
+    // (after the AOSP paths: the system's own font lists, then its font folders - gfx/android_fonts.hpp -,
+    // read once, only when needed)
+    std::vector<cr3::AndroidFont> androidCache;
+    bool androidRead = false;
+    auto androidList = [&]() -> const std::vector<cr3::AndroidFont>& {
+        if (!androidRead) androidCache = cr3::androidFonts(), androidRead = true;
+        return androidCache;
+    };
+#endif
     if (!font.loaded()) {
         for (const std::string& path : std::vector<std::string>{
                  "/system/fonts/Roboto-Regular.ttf", "/system/fonts/Roboto.ttf", "/system/fonts/NotoSans-Regular.ttf",
@@ -1012,6 +1024,11 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
             if (font.loaded()) break;
             if (const FontFile f = apple(name); !f.path.empty()) font.load(f.path, nullptr, f.face);
         }
+#ifdef SDL_PLATFORM_ANDROID
+        // (a phone whose maker names or places its fonts otherwise - CR2-U #4 -: its own font lists', the
+        // first with Latin letters)
+        if (!font.loaded()) cr3::loadAndroidFont(font, androidList());
+#endif
     }
     std::vector<FontFile> fallbacks{{cr3::TextRasterizer::firstFont({fb ? fb : "", "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
                                                                     "/system/fonts/NotoSansCJK-Regular.ttc",
@@ -1019,6 +1036,13 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
                                                                     "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
                                                                     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                                                                     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"})}};
+#ifdef SDL_PLATFORM_ANDROID
+    if (fallbacks[0].path.empty()) { // (the scripts the game's font lacks: Japanese families first, then Chinese, Korean)
+        fallbacks.clear();
+        if (font.loaded())
+            for (const cr3::AndroidFont& f : cr3::androidFallbacks(font, androidList())) fallbacks.push_back({f.path, f.face});
+    }
+#else
     if (fallbacks[0].path.empty()) {
         FontFile korean = apple("AppleSDGothicNeo-Bold"), chinese = apple("PingFangSC-Semibold");
         if (chinese.path.empty()) chinese = apple("PingFangSC-Regular");
@@ -1028,6 +1052,7 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
                                                                                 "/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"});
         fallbacks = {korean, chinese};
     }
+#endif
     std::vector<FontFile> own; // (the game folder's font/ first)
     for (const std::string& f : ownFallbacks) own.push_back({f});
     fallbacks.insert(fallbacks.begin(), own.begin(), own.end());
