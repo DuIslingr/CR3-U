@@ -10,6 +10,10 @@ namespace {
 // ---- AES-128 (FIPS-197), the tables built once: the S-box from GF(2^8)'s inverses, the
 // round's four T tables (SubBytes + MixColumns) and their inverses
 
+// (a rotate right by 0 .. 31 - "x << (32 - n)" for n = 0 shifts by 32: undefined, and Apple's Clang folds
+// it so the T tables come out wrong - every AES result on macOS, iOS and ARM Android)
+uint32_t rol(uint32_t x, int n) { return x << (n & 31) | x >> ((32 - n) & 31); }
+uint32_t ror(uint32_t x, int n) { return x >> (n & 31) | x << ((32 - n) & 31); }
 uint8_t xtime(uint8_t x) { return uint8_t((x << 1) ^ ((x & 0x80) ? 0x1b : 0)); }
 uint8_t gmul(uint8_t a, uint8_t b) {
    uint8_t p = 0;
@@ -41,7 +45,7 @@ struct Tables {
          const uint32_t e = uint32_t(s2) << 24 | uint32_t(s) << 16 | uint32_t(s) << 8 | s3;
          const uint8_t v = inv[i];
          const uint32_t d = uint32_t(gmul(v, 14)) << 24 | uint32_t(gmul(v, 9)) << 16 | uint32_t(gmul(v, 13)) << 8 | gmul(v, 11);
-         for (int k = 0; k < 4; ++k) te[k][i] = e >> (8 * k) | e << (32 - 8 * k), td[k][i] = d >> (8 * k) | d << (32 - 8 * k);
+         for (int k = 0; k < 4; ++k) te[k][i] = ror(e, 8 * k), td[k][i] = ror(d, 8 * k);
       }
    }
 };
@@ -123,8 +127,6 @@ struct Aes {
 
 // ---- SHA-1 and SHA-256 (FIPS 180-4)
 
-uint32_t rol(uint32_t x, int n) { return x << n | x >> (32 - n); }
-uint32_t ror(uint32_t x, int n) { return x >> n | x << (32 - n); }
 
 // the message padded: its bits' count, big-endian, at the end of the last 64-byte block
 std::vector<uint8_t> padded(const uint8_t* src, size_t size) {
