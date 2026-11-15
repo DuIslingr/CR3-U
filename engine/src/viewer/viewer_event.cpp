@@ -1110,8 +1110,10 @@ void Viewer::extendVistaBand() {
     const float unit = vistaWindow.uiUnit > 0 ? vistaWindow.uiUnit : 10.0f;
     const float k = std::min(float(screenW) / (0.96f * unit), float(screenH) / (0.64f * unit)); // (uiProjection's pixels a unit)
     const float cx = float(screenX - frameX) + float(screenW) * 0.5f, cy = float(screenY - frameY) + float(screenH) * 0.5f;
-    const float l = cx + x0 * k, r = cx + x1 * k, b = cy + y0 * k, t = cy + y1 * k; // (frame pixels, y up)
     const float sl = float(screenX - frameX), sr = sl + float(screenW), sb = float(screenY - frameY);
+    // (frame pixels, y up; the panel as drawn - clipped to the UI's screen: its 12 units wider than a screen under 3:2, whose
+    // ends past the safe area's had the carried-on black run from the frame's edge to beyond the clip, so none)
+    const float l = std::max(cx + x0 * k, sl), r = std::min(cx + x1 * k, sr), b = std::max(cy + y0 * k, sb), t = cy + y1 * k;
     const float fw = float(frameW), fh = float(frameH);
     const float alpha = std::clamp(vistaWindow.fig.tint[3], 0.0f, 1.0f);
     auto fill = [&](float px0, float py0, float px1, float py1) {

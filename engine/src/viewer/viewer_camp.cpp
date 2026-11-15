@@ -4439,9 +4439,33 @@ void Viewer::cr3OptionsInput() {
     else if (want.compare(0, 2, "id") == 0) chooseCr3Camp(std::atoi(want.c_str() + 2));
 }
 
+// the Graphics tab's rows: CR3-U's Cheats first (opening its page), then the settings (settingRows - settingsCursor one
+// under graphicsAt); the Cheats page's own in its place
+auto Viewer::graphicsTabRows() -> std::vector<SettingRow> {
+    if (campOptions.cheats) return cheatRows();
+    std::vector<SettingRow> rows = settingRows();
+    int on = 0;
+    for (const SettingRow& r : cheatRows()) on += r.value != "Off" && r.value != "1x";
+    rows.insert(rows.begin(), SettingRow{"Cheats", on ? std::to_string(on) + " on" : std::string("Open"),
+                                         "CR3-U's own cheats: infinite HP and MP, a full break gauge, more EXP ... - all off at first", true,
+                                         [this](int) { openCheats(true); }});
+    return rows;
+}
+
+int& Viewer::campRowAt() { return campOptions.cheats ? campOptions.cheatAt : campOptions.graphicsAt; }
+
+void Viewer::openCheats(bool open) {
+    Cr3CampOptions& co = campOptions;
+    if (co.cheats == open) return;
+    co.cheats = open, co.footer = false;
+    if (open) co.cheatAt = 0, co.cheatTop = 0;
+    audio.playSe(open ? "com_003" : "com_004", false);
+    SDL_Log("options: cheats %s", open ? "opened" : "closed");
+}
+
 void Viewer::openCampOptions() {
     cr3Camp.stage = 9, cr3Camp.since = 0;
-    campOptions.tab = 0;
+    campOptions.tab = 0, campOptions.cheats = false;
     SDL_Log("camp: options");
 }
 
@@ -4506,8 +4530,9 @@ float Viewer::cr3OptionsFloor(int w, int h) const {
 // and last when there are more; the focused one's help on the header's line
 void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& view) {
     Cr3CampOptions& co = campOptions;
-    const std::vector<SettingRow> rows = settingRows();
-    const int n = int(rows.size()), focus = std::clamp(settingsCursor, 0, std::max(n - 1, 0));
+    const std::vector<SettingRow> rows = graphicsTabRows();
+    const int n = int(rows.size()), focus = std::clamp(campRowAt(), 0, std::max(n - 1, 0));
+    int& top = co.cheats ? co.cheatTop : co.top;
     const float s = cr3UiScale;
     float x1, y1, x2, y2, cx, cy, ax, ay, bx, by, tx, ty;
     if (!cr3UiCall(menu, "call_optSltPanel_001", x1, y1) || !cr3UiCall(menu, "call_optSltPanel_002", x2, y2)) return;
@@ -4518,13 +4543,13 @@ void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& vie
         shown = std::max(1 + int((ty - pitch * 0.5f - cr3OptionsFloor(w, h)) / pitch), 1);
 #endif
     shown = std::min(shown, n);
-    co.top = std::clamp(co.top, std::max(focus - (shown - 1), 0), focus);
-    co.top = std::min(co.top, std::max(n - shown, 0));
+    top = std::clamp(top, std::max(focus - (shown - 1), 0), focus);
+    top = std::min(top, std::max(n - shown, 0));
     auto tint = [&](float r, float g, float b) { cr3UiTint[0] = r, cr3UiTint[1] = g, cr3UiTint[2] = b; };
     float firstY = 0, lastY = 0, rightX = 0; // (the value's line on the first and last rows shown; the arrows' right end)
-    for (int k = co.top; k < n && k < co.top + shown; ++k) {
+    for (int k = top; k < n && k < top + shown; ++k) {
         const SettingRow& r = rows[size_t(k)];
-        const float px = x1 + (x2 - x1) * float(k - co.top), py = y1 + (y2 - y1) * float(k - co.top);
+        const float px = x1 + (x2 - x1) * float(k - top), py = y1 + (y2 - y1) * float(k - top);
         if (k == focus) tint(0.82f, 0.9f, 1.0f);
         UiFig& panel = cr3UiPut("optsltlrpanel", "", 0, px, py, view);
         tint(1, 1, 1);
@@ -4533,7 +4558,7 @@ void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& vie
         if (cr3UiCall(panel, "typeM_C01", tx, ty)) {
             dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
             drawUiText(r.value, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, r.enabled ? 0.26f : 0.62f, 0.25f * s);
-            if (k == co.top) firstY = ty - 0.12f * s;
+            if (k == top) firstY = ty - 0.12f * s;
             lastY = ty - 0.12f * s;
         }
         if (cr3UiCall(panel, "call_optSltLbtn", cx, cy)) {
@@ -4554,11 +4579,11 @@ void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& vie
     // (more over or under: an arrow right of the first or last row shown, a tap on it a row on)
     const float at = rightX + 0.45f * s, reach = pitch * 0.45f;
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-    if (co.top > 0) {
+    if (top > 0) {
         drawUiText("▲", 22, at / 10, firstY / 10, w, h, false, 0.4f);
         cr3CampTaps.push_back({at - 0.3f * s, firstY - reach, at + 0.3f * s, firstY + reach, kTapGraphicsUp});
     }
-    if (co.top + shown < n) {
+    if (top + shown < n) {
         drawUiText("▼", 22, at / 10, lastY / 10, w, h, false, 0.4f);
         cr3CampTaps.push_back({at - 0.3f * s, lastY - reach, at + 0.3f * s, lastY + reach, kTapGraphicsDown});
     }
@@ -4588,6 +4613,7 @@ void Viewer::drawCr3OptionsReset(float backX, float backY, int w, int h, const M
 }
 
 std::string Viewer::cr3OptionsResetAsk() const {
+    if (campOptions.tab == 3 && campOptions.cheats) return "Turn every cheat off?";
     static const char* const kTab[kOptionTabs] = {"sound", "control", "other", "graphics"};
     return std::string("Put the ") + kTab[std::clamp(campOptions.tab, 0, kOptionTabs - 1)] + " settings back to their defaults?";
 }
@@ -4599,14 +4625,18 @@ void Viewer::cr3OptionsReset() {
         audio.setVolumes(1, 1, 1);
     } else if (co.tab == 1) co.hands = 0;
     else if (co.tab == 2) optionQuality = 0;
-    else { // (the window's type - F11's fullscreen kind with it - and resolution kept)
+    else if (co.cheats) { // (the Cheats page: every cheat off)
+        settings.cheats = Settings::Cheats();
+        saveSettings();
+    } else { // (the window's type - F11's fullscreen kind with it - and resolution kept; the cheats their own page's)
         const int display = settings.display, kind = settings.fullscreenKind, resolution = settings.resolution;
+        const Settings::Cheats cheats = settings.cheats;
         settings = Settings();
-        settings.display = display, settings.fullscreenKind = kind, settings.resolution = resolution;
+        settings.display = display, settings.fullscreenKind = kind, settings.resolution = resolution, settings.cheats = cheats;
         applySettings();
         saveSettings();
     }
-    SDL_Log("options: tab %d reset", co.tab);
+    SDL_Log("options: tab %d%s reset", co.tab, co.tab == 3 && co.cheats ? " (cheats)" : "");
 }
 
 void Viewer::saveImportAnswer(bool yes) {
@@ -4805,9 +4835,9 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
         }
     }
     std::string line = co.tab < 3 ? menuAnnounce(0x19f + co.tab) : std::string("Change graphics settings.");
-    if (co.tab == 3) { // (Graphics: the focused setting's help)
-        const std::vector<SettingRow> rows = settingRows();
-        if (settingsCursor >= 0 && settingsCursor < int(rows.size())) line = rows[size_t(settingsCursor)].help;
+    if (co.tab == 3) { // (Graphics, or its Cheats page: the focused row's help)
+        const std::vector<SettingRow> rows = graphicsTabRows();
+        if (campRowAt() >= 0 && campRowAt() < int(rows.size())) line = rows[size_t(campRowAt())].help;
     }
     if (co.tab == 2 && co.otherRow == 2) line = co.from == 1 ? "Import decrypted Vita saves (I). Existing saves are backed up." : "Import saves from the title screen's Options.";
     if (co.tab == 2 && co.otherRow == 1) line = "The language of the game's text: its own, or a fan translation over it.";
@@ -4886,18 +4916,28 @@ void Viewer::chooseCampOptions(int id) {
         return;
     }
     if (id == kTapCredits || id == kTapCopyright) return openStaffList(id == kTapCredits ? 1 : 2);
-    const int settingCount = int(settingRows().size());
+    const int settingCount = int(graphicsTabRows().size());
     if (id == kTapGraphicsUp || id == kTapGraphicsDown) {
-        settingsCursor = std::clamp(settingsCursor + (id == kTapGraphicsUp ? -1 : 1), 0, settingCount - 1);
+        campRowAt() = std::clamp(campRowAt() + (id == kTapGraphicsUp ? -1 : 1), 0, settingCount - 1);
+        if (!co.cheats) settingsCursor = std::max(co.graphicsAt - 1, 0);
         audio.playSe("com_002", false);
         return;
     }
     if (id >= kTapGraphicsRow && id < kTapGraphicsRow + settingCount * 2) { // (Graphics: a row's left or right arrow)
-        settingsCursor = (id - kTapGraphicsRow) / 2;
-        settingChange(settingsCursor, (id - kTapGraphicsRow) % 2 ? 1 : -1, false);
+        const int row = (id - kTapGraphicsRow) / 2, dir = (id - kTapGraphicsRow) % 2 ? 1 : -1;
+        campRowAt() = row;
+        if (co.cheats) { // (a cheat changed, kept in settings.ini)
+            std::vector<SettingRow> rows = cheatRows();
+            rows[size_t(row)].change(dir);
+            saveSettings();
+            const std::vector<SettingRow> now = cheatRows();
+            SDL_Log("cheats: %s %s", now[size_t(row)].label.c_str(), now[size_t(row)].value.c_str());
+        } else if (row == 0) return openCheats(true); // (Graphics' first row: the Cheats page)
+        else settingsCursor = row - 1, settingChange(row - 1, dir, false);
         audio.playSe("com_002", false);
         return;
     }
+    if (id == -1 && co.cheats) return openCheats(false); // (the Cheats page's back: Graphics again)
     if (id == -1) {
         audio.playSe("com_004", false);
         cr3Camp.stage = co.from ? 0 : 1, cr3Camp.since = 0; // (from the title or a battle: back to it)
@@ -4905,7 +4945,7 @@ void Viewer::chooseCampOptions(int id) {
         if (scriptSaves) writeSystem(); // (Cr3Util_Save_SystemData)
         return;
     }
-    if (id >= 400 && id < 400 + kOptionTabs && id - 400 != co.tab) co.tab = id - 400, co.footer = false, audio.playSe("com_002", false);
+    if (id >= 400 && id < 400 + kOptionTabs && id - 400 != co.tab) co.tab = id - 400, co.footer = false, co.cheats = false, audio.playSe("com_002", false);
     if (id >= 500 && id < 502 && id - 500 != co.hands) co.hands = id - 500, audio.playSe("com_003", false);
     if (id == 600 || id == 601) optionQuality = (optionQuality + (id == 600 ? 2 : 1)) % 3, audio.playSe("com_002", false);
     if (id == 1400 || id == 1401) stepLanguage(id == 1400 ? -1 : 1), co.otherRow = 1, audio.playSe("com_002", false);
@@ -4970,11 +5010,11 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
         return;
     }
     if (vitaButtons() && co.tab == 1 && key == SDLK_DOWN) { co.footer = true; audio.playSe("com_002", false); return; }
-    if (co.tab == 3) { // (Graphics: up / down a row, left / right / Return change it)
-        if (vitaButtons() && key == SDLK_DOWN && settingsCursor + 1 >= int(settingRows().size())) { co.footer = true; audio.playSe("com_002", false); return; }
+    if (co.tab == 3) { // (Graphics - or its Cheats page: up / down a row, left / right / Return change it; its first row, Cheats, opens that)
+        if (vitaButtons() && key == SDLK_DOWN && campRowAt() + 1 >= int(graphicsTabRows().size())) { co.footer = true; audio.playSe("com_002", false); return; }
         if (key == SDLK_UP || key == SDLK_DOWN) return chooseCampOptions(key == SDLK_UP ? kTapGraphicsUp : kTapGraphicsDown);
         if (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_RETURN || key == SDLK_KP_ENTER)
-            return chooseCampOptions(kTapGraphicsRow + settingsCursor * 2 + (key == SDLK_LEFT ? 0 : 1));
+            return chooseCampOptions(kTapGraphicsRow + campRowAt() * 2 + (key == SDLK_LEFT ? 0 : 1));
         return;
     }
     if (co.tab == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) {

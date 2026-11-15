@@ -64,6 +64,18 @@ void Viewer::loadSettings() {
         else if (k == "field_speed") s.fieldSpeed = std::clamp(v, 1, 5);
         else if (k == "battle_speed") s.battleSpeed = std::clamp(v, 1, 5);
         else if (k == "language") s.language = std::clamp(v, 0, 4);
+        else if (k == "cheat_hp") s.cheats.hp = v != 0;
+        else if (k == "cheat_mp") s.cheats.mp = v != 0;
+        else if (k == "cheat_one_hit") s.cheats.oneHit = v != 0;
+        else if (k == "cheat_exp") s.cheats.exp = std::clamp(v, 1, 10);
+        else if (k == "cheat_first_strike") s.cheats.firstStrike = v != 0;
+        else if (k == "cheat_no_battles") s.cheats.noBattles = v != 0;
+        else if (k == "cheat_money") s.cheats.money = v != 0;
+        else if (k == "cheat_full_outside") s.cheats.fullOutside = v != 0;
+        else if (k == "cheat_gauge") s.cheats.gauge = v != 0;
+        else if (k == "cheat_coop") s.cheats.coop = v != 0;
+        else if (k == "cheat_drops") s.cheats.drops = v != 0;
+        else if (k == "cheat_cheer") s.cheats.cheer = v != 0;
     }
     std::fclose(f);
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
@@ -91,6 +103,17 @@ void Viewer::saveSettings() const {
     text += "original_card_art=" + std::to_string(int(s.originalCardArt)) + "\n";
     text += "fullscreen_kind=" + std::to_string(s.fullscreenKind) + "\n";
     if (s.language) text += "language=" + std::to_string(s.language) + "\n";
+    { // (Options' Cheats: the ones on alone - all off, the file as before)
+        const Settings::Cheats& c = s.cheats;
+        const std::pair<const char*, int> cheats[] = {{"cheat_hp", c.hp},          {"cheat_mp", c.mp},
+                                                      {"cheat_one_hit", c.oneHit}, {"cheat_exp", c.exp > 1 ? c.exp : 0},
+                                                      {"cheat_first_strike", c.firstStrike}, {"cheat_no_battles", c.noBattles},
+                                                      {"cheat_money", c.money},   {"cheat_full_outside", c.fullOutside},
+                                                      {"cheat_gauge", c.gauge},   {"cheat_coop", c.coop},
+                                                      {"cheat_drops", c.drops},   {"cheat_cheer", c.cheer}};
+        for (const auto& [key, v] : cheats)
+            if (v) text += std::string(key) + "=" + std::to_string(v) + "\n";
+    }
     if (!keepData.empty()) text += "data=" + keepData + "\n";
     if (!keepPatch.empty()) text += "patch=" + keepPatch + "\n";
     std::string error;
@@ -330,6 +353,42 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
                     s.padSwap ? "A controller's \u00d7 confirms and \u25cb goes back" : "A controller's \u25cb confirms and \u00d7 goes back, as on the Vita",
                     true, [&s](int) { s.padSwap = !s.padSwap; }});
     return rows;
+}
+
+// Options > Graphics > Cheats (CR3-U's own, none of the original's): each off to begin with, off changing nothing. The
+// battles' never in a VS battle (applyCr3Cheats)
+auto Viewer::cheatRows() -> std::vector<SettingRow> {
+    Settings::Cheats& c = settings.cheats;
+    std::vector<SettingRow> rows;
+    auto onOff = [](bool b) { return std::string(b ? "On" : "Off"); };
+    auto flag = [&](const char* label, bool& v, const char* help) {
+        rows.push_back({label, onOff(v), help, true, [&v](int) { v = !v; }});
+    };
+    // (the help on the header's line: short enough for a 4:3 screen; the battles' never in VS)
+    flag("Infinite HP", c.hp, "The party's HP whole after every blow, the damage still shown (not in VS)");
+    flag("Infinite MP", c.mp, "The party's genes and skills cost no MP (not in VS)");
+    flag("One-Hit Kills", c.oneHit, "The party's hits take all of a monster's HP; a boss's last stand holds (not in VS)");
+    rows.push_back({"EXP Multiplier", std::to_string(std::clamp(c.exp, 1, 10)) + "x", "The genes' EXP from a battle won, 1x to 10x (not in VS)", true,
+                    [&c](int d) { c.exp = (std::clamp(c.exp, 1, 10) - 1 + (d < 0 ? 9 : 1)) % 10 + 1; }});
+    flag("Always First Strike", c.firstStrike, "Every battle that can open with a first strike does; never ambushed");
+    flag("No Random Battles", c.noBattles, "No random encounters on the field; the story's battles still come");
+    flag("Max Money", c.money, "Your money held at the most");
+    flag("Full HP/MP Outside Battle", c.fullOutside, "The party's MP whole between battles (CR3 restores the HP itself)");
+    flag("Always Full Break Gauge", c.gauge, "The break gauge at the party's full side every turn: Finest Arts open (not in VS)");
+    flag("Always Co-op", c.coop, "Members picking the same command always join in a co-op attack (not in VS)");
+    flag("Always Drop", c.drops, "Every monster leaves its item, the rare one by its share (not in VS)");
+    flag("Full Cheer", c.cheer, "The cheer points full in every battle; your saved points kept (not in VS)");
+    return rows;
+}
+
+// the field's cheats, each frame (Options' Cheats: Max Money, Full HP / MP Outside Battle - the MP a battle left, none kept)
+void Viewer::applyFieldCheats() {
+    const Settings::Cheats& c = settings.cheats;
+    if (c.money) {
+        const int most = int(game.cr3Db ? game.cr3Db->constant("GOLD_MAX", 9999999) : 9999999);
+        if (game.cr3Money != most) game.cr3Money = most, SDL_Log("cheats: money held at %d", most);
+    }
+    if (c.fullOutside && !cr3BattleMode && !game.cr3Mp.empty()) game.cr3Mp.clear(), SDL_Log("cheats: the party's MP whole");
 }
 
 void Viewer::settingChange(int row, int dir, bool click) {
@@ -1703,6 +1762,7 @@ void Viewer::advance(float dt, float sx, float sy, bool run) {
         startLunch(request.substr(0, colon), colon == std::string::npos ? "null" : request.substr(colon + 1));
     }
     stepMovie(dt);
+    applyFieldCheats(); // (Options' Cheats: each off a no-op)
     if (areaMode || cr3BattleMode) game.cr3Records.playSeconds += dt; // (My Page's play time)
     if (game.cr3TeamLevel != loggedTeamLevel) SDL_Log("team level %d -> %d", loggedTeamLevel, game.cr3TeamLevel), loggedTeamLevel = game.cr3TeamLevel;
     if (cr3::EventRuntime* ev = activeEvents()) {

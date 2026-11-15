@@ -227,8 +227,29 @@ tab back to its defaults. Most settings also have a command-line flag for a sing
 | Field Speed, Battle Speed | Off or 2x to 5x: walking the field and the battles that many times as fast |
 | Swap ○ and × | which controller button confirms |
 | Lock Orientation | keep the current landscape direction (phones) |
+| Cheats | the Graphics tab's first row opens CR3-U's own **Cheats** page (below) |
 
 The **Other** tab has the **Language** (where the copy has more than one) and the Vita save import.
+
+**Cheats** (Options > Graphics > Cheats; CR3-U's own, none of the original's). Every one is off to
+begin with and saved in `settings.ini` (`cheat_*=` lines, written only while on); all off, the game
+plays exactly as without them. **Reset** on the page turns them all off. The battle ones are taken
+at each battle's start and never apply in VS (colosseum) battles, whose scores and rankings stay fair.
+
+| Cheat | What it does |
+|---|---|
+| Infinite HP | the party's HP is whole again after every blow (the damage numbers still show); nobody falls, poison included |
+| Infinite MP | the party's genes and skills cost no MP (listed at 0) |
+| One-Hit Kills | the party's damaging hits take all of a monster's HP (a boss's own last stand still holds) |
+| EXP Multiplier | 1x to 10x the genes' EXP from a battle won, shown so on the result |
+| Always First Strike | every battle that can open with a first strike does; never ambushed (set story openings kept) |
+| No Random Battles | no random or ace encounters on the field; the story's battles still come |
+| Max Money | your money held at the maximum |
+| Full HP/MP Outside Battle | the party's MP is whole again between battles (CR3 already restores HP) |
+| Always Full Break Gauge | the break gauge pinned at the party's full advantage (+1000) every turn: their damage up, and a combo's Finest Arts open |
+| Always Co-op | party members who pick the same command always join in a cooperation attack |
+| Always Drop | every monster leaves its item (its rare one by its share) |
+| Full Cheer | the cheer points are full in every battle, so assists come at their best chance; your saved points are untouched |
 
 **FSR 4** (AMD RX 6000 or later, on Linux and Windows) needs AMD's own files, which can't be
 included. Put these in `fsr4/` in the game folder (its `README.txt` has the links):

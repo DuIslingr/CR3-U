@@ -344,6 +344,17 @@ public:
     bool reverseSpeed = false;
     int reverseSpeedTurns = 0;
     bool partyUnhurt = false; // (a test aid - --input guard:party: hits on the party do no damage)
+    // Options' Cheats (CR3-U's own, none of the original's: the viewer sets them at a battle's start from settings.ini - never
+    // a VS battle's; all off, nothing changes): cheatHp - a party member's HP whole again after each action's damage, the
+    // numbers still shown, never under 1 meanwhile (nobody falls; poison too); cheatMp - the party's commands cost no MP
+    // (mpCost 0: none checked, none paid; an MP release spends none); cheatOneHit - a party member's damaging hit on a monster
+    // takes all its HP (a boss's own endure kept); cheatGauge - the break gauge pinned at the party's full advantage, +1000,
+    // every turn (no points move it, no break flips it: the party's Finest Arts open to every combo); cheatCoop - a party
+    // member's cooperation roll always comes up; expScale - the battle's EXP (the genes') this many times (scaledExp)
+    bool cheatHp = false, cheatMp = false, cheatOneHit = false, cheatGauge = false, cheatCoop = false;
+    int expScale = 1;
+    int scaledExp(int exp) const; // (x expScale, held under 99999999)
+    void keepCheats();            // (the party's HP / MP whole - cheatHp / cheatMp, the living -, the gauge pinned - cheatGauge)
     // the party's money (DAT_014c6e74, live: a Steal Gold hit takes from it at once -
     // BtlStatus::TakeDamageToCalculation 0x9b41c4); the viewer's game.cr3Money in and out
     int gold = 0;

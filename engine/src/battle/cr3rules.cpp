@@ -341,6 +341,7 @@ std::vector<int> Cr3BattleRules::skillCommands(int fighter) const {
 }
 
 int Cr3BattleRules::mpCost(const Cr3Fighter& f, const Cr3Command& c) const {
+    if (cheatMp && f.player) return 0; // (Options' Infinite MP)
     // (MbCommandInfo::GetMpCost + BtlStatus::GetMpCost: 0 flat, 1 % current MP, 2 % max MP,
     // 3 max(int(cost * weaponConsumption), 1), then scaled by GetMpCostPercent (kind 129) * mpCostScale)
     const float less = float(mpCostPercent(f)) * 0.01f * mpCostScale;
@@ -647,6 +648,7 @@ std::vector<std::pair<int, int>> Cr3BattleRules::endTurn() {
         const int change = f.dead() ? 0 : int(rate * float(f.maxHp));
         if (change != 0) {
             f.hp = std::clamp(f.hp + change, change < 0 ? 1 : 0, f.maxHp);
+            if (cheatHp && f.player && f.hp > 0) f.hp = f.maxHp; // (Options' Infinite HP: the number shown, the HP whole)
             out.emplace_back(int(k), change);
         }
         endEffects(int(k), 11);
@@ -668,6 +670,10 @@ bool Cr3BattleRules::addBreak(int points) {
     // (BtlBreakPoint::Add: the battle's first points +-500 whatever they are; from above 0 to 0 or
     // below another -500 first - a break, +0x31 -, from below to 0 or above +500; held within +-1000)
     if (points == 0) return false;
+    if (cheatGauge) { // (Options' Always Full Break Gauge: the party's full advantage, whatever the points)
+        gauge = 1000, gaugeStarted = true;
+        return false;
+    }
     if (!gaugeStarted) points = points > 0 ? 500 : -500;
     gaugeStarted = true;
     bool broke = false;
@@ -694,6 +700,20 @@ bool Cr3BattleRules::addBreak(int points) {
     }
     gauge = std::clamp(gauge + points, -1000, 1000);
     return broke;
+}
+
+int Cr3BattleRules::scaledExp(int exp) const {
+    if (expScale <= 1 || exp <= 0) return exp;
+    return int(std::min<int64_t>(int64_t(exp) * expScale, 99999999));
+}
+
+void Cr3BattleRules::keepCheats() {
+    if (cheatGauge) gauge = 1000, gaugeStarted = true;
+    for (Cr3Fighter& f : fighters) {
+        if (!f.player || f.dead()) continue;
+        if (cheatHp) f.hp = f.maxHp;
+        if (cheatMp) f.mp = f.maxMp;
+    }
 }
 
 void Cr3BattleRules::rollCritAndDown(const Cr3Fighter& s, const Cr3Fighter& t, const Cr3Command& c, bool& crit, bool& down, float& rate) {
@@ -1127,6 +1147,7 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     giveFieldEffects(); // (phaseStart: GiveFieldStatusEffect, every turn)
     turnEndQueue_.clear(); // (the last turn end's list: played or dropped)
     finisherChunk_ = {}, comboActors_.clear(); // (BtlCommandManager::Clear 0x7da8f8: +0x188, +0xb8)
+    keepCheats(); // (Options' Cheats: the party whole, the gauge pinned - each a no-op when off)
     // BtlCommandManager::AddCommandBySelected + ExecuteAIForEnemy + BtlCommandList::Sort:
     // buckets 0 (normal, sorted), 2 (priority -8, sorted), and 5 (priority -9, unsorted)
     std::vector<std::array<int, 4>> raw; // (fighter, command, target, 1: a skill's added command)
@@ -1499,7 +1520,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         // (calculateCooperation @ 0x007dc7f4: normal bucket0 only, +0xbc bit 7, not a skill's, free of
         // kind 47 for a gene's; random byte under 154 (with advantage) or 77 + skill kind 80)
         if (at < bucket0End && (c.flags & 0x80) && !fromSkill && !((c.flags & 1) && hasKind(s, 47))) {
-            const int chance = (advantage(s.player) ? 154 : 77) + skillConstant(s, 80);
+            const int chance = cheatCoop && s.player ? 256 : (advantage(s.player) ? 154 : 77) + skillConstant(s, 80); // (Options' Always Co-op: sure)
             if (int(random() * 256.0f) < chance)
                 for (size_t k = at + 1; k < bucket0End && k < order.size();) {
                     const std::array<int, 4> o = order[k];
@@ -1525,7 +1546,8 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             a.mpCost = 0;
         } else if (c.damage == 22) { // (calculateMpRelease: spends all remaining MP)
             mpReleased = s.mp;
-            a.mpCost = s.mp, s.mp = 0;
+            if (cheatMp && s.player) a.mpCost = 0; // (Options' Infinite MP: the release's power, none spent)
+            else a.mpCost = s.mp, s.mp = 0;
         } else {
             a.mpCost = std::min(mpCost(s, c), s.mp);
             s.mp -= a.mpCost;
@@ -1534,7 +1556,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         if (s.player) partyMp += a.mpCost;
         for (int pi : a.partners) {
             Cr3Fighter& p = fighters[size_t(pi)];
-            const int m = c.damage == 22 ? p.mp : std::min(mpCost(p, c), p.mp);
+            const int m = c.damage == 22 ? (cheatMp && p.player ? 0 : p.mp) : std::min(mpCost(p, c), p.mp);
             p.mp -= m;
             p.hp = std::max(p.hp - hpCost(p, c), 1);
             if (p.player) partyMp += m;
@@ -1628,9 +1650,10 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
             // percentage of the max - an endure -, and BtlSkillUtility::GetLeastHp 0x9b0368: the enabled skills' highest kind 53,
             // Narrow Escape's / Blue-Moon Brave's 1; a skill's added command past it - the spider's finisher)
             const auto leastHp = [&]() {
-                return c.damage == 24 ? std::max(c.power, 1)
-                       : fromSkill == 1 || fromSkill == 6 ? 0
-                                        : std::max({effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)), skillMost(t, 53)});
+                const int least = c.damage == 24 ? std::max(c.power, 1)
+                                  : fromSkill == 1 || fromSkill == 6 ? 0
+                                                   : std::max({effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)), skillMost(t, 53)});
+                return cheatHp && t.player ? std::max(least, 1) : least; // (Options' Infinite HP: nobody falls)
             };
             if (c.damage < 0) { // (CommandFomula -1: no damage - its status effects alone)
                 landed = true;
@@ -1742,6 +1765,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     if (blocked) rawDmg = 0;
                     const bool downHit = downUnit && !blocked; // (calculateDown 0x7e0ddc: CanBlockBySkill - no down)
                     int d = partyUnhurt && t.player ? 0 : rawDmg;
+                    if (cheatOneHit && d > 0 && u.player && !t.player) d = std::max(t.hp, 1); // (Options' One-Hit Kills: all its HP)
                     // (calculateHpFluctuation 0x7e35e0: an HP steal - +0xbd bit 5 - skips the element's absorb test and
                     // takes no more than the target has)
                     if (c.flags & 0x2000) d = std::min(d, std::max(t.hp, 0));
@@ -1845,6 +1869,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     endEffects(ti, 7);
                 }
             }
+            if (cheatHp && t.player && t.hp > 0) t.hp = t.maxHp; // (Options' Infinite HP: whole again once the action's hits are in)
             hit.hpAfter = t.hp, hit.mpAfter = t.mp, hit.killed = t.dead();
             a.targets.push_back(hit);
         }
@@ -1911,6 +1936,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
         else if (c.extraType == 13 && !c.extraConstants.empty())
             forced = c.extraConstants[std::min(size_t(random() * float(c.extraConstants.size())), c.extraConstants.size() - 1)];
         if (forced != 0) gauge = std::clamp(forced, -1000, 1000), gaugeStarted = true;
+        if (cheatGauge) gauge = 1000, gaugeStarted = true; // (Options' Always Full Break Gauge)
         coopNow_ = 1;
         for (Cr3Hit& th : a.targets)
             while (th.gauge.size() < th.hits.size()) th.gauge.push_back(gauge);

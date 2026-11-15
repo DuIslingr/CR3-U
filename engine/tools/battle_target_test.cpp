@@ -190,6 +190,8 @@ int main() {
         // Round 32: 1113 / 1114 as 1100, of element 1 (fire) / 4 (bolt) - +0x24
         row({{0,1113}, {1,1}, {4,3}, {5,10}, {8,0x101}, {9,1}, {32,4}, {33,1}, {34,1}});
         row({{0,1114}, {1,1}, {4,3}, {5,10}, {8,0x101}, {9,4}, {32,4}, {33,1}, {34,1}});
+        // (Options' Cheats: 1115 as 1100, open to a cooperation - +0xbc bit 7)
+        row({{0,1115}, {1,1}, {4,3}, {5,10}, {8,0x101}, {32,0x84}, {33,1}, {34,1}});
         Table formulas{"CommandFomula", "iiii", {
             {{0,21},{2,21},{3,uint32_t(-1)}},
             {{0,1},{2,1}}, {{0,2},{2,1},{3,3}}, {{0,5},{2,5}}, {{0,7},{2,7}},
@@ -674,6 +676,93 @@ int main() {
                 if (a.source == 0)
                     check(!a.targets.empty() && !a.targets[0].gauge.empty() && a.targets[0].gauge[0] < 0,
                           "without kind 70 the first hit adds its usual points");
+        }
+        // Options' Cheats (CR3-U's own, none of the original's): each a rules flag the viewer sets at a battle's start;
+        // off, the battle as ever (the lethal blow fells, the gauge moves, MP is paid)
+        {
+            cr3::Cr3BattleRules rules; check(rules.setup(t, battle, 1, 77), "setup cheats battle");
+            auto reset = [&] {
+                for (size_t k = 0; k < 4; ++k) {
+                    auto& f = rules.fighters[k];
+                    f.player = k < 2, f.hp = f.maxHp = 5000, f.mp = f.maxMp = 100, f.attack = 50, f.defence = 50, f.luck = 0;
+                    f.speed = k < 2 ? 100 - int(k) : 10 - int(k), f.attackCommand = 30, f.comboChance = false, f.combo = 0, f.chain = 0;
+                    f.effects.clear(), f.skills.clear(), f.lastAttack = f.finestArts = -1;
+                }
+                rules.scripted.clear(), rules.monstersWait = false, rules.gauge = 0, rules.gaugeStarted = false;
+            };
+            auto lethal = [&] { rules.scripted[2].push_back({1, 1111}), rules.scripted[3].push_back({1, 1111}); };
+            // off: the monsters' lethal blows fell the party, the gauge goes their way
+            reset(), lethal();
+            (void)rules.turn({{0, 30, 2}, {1, 30, 3}});
+            check(rules.fighters[0].dead() || rules.fighters[1].dead(), "cheats off: a lethal blow fells a party member");
+            // Infinite HP: the blows' numbers kept, the HP whole after each, nobody falls - poison too
+            reset(), lethal(), rules.cheatHp = true;
+            int shown = 0, wholeAfter = 0;
+            for (const cr3::Cr3Action& a : rules.turn({{0, 30, 2}, {1, 30, 3}}))
+                for (const cr3::Cr3Hit& h : a.targets)
+                    if (h.target < 2) {
+                        for (int d : h.hits) shown += d > 0;
+                        wholeAfter += h.hpAfter == 5000;
+                    }
+            check(shown >= 2 && wholeAfter >= 2 && rules.fighters[0].hp == 5000 && rules.fighters[1].hp == 5000,
+                  "cheat Infinite HP: the damage shown, the party's HP whole after each action, nobody falls");
+            rules.cheatHp = false;
+            // One-Hit Kills: a party member's hit takes all of a monster's HP - the number shown its whole HP
+            reset(), rules.cheatOneHit = true, rules.fighters[1].hp = 0, rules.monstersWait = true;
+            int took = 0;
+            for (const cr3::Cr3Action& a : rules.turn({{0, 30, 2}}))
+                if (a.source == 0)
+                    for (const cr3::Cr3Hit& h : a.targets)
+                        if (h.target == 2 && !h.hits.empty()) took = h.hits[0];
+            check(took == 5000 && rules.fighters[2].dead() && !rules.fighters[3].dead(), "cheat One-Hit Kills: the hit takes all 5000 HP");
+            rules.cheatOneHit = false;
+            // Infinite MP: no MP checked or paid - a 20 MP spell from 0 MP, a party member's alone
+            reset(), rules.fighters[1].hp = 0, rules.fighters[0].mp = 0, rules.monstersWait = true;
+            cr3::Cr3Command fire;
+            check(rules.command(720, fire) && rules.mpCost(rules.fighters[0], fire) == 20, "the spell costs 20 MP");
+            const auto broke = rules.turn({{0, 720, 2}});
+            check(!broke.empty() && broke[0].command == -2, "cheats off: a spell without its MP is called off");
+            reset(), rules.fighters[1].hp = 0, rules.fighters[0].mp = 0, rules.monstersWait = true, rules.cheatMp = true;
+            check(rules.mpCost(rules.fighters[0], fire) == 0 && rules.mpCost(rules.fighters[2], fire) == 20, "cheat Infinite MP: the party's costs 0");
+            bool cast = false;
+            for (const cr3::Cr3Action& a : rules.turn({{0, 720, 2}})) cast |= a.source == 0 && a.command == 720 && a.mpCost == 0 && !a.targets.empty();
+            reset(), rules.fighters[1].hp = 0, rules.monstersWait = true;
+            bool paid = true;
+            for (const cr3::Cr3Action& a : rules.turn({{0, 720, 2}})) paid &= a.source != 0 || a.mpCost == 0;
+            check(cast && paid && rules.fighters[0].mp == 100, "cheat Infinite MP: the spell cast from 0 MP, none paid");
+            rules.cheatMp = false;
+            // Always Full Break Gauge: +1000 from the turn's start, every hit's gauge the same, the monsters' points and a forced
+            // set (extraType 13) moving nothing, no break
+            reset(), lethal(), rules.cheatHp = true, rules.cheatGauge = true;
+            bool pinned = true, anyBreak = false;
+            for (const cr3::Cr3Action& a : rules.turn({{0, 30, 2}, {1, 724, 3}})) {
+                anyBreak |= a.broke;
+                pinned &= a.gaugeAfter == 1000;
+                for (const cr3::Cr3Hit& h : a.targets)
+                    for (int g : h.gauge) pinned &= g == 1000;
+            }
+            check(pinned && !anyBreak && rules.gauge == 1000 && rules.advantage(true) && !rules.addBreak(-1500) && rules.gauge == 1000,
+                  "cheat Always Full Break Gauge: pinned at +1000 through every hit, no break");
+            rules.gauge = 0, rules.keepCheats();
+            check(rules.gauge == 1000, "cheat Always Full Break Gauge: a gauge set back to even pinned again");
+            rules.cheatHp = rules.cheatGauge = false;
+            // Always Co-op: two members on one monster with a cooperation command - joined every time
+            int joined = 0, joinedOff = 0;
+            for (uint32_t seed = 1; seed <= 20; ++seed) {
+                for (const bool on : {false, true}) {
+                    check(rules.setup(t, battle, 1, seed), "setup co-op battle");
+                    reset(), rules.monstersWait = true, rules.cheatCoop = on;
+                    for (const cr3::Cr3Action& a : rules.turn({{0, 1115, 2}, {1, 1115, 2}}))
+                        if (a.source == 0 && !a.partners.empty()) ++(on ? joined : joinedOff);
+                }
+            }
+            check(joined == 20 && joinedOff < 20, "cheat Always Co-op: the cooperation every time (off: by its chance)");
+            rules.cheatCoop = false;
+            // EXP Multiplier: the battle's EXP x expScale, held under 99999999
+            check(rules.scaledExp(120) == 120, "EXP x1 as it is");
+            rules.expScale = 5;
+            check(rules.scaledExp(120) == 600 && rules.scaledExp(0) == 0 && rules.scaledExp(50000000) == 99999999, "cheat EXP Multiplier x5");
+            std::cout << "cheats: Infinite HP / MP, One-Hit Kills, Full Break Gauge, Co-op (" << joinedOff << "/20 off), EXP x5: ok\n";
         }
         // Round 10: BtlCommandManager::addLastAttack - two linked actions (the second a combo on the downed
         // target), the last's command able to lead into one, the next from the other side: the last

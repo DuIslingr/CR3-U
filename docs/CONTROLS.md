@@ -87,6 +87,15 @@ party's arrow and the camera's view. The game's names for three buttons are one 
 pictures (feBtnShop is Camp, feBtnCamp My Page, feBtnMypage the SpShop); CR3-U goes by what they
 open in the game (Fld2Main's states 6, 9 and 10).
 
+## CR3-U's Cheats page
+
+Options → Graphics: the first row, **Cheats**, opens CR3-U's own Cheats page (its value
+says how many are on). It works like the Graphics rows: ↑ / ↓ (the wheel too) a row,
+← / → or ○ / Return / a tap on the arrows change it, the header shows the focused cheat's
+help, **Reset** (or R) turns every cheat off, and × / Back / Esc returns to Graphics. L / R
+and the tabs leave the page. The cheats are listed in the README's Settings section; the
+battle ones are not used in VS battles.
+
 ## CR3's save files
 
 The native title-screen save menu has 12 slots across four pages of three.

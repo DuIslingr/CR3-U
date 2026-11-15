@@ -277,6 +277,18 @@ struct Viewer {
         int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
         int battleSpeed = 1;      // the battles, this many times as fast: 1, 2 .. 5
         int language = 0;         // the options' language: cr3::Language + 1 (0: none picked yet)
+        // Options > Graphics > Cheats (CR3-U's own, none of the original's; settings.ini's cheat_*= - written only when on):
+        // every one off to begin with, and off changes nothing. The battles' are set into the rules at a battle's start
+        // (applyCr3Cheats) - never a VS battle's -, the field's each frame (applyFieldCheats)
+        struct Cheats {
+            bool hp = false, mp = false, oneHit = false; // Infinite HP / MP, One-Hit Kills
+            int exp = 1;                                 // the genes' EXP from a battle, 1x .. 10x
+            bool firstStrike = false, noBattles = false; // Always First Strike (never ambushed), No Random Battles
+            bool money = false, fullOutside = false;     // Max Money, Full HP / MP Outside Battle (the MP a battle left)
+            bool gauge = false, coop = false;            // CR3's: Always Full Break Gauge, Always Co-op
+            bool drops = false, cheer = false;           // CR3's: Always Drop, Full Cheer (the assists')
+            bool battle() const { return hp || mp || oneHit || exp > 1 || firstStrike || gauge || coop || drops || cheer; }
+        } cheats;
     } settings;
     bool settingsPersist = false;
     int rendererInUse = 0;        // (the device that started: the Renderer row's "next start")
@@ -304,6 +316,10 @@ struct Viewer {
     int settingsCursor = 0;
     float settingsStart = 0;
     std::vector<SettingRow> settingRows();
+    std::vector<SettingRow> cheatRows();  // (Options > Graphics > Cheats: Settings::Cheats)
+    void applyCr3Cheats(bool start);       // (a battle's start: the rules' flags - none in VS -; then each turn: the party whole, the gauge, the cheer)
+    void applyFieldCheats();               // (each frame: the money, the MP between battles)
+    bool cr3Cheating = false;              // (this battle's cheats on: applyCr3Cheats)
     void settingChange(int row, int dir, bool click = true);
     void openSettings();
     void closeSettings();
@@ -1311,6 +1327,7 @@ struct Viewer {
     void stepArea2D(float dt);
     float area2DMaxX() const;
     float area2DMaxY() const;
+    void area2DFrame(int& w, int& h) const; // (the scene's frame: the 2D area's scroll and stops measured in it)
     bool area2DTarget(float& tx, float& ty) const;
     Mat4 area2DView(int w, int h, Mat4* proj) const;
     // The toy camera (goods 1: Fld2GoodsButton::OnUpdate 2, not in a town - Fld2TaskMap::GetDungeonNo
@@ -4178,7 +4195,14 @@ struct Viewer {
         bool asking = false; // (CR3-U's Reset: its question up)
         int askFocus = 1;    // (0 Yes, 1 No)
         float askSince = 0;
+        // (Graphics: its first row CR3-U's Cheats, opening that page - the settings' rows after it; graphicsAt the focus, the
+        // settings' settingsCursor + 1. The Cheats page in its place: cheatRows, its own focus and first row shown)
+        bool cheats = false;
+        int graphicsAt = 0, cheatAt = 0, cheatTop = 0;
     } campOptions;
+    std::vector<SettingRow> graphicsTabRows(); // (the Graphics tab's rows: Cheats, then settingRows - or the Cheats page's)
+    int& campRowAt();                    // (their focus)
+    void openCheats(bool open);
     // the Other tab's Credits and Copyright Notice (OptionMain::Update 0xaec0c0: SE com_003, the
     // OptionMenu away, OptionMain's backgrounds dimmed 1 -> 0.5 at 0.05 an update; then
     // StaffNameListMenu 0xe5 - SetNumbers 854 / 668, SetFile Staff2 / Copyright, Copyright's

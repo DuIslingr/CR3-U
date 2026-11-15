@@ -1415,7 +1415,7 @@ void Viewer::drawGeneMerge(int w, int h, const Mat4& view) {
     std::snprintf(lv, sizeof lv, "Lv %d", game.cr3Db ? game.cr3Db->geneLevel(g) : 1);
     drawUiText(cr3NameOf("gene_name.mbe", "GeneName", g.master), 30, 0, -2.3f / 10, w, h, false, 1.0f);
     if (gi) drawUiText(lv, 26, 0, -2.7f / 10, w, h, false, 1.0f);
-    geneLabTaps.push_back({-4.8f, -3.2f, 4.8f, 3.2f, -1});
+    geneLabTaps.push_back({-100, -100, 100, 100, -1}); // (a tap anywhere: the whole screen, wider than 3:2 too)
 }
 
 // a choice in the lab: Talk (the clerk's script's), Combine (its own two - Combine, Enhance),

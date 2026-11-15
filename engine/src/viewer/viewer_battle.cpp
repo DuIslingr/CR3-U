@@ -751,7 +751,10 @@ void Viewer::rollCr3Drops() {
         }
         int pick = -1;
         if (rare && kind1 > 0) pick = 1;
-        else {
+        else if (cr3Cheating && settings.cheats.drops) { // (Options' Always Drop: one of the two always, the rare by its share)
+            const int c0 = kind0 > 0 ? std::max(r.i(29) + dropBoost, 1) : 0, c1 = kind1 > 0 ? std::max(r.i(32), 1) : 0;
+            pick = c0 + c1 <= 0 ? -1 : int(SDL_rand(c0 + c1)) < c0 ? 0 : 1;
+        } else {
             const int c0 = kind0 > 0 && r.i(29) > 0 ? std::max(r.i(29) + dropBoost, 0) : 0;
             const int c1 = kind1 > 0 && r.i(32) > 0 ? r.i(32) : 0;
             const int roll = int(SDL_rand(256));
@@ -981,6 +984,35 @@ void Viewer::drawCr3Continue(int w, int h) {
     }
 }
 
+// Options' Cheats (CR3-U's own) in a battle. At its start the rules' flags from settings.ini - none in a VS battle: the
+// colosseum's scores, week rankings and prizes are the game's own contest, left fair -; then (start or not, each turn) the
+// party's HP / MP whole, the gauge pinned at the party's +1000 and the cheer points full, and the bars shown so
+void Viewer::applyCr3Cheats(bool start) {
+    const Settings::Cheats& c = settings.cheats;
+    if (start) {
+        const bool on = vs.screen != 5 && c.battle();
+        cr3Rules.cheatHp = on && c.hp, cr3Rules.cheatMp = on && c.mp, cr3Rules.cheatOneHit = on && c.oneHit;
+        cr3Rules.cheatGauge = on && c.gauge, cr3Rules.cheatCoop = on && c.coop;
+        cr3Rules.expScale = on ? std::clamp(c.exp, 1, 10) : 1;
+        cr3Cheating = on;
+        if (on)
+            SDL_Log("battle: cheats -%s%s%s%s%s%s%s%s EXP x%d", c.hp ? " infinite HP," : "", c.mp ? " infinite MP," : "", c.oneHit ? " one-hit kills," : "",
+                    c.firstStrike ? " first strike," : "", c.gauge ? " full break gauge," : "", c.coop ? " co-op," : "", c.drops ? " drops," : "",
+                    c.cheer ? " full cheer," : "", cr3Rules.expScale);
+        else if (vs.screen == 5 && c.battle()) SDL_Log("battle: cheats - none in a VS battle");
+    }
+    if (!cr3Cheating) return;
+    cr3Rules.keepCheats();
+    if (c.cheer) cr3Rules.cheer = std::max(cr3Rules.cheer, game.cr3Db ? game.cr3Db->constant("CHEER_POINT_MAX", 100) : 100);
+    for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
+        const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
+        if (!f.player) continue;
+        if (cr3Rules.cheatHp && k < cr3HpShown.size()) cr3HpShown[k] = f.hp;
+        if (cr3Rules.cheatMp && k < cr3MpShown.size()) cr3MpShown[k] = f.mp;
+    }
+    if (cr3Rules.cheatGauge) cr3GaugeShown = cr3Rules.gauge;
+}
+
 void Viewer::rollCr3StartMode() {
     cr3StartMode = 0, cr3Announce = Cr3Announce();
     const int first = game.next.battleFirstStrike[0], surprise = game.next.battleFirstStrike[1];
@@ -993,7 +1025,8 @@ void Viewer::rollCr3StartMode() {
         surpriseBy = std::min(surpriseBy, sum);
     }
     if (first != 0 || surprise != 0) SDL_Log("battle: first strike %d%% (%+d), surprise %d%% (%+d)", first + firstBy, firstBy, surprise + surpriseBy, surpriseBy);
-    if (first != 0 && int(SDL_rand(100)) < first + firstBy) cr3StartMode = 1;
+    if (cr3Cheating && settings.cheats.firstStrike && (first != 0 || surprise != 0)) cr3StartMode = 1; // (Options' Always First Strike)
+    else if (first != 0 && int(SDL_rand(100)) < first + firstBy) cr3StartMode = 1;
     else if (surprise != 0 && int(SDL_rand(100)) < surprise + surpriseBy) cr3StartMode = 2;
     if (const char* m = SDL_getenv("CR3_START_MODE")) cr3StartMode = std::atoi(m);
     if (cr3StartMode != 1 && cr3StartMode != 2) return void(cr3StartMode = 0);
@@ -1190,8 +1223,10 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     cr3VictorUnit = -1, cr3VictoryDuration = 2.5f;
     for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp), cr3MpShown.push_back(f.mp);
     applyVsBattleStart(); // (VS: the lifeline items, the wildcards)
+    applyCr3Cheats(true); // (Options' Cheats into the rules - none in VS)
     cr3GaugeShown = 0;
     rollCr3StartMode();
+    if (cr3Cheating) applyCr3Cheats(false); // (the gauge pinned, shown so)
     cr3AnimCommon.clear();
     if (const cr3::MbeFile::Table* t = cr3BattleTables.model.table("AnimCommon"))
         for (size_t r = 0; r < t->rows.size(); ++r) {
@@ -1442,8 +1477,10 @@ void Viewer::updateCr3Battle(float dt) {
 // the party's most in one hit)
 void Viewer::cr3CountRecords() {
     // (the cheer points an assist spent - crx_game_data's, kept: GameState::cr3Cheer)
-    if (game.cr3Cheer != cr3Rules.cheer) SDL_Log("battle: an assist - cheer points %d -> %d", game.cr3Cheer, cr3Rules.cheer);
-    game.cr3Cheer = cr3Rules.cheer;
+    if (!(cr3Cheating && settings.cheats.cheer)) { // (Options' Full Cheer: the battle's own full points spent, the save's kept)
+        if (game.cr3Cheer != cr3Rules.cheer) SDL_Log("battle: an assist - cheer points %d -> %d", game.cr3Cheer, cr3Rules.cheer);
+        game.cr3Cheer = cr3Rules.cheer;
+    }
     cr3::GameState::Cr3Records& r = game.cr3Records;
     for (const cr3::Cr3Action& a : cr3Actions) {
         if (a.source < 0 || size_t(a.source) >= cr3Rules.fighters.size() || !cr3Rules.fighters[size_t(a.source)].player) continue;
@@ -2060,6 +2097,7 @@ void Viewer::beginCr3Turn(bool countTurn) {
         if (startCr3Opening(cr3Rules.opening())) return;
     }
     cr3Choices.clear(), cr3TurnItems.clear();
+    applyCr3Cheats(false); // (Options' Cheats: the party whole, the gauge pinned, the cheer full - off, nothing)
     closeCr3Totals();
     cr3EffectsShown.clear(), cr3ElementShown.clear(); // (the rules' own while choosing)
     // (phaseStart's BtlUnitList::StopGuardAnimation 0x9d6d54: PlayStayAnimation for every unit - a guard's bg01 gone with its
@@ -3838,6 +3876,10 @@ void Viewer::enterCr3Result() {
             if (cr3::Cr3Command ac; cr3Rules.command(cmd, ac) && !ac.extraConstants.empty() && ac.extraConstants[0] > 0) apples[k] *= ac.extraConstants[0];
     cr3ResultExp = (cr3ResultExp + cr3ResultAdd[0]) * apples[0] * cr3ResultFactor[0], cr3ResultMoney = (cr3ResultMoney + cr3ResultAdd[1]) * apples[1] * cr3ResultFactor[1];
     cr3ResultExp = int(expBy * float(cr3ResultExp)), cr3ResultMoney = int(moneyBy * float(cr3ResultMoney));
+    if (cr3Rules.expScale > 1) { // (Options' EXP Multiplier: the tally shows it)
+        SDL_Log("battle: cheats - EXP %d x%d", cr3ResultExp, cr3Rules.expScale);
+        cr3ResultExp = cr3Rules.scaledExp(cr3ResultExp);
+    }
     cr3ResultVip = game.cr3VipDays >= 1 && game.cr3Db;
     cr3ResultBase[0] = cr3ResultExp, cr3ResultBase[1] = cr3ResultMoney;
     if (cr3ResultVip) {

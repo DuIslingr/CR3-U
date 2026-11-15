@@ -74,6 +74,12 @@ want camp && run options-credits "0:until=camp:_options 0.5:r 1:r 1.5:down 2:dow
     "options: tab 2|options: other row 3|options: credits (854 lines)|staff list: line 2|staff list: line 3|options: credits closed|options: other row 4|options: copyright notice (668 lines)" \
     -- --area d0301 --flag 26 --input "camp:open camp:button6"
 
+# CR3-U's Cheats (Options > Graphics, its first row): ○ opens the page, ↓ Infinite MP, ○ on, ○ off again (the run's settings.ini
+# left as it was for the cases after), × back to Graphics
+want camp && run options-cheats "0:until=camp:_options 0.5:r 1:r 1.5:r 2:east 2.5:down 3:east 3.5:east 4:south 5:quit" \
+    "options: tab 3|options: cheats opened|cheats: Infinite MP On|cheats: Infinite MP Off|options: cheats closed" \
+    -- --area t0101 --flag 26 --input "camp:open camp:button6"
+
 # The Quest Clear screen (QuestDitailMenu 0x7e - d02's quest_complete for quest 50): OK, its 1/6 s close, the script on
 quest_pad="$(k=1; while [ $k -le 24 ]; do printf "%d:east " $k; k=$((k + 1)); done)26:quit" # (the area's tutorials tapped through, then OK)
 want camp && run quest-clear "$quest_pad" \

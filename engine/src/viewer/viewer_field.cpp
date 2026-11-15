@@ -64,8 +64,9 @@ bool Viewer::areaDragFree() const { return areaMode && !eventMode && !(areaEvent
 // all of it at 3:2, 1620 x 1080 of 1920 x 1080)
 bool Viewer::toyCamTouchBox(float fx, float fy) const {
     if (!toyCam.on) return true;
-    int w = 960, h = 640;
-    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    int w = 960, h = 640; // (fx, fy: fractions of the UI's screen - inside a camera cutout's insets -, so its shape)
+    if (screenW > 1 && screenH > 1) w = screenW, h = screenH;
+    else if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
     const float W = float(w), H = float(std::max(h, 1));
     return std::fabs(fx - 0.5f) * W <= 0.5f * std::min(W, 1.5f * H) && std::fabs(fy - 0.5f) * H <= 0.5f * std::min(H, W / 1.5f);
 }
@@ -2509,7 +2510,7 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
     vm.setNative("Cr3FieldMapCamera", "SetPos", [this, area](cr3::NativeCall& c) {
         if (!area || !area2D.on) return;
         int w = 960, h = 640;
-        if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+        area2DFrame(w, h);
         const float k = float(w) / float(std::max(h, 1)) / 1.5f;
         area2D.x = std::clamp(-c.number(0) / 960.0f * k, -area2DMaxX(), area2DMaxX());
         area2D.y = std::clamp(-c.number(1) / 640.0f * k, -area2DMaxY(), area2DMaxY());
@@ -2519,7 +2520,7 @@ void Viewer::bindCr3FieldUiNatives(cr3::ScriptVM& vm, bool area) {
         vm.setNative("Cr3FieldMapCamera", axis ? "GetPos_Y" : "GetPos_X", [this, area, axis](cr3::NativeCall& c) {
             if (!area || !area2D.on) return c.result(0.0f);
             int w = 960, h = 640;
-            if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+            area2DFrame(w, h);
             const float k = float(w) / float(std::max(h, 1)) / 1.5f;
             c.result(-(axis ? area2D.y * 640.0f : area2D.x * 960.0f) / k);
         });
@@ -2920,11 +2921,18 @@ void Viewer::loadArea2D(const std::string& name) {
     SDL_Log("area %s: the 2D camera%s, mode %d, at (%.3f %.3f)", name.c_str(), area2D.camOk ? "" : " (no camera)", area2D.mode, double(area2D.x), double(area2D.y));
 }
 
+// the 2D area's measure: the frame the scene is drawn in (placeScreen's - drawArea's w x h), not the window - a desktop's
+// Resolution of another shape letterboxes the frame in it; before the first frame the window's
+void Viewer::area2DFrame(int& w, int& h) const {
+    if (frameW > 1 && frameH > 1) w = frameW, h = frameH;
+    else if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+}
+
 // (SetScrollStop 0x9ed670: the picture's 1232 x 1848 of the sprite's 2048 against the screen - NDC)
 float Viewer::area2DMaxX() const { return 1232.0f / 1024.0f - 1.0f; }
 float Viewer::area2DMaxY() const {
     int w = 960, h = 640;
-    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    area2DFrame(w, h);
     return 1848.0f / 1024.0f * float(w) / float(std::max(h, 1)) - 1.0f;
 }
 
@@ -2944,7 +2952,7 @@ Mat4 Viewer::area2DView(int w, int h, Mat4* proj) const {
 bool Viewer::area2DTarget(float& tx, float& ty) const {
     if (!area2D.camOk || !areaWalker) return false;
     int w = 960, h = 640;
-    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    area2DFrame(w, h);
     const float aspect = float(w) / float(std::max(h, 1));
     const Mat4 vp = cr3::mat4Multiply(perspective(area2D.fovY * 3.14159265f / 180, aspect, area2D.zNear, area2D.zFar), area2DView(w, h, nullptr));
     const cr3::Vec3 q = areaWalker->position();
@@ -2962,7 +2970,7 @@ bool Viewer::area2DTarget(float& tx, float& ty) const {
 void Viewer::stepArea2D(float dt) {
     if (!area2D.on) return;
     int w = 960, h = 640;
-    if (window) SDL_GetWindowSizeInPixels(window, &w, &h);
+    area2DFrame(w, h);
     if (area2D.mode == 0) {
         float tx, ty;
         if (!area2DTarget(tx, ty)) return;
@@ -3451,6 +3459,7 @@ void Viewer::countEncounter() {
     if (areaEnc.rate == 0 || areaEnc.couplings.empty()) return;
     const bool on = game.encountEnable && !encountersOff && !game.flag(0x410) && !game.flag(4105);
     if (!on && !game.flag(0x40d)) return;
+    if (settings.cheats.noBattles && !game.flag(0x40d)) return; // (Options' No Random Battles: a script's forced count - 0x40d - kept)
     areaEnc.walked += moved;
     if (areaEnc.walked < 1.7f) return;
     areaEnc.walked = 0;
@@ -5398,7 +5407,7 @@ bool Viewer::cr3Shoulder(bool right) {
     if (cr3Camp.stage == 7) return campQuestsKey(lr), true;
     if (cr3Camp.stage == 9 && !saveImport.active() && !campOptions.asking) {
         const int to = std::clamp(campOptions.tab + (right ? 1 : -1), 0, kOptionTabs - 1);
-        if (to != campOptions.tab) campOptions.tab = to, campOptions.footer = false, audio.playSe("com_003", false), SDL_Log("options: tab %d", to);
+        if (to != campOptions.tab) campOptions.tab = to, campOptions.footer = false, campOptions.cheats = false, audio.playSe("com_003", false), SDL_Log("options: tab %d", to);
         return true;
     }
     if (cr3Camp.stage == 10 && myPage.screen == 3 && !cardView.gene) return myPageKey(lr), true;

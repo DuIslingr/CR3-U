@@ -267,8 +267,13 @@ int lifecycleClockViewerSelfTest() {
         SDL_Event event{};
         event.type = SDL_EVENT_WILL_ENTER_BACKGROUND;
         clock.note(event, 2*second);
+        problems += !clock.backgrounded() || clock.resumes() != 0; // (the frame loop draws nothing from here)
+        event.type = SDL_EVENT_DID_ENTER_BACKGROUND;
+        clock.note(event, 3*second);
         event.type = SDL_EVENT_DID_ENTER_FOREGROUND;
         clock.note(event, 3602*second);
+        clock.note(event, 3602*second); // (a repeated notice: one return, one surface made anew)
+        problems += clock.backgrounded() || clock.resumes() != 1;
         frame(3602*second);
         problems += v.uiClock != before; // no scene/UI catch-up after an hour asleep
         frame(3602*second + second/20);
@@ -1692,6 +1697,7 @@ int main(int argc, char** argv) {
                 v.openCampOptions();
                 v.campOptions.tab = std::atoi(row) >= 0 ? 3 : 2;
                 v.settingsCursor = std::max(std::atoi(row), 0);
+                v.campOptions.graphicsAt = v.settingsCursor + 1; // (the Graphics tab's: its Cheats row first)
             } else {
                 v.optionsOpen = true, v.campOpen = !v.battleMode;
                 if (std::atoi(row) >= 0) v.openSettings(), v.settingsCursor = std::atoi(row);
@@ -1851,6 +1857,7 @@ int main(int argc, char** argv) {
         int fpsFrames = 0, totalFrames = 0;
         float measured = 0;
         const Uint64 started = firstFrame;
+        Uint64 seenResumes = 0; // (frameClock.resumes() last seen: the surface made anew after each)
         while (running) {
             SDL_Event e;
             if (v.window && v.inputDialogShown() != SDL_TextInputActive(v.window)) { // (the text entry's typing: a phone's keyboard up with it)
@@ -2198,6 +2205,20 @@ int main(int argc, char** argv) {
             }
             consumeInputCancel();
             if (!running) break;
+            // In a phone's background (iOS: from sceneWillResignActive till the scene is active again; Android's
+            // event pump blocks there anyway): nothing advanced, nothing drawn - iOS refuses a background app's
+            // GPU work, and MoltenVK's swapchain never presents again after it (CR1-U's iPhone: the picture
+            // frozen on return, the game running on beneath it). The frame clock is stopped meanwhile. Back in
+            // front, the window's Vulkan surface is made anew before the next present
+            if (frameClock.backgrounded()) {
+                SDL_Delay(20);
+                continue;
+            }
+            if (const Uint64 n = frameClock.resumes(); n != seenResumes) {
+                seenResumes = n;
+                dev->surfaceChanged();
+                SDL_Log("lifecycle: back from the background (%llu), the drawing surface made anew", (unsigned long long)n);
+            }
             if (!takeTitle()) running = false;
             if (v.cr3Reboot) { // (GameMain::Reboot: SM_Reboot - the game's sounds and scenes dropped, the title again)
                 v.cr3Reboot = false;
