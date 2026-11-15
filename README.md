@@ -209,10 +209,11 @@ code references: [docs/CONTROLS.md](docs/CONTROLS.md).
 
 ## Settings
 
-The title's **Options** (lower right, or O), the camp's and a battle's have the game's own tabs
-plus CR3-U's **Graphics** tab, saved in `settings.ini`. On a desktop the tabs and rows get smaller
-as the window grows, so more rows fit. **Reset** (the round button left of Back, or R) puts the open
-tab back to its defaults. Most settings also have a command-line flag for a single run.
+The title's **Options** (lower right, or O), the camp's and a battle's have five tabs: the game's
+own **Sound**, **Controls** and **Other**, then CR3-U's **Cheats** and **Graphics**, saved in
+`settings.ini`. On a desktop the tabs and rows get smaller as the window grows, so more rows fit.
+**Reset** (the round button left of Back, or R) puts the open tab back to its defaults. Most
+settings also have a command-line flag for a single run. The **Graphics** tab:
 
 | Setting | What it does |
 |---|---|
@@ -227,20 +228,21 @@ tab back to its defaults. Most settings also have a command-line flag for a sing
 | Field Speed, Battle Speed | Off or 2x to 5x: walking the field and the battles that many times as fast |
 | Swap ○ and × | which controller button confirms |
 | Lock Orientation | keep the current landscape direction (phones) |
-| Cheats | the Graphics tab's first row opens CR3-U's own **Cheats** page (below) |
 
 The **Other** tab has the **Language** (where the copy has more than one) and the Vita save import.
 
-**Cheats** (Options > Graphics > Cheats; CR3-U's own, none of the original's). Every one is off to
-begin with and saved in `settings.ini` (`cheat_*=` lines, written only while on); all off, the game
-plays exactly as without them. **Reset** on the page turns them all off. The battle ones are taken
-at each battle's start and never apply in VS (colosseum) battles, whose scores and rankings stay fair.
+The **Cheats** tab (Options > Cheats, before Graphics; CR3-U's own, none of the original's). Every
+one is off to begin with and saved in `settings.ini` (`cheat_*=` lines, written only while on); all
+off, the game plays exactly as without them. **Reset** on the tab turns them all off. The battle
+ones are taken at each battle's start and never apply in VS (colosseum) battles, whose scores and
+rankings stay fair. `--cheats hp,onehit,...` (hp, mp, onehit, firststrike, nobattles, money, full,
+gauge, coop, drops, cheer, exp2 .. exp10) turns them on for a single run.
 
 | Cheat | What it does |
 |---|---|
-| Infinite HP | the party's HP is whole again after every blow (the damage numbers still show); nobody falls, poison included |
+| Infinite HP | the party's HP is whole again after every blow (the damage numbers still show); nobody falls, poison included. In a story battle you're meant to lose it holds while a foe can still fall, so the fight can be won for its reward, and lets go once none can (each held at its last stand, or none hurt for three turns running), so the battle still ends and the story goes on |
 | Infinite MP | the party's genes and skills cost no MP (listed at 0) |
-| One-Hit Kills | the party's damaging hits take all of a monster's HP (a boss's own last stand still holds) |
+| One-Hit Kills | the party's damaging hits take all of a monster's HP (a boss's own last stand still holds: such a foe stays standing) |
 | EXP Multiplier | 1x to 10x the genes' EXP from a battle won, shown so on the result |
 | Always First Strike | every battle that can open with a first strike does; never ambushed (set story openings kept) |
 | No Random Battles | no random or ace encounters on the field; the story's battles still come |

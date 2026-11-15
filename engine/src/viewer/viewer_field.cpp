@@ -3672,7 +3672,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         }
         else if (want.compare(0, 6, "button") == 0) chooseCr3Camp(200 + std::atoi(want.c_str() + 6));
         else if (want.compare(0, 3, "cat") == 0) chooseCr3Camp(400 + std::atoi(want.c_str() + 3));
-        else if (want.compare(0, 2, "id") == 0) chooseCr3Camp(std::atoi(want.c_str() + 2)); // (a tap's id: id403 the Options' Graphics tab)
+        else if (want.compare(0, 2, "id") == 0) chooseCr3Camp(std::atoi(want.c_str() + 2)); // (a tap's id: id404 the Options' Graphics tab)
         else if (want.compare(0, 4, "reel") == 0) chooseCr3Camp(600 + std::atoi(want.c_str() + 4));
         else if (want.compare(0, 5, "chara") == 0) chooseCr3Camp(700 + std::atoi(want.c_str() + 5));
         else if (want == "yes" || want == "no" || want == "ok") chooseCr3Camp(want == "yes" ? 500 : want == "no" ? 501 : 502);
@@ -5407,7 +5407,7 @@ bool Viewer::cr3Shoulder(bool right) {
     if (cr3Camp.stage == 7) return campQuestsKey(lr), true;
     if (cr3Camp.stage == 9 && !saveImport.active() && !campOptions.asking) {
         const int to = std::clamp(campOptions.tab + (right ? 1 : -1), 0, kOptionTabs - 1);
-        if (to != campOptions.tab) campOptions.tab = to, campOptions.footer = false, campOptions.cheats = false, audio.playSe("com_003", false), SDL_Log("options: tab %d", to);
+        if (to != campOptions.tab) campOptions.tab = to, campOptions.footer = false, audio.playSe("com_003", false), SDL_Log("options: tab %d", to);
         return true;
     }
     if (cr3Camp.stage == 10 && myPage.screen == 3 && !cardView.gene) return myPageKey(lr), true;

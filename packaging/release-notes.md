@@ -6,22 +6,37 @@ stopped finding, and missing text on some Android phones. Everything in v0.7.0's
 ## Fixed
 
 - **Flydigi controllers on Windows:** a Vader 4 Pro, wired or through its receiver, wasn't found
-  since v0.7.0's SDL update. SDL 3.4 added its own Flydigi driver, which takes the controller and then
-  gets no input from it; CR3-U now leaves that driver off on Windows, so the controller is read through
-  XInput as before. Setting the environment variable `SDL_JOYSTICK_HIDAPI_FLYDIGI=1` turns SDL's driver
-  back on. Every controller SDL finds is now written to `cr3view.log`, so if one still isn't picked up,
-  the log shows why.
+  since v0.7.0's SDL update. The Windows build now uses SDL's development version from 2026-11-14,
+  which has SDL's later Flydigi fixes - the setup metastigma's fork uses and its user confirmed works
+  with this controller. Other platforms keep SDL 3.4.20. Every controller SDL finds is now written to
+  `cr3view.log`, so if one still isn't picked up, the log shows why.
 - **No text on some Android phones:** on phones whose maker ships its own fonts, without Android's
   usual font files where CR3-U looked, text the game's own font doesn't cover - and all text, when the
   game's font couldn't be read - went missing. CR3-U now reads the phone's own font list and uses the
   fonts it names (Japanese first, then Chinese and Korean), then the phone's default font.
+- **Cheats in story battles you're meant to lose:** Infinite HP no longer leaves you stuck in a battle
+  you can't win - once no foe can fall, it lets the party fall and the story goes on - and winnable
+  story battles can still be won with the cheats on, for their rewards.
+- **Menus on phones wider than 16:9:** on a 20:9 phone the menus' help line, title bar and footer
+  stopped short of the screen's right edge (VS mode's header and footer short of both). They now reach
+  the edges; with Camera Cutout set to Avoid, the bars still run to the edges while their buttons stay
+  inside the safe area.
+- **Options on 4:3 screens:** the Reset button covered the last row's arrow, and Back covered the
+  Other tab's Copyright Notice. Reset now sits immediately left of Back, and every tab's list stops
+  above them - the rows below a scroll away (▼, the wheel, a swipe or the pad). The empty Download
+  panel is gone from the Options footer.
 
 ### Thanks to metastigma
 
 [metastigma](https://github.com/metastigma) reported the Flydigi problem and investigated it in their
 fork of the sister port ([CRO-U-metastigma#42](https://github.com/metastigma/CRO-U-metastigma/pull/42),
-[#43](https://github.com/metastigma/CRO-U-metastigma/pull/43)); this release takes the narrower fix
-above instead of their development build of SDL.
+[#43](https://github.com/metastigma/CRO-U-metastigma/pull/43),
+[#45](https://github.com/metastigma/CRO-U-metastigma/pull/45)); the Windows build takes the SDL
+version their fork showed works.
+
+## Changed
+
+- Cheats moved to its own tab in Options (it was under Graphics in v0.7.0).
 
 ## Downloads
 

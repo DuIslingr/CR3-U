@@ -133,6 +133,9 @@ struct Cr3Battle {
     std::vector<Cr3BattleUnit> units;   // the party, then the monsters
     int cameraSize = -1;               // the largest unit's (BtlCameraSystem::ChangeLargerCameraSize)
     std::array<std::string, 10> cameras; // model.mbe Camera's names for that size: 0 the get-set, 1 command, ...
+    // its script's Battle_Defeat (Battle_Defeat_Base's) ends it with Battle.ForceEnd: the story goes on from its loss -
+    // battles 3, 26, 27, 30, 31 and 50 of the game's (bytes: the compiled battle_NNNN.nut)
+    static bool storyLoss(const std::vector<uint8_t>& script);
     float getSetEnd = 4.16667f;        // (its +0x04: PlayBattleIn's end time)
     float fieldSpan = 4.0f;           // (MbBattleInfo::GetFieldLength)
     // party: the characters in the party's slots (Cr3System.SetParty: char_para ids, 0 none);

@@ -977,10 +977,11 @@ Status, 7 Options - its line at `typeM_L01`, the gold, clock and coins) and the 
 - Options (OptionMain 0xac, OptionMenu 0xad): `optTopPositon`'s `optTab_fr00` (Sound, Controls, Other),
   Sound's three `optSltPanel` (BGM, Sound Effects, Voiceovers) with `optSltBar_fr00` at the volume's
   frame and `optSltBarCursor` along the bar (SetBarControlPoint), Controls' `optHnd_fr00` pair, Other's
-  Resolution (`optSltLRPanel`); the volumes saved on the way out. CR3-U adds a fourth tab, Graphics: the three-tab
-  bar drawn twice half a tab apart (the left one without its right end - `bg_03`, `bg_06`, `frame_03` -, the
-  right one without its left), so its dividers fall at -1, 0, +1 tab, the chosen tab's highlight (`tap_*`) from
-  the half that has it; its settings as the Other tab's Resolution - `optSltLRPanel` rows, as many as fit over
+  Resolution (`optSltLRPanel`); the volumes saved on the way out. CR3-U adds two tabs, Cheats and Graphics: the
+  three-tab bar drawn three times a tab apart (the left one without its right end - `bg_03`, `bg_06`, `frame_03`
+  -, the middle one its middle tab alone, the right one without its left), so its dividers fall at -1.5, -0.5,
+  +0.5, +1.5 tabs, the chosen tab's highlight (`tap_*`) from the copy that has it, the bar narrowed about its
+  middle where five tabs would pass the screen's sides; their cheats and settings as the Other tab's Resolution - `optSltLRPanel` rows, as many as fit over
   the footer (four on a phone or tablet; on a desktop the tabs and rows scaled about the tabs' height to about 78
   pixels a unit), the focused one tinted, its help on the header's line (one line, smaller to fit). A Reset left
   of the back: comBtnSPanel's round button with comBtnIcon_fr00's circling arrows (frame 1), asking with the

@@ -133,7 +133,7 @@ bool Cr3BattleRules::setup(const Cr3BattleTables& t, const Cr3Battle& b, int mon
     turnEndQueue_.clear(), turnEndTriggered_ = false;
     // the enemy AI (BtlOrderPoint: the points 0 to begin with; the coupling's order type, tolerance
     // and element skip; battle.mbe OrderType / ThinkPointAddition)
-    enemyPoints = {}, turnNo = 0, scripted.clear();
+    enemyPoints = {}, turnNo = 0, stallTurns = 0, scripted.clear();
     orderType = b.orderType, orderTolerance = b.orderTolerance, elementSkip = b.elementSkip;
     orderTypes_.clear();
     if (const MbeFile::Table* ot = t.battle.table("OrderType"))
@@ -648,7 +648,7 @@ std::vector<std::pair<int, int>> Cr3BattleRules::endTurn() {
         const int change = f.dead() ? 0 : int(rate * float(f.maxHp));
         if (change != 0) {
             f.hp = std::clamp(f.hp + change, change < 0 ? 1 : 0, f.maxHp);
-            if (cheatHp && f.player && f.hp > 0) f.hp = f.maxHp; // (Options' Infinite HP: the number shown, the HP whole)
+            if (f.player && f.hp > 0 && infiniteHp()) f.hp = f.maxHp; // (Options' Infinite HP: the number shown, the HP whole)
             out.emplace_back(int(k), change);
         }
         endEffects(int(k), 11);
@@ -707,11 +707,23 @@ int Cr3BattleRules::scaledExp(int exp) const {
     return int(std::min<int64_t>(int64_t(exp) * expScale, 99999999));
 }
 
+bool Cr3BattleRules::foeHeld() const {
+    bool standing = false;
+    for (const Cr3Fighter& f : fighters) {
+        if (f.player || f.dead()) continue;
+        const int least = std::max({effectMax(f, 53), int(float(effectMax(f, 121)) * 0.01f * float(f.maxHp)), skillMost(f, 53)});
+        if (!hasKind(f, 62) && !(least > 0 && f.hp <= least)) return false; // (this one can still fall)
+        standing = true;
+    }
+    return standing;
+}
+
 void Cr3BattleRules::keepCheats() {
     if (cheatGauge) gauge = 1000, gaugeStarted = true;
+    const bool hp = infiniteHp();
     for (Cr3Fighter& f : fighters) {
         if (!f.player || f.dead()) continue;
-        if (cheatHp) f.hp = f.maxHp;
+        if (hp) f.hp = f.maxHp;
         if (cheatMp) f.mp = f.maxMp;
     }
 }
@@ -1135,6 +1147,8 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
     // the coupling's order type, every third turn ThinkPointAddition's row 2 - +50 to type 7)
     const bool wait = monstersWait;
     monstersWait = false;
+    std::vector<int> foeHp; // (the monsters' HP as the turn starts: stallTurns)
+    for (const Cr3Fighter& f : fighters) foeHp.push_back(f.player ? 0 : f.hp);
     for (Cr3Fighter& f : fighters) f.actionsLeft = f.player ? 1 : wait ? 0 : std::max(f.actionsPerTurn, 0);
     ++turnNo;
     if (orderType >= 0 && size_t(orderType) < orderTypes_.size())
@@ -1218,6 +1232,9 @@ std::vector<Cr3Action> Cr3BattleRules::turn(const std::vector<std::array<int, 3>
         queueTurnEnd(int(k), triggerEffects(int(k), 12));
     }
     turnEndTriggered_ = true;
+    bool hurt = false; // (a monster's HP down this turn - fallen too -: the fight moving)
+    for (size_t k = 0; k < fighters.size() && k < foeHp.size(); ++k) hurt |= !fighters[k].player && fighters[k].hp < foeHp[k];
+    stallTurns = hurt ? 0 : stallTurns + 1;
     return out;
 }
 
@@ -1653,7 +1670,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                 const int least = c.damage == 24 ? std::max(c.power, 1)
                                   : fromSkill == 1 || fromSkill == 6 ? 0
                                                    : std::max({effectMax(t, 53), int(float(effectMax(t, 121)) * 0.01f * float(t.maxHp)), skillMost(t, 53)});
-                return cheatHp && t.player ? std::max(least, 1) : least; // (Options' Infinite HP: nobody falls)
+                return t.player && infiniteHp() ? std::max(least, 1) : least; // (Options' Infinite HP: nobody falls - lapsed, foeHeld)
             };
             if (c.damage < 0) { // (CommandFomula -1: no damage - its status effects alone)
                 landed = true;
@@ -1869,7 +1886,7 @@ std::vector<Cr3Action> Cr3BattleRules::resolveOrder(std::vector<std::array<int, 
                     endEffects(ti, 7);
                 }
             }
-            if (cheatHp && t.player && t.hp > 0) t.hp = t.maxHp; // (Options' Infinite HP: whole again once the action's hits are in)
+            if (t.player && t.hp > 0 && infiniteHp()) t.hp = t.maxHp; // (Options' Infinite HP: whole again once the action's hits are in)
             hit.hpAfter = t.hp, hit.mpAfter = t.mp, hit.killed = t.dead();
             a.targets.push_back(hit);
         }

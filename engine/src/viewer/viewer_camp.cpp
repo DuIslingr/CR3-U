@@ -4439,37 +4439,26 @@ void Viewer::cr3OptionsInput() {
     else if (want.compare(0, 2, "id") == 0) chooseCr3Camp(std::atoi(want.c_str() + 2));
 }
 
-// the Graphics tab's rows: CR3-U's Cheats first (opening its page), then the settings (settingRows - settingsCursor one
-// under graphicsAt); the Cheats page's own in its place
-auto Viewer::graphicsTabRows() -> std::vector<SettingRow> {
-    if (campOptions.cheats) return cheatRows();
-    std::vector<SettingRow> rows = settingRows();
-    int on = 0;
-    for (const SettingRow& r : cheatRows()) on += r.value != "Off" && r.value != "1x";
-    rows.insert(rows.begin(), SettingRow{"Cheats", on ? std::to_string(on) + " on" : std::string("Open"),
-                                         "CR3-U's own cheats: infinite HP and MP, a full break gauge, more EXP ... - all off at first", true,
-                                         [this](int) { openCheats(true); }});
-    return rows;
-}
+// CR3-U's two list tabs: Cheats (cheatRows, its focus cheatAt) and Graphics (settingRows, settingsCursor)
+auto Viewer::campTabRows() -> std::vector<SettingRow> { return campOptions.tab == kTabCheats ? cheatRows() : settingRows(); }
 
-int& Viewer::campRowAt() { return campOptions.cheats ? campOptions.cheatAt : campOptions.graphicsAt; }
-
-void Viewer::openCheats(bool open) {
-    Cr3CampOptions& co = campOptions;
-    if (co.cheats == open) return;
-    co.cheats = open, co.footer = false;
-    if (open) co.cheatAt = 0, co.cheatTop = 0;
-    audio.playSe(open ? "com_003" : "com_004", false);
-    SDL_Log("options: cheats %s", open ? "opened" : "closed");
-}
+int& Viewer::campRowAt() { return campOptions.tab == kTabCheats ? campOptions.cheatAt : settingsCursor; }
 
 void Viewer::openCampOptions() {
     cr3Camp.stage = 9, cr3Camp.since = 0;
-    campOptions.tab = 0, campOptions.cheats = false;
+    campOptions.tab = 0;
     SDL_Log("camp: options");
 }
 
 void Viewer::drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const Mat4& view) {
+    // (five tabs 2.19 wide each: narrowed to the screen's width less a margin where they'd pass its sides)
+    const float unit = std::min(float(w) / 9.6f, float(h) / 6.4f), across = float(w) / std::max(unit, 1.0f);
+    const float fit = std::min(1.0f, (across - 0.3f) / (2 * 1.095f * kOptionTabs * cr3UiScale));
+    const float keepScale = cr3UiScale, keepText = uiTextScale;
+    float midX = x, midY = y, nowX, nowY; // (the middle tab's centre: kept where it was, the bar narrowed about it)
+    (void)cr3UiCall(cr3UiPose("opttab_fr00", "", 0, x, y), "typeM_C02", midX, midY);
+    cr3UiScale *= fit, uiTextScale *= fit;
+    if (fit < 1 && cr3UiCall(cr3UiPose("opttab_fr00", "", 0, x, y), "typeM_C02", nowX, nowY)) x += midX - nowX, y += midY - nowY;
     const float half = 1.095f * cr3UiScale; // (half a tab: the bar's dividers at -+1.095)
     UiFig& tab = uiFig("opttab_fr00");
     auto jointOf = [&](const ViewMesh& m) {
@@ -4478,18 +4467,24 @@ void Viewer::drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const
     };
     float tx[kOptionTabs] = {}, ty[kOptionTabs] = {};
     bool placed[kOptionTabs] = {};
-    for (int pass = 0; pass < 2; ++pass) {
-        const bool lit = pass == 1, right = lit == (chosen >= 2);
+    // (the copies: 0 left - the bar's tabs 1 and 2, ours 0 and 1 -, 1 middle - its tab 2, our 2 -, 2 right - its 2 and 3, our
+    // 3 and 4; the one with the chosen tab last, lit)
+    const int litCopy = chosen < 2 ? 0 : chosen == 2 ? 1 : 2;
+    for (int pass = 0; pass < 3; ++pass) {
+        const int copy = pass == 2 ? litCopy : (litCopy + 1 + pass) % 3;
+        const bool lit = pass == 2, noLeft = copy >= 1, noRight = copy <= 1;
         for (ViewMesh& m : tab.fig.meshes) {
             const std::string j = jointOf(m);
             const bool highlight = j.compare(0, 4, "tap_") == 0;
-            m.hidden = (highlight && !lit) || j == (right ? "bg_01" : "bg_03") || j == (right ? "bg_04" : "bg_06") ||
-                       j == (right ? "frame_01" : "frame_03") || j == (right ? "tap_01" : "tap_03_02");
+            m.hidden = (highlight && !lit) || (noLeft && (j == "bg_01" || j == "bg_04" || j == "frame_01" || j == "tap_01")) ||
+                       (noRight && (j == "bg_03" || j == "bg_06" || j == "frame_03" || j == "tap_03_02"));
         }
-        const int frame = !lit ? 0 : chosen == 0 ? 0 : chosen == 3 ? 2 : 1;
-        cr3UiPut("opttab_fr00", "", float(frame) / 30, x + (right ? half : -half), y, view);
-        for (int k = 0; k < 2; ++k) {
-            const int own = right ? k + 2 : k + 1, at = right ? k + 2 : k; // (the bar's tab 1 .. 3; ours 0 .. 3)
+        const int own0 = copy == 0 ? 1 : 2, own1 = copy == 1 ? 2 : copy == 0 ? 2 : 3; // (the bar's tabs this copy shows)
+        const int first = copy == 0 ? 0 : copy == 1 ? 2 : 3;                          // (ours: the first of them)
+        const int frame = !lit ? 0 : chosen - first + own0 - 1;                      // (the bar's frame: its tab 1 .. 3 lit)
+        cr3UiPut("opttab_fr00", "", float(frame) / 30, x + 2 * half * float(copy - 1), y, view);
+        for (int own = own0; own <= own1; ++own) {
+            const int at = first + own - own0;
             float ax, ay, bx, by;
             if (cr3UiCall(tab, "typeM_C0" + std::to_string(own), tx[at], ty[at])) placed[at] = true;
             if (cr3UiCall(tab, "tapAreaS0" + std::to_string(own), ax, ay) && cr3UiCall(tab, "tapAreaE0" + std::to_string(own), bx, by))
@@ -4498,10 +4493,12 @@ void Viewer::drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const
     }
     for (ViewMesh& m : tab.fig.meshes) m.hidden = false;
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+    static const char* const kOwn[kOptionTabs - 3] = {"Cheats", "Graphics"}; // (CR3-U's tabs after the game's three)
     for (int k = 0; k < kOptionTabs; ++k) // (white on the tabs' blue: the chosen one's dark, the others' a lighter one - dimmed a little)
         if (placed[k])
-            drawUiText(k < 3 ? menuAnnounce(0x190 + k) : std::string("Graphics"), 24, tx[k] / 10, (ty[k] - 0.12f * cr3UiScale) / 10, w, h, false,
+            drawUiText(k < 3 ? menuAnnounce(0x190 + k) : std::string(kOwn[k - 3]), 24, tx[k] / 10, (ty[k] - 0.12f * cr3UiScale) / 10, w, h, false,
                        k == chosen ? 1.0f : 0.8f);
+    cr3UiScale = keepScale, uiTextScale = keepText;
 }
 
 // the Options' scale (CR3-U's): on a phone or tablet the game's; on a desktop smaller as the
@@ -4518,30 +4515,54 @@ float Viewer::cr3OptionsScale(int w, int h) const {
 #endif
 }
 
-// the lowest a row reaches: over the footer
+// the lowest a row reaches: over the footer's bar - and over the back and Reset on it (fitOffset keeps the back on the bar)
 float Viewer::cr3OptionsFloor(int w, int h) const {
     const float k = std::min(float(w) / 9.6f, float(h) / 6.4f);
-    return -float(h) / k / 2 + 0.75f;
+    const float floor = -float(h) / k / 2 + 0.82f + 0.04f; // (the footer's bar 0.82 tall - mpMeMenu, comFtr*Menu: -2.38 .. -3.2 at 16:9)
+    return optReset.on ? std::max(floor, optReset.y + optReset.r + 0.06f) : floor; // (and over CR3-U's Reset, left of the back)
 }
 
-// the Graphics tab: CR3-U's settings (settingRows) as the Other tab's Resolution - optSltLRPanel
+std::vector<int> Viewer::otherOrder() const {
+    std::vector<int> order = {0, 2, 3, 4};
+    if (languages.size() > 1) order.insert(order.begin() + 1, 1);
+    return order;
+}
+
+void Viewer::syncOtherRow() {
+    Cr3CampOptions& co = campOptions;
+    const std::vector<int> order = otherOrder();
+    const int n = int(order.size());
+    if (co.otherAt != co.otherAtWas && co.otherAt >= 0 && co.otherAt < n) {
+        co.otherRow = order[size_t(co.otherAt)];
+        SDL_Log("options: other row %d", co.otherRow);
+    }
+    const auto it = std::find(order.begin(), order.end(), co.otherRow);
+    co.otherAt = co.otherAtWas = it == order.end() ? 0 : int(it - order.begin());
+}
+
+// the Cheats and Graphics tabs: CR3-U's cheats / settings (campTabRows) as the Other tab's Resolution - optSltLRPanel
 // rows, the setting at typeM_L00, its value between optSltLbtn and optSltRbtn -, as many as fit over
 // the footer (four on a phone or tablet) about the focused one (tinted), arrows right of the first
 // and last when there are more; the focused one's help on the header's line
 void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& view) {
     Cr3CampOptions& co = campOptions;
-    const std::vector<SettingRow> rows = graphicsTabRows();
+    const std::vector<SettingRow> rows = campTabRows();
     const int n = int(rows.size()), focus = std::clamp(campRowAt(), 0, std::max(n - 1, 0));
-    int& top = co.cheats ? co.cheatTop : co.top;
+    int& top = co.tab == kTabCheats ? co.cheatTop : co.top;
     const float s = cr3UiScale;
     float x1, y1, x2, y2, cx, cy, ax, ay, bx, by, tx, ty;
     if (!cr3UiCall(menu, "call_optSltPanel_001", x1, y1) || !cr3UiCall(menu, "call_optSltPanel_002", x2, y2)) return;
     const float pitch = std::abs(y1 - y2);
     int shown = kGraphicsRows;
-#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
-    if (cr3UiCall(cr3UiPose("optsltlrpanel", "", 0, x1, y1), "typeM_C01", tx, ty) && pitch > 0)
-        shown = std::max(1 + int((ty - pitch * 0.5f - cr3OptionsFloor(w, h)) / pitch), 1);
+    if (pitch > 0) {
+        const float bottom = uiBottom(cr3UiPose("optsltlrpanel", "", 0, x1, y1)); // (the first row's foot)
+        const int fit = std::max(1 + int(std::floor((bottom - cr3OptionsFloor(w, h)) / pitch)), 1); // (as many as end over the floor)
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+        shown = std::min(shown, fit); // (a phone's or tablet's four, fewer where they'd reach the back)
+#else
+        shown = fit;
 #endif
+    }
     shown = std::min(shown, n);
     top = std::clamp(top, std::max(focus - (shown - 1), 0), focus);
     top = std::min(top, std::max(n - shown, 0));
@@ -4589,32 +4610,76 @@ void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& vie
     }
 }
 
-// CR3-U's Reset, left of the back: the game's round button (comBtnSPanel, its comBtnBg_fr00)
-// with comBtnIcon_fr00's circling arrows (frame 1), "Reset" under them; it asks, then puts the
+// CR3-U's Reset: the game's round button (comBtnSPanel, its comBtnBg_fr00) with comBtnIcon_fr00's circling arrows
+// (frame 1), centred at (x, y), its circle `radius` across - "Reset" under the arrows when `label`; it asks, then puts the
 // tab's settings back
-void Viewer::drawCr3OptionsReset(float backX, float backY, int w, int h, const Mat4& view) {
-    constexpr float kSize = 0.66f;
+void Viewer::drawCr3ResetButton(float x, float y, float radius, bool label, int w, int h, const Mat4& view) {
     float cx, cy, ex, ey;
-    cr3UiScale = kSize;
+    cr3UiScale = 1;
     UiFig& probe = cr3UiPose("combtnspanel", "", 0, 0, 0);
-    if (!cr3UiCall(probe, "tapAreaCP01", cx, cy) || !cr3UiCall(probe, "tapAreaAP01", ex, ey)) return (void)(cr3UiScale = 1);
-    const float r = std::hypot(ex - cx, ey - cy), px = backX - 0.15f - r - cx, py = backY - cy;
-    UiFig& panel = cr3UiPut("combtnspanel", "", 0, px, py, view);
+    if (!cr3UiCall(probe, "tapAreaCP01", cx, cy) || !cr3UiCall(probe, "tapAreaAP01", ex, ey)) return;
+    const float k = radius / std::max(std::hypot(ex - cx, ey - cy), 1e-3f); // (the button's scale)
+    cr3UiScale = k;
+    UiFig& panel = cr3UiPut("combtnspanel", "", 0, x - cx * k, y - cy * k, view);
     float ix, iy;
     if (cr3UiCall(panel, "call_comBtnBg_fr00", ix, iy)) cr3UiPut("combtnbg_fr00", "", 0, ix, iy, view);
     if (cr3UiCall(panel, "call_comBtnIconS_fr00", ix, iy)) {
-        cr3UiScale = kSize * 0.82f;
-        cr3UiPut("combtnicon_fr00", "", 1.0f / 30, ix, iy + r * 0.2f, view);
+        cr3UiScale = k * 0.82f;
+        cr3UiPut("combtnicon_fr00", "", 1.0f / 30, ix, iy + (label ? radius * 0.2f : 0.0f), view);
     }
     cr3UiScale = 1;
+    if (!label) return;
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-    drawUiText("Reset", 11, (px + cx) / 10, (py + cy - r * 0.5f) / 10, w, h, false, 1.0f, r * 1.3f / 10);
-    cr3CampTaps.push_back(circleTap(px + cx, py + cy, px + cx + r, py + cy, kTapOptionsReset));
+    drawUiText("Reset", 11, x / 10, (y - radius * 0.5f) / 10, w, h, false, 1.0f, radius * 1.3f / 10);
+}
+
+// The field's Options: its footer's bar (mpMePosition's call_mpMeMenu_fit1) the screen's foot's, lower than the comFtr bars
+// (call_comFtr*Menu_fit4) the back (call_comBackMenu_001_fit6) sits on elsewhere where the screen is taller than 16:9 (4:3,
+// the iPhone Duo's): the back - and Reset beside it - taken down with it, on its bar as at 16:9
+float Viewer::optionsBackDrop(int w, int h) {
+    if (campOptions.from != 0 || staffList.kind != 0) return 0;
+    float foot = 0, fx = 0, side = 0;
+    fitOffset("_fit1", w, h, 10, fx, foot);
+    fitOffset("_fit6", w, h, 10, fx, side);
+    return foot - side;
+}
+
+// CR3-U's Reset's place (each frame, before the list - its floor keeps clear of it): on the footer's bar immediately left of the
+// back, 0.12 from it, as tall as the back's button (comBack_fr00's mesh) and centred on its line; the four panels (no Download)
+// end well short of it on every screen's shape
+void Viewer::placeCr3OptionsReset(int w, int h) {
+    const float keep = cr3UiScale;
+    cr3UiScale = 1;
+    optReset = OptReset();
+    float x, y, ax, ay, ex, ey, bx, by;
+    UiFig& foot = cr3UiPose("comftrposition", "", 0, 0, 0);
+    if (!cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) return (void)(cr3UiScale = keep);
+    y += optionsBackDrop(w, h);
+    UiFig& bm = cr3UiPose("combackmenu", "", 0, x, y);
+    if (!cr3UiCall(bm, "tapAreaS01", ax, ay) || !cr3UiCall(bm, "tapAreaE01", ex, ey)) return (void)(cr3UiScale = keep);
+    float top = std::max(ay, ey), bottom = std::min(ay, ey), left = std::min(ax, ex);
+    if (cr3UiCall(bm, "call_comBack_fr00", bx, by)) { // (the button itself: its mesh's height and left end)
+        const UiFig& btn = cr3UiPose("comback_fr00", "", 0, bx, by);
+        float hi = -1e9f, lo = 1e9f, l = 1e9f;
+        for (const ViewMesh& vm : btn.fig.meshes) {
+            if (vm.hidden) continue;
+            for (size_t o = 0; o + 12 <= vm.vertices.size(); o += cr3::kVertexStride) {
+                float v[2];
+                std::memcpy(v, &vm.vertices[o], 8);
+                l = std::min(l, v[0]), lo = std::min(lo, v[1]), hi = std::max(hi, v[1]);
+            }
+        }
+        if (hi > lo) top = hi, bottom = lo, left = std::min(left, l);
+    }
+    const float r = (top - bottom) / 2;
+    optReset.r = r, optReset.x = left - 0.12f - r, optReset.y = (top + bottom) / 2;
+    optReset.on = true;
+    cr3UiScale = keep;
 }
 
 std::string Viewer::cr3OptionsResetAsk() const {
-    if (campOptions.tab == 3 && campOptions.cheats) return "Turn every cheat off?";
-    static const char* const kTab[kOptionTabs] = {"sound", "control", "other", "graphics"};
+    if (campOptions.tab == kTabCheats) return "Turn every cheat off?";
+    static const char* const kTab[kOptionTabs] = {"sound", "control", "other", "cheats", "graphics"};
     return std::string("Put the ") + kTab[std::clamp(campOptions.tab, 0, kOptionTabs - 1)] + " settings back to their defaults?";
 }
 
@@ -4625,10 +4690,10 @@ void Viewer::cr3OptionsReset() {
         audio.setVolumes(1, 1, 1);
     } else if (co.tab == 1) co.hands = 0;
     else if (co.tab == 2) optionQuality = 0;
-    else if (co.cheats) { // (the Cheats page: every cheat off)
+    else if (co.tab == kTabCheats) { // (Cheats: every one off)
         settings.cheats = Settings::Cheats();
         saveSettings();
-    } else { // (the window's type - F11's fullscreen kind with it - and resolution kept; the cheats their own page's)
+    } else { // (the window's type - F11's fullscreen kind with it - and resolution kept; the cheats their own tab's)
         const int display = settings.display, kind = settings.fullscreenKind, resolution = settings.resolution;
         const Settings::Cheats cheats = settings.cheats;
         settings = Settings();
@@ -4636,7 +4701,7 @@ void Viewer::cr3OptionsReset() {
         applySettings();
         saveSettings();
     }
-    SDL_Log("options: tab %d%s reset", co.tab, co.tab == 3 && co.cheats ? " (cheats)" : "");
+    SDL_Log("options: tab %d%s reset", co.tab, co.tab == kTabCheats ? " (cheats)" : "");
 }
 
 void Viewer::saveImportAnswer(bool yes) {
@@ -4656,28 +4721,29 @@ void Viewer::saveImportAnswer(bool yes) {
 // 5 .. 9 -, the focused one's 2n + 1 - SetActivePattern 0xadd5c4 -; SetStringData 0xadd43c: the MnlCmp line at its "01" text
 // joint, size 18, dark) at the call_mpMePanel joints in turn: 0x193 Title Screen, 0x194 Download (SetOnlyFrame: the frame
 // alone, its text and icon hidden), 0x195 Manual, 0x196 App Intro, 0x197 Achievements. Their taps (round 26): Title Screen asks
-// 0x1a3 - Yes reboots to the title -, Manual the tutorials' list (TutorialMain); Download (DownLoadMenuMain), App Intro (OpenURL)
-// and Achievements (GameCenter) the online services': not in - inert
+// 0x1a3 - Yes reboots to the title -, Manual the tutorials' list (TutorialMain); App Intro (OpenURL) and Achievements
+// (GameCenter) the online services': not in - inert. CR3-U has no Download (DownLoadMenuMain): its empty frame gone, the other
+// four closed up at the first four call_mpMePanel joints (round 31) - each its own icon, line and tap (kTapOptPanel + its
+// number)
 void Viewer::drawCr3OptionsFooter(int w, int h, const Mat4& view) {
     const Cr3CampOptions& co = campOptions;
     float x, y;
     UiFig& pos = cr3UiPut("mpmeposition", "", 0, 0, 0, view);
     if (!cr3UiCall(pos, "call_mpMeMenu", x, y, w, h)) return;
     UiFig& menu = cr3UiPut("mpmemenu", "", 0, x, y, view);
-    for (int k = 0; k < 5; ++k) {
+    for (int slot = 0; slot < kOptPanels; ++slot) {
+        const int k = kOptPanel[slot]; // (the game's number: 0 Title Screen, 2 Manual, 3 App Intro, 4 Achievements)
         float px, py, cx, cy;
-        if (!cr3UiCallNth(menu, "call_mpMePanel", k, px, py)) continue;
+        if (!cr3UiCallNth(menu, "call_mpMePanel", slot, px, py)) continue;
         const bool focused = vitaButtons() && co.footer && co.footerAt == k;
         UiFig& panel = cr3UiPut("mpmepanel", "", 0, px, py, view);
-        if (k != 1) { // (Download: the frame alone)
-            if (cr3UiCall(panel, "call_mpMeIcon_fr", cx, cy)) cr3UiPut("mpmeicon_fr00", "", float(2 * (k + 5) + (focused ? 1 : 0)) / 30, cx, cy, view);
-            for (const std::string& j : panel.joints)
-                if (j.compare(0, 4, "type") == 0 && j.size() >= 2 && j.compare(j.size() - 2, 2, "01") == 0 && uiJoint(panel, j, cx, cy)) {
-                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(menuAnnounce(0x193 + k), 18, cx / 10, (cy - 0.1f) / 10, w, h, false, focused ? 1.0f : 0.3f); // (centred on it)
-                    break;
-                }
-        }
+        if (cr3UiCall(panel, "call_mpMeIcon_fr", cx, cy)) cr3UiPut("mpmeicon_fr00", "", float(2 * (k + 5) + (focused ? 1 : 0)) / 30, cx, cy, view);
+        for (const std::string& j : panel.joints)
+            if (j.compare(0, 4, "type") == 0 && j.size() >= 2 && j.compare(j.size() - 2, 2, "01") == 0 && uiJoint(panel, j, cx, cy)) {
+                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                drawUiText(menuAnnounce(0x193 + k), 18, cx / 10, (cy - 0.1f) / 10, w, h, false, focused ? 1.0f : 0.3f); // (centred on it)
+                break;
+            }
         float ax, ay, bx, by;
         if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapOptPanel + k});
     }
@@ -4687,6 +4753,7 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
     saveImport.poll();
     const float t = cr3Camp.since;
     Cr3CampOptions& co = campOptions;
+    placeCr3OptionsReset(w, h); // (before the list: its floor keeps clear of it)
     float x, y, cx, cy;
     // (the tabs and their settings scaled about the tabs' height: they stay under the header)
     const float s = cr3OptionsScale(w, h);
@@ -4743,100 +4810,138 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
         UiFig& menu = cr3UiPut("optsltmenu", "", 0, x, y, view);
         float px, py;
         if (cr3UiCall(menu, "call_optSltPanel_001", px, py)) {
-            UiFig& panel = cr3UiPut("optsltlrpanel", "", 0, px, py, view);
-            cr3UiLabel(panel, "typeM_L00", menuAnnounce(0x230), w, h, 0.26f);
+            // (the rows 0.85 apart down from the first panel's place; as many as end over the floor - clear of the footer and
+            // the back - about the focused one, the rest a scroll away: ▲ / ▼ right of the first and last shown, as the
+            // Graphics tab's)
+            syncOtherRow();
+            const std::vector<int> order = otherOrder();
+            const int n = int(order.size()), at = co.otherAt;
+            const float pitch = 0.85f * s;
+            int shown = n;
             float tx, ty;
-            if (cr3UiCall(panel, "typeM_C01", tx, ty)) {
-                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                drawUiText(menuAnnounce(0x22b + std::clamp(optionQuality, 0, 2)), 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
-            }
-            if (cr3UiCall(panel, "call_optSltLbtn", cx, cy)) {
-                UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
-                float ax, ay, bx, by;
-                if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
-                    cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, 601}); // (the box between the arrows: on)
-                    cr3CampTaps.push_back({ax, ay, bx, by, 600});
-                }
-                // (its right button over the other end: optSltRbtn, as wide)
-                UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
-                if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 601});
-            }
-            // CR3-U's Language (the Vita's options had none): the copy's languages - its own, each
-            // fan translation over it -, each in its own words, the arrows as Resolution's
-            float below = 0.85f * s;
-            if (languages.size() > 1) {
-                UiFig& lang = cr3UiPut("optsltlrpanel", "", 0, px, py - below, view);
-                cr3UiLabel(lang, "typeM_L00", menuAnnounce(102), w, h, 0.26f); // ("Language", "言語", "Idioma")
-                if (cr3UiCall(lang, "typeM_C01", tx, ty)) {
-                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    const cr3::Language id = languages[languageIndex].id;
-                    const char* name = id == cr3::Language::Japanese ? "日本語" : id == cr3::Language::FanSpanish ? "Español" : "English";
-                    drawUiText(name, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
-                }
-                if (cr3UiCall(lang, "call_optSltLbtn", cx, cy)) {
-                    UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
-                    float ax, ay, bx, by;
-                    if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
-                        cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, 1401}); // (the box between the arrows: on)
-                        cr3CampTaps.push_back({ax, ay, bx, by, 1400});
+            const float bottom = std::min(uiBottom(cr3UiPose("optsltlrpanel", "", 0, px, py)), uiBottom(cr3UiPose("optsltpanel", "", 0, px, py))); // (the first row's foot)
+            shown = std::clamp(1 + int(std::floor((bottom - cr3OptionsFloor(w, h)) / pitch)), 1, n);
+            co.otherTop = std::clamp(co.otherTop, std::max(at - (shown - 1), 0), at);
+            co.otherTop = std::clamp(co.otherTop, 0, std::max(n - shown, 0));
+            float firstY = 0, lastY = 0, rightX = -1e9f;
+            for (int j = co.otherTop; j < n && j < co.otherTop + shown; ++j) {
+                const int kind = order[size_t(j)];
+                const float ry = py - pitch * float(j - co.otherTop);
+                UiFig* rowFig = nullptr;
+                if (kind == 0) { // (the game's Resolution - 0x230, Low / Medium / High 0x22b .. 0x22d)
+                    UiFig& panel = cr3UiPut("optsltlrpanel", "", 0, px, ry, view);
+                    rowFig = &panel;
+                    cr3UiLabel(panel, "typeM_L00", menuAnnounce(0x230), w, h, 0.26f);
+                    if (cr3UiCall(panel, "typeM_C01", tx, ty)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        drawUiText(menuAnnounce(0x22b + std::clamp(optionQuality, 0, 2)), 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
                     }
-                    UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
-                    if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 1401});
+                    if (cr3UiCall(panel, "call_optSltLbtn", cx, cy)) {
+                        UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
+                        float ax, ay, bx, by;
+                        if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
+                            cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, 601}); // (the box between the arrows: on)
+                            cr3CampTaps.push_back({ax, ay, bx, by, 600});
+                        }
+                        // (its right button over the other end: optSltRbtn, as wide)
+                        UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
+                        if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 601});
+                    }
+                } else if (kind == 1) { // CR3-U's Language (the Vita's options had none): the copy's languages - its own, each
+                    // fan translation over it -, each in its own words, the arrows as Resolution's
+                    UiFig& lang = cr3UiPut("optsltlrpanel", "", 0, px, ry, view);
+                    rowFig = &lang;
+                    cr3UiLabel(lang, "typeM_L00", menuAnnounce(102), w, h, 0.26f); // ("Language", "言語", "Idioma")
+                    if (cr3UiCall(lang, "typeM_C01", tx, ty)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        const cr3::Language id = languages[languageIndex].id;
+                        const char* name = id == cr3::Language::Japanese ? "日本語" : id == cr3::Language::FanSpanish ? "Español" : "English";
+                        drawUiText(name, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
+                    }
+                    if (cr3UiCall(lang, "call_optSltLbtn", cx, cy)) {
+                        UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
+                        float ax, ay, bx, by;
+                        if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
+                            cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, 1401}); // (the box between the arrows: on)
+                            cr3CampTaps.push_back({ax, ay, bx, by, 1400});
+                        }
+                        UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
+                        if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 1401});
+                    }
+                } else if (kind == 2) { // (CR3-U's Vita save import: the title's Options alone)
+                    UiFig& imp = cr3UiPut("optsltlrpanel", "", 0, px, ry, view);
+                    rowFig = &imp;
+                    cr3UiLabel(imp, "typeM_L00", "Vita Saves", w, h, 0.26f);
+                    if (cr3UiCall(imp, "typeM_C01", tx, ty)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        const std::string label = co.from != 1 ? "Title only" : co.otherRow == 2 ? "> Import <" : "Import";
+                        drawUiText(label, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
+                    }
+                    if (cr3UiCall(imp, "call_optSltLbtn", cx, cy)) {
+                        UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
+                        float ax, ay, bx, by;
+                        if (co.from == 1 && cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by))
+                            cr3CampTaps.push_back({ax - 3.0f * s, ay, bx, by, 1300});
+                    }
+                } else { // (SetModeParts(2) 0xaefb3c: Credits 0x30f and Copyright Notice 0x310 - optSltPanel rows, the original's
+                    // at call_optSltLRPanel 1 / 2, here below CR3-U's rows -, each with a comListLLBtn_fr00 at its
+                    // call_optSltBtn_fr00 + (2, 0), "Confirm" 0xb1 on it)
+                    const int k = kind - 3;
+                    if (vitaButtons() && !co.footer && co.otherRow == kind) cr3UiTintMaterial = "mat_opt_btn_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+                    UiFig& row = cr3UiPut("optsltpanel", "", 0, px, ry, view);
+                    rowFig = &row;
+                    cr3UiTintMaterial.clear();
+                    cr3UiLabel(row, "typeM_L00", menuAnnounce(0x30f + k), w, h, 0.26f);
+                    if (cr3UiCall(row, "call_optSltBtn_fr00", cx, cy)) {
+                        cx += 2.0f * s;
+                        UiFig& btn = cr3UiPut("comlistllbtn_fr00", "", 0, cx, cy, view);
+                        if (cr3UiCall(btn, "typeM_C00", tx, ty)) {
+                            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                            drawUiText(menuAnnounce(0xb1), 24, tx / 10, (ty - 0.03f * s) / 10, w, h, false, 1.0f);
+                        }
+                        cr3CampTaps.push_back({cx, cy, cx + 1.43f * s, cy - 0.45f * s, k == 0 ? kTapCredits : kTapCopyright}); // (the button's own bounds)
+                    }
                 }
-                below += 0.85f * s;
-            }
-            UiFig& imp = cr3UiPut("optsltlrpanel", "", 0, px, py - below, view);
-            cr3UiLabel(imp, "typeM_L00", "Vita Saves", w, h, 0.26f);
-            if (cr3UiCall(imp, "typeM_C01", tx, ty)) {
-                dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                const std::string label = co.from != 1 ? "Title only" : co.otherRow == 2 ? "> Import <" : "Import";
-                drawUiText(label, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
-            }
-            if (cr3UiCall(imp, "call_optSltLbtn", cx, cy)) {
-                UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
-                float ax, ay, bx, by;
-                if (co.from == 1 && cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by))
-                    cr3CampTaps.push_back({ax - 3.0f * s, ay, bx, by, 1300});
-            }
-            // (SetModeParts(2) 0xaefb3c: Credits 0x30f and Copyright Notice 0x310 - optSltPanel rows,
-            // the original's at call_optSltLRPanel 1 / 2, here below CR3-U's rows -, each with a
-            // comListLLBtn_fr00 at its call_optSltBtn_fr00 + (2, 0), "Confirm" 0xb1 on it)
-            for (int k = 0; k < 2; ++k) {
-                below += 0.85f * s;
-                if (vitaButtons() && !co.footer && co.otherRow == 3 + k) cr3UiTintMaterial = "mat_opt_btn_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
-                UiFig& row = cr3UiPut("optsltpanel", "", 0, px, py - below, view);
-                cr3UiTintMaterial.clear();
-                cr3UiLabel(row, "typeM_L00", menuAnnounce(0x30f + k), w, h, 0.26f);
-                if (!cr3UiCall(row, "call_optSltBtn_fr00", cx, cy)) continue;
-                cx += 2.0f * s;
-                UiFig& btn = cr3UiPut("comlistllbtn_fr00", "", 0, cx, cy, view);
-                if (cr3UiCall(btn, "typeM_C00", tx, ty)) {
-                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                    drawUiText(menuAnnounce(0xb1), 24, tx / 10, (ty - 0.03f * s) / 10, w, h, false, 1.0f);
+                float lx, ly;
+                if (rowFig && cr3UiCall(*rowFig, "typeM_L00", lx, ly)) {
+                    if (j == co.otherTop) firstY = ly - 0.12f * s;
+                    lastY = ly - 0.12f * s;
                 }
-                cr3CampTaps.push_back({cx, cy, cx + 1.43f * s, cy - 0.45f * s, k == 0 ? kTapCredits : kTapCopyright}); // (the button's own bounds)
+                if (rowFig) rightX = std::max(rightX, uiRight(*rowFig));
+            }
+            const float mark = rightX + 0.3f * s, reach = pitch * 0.45f;
+            dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+            if (co.otherTop > 0) {
+                drawUiText("▲", 22, mark / 10, firstY / 10, w, h, false, 0.4f);
+                cr3CampTaps.push_back({mark - 0.3f * s, firstY - reach, mark + 0.3f * s, firstY + reach, kTapOtherUp});
+            }
+            if (co.otherTop + shown < n) {
+                drawUiText("▼", 22, mark / 10, lastY / 10, w, h, false, 0.4f);
+                cr3CampTaps.push_back({mark - 0.3f * s, lastY - reach, mark + 0.3f * s, lastY + reach, kTapOtherDown});
             }
         }
     }
-    if (!listUp && co.tab == 3 && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) drawCr3GraphicsTab(cr3UiPut("optsltmenu", "", 0, x, y, view), w, h, view);
+    if (!listUp && co.tab >= kTabCheats && cr3UiCall(top, "call_optSltMenu", x, y, w, h)) drawCr3GraphicsTab(cr3UiPut("optsltmenu", "", 0, x, y, view), w, h, view);
     cr3UiScale = 1, uiTextScale = 1;
     if (co.from == 0 && sl.kind == 0) drawCr3OptionsFooter(w, h, view); // (the field's: OptionFooterMenu's panels)
-    // (the back, and CR3-U's Reset left of it)
+    // (the back, and CR3-U's Reset left of it - placeCr3OptionsReset)
     UiFig& foot = cr3UiPut("comftrposition", "", 0, 0, 0, view);
     if (cr3UiCall(foot, "call_comBackMenu_001", x, y, w, h)) {
-        UiFig& bm = cr3UiPut("combackmenu", "", 0, x, y, view);
+        UiFig& bm = cr3UiPut("combackmenu", "", 0, x, y + optionsBackDrop(w, h), view); // (on the field's footer bar)
         float ax, ay, ex, ey;
         if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view);
         if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", ex, ey)) {
             cr3CampTaps.push_back({ax, ay, ex, ey, -1});
-            // (the field's: above the back's right end, the footer's panels at its left)
-            if (sl.kind == 0 && co.from == 0) drawCr3OptionsReset(std::max(ax, ex), std::max(ay, ey) + 0.55f, w, h, view);
-            else if (sl.kind == 0) drawCr3OptionsReset(std::min(ax, ex), (ay + ey) / 2, w, h, view);
+            if (sl.kind == 0 && optReset.on) {
+                const float r = optReset.r * (vitaButtons() && co.footer && co.footerAt == kFooterReset ? 1.1f : 1.0f); // (in the pad's focus: larger)
+                drawCr3ResetButton(optReset.x, optReset.y, r, true, w, h, view);
+                cr3CampTaps.push_back(circleTap(optReset.x, optReset.y, optReset.x + optReset.r, optReset.y, kTapOptionsReset));
+            }
         }
     }
-    std::string line = co.tab < 3 ? menuAnnounce(0x19f + co.tab) : std::string("Change graphics settings.");
-    if (co.tab == 3) { // (Graphics, or its Cheats page: the focused row's help)
-        const std::vector<SettingRow> rows = graphicsTabRows();
+    std::string line = co.tab < kTabCheats ? menuAnnounce(0x19f + co.tab) : std::string("Change graphics settings.");
+    if (co.tab >= kTabCheats) { // (Cheats or Graphics: the focused row's help)
+        const std::vector<SettingRow> rows = campTabRows();
         if (campRowAt() >= 0 && campRowAt() < int(rows.size())) line = rows[size_t(campRowAt())].help;
     }
     if (co.tab == 2 && co.otherRow == 2) line = co.from == 1 ? "Import decrypted Vita saves (I). Existing saves are backed up." : "Import saves from the title screen's Options.";
@@ -4916,28 +5021,33 @@ void Viewer::chooseCampOptions(int id) {
         return;
     }
     if (id == kTapCredits || id == kTapCopyright) return openStaffList(id == kTapCredits ? 1 : 2);
-    const int settingCount = int(graphicsTabRows().size());
-    if (id == kTapGraphicsUp || id == kTapGraphicsDown) {
-        campRowAt() = std::clamp(campRowAt() + (id == kTapGraphicsUp ? -1 : 1), 0, settingCount - 1);
-        if (!co.cheats) settingsCursor = std::max(co.graphicsAt - 1, 0);
+    const int settingCount = co.tab >= kTabCheats ? int(campTabRows().size()) : 0; // (Cheats or Graphics: its rows)
+    if (id == kTapOtherUp || id == kTapOtherDown) { // (Other's ▲ / ▼: a row on - the list following the focus)
+        syncOtherRow();
+        const int n = int(otherOrder().size());
+        co.otherAt = std::clamp(co.otherAt + (id == kTapOtherUp ? -1 : 1), 0, n - 1);
+        syncOtherRow();
         audio.playSe("com_002", false);
         return;
     }
-    if (id >= kTapGraphicsRow && id < kTapGraphicsRow + settingCount * 2) { // (Graphics: a row's left or right arrow)
+    if ((id == kTapGraphicsUp || id == kTapGraphicsDown) && settingCount > 0) {
+        campRowAt() = std::clamp(campRowAt() + (id == kTapGraphicsUp ? -1 : 1), 0, settingCount - 1);
+        audio.playSe("com_002", false);
+        return;
+    }
+    if (id >= kTapGraphicsRow && id < kTapGraphicsRow + settingCount * 2) { // (Cheats or Graphics: a row's left or right arrow)
         const int row = (id - kTapGraphicsRow) / 2, dir = (id - kTapGraphicsRow) % 2 ? 1 : -1;
         campRowAt() = row;
-        if (co.cheats) { // (a cheat changed, kept in settings.ini)
+        if (co.tab == kTabCheats) { // (a cheat changed, kept in settings.ini)
             std::vector<SettingRow> rows = cheatRows();
             rows[size_t(row)].change(dir);
             saveSettings();
             const std::vector<SettingRow> now = cheatRows();
             SDL_Log("cheats: %s %s", now[size_t(row)].label.c_str(), now[size_t(row)].value.c_str());
-        } else if (row == 0) return openCheats(true); // (Graphics' first row: the Cheats page)
-        else settingsCursor = row - 1, settingChange(row - 1, dir, false);
+        } else settingChange(row, dir, false);
         audio.playSe("com_002", false);
         return;
     }
-    if (id == -1 && co.cheats) return openCheats(false); // (the Cheats page's back: Graphics again)
     if (id == -1) {
         audio.playSe("com_004", false);
         cr3Camp.stage = co.from ? 0 : 1, cr3Camp.since = 0; // (from the title or a battle: back to it)
@@ -4945,7 +5055,7 @@ void Viewer::chooseCampOptions(int id) {
         if (scriptSaves) writeSystem(); // (Cr3Util_Save_SystemData)
         return;
     }
-    if (id >= 400 && id < 400 + kOptionTabs && id - 400 != co.tab) co.tab = id - 400, co.footer = false, co.cheats = false, audio.playSe("com_002", false);
+    if (id >= 400 && id < 400 + kOptionTabs && id - 400 != co.tab) co.tab = id - 400, co.footer = false, audio.playSe("com_002", false), SDL_Log("options: tab %d", co.tab);
     if (id >= 500 && id < 502 && id - 500 != co.hands) co.hands = id - 500, audio.playSe("com_003", false);
     if (id == 600 || id == 601) optionQuality = (optionQuality + (id == 600 ? 2 : 1)) % 3, audio.playSe("com_002", false);
     if (id == 1400 || id == 1401) stepLanguage(id == 1400 ? -1 : 1), co.otherRow = 1, audio.playSe("com_002", false);
@@ -4992,14 +5102,20 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
         return;
     }
     if (vitaButtons() && co.footer) {
-        // (the field's: left / right over the panels - Download's empty frame passed over - and the back)
-        if (co.from == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) {
-            int to = co.footerAt + (key == SDLK_RIGHT ? 1 : -1);
-            if (to == 1) to += key == SDLK_RIGHT ? 1 : -1;
-            if (to >= 0 && to <= 5) co.footerAt = to, audio.playSe("com_002", false);
+        // (left / right over the field's panels - Title Screen, Manual, App Intro, Achievements -, CR3-U's Reset, the back)
+        std::vector<int> order;
+        if (co.from == 0 && staffList.kind == 0) order.assign(kOptPanel, kOptPanel + kOptPanels);
+        if (staffList.kind == 0 && optReset.on) order.push_back(kFooterReset);
+        order.push_back(5);
+        if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+            const auto it = std::find(order.begin(), order.end(), co.footerAt);
+            const int at = it == order.end() ? int(order.size()) - 1 : int(it - order.begin());
+            const int to = at + (key == SDLK_RIGHT ? 1 : -1);
+            if (to >= 0 && to < int(order.size())) co.footerAt = order[size_t(to)], audio.playSe("com_002", false);
             SDL_Log("options: footer focus %d", co.footerAt);
         } else if (key == SDLK_UP) co.footer = false, audio.playSe("com_002", false);
-        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(co.footerAt < 5 && co.from == 0 ? kTapOptPanel + co.footerAt : -1);
+        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE)
+            chooseCampOptions(co.footerAt == kFooterReset ? kTapOptionsReset : co.footerAt < 5 && co.from == 0 ? kTapOptPanel + co.footerAt : -1);
         return;
     }
     if (vitaButtons() && co.tab == 0 && (key == SDLK_UP || key == SDLK_DOWN)) {
@@ -5010,8 +5126,8 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
         return;
     }
     if (vitaButtons() && co.tab == 1 && key == SDLK_DOWN) { co.footer = true; audio.playSe("com_002", false); return; }
-    if (co.tab == 3) { // (Graphics - or its Cheats page: up / down a row, left / right / Return change it; its first row, Cheats, opens that)
-        if (vitaButtons() && key == SDLK_DOWN && campRowAt() + 1 >= int(graphicsTabRows().size())) { co.footer = true; audio.playSe("com_002", false); return; }
+    if (co.tab >= kTabCheats) { // (Cheats or Graphics: up / down a row, left / right / Return change it)
+        if (vitaButtons() && key == SDLK_DOWN && campRowAt() + 1 >= int(campTabRows().size())) { co.footer = true; audio.playSe("com_002", false); return; }
         if (key == SDLK_UP || key == SDLK_DOWN) return chooseCampOptions(key == SDLK_UP ? kTapGraphicsUp : kTapGraphicsDown);
         if (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_RETURN || key == SDLK_KP_ENTER)
             return chooseCampOptions(kTapGraphicsRow + campRowAt() * 2 + (key == SDLK_LEFT ? 0 : 1));
@@ -5027,13 +5143,14 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
     if (co.tab == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(500 + (key == SDLK_RIGHT ? 1 : 0));
     if (co.tab == 2) {
         if (key == SDLK_UP || key == SDLK_DOWN) { // (the Language row only where there are languages to pick)
-            std::vector<int> order = {0, 2, 3, 4};
-            if (languages.size() > 1) order.insert(order.begin() + 1, 1);
+            syncOtherRow();
+            const std::vector<int> order = otherOrder();
             const int rows = int(order.size());
             const int at = int(std::find(order.begin(), order.end(), co.otherRow) - order.begin()) % rows;
             if (vitaButtons() && key == SDLK_DOWN && at == rows - 1) { co.footer = true; audio.playSe("com_002", false); return; }
             const int next = vitaButtons() ? std::clamp(at + (key == SDLK_DOWN ? 1 : -1), 0, rows - 1) : (at + (key == SDLK_DOWN ? 1 : rows - 1)) % rows;
             co.otherRow = order[size_t(next)];
+            co.otherAt = co.otherAtWas = next;
             if (vitaButtons()) audio.playSe("com_002", false);
             SDL_Log("options: other row %d", co.otherRow);
         } else if ((co.otherRow == 3 || co.otherRow == 4) && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))

@@ -355,7 +355,7 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
     return rows;
 }
 
-// Options > Graphics > Cheats (CR3-U's own, none of the original's): each off to begin with, off changing nothing. The
+// Options > Cheats (CR3-U's own, none of the original's): each off to begin with, off changing nothing. The
 // battles' never in a VS battle (applyCr3Cheats)
 auto Viewer::cheatRows() -> std::vector<SettingRow> {
     Settings::Cheats& c = settings.cheats;
@@ -1602,8 +1602,14 @@ void Viewer::drawScene(int w, int h) {
 auto Viewer::menuList() -> MenuList {
     if (saveImport.active() || inputDialog.open) return {};
     if (settingsOpen) return {&settingsCursor, int(settingRows().size()), 1};
-    if (cr3Camp.stage == 9 && campOptions.tab == 3 && !campOptions.asking)
+    if (cr3Camp.stage == 9 && campOptions.tab == kTabGraphics && !campOptions.asking)
         return {&settingsCursor, int(settingRows().size()), 2};
+    if (cr3Camp.stage == 9 && campOptions.tab == kTabCheats && !campOptions.asking)
+        return {&campOptions.cheatAt, int(cheatRows().size()), 9};
+    if (cr3Camp.stage == 9 && campOptions.tab == 2 && !campOptions.asking && staffList.kind == 0) { // (Other: its rows - otherRow by its index)
+        syncOtherRow();
+        return {&campOptions.otherAt, int(otherOrder().size()), 13};
+    }
     if (cr3Camp.stage == 3) return {&cr3Camp.focus, int(cr3Camp.genes.size()), 3};
     if (cr3Camp.stage == 4 && campItems.told.empty()) {
         if (campItems.step == 0) return {&campItems.row, int(campItems.rows.size()), 100 + campItems.category};
@@ -4284,6 +4290,20 @@ float Viewer::uiRight(const UiFig& u) {
     return r;
 }
 
+// the foot of a posed figure's meshes (UI units: their vertices as last posed)
+float Viewer::uiBottom(const UiFig& u) {
+    float b = 1e9f;
+    for (const ViewMesh& vm : u.fig.meshes) {
+        if (vm.hidden) continue;
+        for (size_t o = 0; o + 12 <= vm.vertices.size(); o += cr3::kVertexStride) {
+            float y;
+            std::memcpy(&y, &vm.vertices[o + 4], 4);
+            b = std::min(b, y);
+        }
+    }
+    return b;
+}
+
 // a posed joint's place in UI units (false: none)
 bool Viewer::uiJoint(const UiFig& u, const std::string& joint, float& x, float& y) {
     const auto it = std::find(u.joints.begin(), u.joints.end(), joint);
@@ -5196,7 +5216,15 @@ auto Viewer::cr3UiPut(const std::string& name, const std::string& anim, float t,
         u.fig.place.m[0] = (-2.0f * x / 10.24f) * cr3UiScale;
         poseUi(u, anim.empty() ? name : anim, t, loop);
     }
-    drawFigure(u.fig, view.data());
+    if (cr3UiWiden(u, name) && (screenX > frameX || screenX + screenW < frameX + frameW)) {
+        // (a band carried past the interface's sides - a camera cutout avoided -: drawn over the frame's width, the same place)
+        Mat4 wide = view;
+        const float a = float(screenW) / float(frameW), b = float(2 * (screenX - frameX) + screenW - frameW) / float(frameW);
+        for (int c = 0; c < 4; ++c) wide[size_t(c * 4)] = view[size_t(c * 4)] * a + view[size_t(c * 4 + 3)] * b;
+        dev->setViewport(float(frameX), float(screenY), float(frameW), float(screenH));
+        drawFigure(u.fig, wide.data());
+        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+    } else drawFigure(u.fig, view.data());
     if (stretchEquipFtr) {
         u.fig.place.m[0] = cr3UiScale;
         poseUi(u, anim.empty() ? name : anim, t, loop);
@@ -5206,6 +5234,56 @@ auto Viewer::cr3UiPut(const std::string& name, const std::string& anim, float t,
         else vm->material.params[0x33] = dc;
     }
     return u;
+}
+
+// The bands across the screen - the header's help band and title bar (comHeMenu, comHeTitle_fr00), the footers' (OptionFooterMenu's
+// mpMeMenu, comFtrTeamMenu, comFtrMixMenu, comFtrGeneMenu, comFtrEquipMenu), VS mode's header and footer (VsHeMenu, VsFtrMenu,
+// VsMainBlack) - are 16:9's width in the files: 11.36 units, 9.6 and GetFitXOffset's 16:9 room (0.88) each side. The original
+// places them at their fit joints alone (HeaderMenu::Pose, MyPagebottomPanel's menu; Android's screen mode 6 - GameSystem
+// +0x13c - giving GetFitXOffset the phone's own room), its meshes never widened: on a phone wider than 16:9 (20:9) their far
+// ends stop short of the screen's edge, the clock and the back past them. Here those ends carried on to the interface's edges:
+// a bar fitted to the left edge (fit1 / 4 / 7) its right end by the room beyond 16:9's on both sides, a centred one (VS mode's,
+// at no fit) each end by its side's - the vertices at its far ends alone, the icons and text left be. Under a camera cutout
+// (the interface kept to the safe area) their ends at its sides then on to the frame's: the colour to the screen's edges, the
+// buttons on them inside. True for a band (cr3UiPut draws it over the frame's width)
+bool Viewer::cr3UiWiden(UiFig& u, const std::string& name) {
+    static const std::set<std::string> kLeft = {"comhemenu", "comhetitle_fr00", "mpmemenu", "comftrteammenu", "comftrmixmenu", "comftrgenemenu"};
+    static const std::set<std::string> kCentred = {"vshemenu", "vsftrmenu", "vsmainblack"};
+    const bool left = kLeft.count(name) != 0, centred = kCentred.count(name) != 0;
+    if (!left && !centred && name != "comftrequipmenu") return false;
+    const float k = std::max(std::min(float(screenW) / 9.6f, float(screenH) / 6.4f), 1e-6f); // (uiProjection's pixels a unit)
+    const float half = float(screenW) / k / 2, extra = half - (4.8f + 0.88f); // (the interface's half-width; beyond 16:9's)
+    const float centre = float(screenX) + float(screenW) / 2;
+    const float frameL = (float(frameX) - centre) / k, frameR = (float(frameX + frameW) - centre) / k; // (the frame's sides)
+    float lo = 1e9f, hi = -1e9f;
+    for (const ViewMesh& vm : u.fig.meshes) {
+        if (vm.hidden) continue;
+        for (size_t o = 0; o + 12 <= vm.vertices.size(); o += cr3::kVertexStride) {
+            float vx;
+            std::memcpy(&vx, &vm.vertices[o], 4);
+            lo = std::min(lo, vx), hi = std::max(hi, vx);
+        }
+    }
+    if (hi <= lo) return true;
+    constexpr float kEnd = 0.02f; // (VsHeMenu's halves end at -5.67 and 5.68)
+    const bool cutout = frameL < -half - 0.01f || frameR > half + 0.01f;
+    for (ViewMesh& vm : u.fig.meshes) {
+        bool moved = false;
+        for (size_t o = 0; o + 12 <= vm.vertices.size(); o += cr3::kVertexStride) {
+            float vx;
+            std::memcpy(&vx, &vm.vertices[o], 4);
+            const float was = vx;
+            if (extra > 0 && vx >= hi - kEnd) vx += left ? 2 * extra : centred ? extra : 0.0f;
+            else if (extra > 0 && centred && vx <= lo + kEnd) vx -= extra;
+            if (cutout && vx >= half - kEnd) vx = std::max(vx, frameR + 0.01f); // (at the interface's side: on to the frame's)
+            else if (cutout && vx <= -half + kEnd) vx = std::min(vx, frameL - 0.01f);
+            if (vx == was) continue;
+            std::memcpy(&vm.vertices[o], &vx, 4);
+            moved = true;
+        }
+        if (moved) dev->updateVertices(vm.gpu, vm.vertices);
+    }
+    return true;
 }
 
 // a part posed by an animator over its own animation's first frame (the colours it rests at -

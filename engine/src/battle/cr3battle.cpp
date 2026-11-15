@@ -421,6 +421,39 @@ bool Cr3Battle::setup(const Cr3BattleTables& t, int couplingId, int fieldNo, con
     return true;
 }
 
+// a compiled Squirrel 2 script (SQFunctionProto::Save's stream, tools/nut.py): whether its function `function`'s own literals
+// hold `literal` - a name it calls (PREPCALLK's keys are literals). The function's prototype: 'TRAP', its source and name (string
+// objects), 'TRAP', eight u32 counts - the literals' first -, 'TRAP', the literals
+static bool functionUses(const std::vector<uint8_t>& b, const std::string& function, const std::string& literal) {
+    constexpr uint32_t kString = 0x08000010, kInteger = 0x05000002, kFloat = 0x05000004, kBool = 0x01000008, kNull = 0x01000001;
+    auto u32 = [&](size_t at) { uint32_t v = 0; std::memcpy(&v, b.data() + at, 4); return v; };
+    auto tag = [&](size_t at) { return at + 4 <= b.size() && std::memcmp(b.data() + at, "TRAP", 4) == 0; };
+    std::vector<uint8_t> name(8 + function.size());
+    const uint32_t type = kString, length = uint32_t(function.size());
+    std::memcpy(name.data(), &type, 4), std::memcpy(name.data() + 4, &length, 4), std::memcpy(name.data() + 8, function.data(), function.size());
+    for (auto it = b.begin(); (it = std::search(it, b.end(), name.begin(), name.end())) != b.end(); ++it) {
+        size_t p = size_t(it - b.begin()) + name.size();
+        if (!tag(p) || !tag(p + 4 + 32)) continue; // (a prototype's name: its counts after it - not a literal of that name)
+        const uint32_t literals = u32(p + 4);
+        p += 4 + 32 + 4;
+        for (uint32_t k = 0; k < literals && p + 8 <= b.size(); ++k) {
+            const uint32_t t = u32(p);
+            p += 4;
+            if (t == kString) {
+                const uint32_t n = u32(p);
+                if (p + 4 + n > b.size()) return false;
+                if (n == literal.size() && std::memcmp(b.data() + p + 4, literal.data(), n) == 0) return true;
+                p += 4 + n;
+            } else if (t == kInteger || t == kFloat || t == kBool) p += 4;
+            else if (t != kNull) return false;
+        }
+        return false;
+    }
+    return false;
+}
+
+bool Cr3Battle::storyLoss(const std::vector<uint8_t>& script) { return functionUses(script, "Battle_Defeat", "ForceEnd"); }
+
 std::string Cr3Battle::script() const {
     char name[32];
     std::snprintf(name, sizeof name, "battle_%04d", (couplingFlags & 1) ? coupling : 0);

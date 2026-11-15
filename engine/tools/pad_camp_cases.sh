@@ -74,10 +74,11 @@ want camp && run options-credits "0:until=camp:_options 0.5:r 1:r 1.5:down 2:dow
     "options: tab 2|options: other row 3|options: credits (854 lines)|staff list: line 2|staff list: line 3|options: credits closed|options: other row 4|options: copyright notice (668 lines)" \
     -- --area d0301 --flag 26 --input "camp:open camp:button6"
 
-# CR3-U's Cheats (Options > Graphics, its first row): ○ opens the page, ↓ Infinite MP, ○ on, ○ off again (the run's settings.ini
-# left as it was for the cases after), × back to Graphics
-want camp && run options-cheats "0:until=camp:_options 0.5:r 1:r 1.5:r 2:east 2.5:down 3:east 3.5:east 4:south 5:quit" \
-    "options: tab 3|options: cheats opened|cheats: Infinite MP On|cheats: Infinite MP Off|options: cheats closed" \
+# CR3-U's Cheats (Options' own tab, the fourth - before Graphics): R R R to it, ↓ Infinite MP, ○ on, ○ off again; R to
+# Graphics, L back - the focus kept -, ○ on, then Reset (R key), ← Yes, ○: every cheat off (the run's settings.ini left as
+# it was for the cases after)
+want camp && run options-cheats "0:until=camp:_options 0.5:r 1:r 1.5:r 2:down 2.5:east 3:east 3.5:r 4:l 4.5:east 5:key=R 5.5:left 6:east 7:quit" \
+    "options: tab 3|cheats: Infinite MP On|cheats: Infinite MP Off|options: tab 4|options: tab 3|cheats: Infinite MP On|options: tab 3 (cheats) reset" \
     -- --area t0101 --flag 26 --input "camp:open camp:button6"
 
 # The Quest Clear screen (QuestDitailMenu 0x7e - d02's quest_complete for quest 50): OK, its 1/6 s close, the script on
@@ -86,9 +87,9 @@ want camp && run quest-clear "$quest_pad" \
     "area d0202: quest_complete|quest clear: OK|quest clear: closed" \
     -- --area d0202 --player j001 --work 24:50 --input "wait:1 call:quest_complete"
 
-# OptionFooterMenu (round 27: the field's Options - mpMe panels Title Screen, Download's empty frame, Manual, App Intro,
-# Achievements, then the back): ↓ to the footer on the back, ← over the panels - Download passed over -, ○ Title Screen asks
-# 0x1a3, ← Yes, ○: the title again (GameMain::Reboot)
-want camp && run options-footer "3:down 3.5:down 4:down 4.5:left 5:left 5.5:left 6:left 6.5:east 7.5:left 8:east 10:quit" \
-    "options: sound row 2 footer|options: footer focus 4|options: footer focus 3|options: footer focus 2|options: footer focus 0|options: footer panel 0 (0x193)|options: to the title screen (0x1a3 Yes)|title: CR3's" \
+# OptionFooterMenu (round 27: the field's Options - mpMe panels Title Screen, Manual, App Intro, Achievements - round 31: no
+# Download, the four closed up -, CR3-U's Reset left of the back, then the back): ↓ to the footer on the back, ← Reset, ○ asks,
+# ← Yes, ○: the tab's settings back; ← over the panels to Title Screen, ○ asks 0x1a3, ← Yes, ○: the title again (GameMain::Reboot)
+want camp && run options-footer "3:down 3.5:down 4:down 4.5:left 5:east 5.5:left 6:east 7:left 7.5:left 8:left 8.5:left 9:east 9.5:left 10:east 12:quit" \
+    "options: sound row 2 footer|options: footer focus 6|options: tab 0 reset|options: footer focus 4|options: footer focus 3|options: footer focus 2|options: footer focus 0|options: footer panel 0 (0x193)|options: to the title screen (0x1a3 Yes)|title: CR3's" \
     -- --area t0101 --flag 26 --input "camp:open camp:button6"

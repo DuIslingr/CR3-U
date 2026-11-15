@@ -353,6 +353,16 @@ public:
     // member's cooperation roll always comes up; expScale - the battle's EXP (the genes') this many times (scaledExp)
     bool cheatHp = false, cheatMp = false, cheatOneHit = false, cheatGauge = false, cheatCoop = false;
     int expScale = 1;
+    // A battle the story goes on from when it's lost (the viewer's: its script's Battle_Defeat ends it - Battle.ForceEnd):
+    // Infinite HP lapses there once no foe can fall any more (foeHeld) - or none has lost HP for three turns running
+    // (stallTurns: foes the party can't hurt with nothing marking them so - blocks, absorbs, nulls, a regeneration) -, so
+    // a fight that can't be won still ends the way the story has it; while one can, it holds, and such a battle can be
+    // won with the cheats on. (One-Hit Kills needs no rule: the least HP clamps its blow as any other, and a blocked or
+    // undamaging hit stays so)
+    bool storyLoss = false;
+    int stallTurns = 0;     // (turns in a row with no monster's HP down: turn)
+    bool foeHeld() const;   // (every living monster held: at its least HP - status kinds 53 / 121, skill kind 53 - or blocking every hit, 62)
+    bool infiniteHp() const { return cheatHp && !(storyLoss && (foeHeld() || stallTurns >= 3)); }
     int scaledExp(int exp) const; // (x expScale, held under 99999999)
     void keepCheats();            // (the party's HP / MP whole - cheatHp / cheatMp, the living -, the gauge pinned - cheatGauge)
     // the party's money (DAT_014c6e74, live: a Steal Gold hit takes from it at once -

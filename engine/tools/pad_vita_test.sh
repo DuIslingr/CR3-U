@@ -44,9 +44,10 @@ want choice && run choice "1.5:hold=west 3.2:release=west 3.5:down 4:down 4.5:do
     "choice: the cursor on 2|choice: the cursor on 1|choice: the cursor on 2|choice: 2 of 2" \
     -- --area t0101 --input "call:c111_s110_t01_00101"
 
-# L / R over CR3's menus: OptionMenu's tabs (FUN_81203e54: not round), the gifts' categories (0x81189cf2)
-want shoulders && run options-tabs "3:r 3.5:r 4:r 4.5:r 5:l 6:quit" \
-    "options: tab 1|options: tab 2|options: tab 3|test controller: r|test controller: l|options: tab 2" \
+# L / R over CR3's menus: OptionMenu's tabs (FUN_81203e54: not round - CR3-U's Cheats and Graphics after the game's
+# three, R stopping at Graphics), the gifts' categories (0x81189cf2)
+want shoulders && run options-tabs "3:r 3.5:r 4:r 4.5:r 5:r 5.5:l 6.5:quit" \
+    "options: tab 1|options: tab 2|options: tab 3|options: tab 4|test controller: r|test controller: l|options: tab 3" \
     -- --area t0101 --flag 26 --input "camp:open camp:button6"
 want shoulders && run gift-categories "3:r 3.5:r 4:l 6:quit" \
     "camp: gifts, category 1|camp: gifts, category 2|camp: gifts, category 1" \

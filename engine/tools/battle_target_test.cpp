@@ -2,6 +2,7 @@
 #include "battle/cr3rules.hpp"
 #include "assets/mvgl.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -288,6 +289,8 @@ int main() {
             // 22 -, end 7: kind 97 -> 1525 Braveheart)
             {{0,2}, {1,uint32_t(-1)}, {5,1}, {6,1}, {12,256}, {13,256}, {14,34}, {15,50}},
             {{0,109}, {1,26}, {4,1}, {5,1}, {6,1}, {8,8}, {9,22}, {10,1}, {11,7}, {12,256}, {13,256}, {14,97}, {15,1525}},
+            // (the release's 22: an endure - kind 53, the least HP 1)
+            {{0,22}, {1,17}, {2,uint32_t(-1)}, {4,uint32_t(-1)}, {5,1}, {6,1}, {7,1}, {12,256}, {13,256}, {14,53}, {15,1}},
         }};
         check(t.skill.parse(tables({skills, statusEffects})), "parse synthetic skills and status effects");
         Table elements{"Element", "ifffffff", {
@@ -762,6 +765,47 @@ int main() {
             check(rules.scaledExp(120) == 120, "EXP x1 as it is");
             rules.expScale = 5;
             check(rules.scaledExp(120) == 600 && rules.scaledExp(0) == 0 && rules.scaledExp(50000000) == 99999999, "cheat EXP Multiplier x5");
+            rules.expScale = 1;
+            // A battle the story goes on from when lost (storyLoss), Infinite HP and One-Hit Kills on. Winnable - the foes can fall:
+            // the party's hits fell both, nobody of theirs falls - won
+            reset(), lethal(), rules.storyLoss = true, rules.stallTurns = 0, rules.cheatHp = rules.cheatOneHit = true;
+            (void)rules.turn({{0, 30, 2}, {1, 30, 3}});
+            check(rules.fighters[2].dead() && rules.fighters[3].dead() && !rules.fighters[0].dead() && !rules.fighters[1].dead() &&
+                      rules.outcome() == 1 && rules.infiniteHp(),
+                  "story loss, both cheats on, the foes able to fall: won");
+            // ... not winnable - each foe holding an endure (status 22, the least HP 1) for good: One-Hit Kills takes them to 1 and
+            // no further, Infinite HP lapses there (foeHeld) and the lethal blows fell the party - lost, the story's way on
+            reset(), lethal(), rules.storyLoss = true, rules.stallTurns = 0, rules.cheatHp = rules.cheatOneHit = true;
+            rules.giveEffect(2, 22, true), rules.giveEffect(3, 22, true);
+            check(rules.infiniteHp() && !rules.foeHeld(), "story loss: Infinite HP on while the held foes are above their floor");
+            rules.fighters[2].hp = 1;
+            check(rules.infiniteHp(), "story loss: Infinite HP on while one foe is at its floor and another can still fall");
+            rules.fighters[2].hp = 5000;
+            (void)rules.turn({{0, 30, 2}, {1, 30, 3}});
+            check(rules.fighters[2].hp == 1 && rules.fighters[3].hp == 1 && rules.foeHeld() && !rules.infiniteHp() &&
+                      rules.fighters[0].dead() && rules.fighters[1].dead() && rules.outcome() == 2,
+                  "story loss, both cheats on, the foes unable to fall: One-Hit held at the endure, Infinite HP lapsed, lost");
+            // ... the same foes in a battle whose loss is a game over: Infinite HP holds (never a lapse there)
+            reset(), lethal(), rules.storyLoss = false, rules.stallTurns = 0, rules.cheatHp = rules.cheatOneHit = true;
+            rules.giveEffect(2, 22, true), rules.giveEffect(3, 22, true);
+            (void)rules.turn({{0, 30, 2}, {1, 30, 3}});
+            check(rules.fighters[2].hp == 1 && !rules.fighters[0].dead() && !rules.fighters[1].dead() && rules.outcome() == 0,
+                  "not a story loss: Infinite HP holds against foes that can't fall");
+            // ... foes nothing marks as unable to fall, but no monster's HP down for three turns running (the party not hurting
+            // them): Infinite HP lapses after the third - the stall fallback -, and holds again once one is hurt
+            reset(), rules.storyLoss = true, rules.stallTurns = 0, rules.cheatHp = true;
+            for (int k = 0; k < 3; ++k) {
+                check(rules.infiniteHp(), "story loss: Infinite HP on before three turns without a foe hurt");
+                rules.monstersWait = true;
+                (void)rules.turn({});
+            }
+            check(rules.stallTurns == 3 && !rules.infiniteHp(), "story loss: Infinite HP lapsed after three turns without a foe hurt");
+            rules.monstersWait = true;
+            (void)rules.turn({{0, 30, 2}});
+            check(rules.stallTurns == 0 && rules.infiniteHp(), "story loss: Infinite HP again once a foe is hurt");
+            rules.storyLoss = false, rules.stallTurns = 3;
+            check(rules.infiniteHp(), "not a story loss: no stall rule");
+            rules.storyLoss = rules.cheatHp = rules.cheatOneHit = false, rules.stallTurns = 0;
             std::cout << "cheats: Infinite HP / MP, One-Hit Kills, Full Break Gauge, Co-op (" << joinedOff << "/20 off), EXP x5: ok\n";
         }
         // Round 10: BtlCommandManager::addLastAttack - two linked actions (the second a combo on the downed
@@ -1507,6 +1551,18 @@ int main() {
                     check(b.setup(real, coupling, -1, {character}, seed, &err), "set up a release battle");
                     check(rules.setup(real, b, 10, seed, &err), "set up a release battle's rules");
                 };
+                // the story's losses (Cr3Battle::storyLoss: a battle script whose Battle_Defeat ends it with Battle.ForceEnd)
+                std::string losses;
+                for (int coupling = 1; coupling < 1500; ++coupling) {
+                    char name[40];
+                    std::snprintf(name, sizeof name, "script\\battle_%04d.nut", coupling);
+                    std::vector<uint8_t> nut;
+                    if (archive.contains(name) && archive.read(name, nut) && cr3::Cr3Battle::storyLoss(nut))
+                        losses += (losses.empty() ? "" : " ") + std::to_string(coupling);
+                }
+                const std::string lossLine = "the story's losses: battles 3 26 27 30 31 50 (found: " + losses + ")";
+                check(losses == "3 26 27 30 31 50", lossLine.c_str());
+                std::cout << "story losses (Battle_Defeat's ForceEnd): " << losses << "\n";
                 cr3::Cr3BattleRules r913;
                 battleOf(2612, r913, 5);
                 int m913 = -1;

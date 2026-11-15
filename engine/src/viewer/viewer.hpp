@@ -277,7 +277,7 @@ struct Viewer {
         int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
         int battleSpeed = 1;      // the battles, this many times as fast: 1, 2 .. 5
         int language = 0;         // the options' language: cr3::Language + 1 (0: none picked yet)
-        // Options > Graphics > Cheats (CR3-U's own, none of the original's; settings.ini's cheat_*= - written only when on):
+        // Options > Cheats (CR3-U's own tab, none of the original's; settings.ini's cheat_*= - written only when on):
         // every one off to begin with, and off changes nothing. The battles' are set into the rules at a battle's start
         // (applyCr3Cheats) - never a VS battle's -, the field's each frame (applyFieldCheats)
         struct Cheats {
@@ -316,8 +316,10 @@ struct Viewer {
     int settingsCursor = 0;
     float settingsStart = 0;
     std::vector<SettingRow> settingRows();
-    std::vector<SettingRow> cheatRows();  // (Options > Graphics > Cheats: Settings::Cheats)
+    std::vector<SettingRow> cheatRows();  // (Options > Cheats: Settings::Cheats)
     void applyCr3Cheats(bool start);       // (a battle's start: the rules' flags - none in VS -; then each turn: the party whole, the gauge, the cheer)
+    void markCr3StoryLoss();               // (the rules' storyLoss: this battle's script's Battle_Defeat ends it - Cr3Battle::storyLoss)
+    bool cr3HpLapsed = false;              // (Infinite HP lapsed this battle - a story loss's foe that can't fall: logged as it changes)
     void applyFieldCheats();               // (each frame: the money, the MP between battles)
     bool cr3Cheating = false;              // (this battle's cheats on: applyCr3Cheats)
     void settingChange(int row, int dir, bool click = true);
@@ -961,6 +963,7 @@ struct Viewer {
     std::vector<std::pair<int, int>> stateArg; // (--state fighter:state)
     int chargeArg = -1;                        // (--charge: the gauge to begin with)
     int gaugeArg = 0;
+    int foeEffectArg = 0; // (--foe-effect: a status effect every monster holds for good from a battle's start - tests)
     void startFight(int mode, uint32_t seed);
     bool dposPosition(const char* name, float* out);
     void placeParty(bool pair);
@@ -2580,6 +2583,7 @@ struct Viewer {
     UiFig& uiFig(const std::string& name);
     void poseUi(UiFig& u, const std::string& anim, float t, bool loop = false);
     static float uiRight(const UiFig& u);
+    static float uiBottom(const UiFig& u);
     bool uiJoint(const UiFig& u, const std::string& joint, float& x, float& y);
     // DotNumId2: a number's digits from hud_dotnum (DotNumParamPackTable: set `set`'s glyph d at
     // set + d, its size w x h pixels of a 1000-a-unit layout and its UVs), right to left from
@@ -3220,6 +3224,7 @@ struct Viewer {
     UiFig& drawCr3Battery(float x, float y, const Mat4& view, const char* menu = "comheiconmenu");
     int batteryState = 2;
     float batteryLevel = 1, batteryReadAt = 0;
+    bool cr3UiWiden(UiFig& u, const std::string& name); // (the bands across the screen carried to its edges - wider than 16:9, under a cutout)
     UiFig& cr3UiPutOverOwn(const std::string& name, const std::string& anim, float t, float x, float y, const Mat4& view, bool loop);
     bool cr3UiCall(const UiFig& u, const std::string& prefix, float& x, float& y, int w = 0, int h = 0);
     void cr3UiTexture(UiFig& u, const std::string& image, const std::string& mask = {});
@@ -4189,20 +4194,20 @@ struct Viewer {
         int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
         int top = 0;   // (Graphics: the first row shown)
         bool footer = false;
-        int footerAt = 5;    // (the footer's focus: 0 .. 4 the mpMe panels - the field's alone -, 5 the back)
+        int footerAt = 5;    // (the footer's focus: 0, 2, 3, 4 the mpMe panels - the field's alone -, 6 CR3-U's Reset, 5 the back)
         bool titleAsk = false; // (Title Screen's question, 0x1a3)
         int titleFocus = 1;
         bool asking = false; // (CR3-U's Reset: its question up)
         int askFocus = 1;    // (0 Yes, 1 No)
         float askSince = 0;
-        // (Graphics: its first row CR3-U's Cheats, opening that page - the settings' rows after it; graphicsAt the focus, the
-        // settings' settingsCursor + 1. The Cheats page in its place: cheatRows, its own focus and first row shown)
-        bool cheats = false;
-        int graphicsAt = 0, cheatAt = 0, cheatTop = 0;
+        int cheatAt = 0, cheatTop = 0; // (the Cheats tab's focus and first row shown - Graphics': settingsCursor, top)
+        int otherTop = 0;              // (Other: the first row shown - an index into otherOrder -, where they don't all fit)
+        int otherAt = 0, otherAtWas = 0; // (Other: otherRow's index in otherOrder - a swipe's or the wheel's cursor - and as last synced)
     } campOptions;
-    std::vector<SettingRow> graphicsTabRows(); // (the Graphics tab's rows: Cheats, then settingRows - or the Cheats page's)
-    int& campRowAt();                    // (their focus)
-    void openCheats(bool open);
+    std::vector<int> otherOrder() const; // (the Other tab's rows, top down: otherRow's values - the Language row where there's a choice)
+    void syncOtherRow();                 // (otherAt moved - a swipe, the wheel -: otherRow to it; otherAt otherRow's again)
+    std::vector<SettingRow> campTabRows(); // (the Cheats or Graphics tab's rows: cheatRows / settingRows)
+    int& campRowAt();                      // (their focus: cheatAt / settingsCursor)
     // the Other tab's Credits and Copyright Notice (OptionMain::Update 0xaec0c0: SE com_003, the
     // OptionMenu away, OptionMain's backgrounds dimmed 1 -> 0.5 at 0.05 an update; then
     // StaffNameListMenu 0xe5 - SetNumbers 854 / 668, SetFile Staff2 / Copyright, Copyright's
@@ -4243,19 +4248,26 @@ struct Viewer {
     static constexpr int kTapTitleOptions = 7000;
     void cr3OptionsInput();
     void openCampOptions();
-    // CR3-U's fourth tab, Graphics: the game's three-tab bar (optTab_fr00) drawn twice half a tab
-    // apart - the left one without its right end (bg_03, bg_06, frame_03), the right one without its
-    // left (bg_01, bg_04, frame_01) -, so their dividers fall at -1, 0 and +1 tab: four tabs. The
-    // chosen one's highlight (tap_*, the bar's frame its tab) from the half that has it, drawn last
-    static constexpr int kOptionTabs = 4, kGraphicsRows = 4;
-    static constexpr int kTapGraphicsRow = 1000, kTapGraphicsUp = 1100, kTapGraphicsDown = 1101;
+    // CR3-U's fourth and fifth tabs, Cheats and Graphics: the game's three-tab bar (optTab_fr00) drawn
+    // three times a tab apart - the left one without its right end (bg_03, bg_06, frame_03), the middle
+    // one its middle tab alone, the right one without its left end (bg_01, bg_04, frame_01) -, so their
+    // dividers fall at -1.5, -0.5, +0.5 and +1.5 tabs: five tabs. The chosen one's highlight (tap_*, the
+    // bar's frame its tab) from the copy that has it, drawn last; the whole bar narrowed where five tabs
+    // would pass the screen's sides (a 4:3 tablet at the game's scale)
+    static constexpr int kOptionTabs = 5, kTabCheats = 3, kTabGraphics = 4, kGraphicsRows = 4;
+    static constexpr int kTapGraphicsRow = 1000, kTapGraphicsUp = 1100, kTapGraphicsDown = 1101, kTapOtherUp = 1102, kTapOtherDown = 1103;
     static constexpr int kTapOptionsReset = 1200, kTapResetYes = 1201, kTapResetNo = 1202;
     static constexpr int kTapOptPanel = 1230, kTapTitleYes = 1240, kTapTitleNo = 1241; // (the field's footer panels 0 .. 4; Title Screen's question)
     void drawCr3OptionsFooter(int w, int h, const Mat4& view);    void drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const Mat4& view);
     float cr3OptionsScale(int w, int h) const;
     float cr3OptionsFloor(int w, int h) const;
     void drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& view);
-    void drawCr3OptionsReset(float backX, float backY, int w, int h, const Mat4& view);
+    struct OptReset { bool on = false; float x = 0, y = 0, r = 0; } optReset; // (CR3-U's Reset: its circle, left of the back)
+    void placeCr3OptionsReset(int w, int h);
+    float optionsBackDrop(int w, int h); // (the field's Options: the back taken down onto its footer's bar)
+    static constexpr int kOptPanels = 4, kOptPanel[kOptPanels] = {0, 2, 3, 4}; // (the field's footer panels: the game's numbers - no Download, 1)
+    static constexpr int kFooterReset = 6; // (footerAt: CR3-U's Reset, the pad's stop just before the back, 5)
+    void drawCr3ResetButton(float x, float y, float radius, bool label, int w, int h, const Mat4& view);
     std::string cr3OptionsResetAsk() const;
     void cr3OptionsReset();
     void saveImportAnswer(bool yes);

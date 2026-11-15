@@ -984,9 +984,19 @@ void Viewer::drawCr3Continue(int w, int h) {
     }
 }
 
+// A battle the story goes on from when it's lost: its script's Battle_Defeat ends it with Battle.ForceEnd (Cr3Battle::storyLoss -
+// the game's 3, 26, 27, 30, 31 and 50). Infinite HP lapses there only once no foe can fall, or none has been hurt for three
+// turns running (Cr3BattleRules::infiniteHp)
+void Viewer::markCr3StoryLoss() {
+    std::vector<uint8_t> nut;
+    cr3Rules.storyLoss = (cr3Battle.couplingFlags & 1) && archive.read("script\\" + cr3Battle.script() + ".nut", nut) && cr3::Cr3Battle::storyLoss(nut);
+    if (cr3Rules.storyLoss) SDL_Log("battle %d: the story goes on from a loss (its Battle_Defeat's ForceEnd)", cr3Battle.coupling);
+}
+
 // Options' Cheats (CR3-U's own) in a battle. At its start the rules' flags from settings.ini - none in a VS battle: the
 // colosseum's scores, week rankings and prizes are the game's own contest, left fair -; then (start or not, each turn) the
-// party's HP / MP whole, the gauge pinned at the party's +1000 and the cheer points full, and the bars shown so
+// party's HP / MP whole - Infinite HP lapsing in a story's loss once no foe can fall (markCr3StoryLoss) -, the gauge
+// pinned at the party's +1000 and the cheer points full, and the bars shown so
 void Viewer::applyCr3Cheats(bool start) {
     const Settings::Cheats& c = settings.cheats;
     if (start) {
@@ -1000,14 +1010,20 @@ void Viewer::applyCr3Cheats(bool start) {
                     c.firstStrike ? " first strike," : "", c.gauge ? " full break gauge," : "", c.coop ? " co-op," : "", c.drops ? " drops," : "",
                     c.cheer ? " full cheer," : "", cr3Rules.expScale);
         else if (vs.screen == 5 && c.battle()) SDL_Log("battle: cheats - none in a VS battle");
+        cr3HpLapsed = false;
     }
     if (!cr3Cheating) return;
+    if (cr3Rules.cheatHp && cr3HpLapsed != !cr3Rules.infiniteHp()) {
+        cr3HpLapsed = !cr3HpLapsed;
+        SDL_Log(cr3HpLapsed ? "battle %d: cheats - Infinite HP lapses: no foe can fall (or none hurt for 3 turns) and the story goes on from a loss"
+                            : "battle %d: cheats - Infinite HP again", cr3Battle.coupling);
+    }
     cr3Rules.keepCheats();
     if (c.cheer) cr3Rules.cheer = std::max(cr3Rules.cheer, game.cr3Db ? game.cr3Db->constant("CHEER_POINT_MAX", 100) : 100);
     for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
         const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
         if (!f.player) continue;
-        if (cr3Rules.cheatHp && k < cr3HpShown.size()) cr3HpShown[k] = f.hp;
+        if (cr3Rules.infiniteHp() && k < cr3HpShown.size()) cr3HpShown[k] = f.hp;
         if (cr3Rules.cheatMp && k < cr3MpShown.size()) cr3MpShown[k] = f.mp;
     }
     if (cr3Rules.cheatGauge) cr3GaugeShown = cr3Rules.gauge;
@@ -1136,6 +1152,7 @@ void Viewer::reinforceCr3Battle(int coupling) {
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
     cr3Rules.gold = game.cr3Money; // (the party's money: a Steal Gold's to take from)
     if (gaugeArg != 0) cr3Rules.gauge = std::clamp(gaugeArg * 250, -1000, 1000), cr3Rules.gaugeStarted = true, SDL_Log("battle: the break gauge at %d (test)", cr3Rules.gauge); // (--gauge -4 .. 4: tests)
+    markCr3StoryLoss(); // (the next wave's script's)
     for (size_t k = 0, p = 0; k < cr3Rules.fighters.size() && p < party.size(); ++k)
         if (cr3Rules.fighters[k].player) {
             const int unit = cr3Rules.fighters[k].unit;
@@ -1213,6 +1230,8 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     if (!cr3Rules.setup(cr3BattleTables, cr3Battle, game.next.battleLevel, seed, &err)) SDL_Log("battle rules: %s", err.c_str());
     cr3Rules.gold = game.cr3Money; // (the party's money: a Steal Gold's to take from)
     if (gaugeArg != 0) cr3Rules.gauge = std::clamp(gaugeArg * 250, -1000, 1000), cr3Rules.gaugeStarted = true, SDL_Log("battle: the break gauge at %d (test)", cr3Rules.gauge); // (--gauge -4 .. 4: tests)
+    for (size_t k = 0; foeEffectArg > 0 && k < cr3Rules.fighters.size(); ++k) // (--foe-effect: tests - 22, an endure that never ends)
+        if (!cr3Rules.fighters[k].player) cr3Rules.giveEffect(int(k), foeEffectArg, true), SDL_Log("battle: fighter %zu holds status effect %d (test)", k, foeEffectArg);
     for (size_t k = 0; k < cr3Rules.fighters.size(); ++k) {
         const cr3::Cr3Fighter& f = cr3Rules.fighters[k];
         SDL_Log("battle %d: fighter %zu - %s %d, level %d, HP %d", coupling, k, f.player ? "character" : "monster", f.id, f.level, f.maxHp);
@@ -1223,6 +1242,7 @@ bool Viewer::startCr3Battle(int coupling, int fieldId) {
     cr3VictorUnit = -1, cr3VictoryDuration = 2.5f;
     for (const cr3::Cr3Fighter& f : cr3Rules.fighters) cr3HpShown.push_back(f.hp), cr3MpShown.push_back(f.mp);
     applyVsBattleStart(); // (VS: the lifeline items, the wildcards)
+    markCr3StoryLoss();
     applyCr3Cheats(true); // (Options' Cheats into the rules - none in VS)
     cr3GaugeShown = 0;
     rollCr3StartMode();

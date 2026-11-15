@@ -193,3 +193,16 @@ want battle && run expansion-melee "0.1:until=turn_2,_the_get-set 0.5:quit" \
 want battle && run show-hide "0.1:until=turn_2,_the_get-set 0.5:quit" \
     "fighter 3 given command 1765 on turn 1|a show / hide direction (kind 28, motion bt01, camera type 2)|turn 2, the get-set" \
     -- --battle 2612 --team-level 30 --cr3-party 1,2,3 --flag 5056 --input "guard:party foe:1:3:1765 battle guard guard guard"
+
+# Options' Cheats in a battle the story goes on from when lost (battle 3: its Battle_Defeat's Battle.ForceEnd). Winnable - its foe
+# can fall: Infinite HP and One-Hit Kills on, it's won. Not winnable (--foe-effect 22: the foe holding an endure, least HP 1, for
+# good - at level 99 against a level 1 party, so its blows can fell them): One-Hit takes it to 1 and no further, Infinite HP
+# lapses there, the party falls and the script ends the battle as over
+export CR3_BATTLE_SEED=1
+want cheats && run cheats-story-win "0.1:until=battle_3:_won 1:quit" \
+    "battle 3: the story goes on from a loss|battle: cheats - infinite HP, one-hit kills,|battle 3: won" \
+    -- --battle 3 --team-level 20 --cr3-party 1,2 --cheats hp,onehit --page 0.05 --input "auto"
+want cheats && run cheats-story-loss "0.1:until=ended_by_its_script 1:quit" \
+    "battle: fighter 2 holds status effect 22 (test)|battle 3: the story goes on from a loss|battle: cheats - infinite HP, one-hit kills,|Infinite HP lapses: no foe can fall|battle 3: lost|battle 3: ended by its script" \
+    -- --battle 3 --battle-level 99 --team-level 1 --cr3-party 1,2 --cheats hp,onehit --foe-effect 22 --battle-speed 5 --page 0.05 --input "auto"
+unset CR3_BATTLE_SEED

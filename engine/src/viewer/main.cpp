@@ -704,14 +704,6 @@ static cr3::SetupGame cr3SetupGame() {
 }
 
 int main(int argc, char** argv) {
-#ifdef SDL_PLATFORM_WINDOWS
-    // Flydigi pads (CRO-U #4: a Vader 4 Pro, wired and through its receiver, not found since SDL 3.4.20): SDL
-    // 3.4.0 added a HIDAPI driver for Flydigi controllers, on by default, which takes the pad and then gets no
-    // input from one in XInput mode (SDL's fixes for it are on its development branch only, after 3.4.20). Off
-    // here - before any SDL_Init -, so the pad is read through XInput as with SDL 3.2.0, where it worked.
-    // SDL_JOYSTICK_HIDAPI_FLYDIGI=1 in the environment turns it back on (the environment's value wins)
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_FLYDIGI, "0");
-#endif
     if (argc>1 && std::strcmp(argv[1],"--selftest-vista-pause")==0) return vistaPauseSelfTest();
     if (argc > 1 && std::strcmp(argv[1], "--selftest-quake") == 0) return quakeSelfTest();
     if (argc > 1 && std::strcmp(argv[1], "--selftest-vs-score") == 0) return vsScoreSelfTest();
@@ -761,7 +753,8 @@ int main(int argc, char** argv) {
     std::vector<std::array<int, 4>> cr3GeneArgs; // (--cr3-gene ch:gene[:exp[:skill]]: worn - its slots learnt, a skill added in slot 7 -, tests)
     std::vector<std::array<int, 3>> sheetArg; // (--cr3-sheet sheet:entry[:new] - entry -1 its prize)
     std::vector<std::tuple<int, int, int>> equipArg;
-    int chargeArg = -1, difficultyArg = -1, membersArg[2] = {-2, -2}, ozArg = -1, gaugeArg = 0;
+    int chargeArg = -1, difficultyArg = -1, membersArg[2] = {-2, -2}, ozArg = -1, gaugeArg = 0, foeEffectArg = 0;
+    std::string cheatsArg; // --cheats hp,mp,onehit,...: Options' Cheats on for one run
     std::vector<std::string> workArgs;
     std::vector<std::pair<int, int>> stateArg;
     std::vector<std::pair<int, int>> sopiaArg;
@@ -840,6 +833,8 @@ int main(int argc, char** argv) {
         }
         else if (a == "--charge" && next) chargeArg = std::atoi(next), ++i; // (the charge gauge to begin with: tests)
         else if (a == "--gauge" && next) gaugeArg = std::atoi(next), ++i; // (the break gauge to begin with, -4..4: tests)
+        else if (a == "--foe-effect" && next) foeEffectArg = std::atoi(next), ++i; // (a status effect every monster holds for good: tests)
+        else if (a == "--cheats" && next) cheatsArg = next, ++i;
         else if (a == "--difficulty" && next) difficultyArg = std::atoi(next), ++i; // (the world select's level - 1: tests)
         else if (a == "--oz" && next) ozArg = std::atoi(next), ++i; // (the Oz to begin with: tests)
         else if (a == "--work" && next) workArgs.push_back(next), ++i; // (n:v - Cr3UtilGlobalWork n to begin with: tests)
@@ -1196,6 +1191,25 @@ int main(int argc, char** argv) {
     if (smoothArg >= 0) v.settings.smoothModels = smoothArg;
     if (speedArg[0]) v.settings.fieldSpeed = speedArg[0];
     if (speedArg[1]) v.settings.battleSpeed = speedArg[1];
+    for (size_t at = 0; at < cheatsArg.size();) { // (--cheats: Options' Cheats by name, comma-separated - expN the EXP's N x)
+        const size_t end = std::min(cheatsArg.find(',', at), cheatsArg.size());
+        const std::string c = cheatsArg.substr(at, end - at);
+        Viewer::Settings::Cheats& h = v.settings.cheats;
+        if (c == "hp") h.hp = true;
+        else if (c == "mp") h.mp = true;
+        else if (c == "onehit") h.oneHit = true;
+        else if (c == "firststrike") h.firstStrike = true;
+        else if (c == "nobattles") h.noBattles = true;
+        else if (c == "money") h.money = true;
+        else if (c == "full") h.fullOutside = true;
+        else if (c == "gauge") h.gauge = true;
+        else if (c == "coop") h.coop = true;
+        else if (c == "drops") h.drops = true;
+        else if (c == "cheer") h.cheer = true;
+        else if (c.compare(0, 3, "exp") == 0) h.exp = std::clamp(std::atoi(c.c_str() + 3), 1, 10);
+        else return std::fprintf(stderr, "--cheats: %s? (hp, mp, onehit, firststrike, nobattles, money, full, gauge, coop, drops, cheer, expN)\n", c.c_str()), 2;
+        at = end + 1;
+    }
     if (exportModels) { // every figure as glTF (assets/gltf_figure.hpp): its skeleton, meshes, materials, pictures, animations
         std::string dir = exportModelsDir.empty() ? gameFolder + "models/export/" : exportModelsDir;
         if (dir.back() != '/' && dir.back() != '\\') dir += '/';
@@ -1580,7 +1594,7 @@ int main(int argc, char** argv) {
     }
     if (model == "c001" && leaderDefaulted) v.leaderFollows = true, v.refreshLeader();
     v.stateArg = stateArg;
-    v.chargeArg = chargeArg, v.gaugeArg = gaugeArg;
+    v.chargeArg = chargeArg, v.gaugeArg = gaugeArg, v.foeEffectArg = foeEffectArg;
     if (battleId > 0 && v.archive.contains("data\\battle_field.mbe")) { // (CR3's: battle/cr3battle.hpp)
         if (battleLevelArg > 0) v.game.next.battleLevel = battleLevelArg;
         if (!v.startCr3Battle(battleId, battleFieldArg)) return 1;
@@ -1703,9 +1717,8 @@ int main(int argc, char** argv) {
             if (v.areaMode) { // (CR3's camp: Options, its Graphics tab; -1 the Other tab)
                 v.openCr3Camp();
                 v.openCampOptions();
-                v.campOptions.tab = std::atoi(row) >= 0 ? 3 : 2;
+                v.campOptions.tab = std::atoi(row) >= 0 ? Viewer::kTabGraphics : 2;
                 v.settingsCursor = std::max(std::atoi(row), 0);
-                v.campOptions.graphicsAt = v.settingsCursor + 1; // (the Graphics tab's: its Cheats row first)
             } else {
                 v.optionsOpen = true, v.campOpen = !v.battleMode;
                 if (std::atoi(row) >= 0) v.openSettings(), v.settingsCursor = std::atoi(row);
@@ -2205,7 +2218,7 @@ int main(int argc, char** argv) {
                     v.scrollScenarios(-e.motion.yrel / float(std::max(wh, 1)) * 0.64f);
                 } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.settingsOpen) { // (the settings' list: a row up / down)
                     if (e.wheel.y != 0) v.settingsKey(e.wheel.y > 0 ? SDLK_UP : SDLK_DOWN);
-                } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.cr3Camp.stage == 9 && v.campOptions.tab == 3) { // (CR3's Options' Graphics: a row up / down)
+                } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.cr3Camp.stage == 9 && v.campOptions.tab >= Viewer::kTabCheats) { // (CR3's Options' Cheats or Graphics: a row up / down)
                     if (e.wheel.y != 0) v.campOptionsKey(e.wheel.y > 0 ? SDLK_UP : SDLK_DOWN);
                 } else if (e.type == SDL_EVENT_MOUSE_WHEEL && v.campOpen && v.campLink == 201) {
                     v.scrollScenarios(e.wheel.y > 0 ? -0.1f : 0.1f);
