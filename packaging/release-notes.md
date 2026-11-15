@@ -1,108 +1,27 @@
-# CR3-U v0.7.0
+# CR3-U v0.7.1
 
-A from-scratch reimplementation of *Chaos Rings III* for Windows, macOS, Linux, Android and now iOS.
+A fix release for [v0.7.0](https://github.com/DuIslingr/CR3-U/releases/tag/v0.7.0): a controller Windows
+stopped finding, and missing text on some Android phones. Everything in v0.7.0's notes still applies.
 
-This release carries the parity audit to its end: system by system, the game's own code was read
-against the port and the differences fixed (`docs/OPENING_AUDIT.md`, rounds 19 to 32). What's still
-open needs footage of the original to settle, is online-only, or is code nothing reaches. It also
-brings an iOS build, a first start that no longer looks frozen, and a Cheats page.
+## Fixed
 
-## What's new
-
-### Starting the game
-
-- **No more "frozen" first start** (issue #6). A repacked Android `.apks` has about 1.3 GB of sound,
-  voices and movies to unpack the first time; that used to happen before any window opened, so the
-  game looked hung (and closing it started the unpacking over). A progress window shows it now, and
-  for an `.apks` that holds its APKs compressed too. Later starts skip it.
-- **Copy your game in, any way:** an `.ipa` dropped into `ios/` is unpacked, and a Vita dump's
-  `.zip`, `.rar`, `.7z` or `.vpk` dropped into `vita/` is unpacked and decrypted, with a progress bar.
-- **"Look again":** if no copy is found, the message has a *Look again* button - copy your files in
-  and carry on, no restart.
-- **A log file**, `cr3view.log` in your profile folder (Documents on iOS), the last start's kept as
-  `cr3view.prev.log`. Attach it to a bug report.
-- **Your own font:** put a `.ttf` / `.otf` / `.ttc` in the game folder's `font/` and the game's text
-  uses it.
-- The Prequel Trilogy's NoNpDrm `.rar` now unpacks on every platform (a newer libarchive).
-
-### Battles
-
-- **Gene skills** fire the way the game does: when their trigger and condition hold, with their uses
-  per battle, turn and command. Critical x2, Critical First Attack, Narrow Escape, Emergency Guard,
-  Afterthought Guard, Counter Ignition and Adam's element skills now work; several never fired before.
-- **Status effects** wait for their moment and get used up - Mental Wall's reflect, Moonlight Shadow's
-  evade, Rally, Concentrate, Lock On, the counters, Regenerate - and their icons show on the party
-  panels and the target list.
-- **The monsters think** as in the original: their own command choices and targets, Call for Help,
-  stealing HP / MP / gold, Reverse Gravity, the Mimic's escape, Avatar summons, Gene Switch, Cover.
-- **Auto Battle and Mass Attack** tabs on the Battle button.
-- **Assists** from your helpers by cheer points ("Thanks to Patty's help...").
-- **Analyze** shows a monster's name, HP and description.
-- **Break Reset**, finishers after the turn's last command, counters in their right place in the
-  turn, cooperation names (" II", " III"), damage totals on the party, fixed-damage hits and blocks.
-- **The result screen:** gene level-ups with their windows and learned skills, drops in the
-  Information bar, the VIP bonus panels, steal gold back from a fallen thief.
-- **Hit effects** land at varied angles, offsets and sizes; fire bullets leave their embers behind.
-
-### Battle Mode (VS)
-
-- **The commentators** say all their lines - each turn, on a joint attack, a gene command, after
-  damage or a miss, on continuing, retiring and a perfect run - and greet you as you enter VS.
-- **The score panel** and **the VS footer** as the game shows them (digits the right way round).
-- **Prizes and rewards:** the season token, the gene prize going to the stock when the box is full.
-- **Retiring** is a loss without the defeat lines.
-
-### Dungeons, towns and menus
-
-- **Gems** to pick up (99 trade for a Continue Gem), **doors** that open, **gold chests** with their
-  collected counts.
-- **The title:** the Square Enix / Media.Vision logos and the CHAOS RINGS emblem, and the Story / VS
-  choice after the story unlocks it.
-- **Camp:** the gene list's Skills view; **Options:** Credits, Copyright, Title Screen and Manual.
-- **Space Port:** its backdrop, the Lucky Box's five panels and slide (swipe too), Quest Clear's
-  stamp, NEW badges, the goods button's dots and names, the VS header's "SAVING.." icon.
-- **The late dungeons' glow** (d12xx-d14xx's skies), on Vulkan and OpenGL.
-- **A safety net:** falling through the floor puts you back on the last safe ground.
-- **The talk mark** over what you can talk to, and the battle lists' skill icons (from a player's video).
-
-### Controls and display
-
-- **F11 / Alt+Enter** switch between window and fullscreen.
-- **Controllers** can be swapped while playing: another connected pad takes over when one is removed.
-- **Phones:** no Resolution or Display options (the whole screen is used), and a **Camera Cutout**
-  option - *Avoid* keeps the menus clear of the punch hole, *Ignore* uses the whole screen.
-
-### Cheats
-
-- **Options > Graphics > Cheats**, every cheat off unless you turn it on: infinite HP, infinite MP,
-  one-hit kills, an EXP multiplier (1x to 10x), always first strike, no random battles, max money,
-  full HP / MP outside battle - and CR3's own: an **always-full Break gauge** (Finest Arts ready),
-  always co-op, always drop, and full cheer for assists. Battle cheats don't apply in Battle Mode,
-  so its scores and prizes stay a fair contest.
-
-### iOS (new)
-
-- **An iOS build** (unsigned `.ipa`, to sideload), feature-complete with Android: the first-start
-  setup with the document picker and progress bars, your files in the app's folder in the Files app
-  or Finder, 120 Hz on ProMotion screens, and full-screen on the iPhone Duo's inner and cover screens.
-- Switching to another app and back no longer leaves the picture frozen.
-- The message band reaches the screen's edges past a camera cutout, its text kept clear of it.
+- **Flydigi controllers on Windows:** a Vader 4 Pro, wired or through its receiver, wasn't found
+  since v0.7.0's SDL update. SDL 3.4 added its own Flydigi driver, which takes the controller and then
+  gets no input from it; CR3-U now leaves that driver off on Windows, so the controller is read through
+  XInput as before. Setting the environment variable `SDL_JOYSTICK_HIDAPI_FLYDIGI=1` turns SDL's driver
+  back on. Every controller SDL finds is now written to `cr3view.log`, so if one still isn't picked up,
+  the log shows why.
+- **No text on some Android phones:** on phones whose maker ships its own fonts, without Android's
+  usual font files where CR3-U looked, text the game's own font doesn't cover - and all text, when the
+  game's font couldn't be read - went missing. CR3-U now reads the phone's own font list and uses the
+  fonts it names (Japanese first, then Chinese and Korean), then the phone's default font.
 
 ### Thanks to metastigma
 
-Thanks to [metastigma](https://github.com/metastigma), whose fork of the sister port
-([CRO-U-metastigma](https://github.com/metastigma/CRO-U-metastigma)) led to two of this release's
-changes, brought over from CRO-U: the controller hot-plug, after their Windows XInput work, and
-F11 / Alt+Enter, which their fork had first
-([1ec1f11](https://github.com/DuIslingr/CR3-U/commit/1ec1f11); in CRO-U
-[0571f0f](https://github.com/DuIslingr/CRO-U/commit/0571f0f) and
-[81a71a1](https://github.com/DuIslingr/CRO-U/commit/81a71a1)).
-
-### Under the hood
-
-- The Vita decryption is the project's own code now (the library it used had no licence), and a bug
-  that made it give garbage on macOS - and likely iOS and ARM Android - is fixed.
-- SDL 3.4.20, MoltenVK 1.4.2.
+[metastigma](https://github.com/metastigma) reported the Flydigi problem and investigated it in their
+fork of the sister port ([CRO-U-metastigma#42](https://github.com/metastigma/CRO-U-metastigma/pull/42),
+[#43](https://github.com/metastigma/CRO-U-metastigma/pull/43)); this release takes the narrower fix
+above instead of their development build of SDL.
 
 ## Downloads
 
