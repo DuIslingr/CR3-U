@@ -25,6 +25,13 @@ HMAC). Its SELF decryption (the game's program, `engine/src/viewer/setup.cpp`) f
 `packages/sce_utils.cpp` (github.com/Vita3K/Vita3K) and uses its retail app keys -
 GPL-2.0-or-later, as the port.
 
+Both embed PS Vita console keys: the SELF decryption's retail app keys, and the PFS decryption's
+fixed unwrap key (the F00D security processor's `key_id` 0 key, which turns a dump's klicensee
+into its data key). They are not the project's work and not secrets it holds: the Vita scene
+extracted them from the console's F00D processor years ago, and they are published in many
+emulators and tools (Vita3K, VitaSharp, vitaslop, rom-converto and others). They are facts, used
+only to read a copy of the game its owner supplies; the port ships no game data.
+
 Built from source by CMake when the system has none (fetched at build time, not in the
 repository; in the CI artifacts):
 
