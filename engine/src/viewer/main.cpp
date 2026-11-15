@@ -704,6 +704,14 @@ static cr3::SetupGame cr3SetupGame() {
 }
 
 int main(int argc, char** argv) {
+#ifdef SDL_PLATFORM_WINDOWS
+    // Flydigi pads (CRO-U #4: a Vader 4 Pro, wired and through its receiver, not found since SDL 3.4.20): SDL
+    // 3.4.0 added a HIDAPI driver for Flydigi controllers, on by default, which takes the pad and then gets no
+    // input from one in XInput mode (SDL's fixes for it are on its development branch only, after 3.4.20). Off
+    // here - before any SDL_Init -, so the pad is read through XInput as with SDL 3.2.0, where it worked.
+    // SDL_JOYSTICK_HIDAPI_FLYDIGI=1 in the environment turns it back on (the environment's value wins)
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_FLYDIGI, "0");
+#endif
     if (argc>1 && std::strcmp(argv[1],"--selftest-vista-pause")==0) return vistaPauseSelfTest();
     if (argc > 1 && std::strcmp(argv[1], "--selftest-quake") == 0) return quakeSelfTest();
     if (argc > 1 && std::strcmp(argv[1], "--selftest-vs-score") == 0) return vsScoreSelfTest();
@@ -2046,6 +2054,11 @@ int main(int argc, char** argv) {
                     if (to != v.current) v.load(to);
                     if ((k == SDLK_UP || k == SDLK_DOWN) && !f.anims.empty())
                         v.loadAnim(f, (f.animIndex + (k == SDLK_DOWN ? 1 : f.anims.size() - 1)) % f.anims.size());
+                } else if (e.type == SDL_EVENT_JOYSTICK_ADDED) { // (logged: what SDL found and whether it maps it as a gamepad - a pad that never takes shows here)
+                    const SDL_JoystickID id = e.jdevice.which;
+                    const char* name = SDL_GetJoystickNameForID(id);
+                    SDL_Log("joystick: %s (%04x:%04x, type %d)%s", name ? name : "(unnamed)", unsigned(SDL_GetJoystickVendorForID(id)),
+                            unsigned(SDL_GetJoystickProductForID(id)), int(SDL_GetJoystickTypeForID(id)), SDL_IsGamepad(id) ? "" : " - not a gamepad to SDL");
                 } else if (e.type == SDL_EVENT_GAMEPAD_ADDED) { // (taken while none is in use - or the one held went quiet: a wireless pad's receiver keeps a dead handle)
                     if (!pad || !SDL_GamepadConnected(pad))
                         if (SDL_Gamepad* added = SDL_OpenGamepad(e.gdevice.which)) {
