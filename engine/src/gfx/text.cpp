@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #ifdef CR3_HAVE_FREETYPE
 #include <ft2build.h>
@@ -12,6 +13,10 @@
 #endif
 
 #include <unordered_map>
+
+#ifdef __APPLE__
+#include <CoreText/CoreText.h>
+#endif
 
 namespace cr3 {
 
@@ -101,13 +106,13 @@ TextRasterizer::TextRasterizer() : impl_(std::make_unique<Impl>()) {
 
 TextRasterizer::~TextRasterizer() = default;
 
-bool TextRasterizer::load(const std::string& path, std::string* error) {
+bool TextRasterizer::load(const std::string& path, std::string* error, int face) {
     if (!impl_->lib) {
         if (error) *error = "FreeType could not start";
         return false;
     }
     FT_Face f = nullptr;
-    if (FT_New_Face(impl_->lib, path.c_str(), 0, &f)) {
+    if (FT_New_Face(impl_->lib, path.c_str(), FT_Long(face), &f)) {
         if (error) *error = path + ": not a font FreeType reads";
         return false;
     }
@@ -139,14 +144,33 @@ bool TextRasterizer::loadMemory(std::vector<uint8_t> bytes, const std::string& n
 
 bool TextRasterizer::loaded() const { return impl_->face != nullptr; }
 
-bool TextRasterizer::addFallback(const std::string& path, std::string* error) {
+bool TextRasterizer::addFallback(const std::string& path, std::string* error, int face) {
     FT_Face f = nullptr;
-    if (!impl_->lib || FT_New_Face(impl_->lib, path.c_str(), 0, &f)) {
+    if (!impl_->lib || FT_New_Face(impl_->lib, path.c_str(), FT_Long(face), &f)) {
         if (error) *error = path + ": not a font FreeType reads";
         return false;
     }
     impl_->fallbacks.push_back(f);
     return true;
+}
+
+int TextRasterizer::faceNamed(const std::string& path, const char* postScriptName) {
+    FT_Library lib = nullptr;
+    if (FT_Init_FreeType(&lib)) return -1;
+    int found = -1;
+    FT_Face f = nullptr;
+    if (!FT_New_Face(lib, path.c_str(), -1, &f)) {
+        const FT_Long n = std::max<FT_Long>(f->num_faces, 1);
+        FT_Done_Face(f);
+        for (FT_Long i = 0; i < n && found < 0; ++i) {
+            if (FT_New_Face(lib, path.c_str(), i, &f)) continue;
+            const char* ps = FT_Get_Postscript_Name(f);
+            if (ps && std::strcmp(ps, postScriptName) == 0) found = int(i);
+            FT_Done_Face(f);
+        }
+    }
+    FT_Done_FreeType(lib);
+    return found;
 }
 
 Image TextRasterizer::render(const std::string& utf8, int sizePx, int& width, int& height, std::vector<float>* penX) {
@@ -220,16 +244,16 @@ Image TextRasterizer::render(const std::string& utf8, int sizePx, int& width, in
 struct TextRasterizer::Impl {};
 TextRasterizer::TextRasterizer() : impl_(std::make_unique<Impl>()) {}
 TextRasterizer::~TextRasterizer() = default;
-bool TextRasterizer::load(const std::string& path, std::string* error) {
+bool TextRasterizer::load(const std::string& path, std::string* error, int) {
     if (error) *error = path + ": built without FreeType";
     return false;
 }
-bool TextRasterizer::loadMemory(std::vector<uint8_t>, const std::string& name, std::string* error) {
+bool TextRasterizer::loadMemory(std::vector<uint8_t>, const std::string& name, std::string* error, int) {
     if (error) *error = name + ": built without FreeType";
     return false;
 }
 bool TextRasterizer::loaded() const { return false; }
-bool TextRasterizer::addFallback(const std::string& path, std::string* error) {
+bool TextRasterizer::addFallback(const std::string& path, std::string* error, int) {
     if (error) *error = path + ": built without FreeType";
     return false;
 }
@@ -237,6 +261,7 @@ Image TextRasterizer::render(const std::string&, int, int& width, int& height, s
     width = height = 0;
     return Image();
 }
+int TextRasterizer::faceNamed(const std::string&, const char*) { return -1; }
 
 #endif
 
@@ -250,5 +275,39 @@ std::string TextRasterizer::firstFont(const std::vector<std::string>& candidates
     }
     return {};
 }
+
+#ifdef __APPLE__
+bool TextRasterizer::appleFont(const char* postScriptName, std::string& path, int& face) {
+    path.clear(), face = 0;
+    CFStringRef name = CFStringCreateWithCString(nullptr, postScriptName, kCFStringEncodingUTF8);
+    if (!name) return false;
+    std::string file, found;
+    if (CTFontDescriptorRef desc = CTFontDescriptorCreateWithNameAndSize(name, 0)) {
+        // (CoreText answers an unknown name with a stand-in: its own name checked)
+        if (CFStringRef got = static_cast<CFStringRef>(CTFontDescriptorCopyAttribute(desc, kCTFontNameAttribute))) {
+            char buf[256];
+            if (CFStringGetCString(got, buf, sizeof buf, kCFStringEncodingUTF8)) found = buf;
+            CFRelease(got);
+        }
+        if (CFURLRef url = static_cast<CFURLRef>(CTFontDescriptorCopyAttribute(desc, kCTFontURLAttribute))) {
+            char buf[1024];
+            if (CFURLGetFileSystemRepresentation(url, true, reinterpret_cast<UInt8*>(buf), sizeof buf)) file = buf;
+            CFRelease(url);
+        }
+        CFRelease(desc);
+    }
+    CFRelease(name);
+    if (file.empty() || found != postScriptName) return false;
+    const int f = faceNamed(file, postScriptName); // (a collection's: that face; a lone font's own)
+    if (f < 0) return false;
+    path = file, face = f;
+    return true;
+}
+#else
+bool TextRasterizer::appleFont(const char*, std::string& path, int& face) {
+    path.clear(), face = 0;
+    return false;
+}
+#endif
 
 } // namespace cr3

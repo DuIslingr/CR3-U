@@ -2,7 +2,8 @@ Chaos Rings III (CR3-U): your own fonts, if you want them - .ttf, .otf or .ttc f
 
 Leave this folder empty and the game draws its text in your copy's own font (TB Gothic - the
 Spanish fan translation's own while it's the language in use), with a system font (Noto Sans CJK,
-Malgun Gothic, Microsoft YaHei, PingFang) for the characters it lacks.
+Malgun Gothic, Microsoft YaHei; Apple SD Gothic Neo and PingFang on an iPhone, iPad or Mac) for the
+characters it lacks.
 
 With fonts here:
 - the first by file name draws all the text, in every language (a translation's own font no
@@ -11,4 +12,5 @@ With fonts here:
   file-name order, ahead of the system's.
 A file that isn't a font is left out. A font far wider than the original can run long lines off the
 message windows. --font <file> and the CR3_FONT environment variable still come first.
-The log (cr3view.log in the profile folder) names the font/ files it used.
+The log (cr3view.log in the profile folder; on an iPhone or iPad in the app's folder, beside this
+one) names the font/ files it used.

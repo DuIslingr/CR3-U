@@ -986,10 +986,20 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
     else if (fontPath.empty() && !fontBytes.empty() && !font.loadMemory(std::move(fontBytes), fontName, &err, fontFace)) SDL_Log("font: %s", err.c_str());
     // (the code points the game's font lacks - Hangul, simplified Chinese - from the system's, as
     // Android's: the game folder's font/ files the text isn't drawn in, then CR3_FONT_FALLBACK, else a Noto
-    // CJK where the distributions put it, else Windows' or macOS's own - one for each script there)
+    // CJK where the distributions put it, else Windows' or Apple's own - one for each script there. Apple's by
+    // name through CoreText: iOS keeps its fonts at no path to name, newer macOS PingFang outside /System/Library/Fonts)
     const char* fb = std::getenv("CR3_FONT_FALLBACK");
     const char* windir = std::getenv("WINDIR");
     const std::string winFonts = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
+    struct FontFile {
+        std::string path;
+        int face = 0; // (a collection's)
+    };
+    auto apple = [](const char* postScriptName) {
+        FontFile f;
+        cr3::TextRasterizer::appleFont(postScriptName, f.path, f.face);
+        return f;
+    };
     if (!font.loaded()) {
         for (const std::string& path : std::vector<std::string>{
                  "/system/fonts/Roboto-Regular.ttf", "/system/fonts/Roboto.ttf", "/system/fonts/NotoSans-Regular.ttf",
@@ -998,24 +1008,34 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
                  winFonts + "arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc"}) {
             if (font.load(path)) break;
         }
+        for (const char* name : {"ArialMT", "Helvetica"}) { // (iOS's: none of the paths above)
+            if (font.loaded()) break;
+            if (const FontFile f = apple(name); !f.path.empty()) font.load(f.path, nullptr, f.face);
+        }
     }
-    std::vector<std::string> fallbacks{cr3::TextRasterizer::firstFont({fb ? fb : "", "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
-                                                                       "/system/fonts/NotoSansCJK-Regular.ttc",
-                                                                       "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-                                                                       "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
-                                                                       "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-                                                                       "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"})};
-    if (fallbacks[0].empty())
-        fallbacks = {cr3::TextRasterizer::firstFont({winFonts + "malgunbd.ttf", winFonts + "malgun.ttf",
-                                                     "/System/Library/Fonts/AppleSDGothicNeo.ttc"}),
-                     cr3::TextRasterizer::firstFont({winFonts + "msyhbd.ttc", winFonts + "msyh.ttc",
-                                                     "/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"})};
-    fallbacks.insert(fallbacks.begin(), ownFallbacks.begin(), ownFallbacks.end()); // (the game folder's font/ first)
+    std::vector<FontFile> fallbacks{{cr3::TextRasterizer::firstFont({fb ? fb : "", "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+                                                                    "/system/fonts/NotoSansCJK-Regular.ttc",
+                                                                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+                                                                    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
+                                                                    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+                                                                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"})}};
+    if (fallbacks[0].path.empty()) {
+        FontFile korean = apple("AppleSDGothicNeo-Bold"), chinese = apple("PingFangSC-Semibold");
+        if (chinese.path.empty()) chinese = apple("PingFangSC-Regular");
+        if (korean.path.empty()) korean.path = cr3::TextRasterizer::firstFont({winFonts + "malgunbd.ttf", winFonts + "malgun.ttf",
+                                                                              "/System/Library/Fonts/AppleSDGothicNeo.ttc"});
+        if (chinese.path.empty()) chinese.path = cr3::TextRasterizer::firstFont({winFonts + "msyhbd.ttc", winFonts + "msyh.ttc",
+                                                                                "/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"});
+        fallbacks = {korean, chinese};
+    }
+    std::vector<FontFile> own; // (the game folder's font/ first)
+    for (const std::string& f : ownFallbacks) own.push_back({f});
+    fallbacks.insert(fallbacks.begin(), own.begin(), own.end());
     std::string fallback;
-    for (const std::string& f : fallbacks) {
-        if (f.empty() || !font.loaded()) continue;
-        if (!font.addFallback(f, &err)) SDL_Log("font: %s", err.c_str());
-        else fallback += (fallback.empty() ? "" : ", ") + f;
+    for (const FontFile& f : fallbacks) {
+        if (f.path.empty() || !font.loaded()) continue;
+        if (!font.addFallback(f.path, &err, f.face)) SDL_Log("font: %s", err.c_str());
+        else fallback += (fallback.empty() ? "" : ", ") + f.path + (f.face ? " (face " + std::to_string(f.face) + ")" : "");
     }
     SDL_Log("message windows: vista %zu meshes, narration %zu joints; font %s%s%s", vistaWindow.fig.meshes.size(),
             narrationWindow.joints.size(), font.loaded() ? font.path().c_str() : "none (no text)", fallback.empty() ? "" : ", then ",

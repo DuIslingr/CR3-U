@@ -272,6 +272,7 @@ struct Viewer {
         int smoothModels = 0;     // smoothed models (assets/smooth.hpp): 0 off, 2 / 3 the PN triangles' level (what loads next)
         bool originalCardArt = false;
         bool lockOrientation = false, landscapeFlipped = false;
+        bool avoidCutout = true;  // the interface kept clear of a camera's notch / punch hole (safeInsets; Options' Camera Cutout, a phone's)
         bool padSwap = false;     // a controller's: × (south) confirms, ○ (east) goes back - else as the Vita
         int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
         int battleSpeed = 1;      // the battles, this many times as fast: 1, 2 .. 5
@@ -625,6 +626,10 @@ struct Viewer {
     void safeInsets(int fw, int fh, int& ix, int& iy) const;
     void extendVistaBand();
     void placeScreen(int fw, int fh);
+    // what the system gives the game, and how it fits itself in it: a "screen:" log line, at the start and whenever
+    // it changes (a phone's fold or rotation, a window's resize - the iPhone Duo's screens: iOS's log in Documents)
+    void logScreen(int fw, int fh);
+    std::string screenLogged;
     void drawScene(int w, int h);
 
     // The maps' table from the game's executable (--binary, or beside the iPad's / Vita's archive)

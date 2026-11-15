@@ -54,7 +54,7 @@ Vita copy the setup also asks for a fan translation (optional).
 | macOS 11+ | Right-click `cr3view.app` and choose *Open* (it isn't signed). |
 | Linux | `chmod +x` the AppImage and run it, or use the `.tar.gz`. |
 | Android 7+ | Install the APK and start it. The first start offers the same setup: pick your `.apks` (or APK and asset packs), the `.ipa` or a Vita archive. Folders can't be picked on Android; copy them over USB instead (below). |
-| iPhone / iPad, iOS 15+ | The `CR3-U-ios-unsigned.ipa` isn't signed: sideload it with AltStore, Sideloadly or the like (they sign it with your Apple ID). The first start offers the same setup, with the system's document picker (Files, iCloud Drive, a USB drive ...): pick the `.ipa` (or its unpacked `.app`), your `.apks` (or APK and asset packs), or a Vita folder or archive. Or copy your files into the app's folder in the Files app (below) and choose *Look again*. It runs at the display's rate (120 Hz on ProMotion screens; Options > Graphics > Frame Rate) and keeps the menus clear of the notch. |
+| iPhone / iPad, iOS 15+ | The `CR3-U-ios-unsigned.ipa` isn't signed: sideload it with AltStore, Sideloadly or the like (they sign it with your Apple ID). The first start offers the same setup, with the system's document picker (Files, iCloud Drive, a USB drive ...): pick the `.ipa` (or its unpacked `.app`), your `.apks` (or APK and asset packs), or a Vita folder or archive. Or copy your files into the app's folder in the Files app (below) and choose *Look again*. It runs at the display's rate (120 Hz on ProMotion screens; Options > Graphics > Frame Rate), fills the whole screen (a foldable's inner and cover screens too; built with Xcode 27.1 and the iOS 27.1 SDK, as iOS boxes an app built for an older one) and keeps the menus clear of the notch or punch hole (Options > Graphics > Camera Cutout). With no console, its log is `cr3view.log` in the app's folder. |
 
 **Android `.apks` files:** a repacked `.apks` that holds its asset packs compressed has them
 unpacked once on the first start, into `assetpacks/` beside it (about **1.3 GB** of free space; that
@@ -69,8 +69,8 @@ You can also copy your game into the **game folder** yourself; the port finds it
 The game folder is the folder holding `cr3view` (or `cr3view.exe`, `cr3view.app`, the AppImage). On
 Android it is `Android/data/local.preservation.chaosrings3/files/`, reached over USB. On an iPhone or
 iPad it is the app's own folder: in the Files app *On My iPhone* (or *iPad*) *> Chaos Rings III*, or in
-Finder's *Files* tab with the device connected (`ios/`, `android/`, `vita/` and `translation/` are made
-there on the first start). It works there as on any system: an `.ipa` copied into `ios/` is unpacked,
+Finder's *Files* tab with the device connected (`ios/`, `android/`, `vita/`, `font/` and `translation/` are
+made there on every start, Android's too). It works there as on any system: an `.ipa` copied into `ios/` is unpacked,
 a Vita dump or its archive copied into `vita/` is unpacked and decrypted, and a fan translation's archive
 in `translation/` is unpacked when the app starts.
 
@@ -216,7 +216,8 @@ tab back to its defaults. Most settings also have a command-line flag for a sing
 
 | Setting | What it does |
 |---|---|
-| Display, Resolution, VSync, Frame Rate | window / fullscreen / borderless, output size (up to 3840 x 2160), frame cap |
+| Display, Resolution, VSync, Frame Rate | window / fullscreen / borderless, output size (up to 3840 x 2160), frame cap. A phone or tablet has no Display or Resolution: always its whole screen at its own resolution and shape |
+| Camera Cutout | phones and tablets: **Avoid** (default) keeps the menus and buttons clear of a notch or punch hole, **Ignore** lets them reach the edges; the picture fills the screen either way |
 | Renderer | Vulkan (default) or OpenGL; takes effect on the next start |
 | Upscaler, Upscale Mode, Sharpness | FSR 3.1, FSR 4, DLSS or MetalFX. The 3D scene renders smaller and is upscaled; menus and text stay sharp. |
 | Anti-aliasing, Anisotropic / Texture Filtering | MSAA, sharper textures at an angle, sharp or smooth texels |
@@ -301,8 +302,8 @@ for personal use. The full steps, limits and the add-on manifest:
 ### Fonts
 
 The text is drawn in your copy's own font (TB Gothic; the Spanish translation's while it's in use),
-with a system CJK font (Noto Sans CJK, Malgun Gothic, Microsoft YaHei, PingFang) for the characters
-it lacks. To use your own, put .ttf / .otf / .ttc files in the game folder's `font/`: the first by
+with a system CJK font (Noto Sans CJK, Malgun Gothic, Microsoft YaHei; on an iPhone, iPad or Mac
+Apple SD Gothic Neo and PingFang, found by name) for the characters it lacks. To use your own, put .ttf / .otf / .ttc files in the game folder's `font/`: the first by
 file name draws the text in every language (the Spanish translation's too), and the others stand in
 for the characters it lacks, ahead of the system's. A file that isn't a font is left out (the log
 says so); with the folder empty nothing changes. `--font <file>` and `CR3_FONT` still come first.

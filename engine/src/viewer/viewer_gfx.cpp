@@ -59,12 +59,18 @@ void Viewer::loadSettings() {
         else if (k == "original_card_art") s.originalCardArt = v != 0;
         else if (k == "lock_orientation") s.lockOrientation = v != 0;
         else if (k == "landscape_flipped") s.landscapeFlipped = v != 0;
+        else if (k == "avoid_cutout") s.avoidCutout = v != 0;
         else if (k == "pad_swap") s.padSwap = v != 0;
         else if (k == "field_speed") s.fieldSpeed = std::clamp(v, 1, 5);
         else if (k == "battle_speed") s.battleSpeed = std::clamp(v, 1, 5);
         else if (k == "language") s.language = std::clamp(v, 0, 4);
     }
     std::fclose(f);
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+    // (a phone's or tablet's: no resolution or window choice - the whole screen at its own pixels, always; an
+    // older version's settings.ini set aside)
+    s.resolution = 0, s.display = 0;
+#endif
 }
 
 void Viewer::saveSettings() const {
@@ -81,6 +87,7 @@ void Viewer::saveSettings() const {
     std::string text = serialized;
     SDL_free(serialized);
     text += "lock_orientation=" + std::to_string(int(s.lockOrientation)) + "\nlandscape_flipped=" + std::to_string(int(s.landscapeFlipped)) + "\n";
+    text += "avoid_cutout=" + std::to_string(int(s.avoidCutout)) + "\n";
     text += "original_card_art=" + std::to_string(int(s.originalCardArt)) + "\n";
     text += "fullscreen_kind=" + std::to_string(s.fullscreenKind) + "\n";
     if (s.language) text += "language=" + std::to_string(s.language) + "\n";
@@ -196,6 +203,14 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
         v = values[size_t(((i < values.size() ? int(i) : 0) + dir + n) % n)];
     };
     auto onOff = [](bool b) { return std::string(b ? "On" : "Off"); };
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+    // (a phone's or tablet's: the whole screen at its own resolution and shape, always - no Display or
+    // Resolution; in their place the camera's cutout: the interface kept clear of it, or not)
+    rows.push_back({"Camera Cutout", s.avoidCutout ? "Avoid" : "Ignore",
+                    s.avoidCutout ? "The menus and buttons kept clear of the camera's notch or punch hole; the picture fills the screen either way"
+                                  : "The menus and buttons reach the screen's edges, under the camera's notch or punch hole too",
+                    true, [&s](int) { s.avoidCutout = !s.avoidCutout; }});
+#else
     static const char* const kDisplay[] = {"Window", "Fullscreen", "Borderless"};
     rows.push_back({"Display", kDisplay[std::clamp(s.display, 0, 2)], "A window, fullscreen at the display's own mode, or borderless over the desktop",
                     true, [&s](int d) {
@@ -210,6 +225,7 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
         rows.push_back({"Resolution", v, "The frames' size (Window: the window's own), scaled to the window",
                         true, [&s](int d) { const int n = int(std::size(kResolutions)); s.resolution = s.resolution < 0 ? 0 : (s.resolution + d + n) % n; }});
     }
+#endif
     rows.push_back({"VSync", onOff(s.vsync), "Each frame waits for the display's refresh: no tearing", true, [&s](int) { s.vsync = !s.vsync; }});
     rows.push_back({"Frame Rate", s.fps ? std::to_string(s.fps) : std::string("Unlimited"),
                     "The most frames drawn a second; the game runs at 20, smoothed between them",
@@ -1186,6 +1202,7 @@ void Viewer::draw(int fw, int fh) {
     if (cr3::EventRuntime* ev = activeEvents(); ev && ev->crossFade().capture) grabCrossFade(fw, fh, *ev);
     dev->beginFrame(fw, fh);
     placeScreen(fw, fh);
+    logScreen(fw, fh);
     if ((game.bgColor[0] > 0 || game.bgColor[1] > 0 || game.bgColor[2] > 0) && white.id) { // (SetBGColor: GameMain::Draw's clear colour)
         static const float kScreen[24] = {-1, -1, 0, 0, 1, -1, 1, 0, 1, 1, 1, 1, -1, -1, 0, 0, 1, 1, 1, 1, -1, 1, 0, 1};
         const Mat4 id = cr3::mat4Identity();
@@ -1376,9 +1393,11 @@ void Viewer::applySceneBlur(int fw, int fh) {
 // (LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS), so the scene can fill all of it while the UI stays
 // clear - the insets, each axis's larger on both its sides so the UI's screen stays centred, in
 // the frame's pixels (an offscreen device's frame is scaled into the window to fit: the insets
-// less the bars around it, in its own pixels). CR3_SAFE_INSETS "l,t,r,b" in the frame's pixels: tests
+// less the bars around it, in its own pixels). CR3_SAFE_INSETS "l,t,r,b" in the frame's pixels: tests.
+// Options' Camera Cutout (a phone's; settings.ini's avoid_cutout=0): Ignore - none, the interface to the edges too
 void Viewer::safeInsets(int fw, int fh, int& ix, int& iy) const {
     ix = iy = 0;
+    if (!settings.avoidCutout) return; // (Options' Camera Cutout: Ignore - the interface to the screen's edges too)
     int l = 0, t = 0, r = 0, b = 0;
     if (const char* e = SDL_getenv("CR3_SAFE_INSETS"); e && std::sscanf(e, "%d,%d,%d,%d", &l, &t, &r, &b) == 4) {
     } else if (SDL_Rect safe; window && SDL_GetWindowSafeArea(window, &safe)) {
@@ -1421,6 +1440,26 @@ void Viewer::placeScreen(int fw, int fh) {
     dev->sceneSize(fw, fh, rw, rh);
     const float kx = float(rw) / float(fw), ky = float(rh) / float(fh);
     dev->setViewport(frameX * kx, frameY * ky, frameW * kx, frameH * ky);
+}
+
+void Viewer::logScreen(int fw, int fh) {
+    if (!window) return;
+    int ww = 0, wh = 0, pw = 0, ph = 0;
+    SDL_GetWindowSize(window, &ww, &wh);
+    SDL_GetWindowSizeInPixels(window, &pw, &ph);
+    SDL_Rect safe{}, bounds{}, usable{};
+    SDL_GetWindowSafeArea(window, &safe);
+    const SDL_DisplayID d = SDL_GetDisplayForWindow(window);
+    SDL_GetDisplayBounds(d, &bounds);
+    SDL_GetDisplayUsableBounds(d, &usable);
+    char line[512];
+    SDL_snprintf(line, sizeof line,
+                 "window %dx%d pt, %dx%d px (density %.2f, scale %.2f), display %dx%d at %d,%d (usable %dx%d at %d,%d), safe area %dx%d at %d,%d; "
+                 "frame %dx%d, the scene %dx%d at %d,%d, the interface %dx%d at %d,%d (cutout %s)",
+                 ww, wh, pw, ph, double(SDL_GetWindowPixelDensity(window)), double(SDL_GetWindowDisplayScale(window)), bounds.w, bounds.h, bounds.x,
+                 bounds.y, usable.w, usable.h, usable.x, usable.y, safe.w, safe.h, safe.x, safe.y, fw, fh, frameW, frameH, frameX, frameY, screenW,
+                 screenH, screenX, screenY, settings.avoidCutout ? "avoided" : "ignored");
+    if (screenLogged != line) screenLogged = line, SDL_Log("screen: %s", line);
 }
 
 void Viewer::drawScene(int w, int h) {

@@ -903,12 +903,19 @@ int main(int argc, char** argv) {
         else if (a == "--movie" && next) movieArg = next, ++i;
         else if (a == "--sharpness" && next) sharpness = std::clamp(float(std::atof(next)), 0.0f, 1.0f), ++i;
     }
-#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+#if !defined(SDL_PLATFORM_ANDROID)
     // the log, also into cr3view.log in the profile folder (the last start's kept as cr3view.prev.log): the Windows
-    // build has no console, so a report can come with it. Not for captures, exports or a test's virtual controller
+    // build has no console, so a report can come with it. Not for captures, exports or a test's virtual controller.
+    // iOS's in the app's Documents - its game folder, seen in the Files app and over USB -: no console there either
     if (capture.empty() && !exportTextures && !exportModels && !std::getenv("CR3_PAD_SCRIPT")) {
         static std::FILE* logFile = nullptr;
+#ifdef SDL_PLATFORM_IOS
+        const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+        const std::string dir = docs ? std::string(docs) + (*docs && docs[std::strlen(docs) - 1] == '/' ? "" : "/") : Viewer::savePath("");
+        const std::string path = dir + "cr3view.log", prev = dir + "cr3view.prev.log";
+#else
         const std::string path = Viewer::savePath("cr3view.log"), prev = Viewer::savePath("cr3view.prev.log");
+#endif
         std::remove(prev.c_str());
         std::rename(path.c_str(), prev.c_str());
         if ((logFile = std::fopen(path.c_str(), "w"))) {
@@ -941,6 +948,15 @@ int main(int argc, char** argv) {
         if (q == std::end(kQualities)) return std::fprintf(stderr, "--quality: native, quality, balanced, performance or ultra\n"), 2;
         upscale.ratio = q->ratio;
     }
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+    { // the game folder's places made on every start - to be seen and filled over USB, an iPhone's in the Files app
+      // (Info.plist's UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace share its Documents; Files shows an
+      // app's folder only once there is something in it)
+        const std::vector<std::string> g = dataPlaces();
+        if (!g.empty())
+            for (const char* f : {"ios", "android", "vita", "font", "translation"}) SDL_CreateDirectory((g.front() + f).c_str());
+    }
+#endif
     std::vector<std::string> searched; // (where a copy was looked for: the message if none)
     if (data.empty()) { // (CR3_DATA, else a copy in a game folder: vita/, android/, ios/ ...)
         searched = dataPlaces();
@@ -958,10 +974,7 @@ int main(int argc, char** argv) {
         SDL_Init(SDL_INIT_VIDEO); // (its message boxes and the system's dialogs - iOS: its document picker, platform/ios_picker.mm)
         const cr3::SetupGame setup = cr3SetupGame();
         std::string profile;
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
-        if (!searched.empty()) // (the folders made, to be seen over USB - an iPhone's in the Files app; its game folder, Documents, always its own: no other)
-            for (const char* f : {"ios", "android", "vita", "translation"}) SDL_CreateDirectory((searched.front() + f).c_str());
-#else
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) // (a phone's game folder, Documents on iOS, always its own: its places made at the start)
         if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) profile = pref, SDL_free(pref); // (the profile folder: where the game folder can't be written)
 #endif
         cr3::SetupResult got;
@@ -979,10 +992,6 @@ int main(int argc, char** argv) {
         if (cr3::setupScripted()) return data.empty() ? 1 : 0; // (a test's: the setup alone)
     }
     while (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
-        if (!searched.empty()) // (the folders made, to be seen over USB - iOS: in the Files app)
-            for (const char* f : {"ios", "android", "vita", "translation"}) SDL_CreateDirectory((searched.front() + f).c_str());
-#endif
 #ifdef SDL_PLATFORM_IOS
         // (the game folder: the app's Documents - an .ipa unpacked there, a Vita dump or its archive decrypted, as anywhere)
         std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the app's folder - in the Files app, "

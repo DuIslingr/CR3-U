@@ -4,7 +4,12 @@
      UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace: the app's Documents folder - its game
      folder (ios/, android/, vita/, translation/, movies/, font/ ...) - shows in the Files app and in
      Finder, so a copy can be put in. CADisableMinimumFrameDurationOnPhone: an iPhone's ProMotion at
-     120 Hz (else 60). Landscape only, as the original. -->
+     120 Hz (else 60). Landscape only, as the original.
+     UIApplicationSceneManifest: SDL's own scene delegate (SDL 3.4 runs the UIScene life cycle) stated, and
+     no UIRequiresFullScreen - deprecated, and with it a screen iOS doesn't know the app on (a foldable's
+     inner screen) showed it in a box of an older iPhone's size: the window is the screen's, resized as
+     the device folds (the game lays itself out for any size). CFBundleIcons: the asset catalog's
+     AppIcon (packaging/ios/Assets.xcassets, made by packaging/make_icons.py). -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
@@ -15,6 +20,22 @@
 	<string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
 	<key>CFBundleIdentifier</key>
 	<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+		</dict>
+	</dict>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+		</dict>
+	</dict>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -33,8 +54,23 @@
 	<true/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
-	<key>UIRequiresFullScreen</key>
-	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>SDLSceneConfiguration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>SDLUIKitSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 	<key>UIStatusBarHidden</key>
 	<true/>
 	<key>UILaunchScreen</key>

@@ -22,15 +22,15 @@ public:
     TextRasterizer(const TextRasterizer&) = delete;
     TextRasterizer& operator=(const TextRasterizer&) = delete;
 
-    // a font file (OpenType / TrueType, face 0); false: none could be read
-    bool load(const std::string& path, std::string* error = nullptr);
+    // a font file (OpenType / TrueType; `face` a collection's); false: none could be read
+    bool load(const std::string& path, std::string* error = nullptr, int face = 0);
     // the same from memory (the APK's fonts): `name` stands for its path; `face` a collection's
     // (CR3's F0001.bin / TBGB_0KP.TTC: 0 TBGothic-B, 1 TBPGothic-B - proportional)
     bool loadMemory(std::vector<uint8_t> bytes, const std::string& name, std::string* error = nullptr, int face = 0);
     bool loaded() const;
     // a font for the code points the first lacks (as Android's Paint falls back on the system's:
-    // Hangul, simplified Chinese), tried in the order added; false: none could be read
-    bool addFallback(const std::string& path, std::string* error = nullptr);
+    // Hangul, simplified Chinese), tried in the order added (`face` a collection's); false: none could be read
+    bool addFallback(const std::string& path, std::string* error = nullptr, int face = 0);
     const std::string& path() const { return path_; }
 
     // one line of UTF-8 at `sizePx` (rows top first): white, the coverage in alpha. Empty when the
@@ -41,6 +41,12 @@ public:
 
     // the first of the candidates that loads (empty ones skipped)
     static std::string firstFont(const std::vector<std::string>& candidates);
+    // Apple's (iOS, macOS): the system font of this PostScript name ("AppleSDGothicNeo-Bold",
+    // "PingFangSC-Semibold") - its file from CoreText, its face in a collection. iOS keeps its fonts
+    // at no path a program can name; false elsewhere, or when the system has no such font
+    static bool appleFont(const char* postScriptName, std::string& path, int& face);
+    // a font file's face of this PostScript name (a collection's, or a lone font's 0); -1: none has it
+    static int faceNamed(const std::string& path, const char* postScriptName);
 
 private:
     struct Impl;
