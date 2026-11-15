@@ -26,14 +26,14 @@ repository; in the CI artifacts):
 |---|---|
 | [SDL 3.4.20](https://github.com/libsdl-org/SDL) (linked in statically) | zlib |
 | [zlib 1.3.1](https://github.com/madler/zlib) (Windows, Android) | zlib |
-| [libarchive 3.7.7](https://github.com/libarchive/libarchive) (Windows, macOS: the setup reads a Vita dump's .rar, .7z, .zip, .vpk) | BSD-2-Clause |
+| [libarchive 3.8.11](https://github.com/libarchive/libarchive) (Windows, macOS, iOS, Android: the setup reads a Vita dump's .rar, .7z, .zip, .vpk) | BSD-2-Clause |
 | [FreeType 2.13.3](https://gitlab.freedesktop.org/freetype/freetype) (Windows, macOS, Android, iOS: the text) | FreeType License or GPL-2.0 - used here under the GPL |
 
 Carried by the macOS `.app` (Contents/Frameworks; their licence texts in Contents/Resources/licenses):
 the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader) (from the LunarG Vulkan SDK 1.4.363.1)
 and [MoltenVK v1.4.2](https://github.com/KhronosGroup/MoltenVK/releases/tag/v1.4.2) (Khronos's release,
 its universal dylib), both Apache-2.0. The iOS app links MoltenVK v1.4.2's static library in (no
-loader; the licence texts in the app's `licenses/`), and has neither psvpfsparser nor libarchive.
+loader; the licence texts in the app's `licenses/`), and also has psvpfsparser and libarchive (the setup's Vita dumps).
 Apache-2.0 meets the GPL in its version 3, which "or any later version" allows: a macOS or iOS app
 with MoltenVK is under GPL-3.0.
 
