@@ -51,6 +51,8 @@ add_library(cr3core STATIC
     src/assets/language.cpp
     src/assets/spark.cpp
     src/assets/movie.cpp
+    src/assets/vita_pfs.cpp
+    src/crypto/crypto.cpp
     src/field/fieldmap.cpp
     src/field/cr3field.cpp
     src/field/collision.cpp
@@ -438,20 +440,13 @@ elseif(CR3_GLES)
     message(STATUS "GL device: OpenGL ES 3.0 (${CR3_GLES_LIBRARY})")
 endif()
 target_link_libraries(cr3view PRIVATE cr3core SDL3::SDL3)
-# The setup (viewer/setup.cpp): a Vita NoNpDrm dump's files decrypted (third_party/psvpfsparser -
-# Vita3K's, GPL-2.0) - the first start's, a phone's too, and one copied into vita/ on any start -,
-# and a dump's archive - .rar, .7z, .zip, .vpk - unpacked (libarchive: the system's, else built here
-# - CR_FETCH_DEPS; without it, a folder only). iOS too: a dump or its archive copied into the Files
-# app's vita/, or picked in the setup, is decrypted there as on a desktop or a phone
-file(GLOB CR_PSVPFS_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/psvpfsparser/*.cpp)
-add_library(psvpfs STATIC ${CR_PSVPFS_SOURCES})
-target_include_directories(psvpfs SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/psvpfsparser)
-target_compile_features(psvpfs PUBLIC cxx_std_17)
-if(NOT MSVC)
-    target_compile_options(psvpfs PRIVATE -w)
-endif()
-target_link_libraries(cr3view PRIVATE psvpfs)
-target_compile_definitions(cr3view PRIVATE CR_HAVE_PSVPFS=1)
+# The setup (viewer/setup.cpp): a Vita NoNpDrm dump's files decrypted (assets/vita_pfs, its SELF
+# programs too - crypto/: the project's own, in cr3core) - the first start's, a phone's too, and one
+# copied into vita/ on any start -, and a dump's archive - .rar, .7z, .zip, .vpk - unpacked (libarchive:
+# the system's, else built here - CR_FETCH_DEPS; without it, a folder only). iOS too: a dump or its
+# archive copied into the Files app's vita/, or picked in the setup, is decrypted there as on a
+# desktop or a phone
+target_compile_definitions(cr3view PRIVATE CR_HAVE_VITA_DECRYPT=1)
 # (a phone's setup too: a dump or the fan translation picked as its archive - Android's libarchive without LZMA: no .7z)
 find_package(LibArchive QUIET)
 if(NOT LibArchive_FOUND AND CR_FETCH_DEPS)
@@ -617,6 +612,9 @@ if(NOT ANDROID AND NOT IOS)
     add_executable(new-game-plus-tests tools/new_game_plus_test.cpp)
     target_link_libraries(new-game-plus-tests PRIVATE cr3core)
     add_test(NAME new-game-plus COMMAND new-game-plus-tests)
+    add_executable(vita-pfs-tests tools/vita_pfs_test.cpp)
+    target_link_libraries(vita-pfs-tests PRIVATE cr3core)
+    add_test(NAME vita-pfs COMMAND vita-pfs-tests)
     add_executable(tab-buttons-tests tools/tab_buttons_test.cpp)
     target_link_libraries(tab-buttons-tests PRIVATE cr3core)
     add_test(NAME tab-buttons COMMAND tab-buttons-tests)

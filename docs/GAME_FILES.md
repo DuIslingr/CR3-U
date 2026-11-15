@@ -42,7 +42,7 @@ folder's if that one can't be written), the same layout as putting them there by
   without the other games) - then its fan translation (the `rePatch` folder: Vita3K's
   `ux0/rePatch/PCSG00500` by itself, else asked for, or left out) into `translation/en/` or `translation/es/` (its language's).
   A **NoNpDrm dump** (its files encrypted, `sce_sys/package/work.bin` its licence) - its folder, or packed as
-  `.rar`, `.7z`, `.zip` or `.vpk` - is decrypted as Vita3K's install does, this game's parts alone.
+  `.rar`, `.7z`, `.zip` or `.vpk` - is decrypted by the setup itself (the files Vita3K's install gives), this game's parts alone.
 
 One copy is the game: the first given starts it. Nothing is read where it was chosen, so the folder it came from can go
 afterwards. (Every system: on Android the picker takes files alone - folders are copied in over USB, as

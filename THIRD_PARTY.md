@@ -17,7 +17,13 @@ them in `engine/third_party/`:
 | `libatrac9/` | LibAtrac9 by Alex Barney, commit efca2e3 (the copy CR1:U vendors) - decodes the Vita release's music (ATRAC9 in SXD) | MIT (`LICENSE`) |
 | `hevag/` | The HE-VAG prediction filter table from vgmstream (the copy CR1:U vendors) - the Vita release's sound effects | ISC (`COPYING`) |
 | `squirrel2/` | Squirrel 2.2.4 stable by Alberto Demichelis (the VM and its standard library, unmodified; `squirrel_2.2.4_stable.tar.gz` from the Squirrel project on SourceForge) - the version the game embeds, which runs its compiled scripts | zlib (`COPYRIGHT`) |
-| `psvpfsparser/` | Vita3K's psvpfsparser, commit 05d43a06 (github.com/Vita3K/psvpfsparser; from motoharu-gosuto's psvpfstools), trimmed, with its own crypto in place of OpenSSL (`README.md` there) - the first start's setup decrypts a Vita NoNpDrm dump with it, as Vita3K's install does. The setup's SELF decryption follows Vita3K's `packages/sce_utils.cpp` and uses its retail app keys | GPL-2.0, as Vita3K (with it, builds of the port are GPL-2.0) |
+
+The first start's setup decrypts a PS Vita NoNpDrm dump itself. Its PFS decryption (the dump's
+files, `engine/src/assets/vita_pfs.cpp`) is the project's own code, written from a functional
+description of the format, on the project's own crypto (`engine/src/crypto/`: AES, SHA-1, SHA-256,
+HMAC). Its SELF decryption (the game's program, `engine/src/viewer/setup.cpp`) follows Vita3K's
+`packages/sce_utils.cpp` (github.com/Vita3K/Vita3K) and uses its retail app keys -
+GPL-2.0-or-later, as the port.
 
 Built from source by CMake when the system has none (fetched at build time, not in the
 repository; in the CI artifacts):
@@ -33,7 +39,7 @@ Carried by the macOS `.app` (Contents/Frameworks; their licence texts in Content
 the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader) (from the LunarG Vulkan SDK 1.4.363.1)
 and [MoltenVK v1.4.2](https://github.com/KhronosGroup/MoltenVK/releases/tag/v1.4.2) (Khronos's release,
 its universal dylib), both Apache-2.0. The iOS app links MoltenVK v1.4.2's static library in (no
-loader; the licence texts in the app's `licenses/`), and also has psvpfsparser and libarchive (the setup's Vita dumps).
+loader; the licence texts in the app's `licenses/`), and also has libarchive (the setup's Vita dumps).
 Apache-2.0 meets the GPL in its version 3, which "or any later version" allows: a macOS or iOS app
 with MoltenVK is under GPL-3.0.
 
