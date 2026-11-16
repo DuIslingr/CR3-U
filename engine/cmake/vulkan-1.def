@@ -16,6 +16,7 @@ EXPORTS
     vkCmdClearAttachments
     vkCmdClearColorImage
     vkCmdCopyBufferToImage
+    vkCmdCopyImage
     vkCmdCopyImageToBuffer
     vkCmdDispatch
     vkCmdDraw
@@ -41,6 +42,7 @@ EXPORTS
     vkCreateImage
     vkCreateImageView
     vkCreateInstance
+    vkCreatePipelineCache
     vkCreatePipelineLayout
     vkCreateSampler
     vkCreateSemaphore
@@ -56,6 +58,7 @@ EXPORTS
     vkDestroyImageView
     vkDestroyInstance
     vkDestroyPipeline
+    vkDestroyPipelineCache
     vkDestroyPipelineLayout
     vkDestroySampler
     vkDestroySemaphore
@@ -85,6 +88,7 @@ EXPORTS
     vkGetPhysicalDeviceSurfaceFormatsKHR
     vkGetPhysicalDeviceSurfacePresentModesKHR
     vkGetPhysicalDeviceSurfaceSupportKHR
+    vkGetPipelineCacheData
     vkGetSwapchainImagesKHR
     vkMapMemory
     vkQueuePresentKHR
