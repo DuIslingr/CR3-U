@@ -3840,7 +3840,9 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
         areaWalker->step(dt / float(steps));
     }
     if (areaClimb.on) stepAreaClimb(dt, climbIn);
-    else if (areaFall.on) {
+    else if (areaFall.on || areaMoveTo.on) { // (SM_Fall / SM_MoveTo - state 9, Fld2TaskPlayer::MoveTo - run in place
+        // of SM_Idle / Walk / Run: the stick's motion not set, the move's own walk below - else the two
+        // swapped every frame and the walk never left its first frame, the leader sliding as he stood)
         if (areaRide.on) areaRide.age += dt;
     } else if (areaRide.on) { // (SM_RideIdle / Walk / Run: fr01 .. fr03, the animal's fn01 / ff01 / ff02)
         setAreaMotion(!moving ? cr3::Cr3Motion::RideIdle : run ? cr3::Cr3Motion::RideRun : cr3::Cr3Motion::RideWalk);
