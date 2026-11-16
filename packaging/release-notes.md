@@ -1,42 +1,20 @@
-# CR3-U v0.7.1
+# CR3-U v0.7.2
 
-A fix release for [v0.7.0](https://github.com/DuIslingr/CR3-U/releases/tag/v0.7.0): a controller Windows
-stopped finding, and missing text on some Android phones. Everything in v0.7.0's notes still applies.
+A fix release for [v0.7.1](https://github.com/DuIslingr/CR3-U/releases/tag/v0.7.1): a controller that
+still did nothing, and the player sliding in some scenes. Everything in v0.7.1's notes still applies.
 
 ## Fixed
 
-- **Flydigi controllers on Windows:** a Vader 4 Pro, wired or through its receiver, wasn't found
-  since v0.7.0's SDL update. The Windows build now uses SDL's development version from 2026-11-14,
-  which has SDL's later Flydigi fixes - the setup metastigma's fork uses and its user confirmed works
-  with this controller. Other platforms keep SDL 3.4.20. Every controller SDL finds is now written to
-  `cr3view.log`, so if one still isn't picked up, the log shows why.
-- **No text on some Android phones:** on phones whose maker ships its own fonts, without Android's
-  usual font files where CR3-U looked, text the game's own font doesn't cover - and all text, when the
-  game's font couldn't be read - went missing. CR3-U now reads the phone's own font list and uses the
-  fonts it names (Japanese first, then Chinese and Korean), then the phone's default font.
-- **Cheats in story battles you're meant to lose:** Infinite HP no longer leaves you stuck in a battle
-  you can't win - once no foe can fall, it lets the party fall and the story goes on - and winnable
-  story battles can still be won with the cheats on, for their rewards.
-- **Menus on phones wider than 16:9:** on a 20:9 phone the menus' help line, title bar and footer
-  stopped short of the screen's right edge (VS mode's header and footer short of both). They now reach
-  the edges; with Camera Cutout set to Avoid, the bars still run to the edges while their buttons stay
-  inside the safe area.
-- **Options on 4:3 screens:** the Reset button covered the last row's arrow, and Back covered the
-  Other tab's Copyright Notice. Reset now sits immediately left of Back, and every tab's list stops
-  above them - the rows below a scroll away (▼, the wheel, a swipe or the pad). The empty Download
-  panel is gone from the Options footer.
+- **Flydigi controllers, take three:** v0.7.1's SDL update found the Vader 4 Pro, but it shows up as
+  two "Xbox 360 Controller" devices and its input comes on the second, which CR3-U never opened. Now
+  every controller is opened, and the one you press or move takes over, with any make of controller.
+- **The player sliding in scenes:** when a scene walks the player to a spot (such as turning you back
+  at an area's edge), the player slid there in a standing pose. They now walk.
 
 ### Thanks to metastigma
 
-[metastigma](https://github.com/metastigma) reported the Flydigi problem and investigated it in their
-fork of the sister port ([CRO-U-metastigma#42](https://github.com/metastigma/CRO-U-metastigma/pull/42),
-[#43](https://github.com/metastigma/CRO-U-metastigma/pull/43),
-[#45](https://github.com/metastigma/CRO-U-metastigma/pull/45)); the Windows build takes the SDL
-version their fork showed works.
-
-## Changed
-
-- Cheats moved to its own tab in Options (it was under Graphics in v0.7.0).
+[metastigma](https://github.com/metastigma) sent the log that showed the Vader 4 Pro's second device
+([CRO-U #4](https://github.com/DuIslingr/CRO-U/issues/4)).
 
 ## Downloads
 
