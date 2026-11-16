@@ -1785,6 +1785,10 @@ int main(int argc, char** argv) {
         // page, START the title's "Please Touch", □ held the fast-forward; △ (the port's own: the Vita's is
         // a touch) the field's tab. On the field the left stick walks, a long push running
         SDL_Gamepad* pad = nullptr;
+        // The other controllers connected, open too: SDL sends a controller's buttons and sticks only once it's open, and
+        // one pad can come as two (CRO-U #4: a Flydigi Vader 4 Pro listed twice as "Xbox 360 Controller", its input on the
+        // second while the first was taken). A button on one of these, or a stick or trigger past half way, makes it `pad`
+        std::vector<SDL_Gamepad*> morePads;
         SDL_Keycode padDir = 0;
         Uint64 padDirNext = 0;
         crinput::CancelWatch inputCancel;
@@ -1808,7 +1812,7 @@ int main(int argc, char** argv) {
         // 2:down 3:lx=1 4:lx=0" (a button is held 0.1 s; east / south / north / west, up / down / left /
         // right, l / r, start, back; lx / ly the left stick, rx / ry the right, -1 .. 1, y up positive; blur the window's focus
         // lost; plug another controller connected (pressed from then), unplug the first taken out (with
-        // another left); key=<name> a key, alt+ with Alt; shot=<file.bmp> the frame then; until=<text> the
+        // another left); use=<n> the n-th still connected pressed from then; foreign one not the run's own connected (ignored); key=<name> a key, alt+ with Alt; shot=<file.bmp> the frame then; until=<text> the
         // later steps held till a log line has it - '_' a space -, their times from then; quit the end).
         // Each press of a held direction is logged
         struct PadStep {
@@ -1853,10 +1857,29 @@ int main(int argc, char** argv) {
             }
         }
         std::vector<std::pair<Uint64, SDL_GamepadButton>> testReleases;
+        // (a test run - CR3_PAD_SCRIPT -: only its own virtual controllers, the test controller and plug's, opened and listened
+        // to, by the IDs SDL gave them - any other gamepad connected, a real one or another program's, called "Xbox 360
+        // Controller" or anything, left out, for nothing outside to press a test)
+        const bool padTest = SDL_getenv("CR3_PAD_SCRIPT") != nullptr;
+        auto padOwn = [&](SDL_JoystickID id) {
+            return !padTest || std::any_of(testPads.begin(), testPads.end(), [&](SDL_Joystick* j) { return SDL_GetJoystickID(j) == id; });
+        };
         auto padStick = [&](float& x, float& y) { // (the left stick, up positive; the Vita's 0.25 dead zone)
             x = pad ? float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX)) / 32767.0f : 0.0f;
             y = pad ? -float(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY)) / 32767.0f : 0.0f;
             if (std::hypot(x, y) < 0.25f) x = y = 0;
+        };
+        auto takePad = [&](SDL_JoystickID which) { // (one of morePads pressed or pushed: it in use, the one before kept open)
+            if (pad && SDL_GetGamepadID(pad) == which) return;
+            for (size_t k = 0; k < morePads.size(); ++k)
+                if (SDL_GetGamepadID(morePads[k]) == which) {
+                    SDL_Gamepad* now = morePads[k];
+                    morePads.erase(morePads.begin() + std::ptrdiff_t(k));
+                    if (pad) morePads.push_back(pad);
+                    pad = now, padDir = 0;
+                    SDL_Log("controller: now %s", SDL_GetGamepadName(pad));
+                    return;
+                }
         };
         // (the window's point on the game's screen, letterboxed in the window at its own shape: its fractions)
         auto screenFraction = [&](float wx, float wy, float& fx, float& fy) {
@@ -2072,25 +2095,51 @@ int main(int argc, char** argv) {
                     const char* name = SDL_GetJoystickNameForID(id);
                     SDL_Log("joystick: %s (%04x:%04x, type %d)%s", name ? name : "(unnamed)", unsigned(SDL_GetJoystickVendorForID(id)),
                             unsigned(SDL_GetJoystickProductForID(id)), int(SDL_GetJoystickTypeForID(id)), SDL_IsGamepad(id) ? "" : " - not a gamepad to SDL");
-                } else if (e.type == SDL_EVENT_GAMEPAD_ADDED) { // (taken while none is in use - or the one held went quiet: a wireless pad's receiver keeps a dead handle)
-                    if (!pad || !SDL_GamepadConnected(pad))
-                        if (SDL_Gamepad* added = SDL_OpenGamepad(e.gdevice.which)) {
+                } else if (e.type == SDL_EVENT_GAMEPAD_ADDED) { // (taken while none is in use - or the one held went quiet: a wireless pad's
+                    // receiver keeps a dead handle); any other opened as well, for its input to come (morePads)
+                    const SDL_JoystickID id = e.gdevice.which;
+                    if (!padOwn(id)) {
+                        SDL_Log("controller: %s ignored (test run)", SDL_GetGamepadNameForID(id) ? SDL_GetGamepadNameForID(id) : "(unnamed)");
+                        continue;
+                    }
+                    if (!pad || !SDL_GamepadConnected(pad)) {
+                        if (SDL_Gamepad* added = SDL_OpenGamepad(id)) {
                             if (pad) SDL_CloseGamepad(pad), padDir = 0;
                             pad = added;
                             SDL_Log("controller: %s", SDL_GetGamepadName(pad));
                         }
+                    } else if (SDL_GetGamepadID(pad) != id && std::none_of(morePads.begin(), morePads.end(), [&](SDL_Gamepad* g) { return SDL_GetGamepadID(g) == id; }))
+                        if (SDL_Gamepad* added = SDL_OpenGamepad(id)) {
+                            morePads.push_back(added);
+                            SDL_Log("controller: %s (also open: it takes over once it's pressed)", SDL_GetGamepadName(added));
+                        }
                 } else if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                    for (size_t k = 0; k < morePads.size(); ++k)
+                        if (SDL_GetGamepadID(morePads[k]) == e.gdevice.which) {
+                            SDL_CloseGamepad(morePads[k]), morePads.erase(morePads.begin() + std::ptrdiff_t(k));
+                            break;
+                        }
                     if (pad && SDL_GetGamepadID(pad) == e.gdevice.which) {
                         SDL_CloseGamepad(pad), pad = nullptr, padDir = 0;
-                        int count = 0; // (another still connected: that one goes on, not none until a new one comes)
-                        if (SDL_JoystickID* ids = SDL_GetGamepads(&count)) {
-                            for (int k = 0; k < count && !pad; ++k)
-                                if (ids[k] != e.gdevice.which) pad = SDL_OpenGamepad(ids[k]);
-                            SDL_free(ids);
-                        }
+                        if (!morePads.empty()) pad = morePads.front(), morePads.erase(morePads.begin()); // (another open one goes on)
+                        int count = 0; // (else another still connected: that one goes on, not none until a new one comes)
+                        if (!pad)
+                            if (SDL_JoystickID* ids = SDL_GetGamepads(&count)) {
+                                for (int k = 0; k < count && !pad; ++k)
+                                    if (ids[k] != e.gdevice.which && padOwn(ids[k])) pad = SDL_OpenGamepad(ids[k]);
+                                SDL_free(ids);
+                            }
                         SDL_Log("controller: %s", pad ? SDL_GetGamepadName(pad) : "none (taken out)");
                     }
+                } else if ((e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && pad && SDL_GetGamepadID(pad) != e.gaxis.which) ||
+                           (e.type == SDL_EVENT_GAMEPAD_BUTTON_UP && pad && SDL_GetGamepadID(pad) != e.gbutton.which)) {
+                    // (a stick or trigger well off its rest on another open pad: that one in use now - a resting or nudged one, or a
+                    // button let go, takes nothing; the one in use's sticks are read as they stand, below)
+                    if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && std::abs(int(e.gaxis.value)) > 16000) takePad(e.gaxis.which);
+                    continue;
                 } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && pad) {
+                    takePad(e.gbutton.which); // (a button on another open pad: that one in use now)
+                    if (SDL_GetGamepadID(pad) != e.gbutton.which) continue;
                     const SDL_GamepadButton b = SDL_GamepadButton(e.gbutton.button);
                     const SDL_GamepadButton circle = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
                     const SDL_GamepadButton cross = v.settings.padSwap ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH;
@@ -2312,6 +2361,13 @@ int main(int argc, char** argv) {
                             SDL_CloseJoystick(testPads.front()), testPads.erase(testPads.begin());
                             SDL_DetachVirtualJoystick(id);
                             testPad = testPads.back(), testReleases.clear();
+                        }
+                    } else if (w == "foreign") { // (a virtual controller not the run's own connected: a pad from outside, left out)
+                        SDL_AttachVirtualJoystick(&testDesc);
+                    } else if (w.rfind("use=", 0) == 0) { // (the steps press the N-th virtual controller still connected from now: use=1)
+                        if (const size_t n = size_t(std::atoi(w.c_str() + 4)); n >= 1 && n <= testPads.size()) {
+                            for (const auto& release : testReleases) SDL_SetJoystickVirtualButton(testPad, release.second, false);
+                            testPad = testPads[n - 1], testReleases.clear();
                         }
                     } else if (w.rfind("key=", 0) == 0) { // (a key pressed: key=F11, key=alt+Return)
                         std::string name = w.substr(4);

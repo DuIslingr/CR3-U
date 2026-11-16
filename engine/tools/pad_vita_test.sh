@@ -39,6 +39,14 @@ want field-bar && run field-bar "3:north 3.5:left 4:up 4.5:up 5:down 5.5:down 6:
     "field: the buttons opened|field: the cursor on 101|field: the cursor on 108|field: the cursor on 105|field: the cursor on 108|field: the cursor on 101|field: the buttons closed|field: the buttons opened|field: the cursor presses 106|camp: open" \
     -- --area t0101 --flag 26 --flag 27
 
+# One pad as two (CRO-U #4: a Flydigi Vader 4 Pro listed twice, its input on the second): a second controller plugged
+# in while the first is in use is opened too, and a button on it takes over; a nudge on the first takes nothing (the
+# stick pushed past half way after it takes it back, so its "now" comes after lx=1), and with the one in use taken out
+# the other goes on. A controller not the run's own (foreign: as a real pad or another program's would be) is left out
+{ want two-pads || want controllers; } && run two-pads "0.5:foreign 1:plug 3:north 3.5:left 4:use=1 4.2:lx=0.3 5:lx=1 5.3:lx=0 6:south 7:unplug 8:north 9:quit" \
+    "test controller: foreign|controller: CR3-U test controller ignored (test run)|test controller: plug|controller: CR3-U test controller (also open|controller: now CR3-U test controller|field: the buttons opened|field: the cursor on 101|test controller: lx=0.3|test controller: lx=1|controller: now CR3-U test controller|field: the buttons closed|test controller: unplug|controller: CR3-U test controller|field: the buttons opened" \
+    -- --area t0101 --flag 26 --flag 27
+
 # SelectTwoChoicesMenu (FUN_8123f2f4, the cursor FUN_8128d1ea): □ fast-forwards to the choice in any language, ↓ / ↑ round the options from the first, ○ the one under it
 want choice && run choice "1.5:hold=west 3.2:release=west 3.5:down 4:down 4.5:down 5.5:east 7:quit" \
     "choice: the cursor on 2|choice: the cursor on 1|choice: the cursor on 2|choice: 2 of 2" \

@@ -20,14 +20,23 @@ Square holds message fast-forward, Triangle opens the field bar, the left stick
 walks and the right stick turns the follow camera. Each screen can give these
 buttons its own action, as listed below. START also starts the Vita title.
 
-One controller is in use at a time: the first connected. When it is taken out
-while another is connected, that one takes over; a controller connected while
-the one in use has gone quiet (a wireless pad's receiver can keep a dead handle)
-replaces it.
+Every controller connected is opened (SDL sends a controller's input only once
+it is open, and some pads come as two devices: a Flydigi Vader 4 Pro on Windows
+shows up twice as "Xbox 360 Controller", its input on the second). One is in use
+at a time, at first the first connected; the one you use takes over: a button
+on another, or a stick or trigger pushed past half way, makes that one the
+controller in use (logged `controller: now <name>`), the one before kept open. A
+stick resting or nudged on another takes nothing. When the one in use is taken
+out, another connected one takes over; a controller connected while the one in
+use has gone quiet (a wireless pad's receiver can keep a dead handle) replaces it.
 
 `CR3_PAD_SCRIPT` drives an SDL virtual controller for headless tests (`plug` /
-`unplug` connect a second one and take the first out; `key=F11`, `key=alt+Return`
-press keys). Controller focus uses the game's existing parts, cyan tint and sounds
+`unplug` connect a second one and take the first out; `use=1` makes the later
+steps press the first one still connected; `foreign` connects one that is not
+the run's own; `key=F11`, `key=alt+Return` press keys). During such a run only
+the run's own virtual controllers are opened: any other controller connected is
+left out (logged `controller: <name> ignored (test run)`), so nothing outside
+can press a test. Controller focus uses the game's existing parts, cyan tint and sounds
 where available.
 
 ## Windowed and fullscreen keys
