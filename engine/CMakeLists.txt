@@ -30,8 +30,18 @@ target_include_directories(squirrel2 PRIVATE ${THIRD_PARTY_DIR}/squirrel2/squirr
 target_compile_options(squirrel2 PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w -fno-strict-aliasing>
     $<IF:$<CXX_COMPILER_ID:MSVC>,/FI${CMAKE_CURRENT_SOURCE_DIR}/src/script/squirrel_prefix.h,-include ${CMAKE_CURRENT_SOURCE_DIR}/src/script/squirrel_prefix.h>)
 
+# The port's own interface text in other languages (platform/ui_text.hpp): lang/<code>.po built in
+file(GLOB UI_TEXT_CATALOGS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/lang/*.po)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ui_text_catalogs.cpp
+    COMMAND ${CMAKE_COMMAND} -DLANG_DIR=${CMAKE_CURRENT_SOURCE_DIR}/lang -DOUT=${CMAKE_CURRENT_BINARY_DIR}/ui_text_catalogs.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_lang.cmake
+    DEPENDS ${UI_TEXT_CATALOGS} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_lang.cmake
+    COMMENT "Interface text catalogs (lang/*.po)")
+
 # Core library: everything that is not an app entry point, so tools can reuse it
 add_library(cr3core STATIC
+    src/platform/ui_text.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/ui_text_catalogs.cpp
     src/assets/mvgl.cpp
     src/assets/mbe.cpp
     src/assets/bson.cpp
@@ -457,6 +467,7 @@ elseif(CR3_GLES)
     message(STATUS "GL device: OpenGL ES 3.0 (${CR3_GLES_LIBRARY})")
 endif()
 target_link_libraries(cr3view PRIVATE cr3core SDL3::SDL3)
+target_link_libraries(cr3core PUBLIC SDL3::SDL3) # (platform/ui_text: its catalogs read, the system's language)
 # The setup (viewer/setup.cpp): a Vita NoNpDrm dump's files decrypted (assets/vita_pfs, its SELF
 # programs too - crypto/: the project's own, in cr3core) - the first start's, a phone's too, and one
 # copied into vita/ on any start -, and a dump's archive - .rar, .7z, .zip, .vpk - unpacked (libarchive:
@@ -638,4 +649,12 @@ if(NOT ANDROID AND NOT IOS)
     add_executable(tab-buttons-tests tools/tab_buttons_test.cpp)
     target_link_libraries(tab-buttons-tests PRIVATE cr3core)
     add_test(NAME tab-buttons COMMAND tab-buttons-tests)
+    add_executable(ui-text-tests tools/ui_text_test.cpp)
+    target_link_libraries(ui-text-tests PRIVATE cr3core)
+    add_test(NAME ui-text COMMAND ui-text-tests)
+    # the catalogs up to date with the code's strings (tools/ui_strings.py)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME ui-strings COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/ui_strings.py --check)
+    endif()
 endif()

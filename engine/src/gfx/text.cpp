@@ -10,6 +10,7 @@
 #include FT_FREETYPE_H
 #include FT_TRUETYPE_TABLES_H
 #include FT_TRUETYPE_TAGS_H
+#include FT_ADVANCES_H
 #endif
 
 #include <unordered_map>
@@ -100,6 +101,15 @@ struct TextRasterizer::Impl {
     }
 };
 
+namespace {
+// a glyph's advance in ems (1: as wide as a CJK font's kana, kanji - and its Cyrillic)
+double emWidth(FT_Face f, FT_UInt g) {
+    FT_Fixed adv = 0;
+    if (FT_Get_Advance(f, g, FT_LOAD_NO_SCALE, &adv) || !f->units_per_EM) return 0;
+    return double(adv) / double(f->units_per_EM);
+}
+} // namespace
+
 TextRasterizer::TextRasterizer() : impl_(std::make_unique<Impl>()) {
     if (FT_Init_FreeType(&impl_->lib)) impl_->lib = nullptr;
 }
@@ -121,6 +131,7 @@ bool TextRasterizer::load(const std::string& path, std::string* error, int face)
     impl_->face = f;
     impl_->bytes.clear();
     path_ = path;
+    ++generation_;
     return true;
 }
 
@@ -139,6 +150,7 @@ bool TextRasterizer::loadMemory(std::vector<uint8_t> bytes, const std::string& n
     impl_->face = f;
     impl_->bytes = std::move(bytes);
     path_ = name;
+    ++generation_;
     return true;
 }
 
@@ -151,6 +163,21 @@ bool TextRasterizer::covers(const std::string& utf8) const {
     return true;
 }
 
+bool TextRasterizer::drawable(const std::string& utf8) const {
+    if (!impl_->face) return false;
+    for (uint32_t cp : codePoints(utf8)) {
+        if (cp < 0x20 || FT_Get_Char_Index(impl_->face, cp)) continue; // (a line break: not drawn)
+        bool any = false;
+        for (FT_Face f : impl_->fallbacks)
+            if (FT_Get_Char_Index(f, cp)) {
+                any = true;
+                break;
+            }
+        if (!any) return false;
+    }
+    return true;
+}
+
 bool TextRasterizer::addFallback(const std::string& path, std::string* error, int face) {
     FT_Face f = nullptr;
     if (!impl_->lib || FT_New_Face(impl_->lib, path.c_str(), FT_Long(face), &f)) {
@@ -158,6 +185,7 @@ bool TextRasterizer::addFallback(const std::string& path, std::string* error, in
         return false;
     }
     impl_->fallbacks.push_back(f);
+    ++generation_;
     return true;
 }
 
@@ -211,6 +239,14 @@ Image TextRasterizer::render(const std::string& utf8, int sizePx, int& width, in
         FT_UInt g = FT_Get_Char_Index(f, cp);
         for (size_t k = 0; !g && k < impl_->fallbacks.size(); ++k) // (the first font without it: a fallback's)
             if (FT_UInt h = FT_Get_Char_Index(impl_->fallbacks[k], cp)) gf = impl_->fallbacks[k], g = h;
+        // (Cyrillic - CR3-U's own text in Russian; the game's text has none -: a Japanese font has it full-width, as kana, spaced
+        // out; a fallback's proportional ones where it has them)
+        if (const double em = g && gf == f && cp >= 0x400 && cp < 0x530 ? emWidth(f, g) : 0; em >= 0.85)
+            for (FT_Face b : impl_->fallbacks)
+                if (FT_UInt h = FT_Get_Char_Index(b, cp); h && emWidth(b, h) < em * 0.95) {
+                    gf = b, g = h;
+                    break;
+                }
         if (!g) gf = f; // (none has it: the first's missing glyph)
         if (prev && g && gf == prevFace && FT_HAS_KERNING(gf)) {
             FT_Vector k;
@@ -261,6 +297,7 @@ bool TextRasterizer::loadMemory(std::vector<uint8_t>, const std::string& name, s
 }
 bool TextRasterizer::loaded() const { return false; }
 bool TextRasterizer::covers(const std::string&) const { return false; }
+bool TextRasterizer::drawable(const std::string&) const { return false; }
 bool TextRasterizer::addFallback(const std::string& path, std::string* error, int) {
     if (error) *error = path + ": built without FreeType";
     return false;

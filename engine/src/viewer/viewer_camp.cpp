@@ -99,6 +99,7 @@ void Viewer::useLanguage(size_t i, bool live) {
     const int before = archive.activeOverlay();
     languageIndex = i;
     optionLanguage = l.slot;
+    applyUiLanguage(); // (Menu Language's Auto: the port's own text follows)
     originalTextJapanese = l.id == cr3::Language::Japanese;
     japaneseText = l.slot == 0 && l.overlay < 0;
     if (before == l.overlay) {
@@ -351,7 +352,7 @@ void Viewer::drawOptions(const Mat4& view, const Mat4& proj, int w, int h) {
             c.fig.place.m[3] = ox, c.fig.place.m[7] = oy;
             poseUi(c, "circlebtn_fr", 0);
             drawFigure(c.fig, view.data());
-            drawUiText("Graphics", 26, cx, cy, w, h, false, 1.0f, bw * 0.9f);
+            drawUiText(tr("Graphics"), 26, cx, cy, w, h, false, 1.0f, bw * 0.9f);
             tapRects.push_back({3110, sx + ox, sy + oy, ex + ox, ey + oy});
             break;
         }
@@ -4493,10 +4494,10 @@ void Viewer::drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const
     }
     for (ViewMesh& m : tab.fig.meshes) m.hidden = false;
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-    static const char* const kOwn[kOptionTabs - 3] = {"Cheats", "Graphics"}; // (CR3-U's tabs after the game's three)
+    static const char* const kOwn[kOptionTabs - 3] = {N_("Cheats"), N_("Graphics")}; // (CR3-U's tabs after the game's three)
     for (int k = 0; k < kOptionTabs; ++k) // (white on the tabs' blue: the chosen one's dark, the others' a lighter one - dimmed a little)
         if (placed[k])
-            drawUiText(k < 3 ? menuAnnounce(0x190 + k) : std::string(kOwn[k - 3]), 24, tx[k] / 10, (ty[k] - 0.12f * cr3UiScale) / 10, w, h, false,
+            drawUiText(k < 3 ? menuAnnounce(0x190 + k) : std::string(tr(kOwn[k - 3])), 24, tx[k] / 10, (ty[k] - 0.12f * cr3UiScale) / 10, w, h, false,
                        k == chosen ? 1.0f : 0.8f);
     cr3UiScale = keepScale, uiTextScale = keepText;
 }
@@ -4523,7 +4524,7 @@ float Viewer::cr3OptionsFloor(int w, int h) const {
 }
 
 std::vector<int> Viewer::otherOrder() const {
-    std::vector<int> order = {0, 2, 3, 4};
+    std::vector<int> order = {0, 5, 2, 3, 4}; // (CR3-U's Menu Language, 5: after the game's Language)
     if (languages.size() > 1) order.insert(order.begin() + 1, 1);
     return order;
 }
@@ -4575,7 +4576,7 @@ void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& vie
         UiFig& panel = cr3UiPut("optsltlrpanel", "", 0, px, py, view);
         tint(1, 1, 1);
         if (!r.enabled) tint(0.549f, 0.549f, 0.655f); // (one that can't change now: its arrows grey, its text light)
-        cr3UiLabel(panel, "typeM_L00", r.label, w, h, r.enabled ? 0.26f : 0.62f);
+        cr3UiLabel(panel, "typeM_L00", r.label, w, h, r.enabled ? 0.26f : 0.62f, optLabelRoom(panel));
         if (cr3UiCall(panel, "typeM_C01", tx, ty)) {
             dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
             drawUiText(r.value, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, r.enabled ? 0.26f : 0.62f, 0.25f * s);
@@ -4630,7 +4631,7 @@ void Viewer::drawCr3ResetButton(float x, float y, float radius, bool label, int 
     cr3UiScale = 1;
     if (!label) return;
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-    drawUiText("Reset", 11, x / 10, (y - radius * 0.5f) / 10, w, h, false, 1.0f, radius * 1.3f / 10);
+    drawUiText(tr("Reset"), 11, x / 10, (y - radius * 0.5f) / 10, w, h, false, 1.0f, radius * 1.3f / 10);
 }
 
 // The field's Options: its footer's bar (mpMePosition's call_mpMeMenu_fit1) the screen's foot's, lower than the comFtr bars
@@ -4678,9 +4679,10 @@ void Viewer::placeCr3OptionsReset(int w, int h) {
 }
 
 std::string Viewer::cr3OptionsResetAsk() const {
-    if (campOptions.tab == kTabCheats) return "Turn every cheat off?";
-    static const char* const kTab[kOptionTabs] = {"sound", "control", "other", "cheats", "graphics"};
-    return std::string("Put the ") + kTab[std::clamp(campOptions.tab, 0, kOptionTabs - 1)] + " settings back to their defaults?";
+    static const char* const kAsk[kOptionTabs] = {N_("Put the sound settings back to their defaults?"), N_("Put the control settings back to their defaults?"),
+                                                  N_("Put the other settings back to their defaults?"), N_("Turn every cheat off?"),
+                                                  N_("Put the graphics settings back to their defaults?")};
+    return tr(kAsk[std::clamp(campOptions.tab, 0, kOptionTabs - 1)]);
 }
 
 void Viewer::cr3OptionsReset() {
@@ -4868,14 +4870,33 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
                         UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
                         if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, 1401});
                     }
+                } else if (kind == 5) { // CR3-U's Menu Language (platform/ui_text): the port's own text's - Auto (the game
+                    // text's), English, each catalog -, each in its own words, the arrows as Language's
+                    UiFig& ml = cr3UiPut("optsltlrpanel", "", 0, px, ry, view);
+                    rowFig = &ml;
+                    cr3UiLabel(ml, "typeM_L00", tr("Menu Language"), w, h, 0.26f, optLabelRoom(ml));
+                    if (cr3UiCall(ml, "typeM_C01", tx, ty)) {
+                        dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                        drawUiText(uiLanguageShown(), 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f, 0.25f * s);
+                    }
+                    if (cr3UiCall(ml, "call_optSltLbtn", cx, cy)) {
+                        UiFig& l = cr3UiPut("optsltlbtn", "", 0, cx, cy, view);
+                        float ax, ay, bx, by;
+                        if (cr3UiCall(l, "tapAreaS01", ax, ay) && cr3UiCall(l, "tapAreaE01", bx, by)) {
+                            cr3CampTaps.push_back({ax, ay, ax + 3.0f * s, by, kTapMenuLanguage + 1}); // (the box between the arrows: on)
+                            cr3CampTaps.push_back({ax, ay, bx, by, kTapMenuLanguage});
+                        }
+                        UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
+                        if (cr3UiCall(r, "tapAreaS01", ax, ay) && cr3UiCall(r, "tapAreaE01", bx, by)) cr3CampTaps.push_back({ax, ay, bx, by, kTapMenuLanguage + 1});
+                    }
                 } else if (kind == 2) { // (CR3-U's Vita save import: the title's Options alone)
                     UiFig& imp = cr3UiPut("optsltlrpanel", "", 0, px, ry, view);
                     rowFig = &imp;
-                    cr3UiLabel(imp, "typeM_L00", "Vita Saves", w, h, 0.26f);
+                    cr3UiLabel(imp, "typeM_L00", tr("Vita Saves"), w, h, 0.26f, optLabelRoom(imp));
                     if (cr3UiCall(imp, "typeM_C01", tx, ty)) {
                         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                        const std::string label = co.from != 1 ? "Title only" : co.otherRow == 2 ? "> Import <" : "Import";
-                        drawUiText(label, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f);
+                        const std::string label = co.from != 1 ? tr("Title only") : co.otherRow == 2 ? trf("> {0} <", {tr("Import")}) : tr("Import");
+                        drawUiText(label, 24, tx / 10, (ty - 0.12f * s) / 10, w, h, false, 0.26f, 0.25f * s);
                     }
                     if (cr3UiCall(imp, "call_optSltLbtn", cx, cy)) {
                         UiFig& r = cr3UiPut("optsltrbtn", "", 0, cx + 3.0f * s, cy, view);
@@ -4939,13 +4960,14 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
             }
         }
     }
-    std::string line = co.tab < kTabCheats ? menuAnnounce(0x19f + co.tab) : std::string("Change graphics settings.");
+    std::string line = co.tab < kTabCheats ? menuAnnounce(0x19f + co.tab) : std::string(tr("Change graphics settings."));
     if (co.tab >= kTabCheats) { // (Cheats or Graphics: the focused row's help)
         const std::vector<SettingRow> rows = campTabRows();
         if (campRowAt() >= 0 && campRowAt() < int(rows.size())) line = rows[size_t(campRowAt())].help;
     }
-    if (co.tab == 2 && co.otherRow == 2) line = co.from == 1 ? "Import decrypted Vita saves (I). Existing saves are backed up." : "Import saves from the title screen's Options.";
-    if (co.tab == 2 && co.otherRow == 1) line = "The language of the game's text: its own, or a fan translation over it.";
+    if (co.tab == 2 && co.otherRow == 2) line = co.from == 1 ? tr("Import decrypted Vita saves (I). Existing saves are backed up.") : tr("Import saves from the title screen's Options.");
+    if (co.tab == 2 && co.otherRow == 1) line = tr("The language of the game's text: its own, or a fan translation over it.");
+    if (co.tab == 2 && co.otherRow == 5) line = tr("The language of CR3-U's own menus and messages. Auto: the game text's.");
     if (sl.kind != 0 && sl.stage == 1) cr3CampTaps.clear(); // (nothing taken while the menus change)
     drawCr3Header(t, 7, line, w, h, view);
     if (co.asking) { // (the Reset's question over all; its Yes / No the only taps)
@@ -5059,6 +5081,12 @@ void Viewer::chooseCampOptions(int id) {
     if (id >= 500 && id < 502 && id - 500 != co.hands) co.hands = id - 500, audio.playSe("com_003", false);
     if (id == 600 || id == 601) optionQuality = (optionQuality + (id == 600 ? 2 : 1)) % 3, audio.playSe("com_002", false);
     if (id == 1400 || id == 1401) stepLanguage(id == 1400 ? -1 : 1), co.otherRow = 1, audio.playSe("com_002", false);
+    if (id == kTapMenuLanguage || id == kTapMenuLanguage + 1) {
+        stepUiLanguage(id == kTapMenuLanguage ? -1 : 1);
+        co.otherRow = 5;
+        audio.playSe("com_002", false);
+        SDL_Log("options: menu language %s (%s) - \"%s\"", uitext::language().c_str(), uiLang.c_str(), tr("Menu Language")); // (the label in it)
+    }
     if (id >= 800 && id < 860) {
         optionVolume[(id - 800) / 20] = (id - 800) % 20 * 10;
         audio.setVolumes(float(optionVolume[0]) / 100.0f, float(optionVolume[1]) / 100.0f, float(optionVolume[2]) / 100.0f);
@@ -5158,6 +5186,7 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
         else if (key == SDLK_I || (co.otherRow == 2 && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE))) chooseCampOptions(1300);
         else if (co.otherRow == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 600 : 601);
         else if (co.otherRow == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? 1400 : 1401);
+        else if (co.otherRow == 5 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(key == SDLK_LEFT ? kTapMenuLanguage : kTapMenuLanguage + 1);
     }
 }
 

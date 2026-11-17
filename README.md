@@ -115,6 +115,16 @@ and the translations while you play, and the choice is kept. A Vita copy with a 
 patched into it shows that translation as it is. `--patch <rePatch folder>` gives one from
 elsewhere.
 
+### Menu language
+
+The game's own text comes from your copy, in its languages. What the port adds - the Options' rows
+and help lines, the first start's setup, the Vita save import - can be shown in English, Japanese,
+French, German, Spanish, Simplified or Traditional Chinese, Korean or Russian: **Options > Other >
+Menu Language**. *Auto* follows the game text's language; before you pick one, the system's language
+is used. The translations are machine translations, not yet reviewed; corrections are welcome
+([engine/lang/README.md](engine/lang/README.md) says how, and how to try a `lang/<code>.po` without
+building).
+
 ### Saves and settings
 
 Saves and `settings.ini` go to your profile folder, not the game folder:
@@ -229,7 +239,9 @@ settings also have a command-line flag for a single run. The **Graphics** tab:
 | Swap ○ and × | which controller button confirms |
 | Lock Orientation | keep the current landscape direction (phones) |
 
-The **Other** tab has the **Language** (where the copy has more than one) and the Vita save import.
+The **Other** tab has the **Language** (where the copy has more than one), CR3-U's **Menu Language**
+(the port's own text: Auto, English or one of eight translations - [Menu language](#menu-language),
+`ui_lang=` in `settings.ini`; `CR_UI_LANG=<code>` forces one for a run) and the Vita save import.
 
 The **Cheats** tab (Options > Cheats, before Graphics; CR3-U's own, none of the original's). Every
 one is off to begin with and saved in `settings.ini` (`cheat_*=` lines, written only while on); all

@@ -16,7 +16,8 @@ run() {
     name=$1 pad=$2 want=$3
     shift 3
     [ "$1" = "--" ] && shift
-    HOME="$work/home" XDG_DATA_HOME="$work/home" SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy CR3_PAD_SCRIPT="$pad" \
+    # (the port's own text in English - the log lines looked for are its words - unless a case sets CR_UI_LANG itself)
+    HOME="$work/home" XDG_DATA_HOME="$work/home" SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy CR3_PAD_SCRIPT="$pad" CR_UI_LANG="${CR_UI_LANG-en}" \
         timeout 120 "$viewer" --data "$data" --mute "$@" > "$work/$name.log" 2>&1
     status=$?
     if [ "$status" -eq 0 ] && awk -v want="$want" 'BEGIN { n = split(want, w, "|"); k = 1 }

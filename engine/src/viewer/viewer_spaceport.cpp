@@ -665,6 +665,39 @@ std::string Viewer::announceText(const std::string& file, int id) {
 }
 
 // the help line (SetHeaderSentence: comHeMenu's typeM_L01)
+// Where a one-line sentence splits into two halves about as wide: the space nearest its middle, else (Japanese, Chinese - no
+// spaces) the place after a CJK punctuation mark nearest it, else the code point there (CJK ones counted twice as wide)
+static size_t sentenceSplit(const std::string& t) {
+    std::vector<std::pair<size_t, int>> cps; // (each code point's byte offset, its width)
+    int total = 0;
+    for (size_t i = 0; i < t.size();) {
+        const unsigned char c = static_cast<unsigned char>(t[i]);
+        const size_t n = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : 4;
+        const int wide = n >= 3 ? 2 : 1; // (U+0800 on: kana, kanji, Hangul, full-width forms)
+        cps.emplace_back(i, wide);
+        total += wide;
+        i += n;
+    }
+    if (cps.size() < 8) return std::string::npos;
+    size_t best = std::string::npos, bestPunct = std::string::npos, mid = std::string::npos;
+    int bestD = 1 << 30, bestPunctD = 1 << 30, run = 0;
+    for (size_t k = 0; k < cps.size(); ++k) {
+        const int d = std::abs(2 * run - total);
+        if (k > 0 && t[cps[k].first] == ' ' && d < bestD) bestD = d, best = cps[k].first;
+        if (k > 0 && mid == std::string::npos && 2 * run >= total) mid = cps[k].first;
+        if (k > 0) { // (after 、。，；：！？）: the place past it)
+            const std::string prev = t.substr(cps[k - 1].first, cps[k].first - cps[k - 1].first);
+            static const char* const kPunct[] = {"\u3001", "\u3002", "\uff0c", "\uff1b", "\uff1a", "\uff01", "\uff1f", "\uff09"};
+            for (const char* p : kPunct)
+                if (prev == p && d < bestPunctD) bestPunctD = d, bestPunct = cps[k].first;
+        }
+        run += cps[k].second;
+    }
+    if (best != std::string::npos && bestD <= total / 3) return best;
+    if (bestPunct != std::string::npos && bestPunctD <= total / 2) return bestPunct;
+    return best != std::string::npos ? best : mid;
+}
+
 void Viewer::drawGeneLabSentence(const UiFig& menu, const std::string& text, int w, int h) {
     float tx, ty;
     if (text.empty() || !cr3UiCall(menu, "typeM_L01", tx, ty)) return;
@@ -676,7 +709,14 @@ void Viewer::drawGeneLabSentence(const UiFig& menu, const std::string& text, int
         const float k = std::min(float(w) / 9.6f, float(h) / 6.4f);
         const float room = std::min(0.97f, (float(w) / k / 2 - 0.9f - (tx - 0.03f)) / 10);
         const float wide = uiTextWidth(text, 23, w, h), size = wide > room ? std::max(23 * room / wide, 18.0f) : 23;
-        return (void)drawUiText(text, size, (tx - 0.03f) / 10, (ty - 0.1f + (23 - size) * 0.004f) / 10, w, h, true, 0.24f, room);
+        // (CR3-U's: one that would still be narrowed at 18 - a long help line, a translation's - in two lines, as the
+        // game's own two-line sentences; split at the space - or after a CJK one's punctuation - nearest its middle)
+        const size_t at = wide * 18 / 23 > room ? sentenceSplit(text) : std::string::npos;
+        if (at == std::string::npos)
+            return (void)drawUiText(text, size, (tx - 0.03f) / 10, (ty - 0.1f + (23 - size) * 0.004f) / 10, w, h, true, 0.24f, room);
+        drawUiText(text.substr(0, at), 18, (tx + 0.075f) / 10, (ty - 0.04f) / 10, w, h, true, 0.24f, room);
+        drawUiText(text.substr(text[at] == ' ' ? at + 1 : at), 18, (tx + 0.075f) / 10, (ty - 0.27f) / 10, w, h, true, 0.24f, room);
+        return;
     }
     // (two lines: the bar's height between them)
     drawUiText(text.substr(0, nl), 18, (tx + 0.075f) / 10, (ty - 0.04f) / 10, w, h, true, 0.24f);

@@ -184,6 +184,22 @@ std::string storedSetting(const char* key) {
     while (!out.empty() && (out.back() == '\r' || out.back() == ' ')) out.pop_back();
     return out;
 }
+// Before the game: the catalogs' folders, and the language settings.ini names - the system's where it names none
+void startUiText(const std::vector<std::string>& gameFolders) {
+    for (const std::string& g : gameFolders) uitext::addFolder(g + "lang/");
+    if (char* pref = SDL_GetPrefPath("DuIslingr", "CR3-U")) uitext::addFolder(std::string(pref) + "lang/"), SDL_free(pref);
+    std::string want = storedSetting("ui_lang=");
+    if (want == "auto") { // (the game text's: settings.ini's language= - cr3::Language + 1 -, else English)
+        const int l = std::atoi(storedSetting("language=").c_str()) - 1;
+        want = l == int(cr3::Language::Japanese) ? "ja" : l == int(cr3::Language::FanSpanish) ? "es" : "en";
+    }
+    const char* forced = SDL_getenv("CR_UI_LANG"); // (tests)
+    if (forced && *forced) want = forced;
+    else if (want.empty()) want = uitext::systemLanguage();
+    if (!uitext::setLanguage(want)) uitext::setLanguage("en");
+    SDL_Log("menu language: %s", uitext::language().c_str());
+}
+
 void storeSetting(const char* key, const std::string& value) {
     size_t size = 0;
     char* text = static_cast<char*>(SDL_LoadFile(settingsIni().c_str(), &size));
@@ -676,7 +692,7 @@ int saveSlotSafetySelfTest() {
 static cr3::SetupGame cr3SetupGame() {
     cr3::SetupGame setup;
     setup.title = "Chaos Rings III", setup.port = "CR3-U", setup.vitaId = "PCSG00500", setup.trilogyDir = "CR3";
-    setup.obbHint = "asset packs (the .apks has them all)";
+    setup.obbHint = N_("asset packs (the .apks has them all)"); // (translated where it is said)
     setup.package = "com.square_enix.chaosrings3gp";
     setup.oneRelease = true; // (one copy is the game)
     auto releaseIs = [](const std::string& p, cr3::Database::Kind kind) {
@@ -701,6 +717,14 @@ static cr3::SetupGame cr3SetupGame() {
         return db.open(p) && db.kind() == cr3::Database::Kind::Vita && !cr3::fanPatchedInPlace(db);
     };
     return setup;
+}
+
+// (the message where no copy is found: the game folder's places, each said)
+static std::string copyPlaces() {
+    return "\n  ios/      " + std::string(tr("the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app")) +
+           "\n  android/  " + tr("the Android release's .apks (or its base.apk with the asset packs)") +
+           "\n  vita/     " + tr("the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump - its folder, or packed as "
+                                ".zip, .rar, .7z or .vpk (unpacked and decrypted when it is found)");
 }
 
 int main(int argc, char** argv) {
@@ -965,6 +989,7 @@ int main(int argc, char** argv) {
             for (const char* f : {"ios", "android", "vita", "font", "translation"}) SDL_CreateDirectory((g.front() + f).c_str());
     }
 #endif
+    startUiText(dataPlaces()); // (the setup's messages, its progress windows in the player's language)
     std::vector<std::string> searched; // (where a copy was looked for: the message if none)
     if (data.empty()) { // (CR3_DATA, else a copy in a game folder: vita/, android/, ios/ ...)
         searched = dataPlaces();
@@ -1002,25 +1027,22 @@ int main(int argc, char** argv) {
     while (data.empty() && argc <= 1) { // (opened with nothing: a window, not the terminal's usage)
 #ifdef SDL_PLATFORM_IOS
         // (the game folder: the app's Documents - an .ipa unpacked there, a Vita dump or its archive decrypted, as anywhere)
-        std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the app's folder - in the Files app, "
-                          "On My iPhone (or iPad) > Chaos Rings III; or in Finder with the device connected, its Files - then choose Look again:\n"
-                          "\n  ios/      the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app"
-                          "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
-                          "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump - its folder,"
-                          "\n            or packed as .zip, .rar, .7z or .vpk (unpacked and decrypted when it is found)"
-                          "\n\nThe README's \"Your copy\" has the details.";
+        std::string msg = std::string(tr("Could not find your copy of the game.")) + "\n\n" +
+                          tr("Put any one of these in the app's folder - in the Files app, On My iPhone (or iPad) > Chaos Rings III; or in Finder "
+                             "with the device connected, its Files - then choose Look again:") +
+                          "\n";
+        msg += copyPlaces();
+        msg += std::string("\n\n") + tr("The README's \"Your copy\" has the details.");
 #else
-        std::string msg = "Could not find your copy of the game.\n\nPut any one of these in the folder here, then choose Look again:\n";
-        msg += searched.empty() ? std::string("(no folder)") : searched.front();
-        msg += "\n\n  ios/      the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app"
-               "\n  android/  the Android release's .apks (or its base.apk with the asset packs)"
-               "\n  vita/     the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump - its folder,"
-               "\n            or packed as .zip, .rar, .7z or .vpk (unpacked and decrypted when it is found)\n\nAlso looked in:";
+        std::string msg = std::string(tr("Could not find your copy of the game.")) + "\n\n" +
+                          tr("Put any one of these in the folder here, then choose Look again:") + "\n";
+        msg += searched.empty() ? std::string(tr("(no folder)")) : searched.front();
+        msg += "\n" + copyPlaces() + "\n\n" + tr("Also looked in:");
         for (size_t k = 1; k < searched.size(); ++k) msg += "\n" + searched[k];
-        msg += "\n\nThe README's \"Your copy\" has the details.";
+        msg += std::string("\n\n") + tr("The README's \"Your copy\" has the details.");
 #endif
-        const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Look again"},
-                                                    {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Quit"}};
+        const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, tr("Look again")},
+                                                    {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, tr("Quit")}};
         const SDL_MessageBoxData box{SDL_MESSAGEBOX_ERROR, nullptr, "Chaos Rings III", msg.c_str(), 2, buttons, nullptr};
         int choice = 0;
         if (!SDL_ShowMessageBox(&box, &choice) || choice != 1) return 2;
@@ -1111,13 +1133,13 @@ int main(int argc, char** argv) {
     // (a repacked .apks: its asset packs - ~1.3 GB - unpacked on the first start before any window; a progress
     // window over it, else the game seems to hang - GitHub issue 6. Not for captures and exports: logged)
     if (capture.empty() && !exportTextures && !exportModels)
-        v.archive.setUnpackProgress(cr3::progressWindow(cr3SetupGame(), "First start - unpacking"));
+        v.archive.setUnpackProgress(cr3::progressWindow(cr3SetupGame(), tr("First start - unpacking")));
     const bool opened = v.archive.open(data, &err);
     v.archive.setUnpackProgress({}); // (its window closed)
     if (!opened) {
         std::fprintf(stderr, "%s\n", err.c_str());
         if (argc <= 1) // (opened with nothing - a double-click -: said in a window, not only to a terminal)
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", ("The copy of the game in\n" + data + "\ncan't be read: " + err).c_str(), nullptr);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", trf("The copy of the game in\n{0}\ncan't be read: {1}", {data, err}).c_str(), nullptr);
         return 1;
     }
     SDL_Log("data: %s", data.c_str());
@@ -1161,9 +1183,11 @@ int main(int argc, char** argv) {
         SDL_Log("asset packs not unpacked: %s", names.c_str());
         if (capture.empty())
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Chaos Rings III",
-                                     ("Couldn't unpack the game's asset packs from the .apks (" + names +
-                                      ") into the assetpacks folder beside it - is there about 1.3 GB free?\n\n"
-                                      "The game will run without its sound, voices and movies.").c_str(),
+                                     (trf("Couldn't unpack the game's asset packs from the .apks ({0}) into the assetpacks folder beside it - is "
+                                          "there about 1.3 GB free?",
+                                          {names}) +
+                                      "\n\n" + tr("The game will run without its sound, voices and movies."))
+                                         .c_str(),
                                      nullptr);
     }
     {

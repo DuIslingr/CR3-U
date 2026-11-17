@@ -30,6 +30,10 @@ public:
     bool loaded() const;
     // the loaded font itself (not its fallbacks) has every code point of this UTF-8; false: none loaded
     bool covers(const std::string& utf8) const;
+    // the loaded font or one of its fallbacks has each code point of this UTF-8 (render draws it whole)
+    bool drawable(const std::string& utf8) const;
+    // a count that changes as the fonts do (a load, a fallback added): what was measured against them stale
+    int generation() const { return generation_; }
     // a font for the code points the first lacks (as Android's Paint falls back on the system's:
     // Hangul, simplified Chinese), tried in the order added (`face` a collection's); false: none could be read
     bool addFallback(const std::string& path, std::string* error = nullptr, int face = 0);
@@ -54,6 +58,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     std::string path_;
+    int generation_ = 0;
 };
 
 } // namespace cr3

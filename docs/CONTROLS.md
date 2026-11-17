@@ -191,6 +191,7 @@ Options → Graphics → Swap ○ and ×. Directions below also accept the left 
 | Mode select | Down and ○ press Main, which asks: ○ on No back to the buttons, Down and ○ Yes into the story. | ModeSelectMenu (TitleMenuMain 4 / 0xe .. 0x18) |
 | Quest Clear | ○ its OK; closes over 1/6 s and the script goes on. | QuestDitailMenu 0x7e |
 | Credits | R to the Other tab, Down to Credits / Copyright Notice, ○ opens; Down a line; × back to the options. | StaffNameListMenu |
+| Menu Language | R to the Other tab, Down past Resolution and Language to Menu Language; Left/Right step Auto, English and each catalog - CR3-U's own text (its Options, the setup) follows at once. | CR3-U's (platform/ui_text) |
 | Options footer | Down past the rows to the footer's back; Left to CR3-U's Reset (○ asks, Left and ○ Yes), then over the panels (the empty Download panel is gone from the Options footer); ○ Title Screen asks 0x1a3, Left and ○ Yes. | OptionFooterMenu |
 | Gene skills | In the camp's gene list R shows the gene's skills in the cards' place (the unlearned dimmed); Up/Down its rows. | GeneSkillListMenu |
 | Gems | Walking into a gem takes it; at 99 the Continue Gem's exchange is told, ○ its OK. | Fld2Jem |

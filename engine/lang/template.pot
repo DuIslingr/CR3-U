@@ -1,0 +1,1160 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: the port's interface text\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: \n"
+"X-Language-Name: \n"
+
+#: src/gfx/render_device.hpp
+msgid "needs the Vulkan renderer"
+msgstr ""
+
+#: src/gfx/vk_device.cpp
+msgid "this GPU lacks what temporal upscaling needs"
+msgstr ""
+
+#: src/gfx/vk_device.cpp
+msgid "this GPU can't run FSR 3.1"
+msgstr ""
+
+#: src/gfx/vk_device.cpp
+msgid "MetalFX is Apple's: macOS only"
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Found {0} save slot(s)."
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Existing saves will be backed up."
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Invalid suspend skipped."
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Import now?"
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Import failed: {0}"
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Cannot open the folder picker: {0}"
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Imported {0} save slot(s)."
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Previous saves backed up."
+msgstr ""
+
+#: src/platform/vita_import_ui.hpp
+msgid "Load from the title."
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "asset packs (the .apks has them all)"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid ""
+"the iOS release's .ipa (unpacked when it is found), or its ChaosRings3_FINAL_ENG.app"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "the Android release's .apks (or its base.apk with the asset packs)"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid ""
+"the Vita's PCSG00500 folder (or the Prequel Trilogy's PCSG00457), or a NoNpDrm dump - its folder, or packed as .zip, .rar, .7z or .vpk (unpacked and decrypted when it is found)"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "Could not find your copy of the game."
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid ""
+"Put any one of these in the app's folder - in the Files app, On My iPhone (or iPad) > Chaos Rings III; or in Finder with the device connected, its Files - then choose Look again:"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "The README's \"Your copy\" has the details."
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "Put any one of these in the folder here, then choose Look again:"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "(no folder)"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "Also looked in:"
+msgstr ""
+
+#: src/viewer/main.cpp src/viewer/setup.cpp
+msgid "Look again"
+msgstr ""
+
+#: src/viewer/main.cpp src/viewer/setup.cpp
+msgid "Quit"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "First start - unpacking"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid ""
+"The copy of the game in\n"
+"{0}\n"
+"can't be read: {1}"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid ""
+"Couldn't unpack the game's asset packs from the .apks ({0}) into the assetpacks folder beside it - is there about 1.3 GB free?"
+msgstr ""
+
+#: src/viewer/main.cpp
+msgid "The game will run without its sound, voices and movies."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Any file"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "can't be read"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "not a zip (no central directory) - an .ipa is one"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "its directory is past its end"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a broken directory entry"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0}: no local header"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0}: can't be written"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0}: can't be unpacked"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "A file picked can't be read ({0})."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"A file picked ({0} GB) needs about {1} GB free in {2} - the copy and what it unpacks to -, and there is {3} GB."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copying the file picked ({0} of {1}) ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copying the file picked ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "A file picked can't be copied into {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "can't be opened"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "no Payload/<name>.app in it - not an iOS app"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0}: can't be made"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "no work.bin (its licence) to decrypt it with"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "its files don't decrypt (a part of the dump missing or damaged?)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"its files can't be read with its own work.bin - not a whole NoNpDrm dump"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"this build can't decrypt the Vita's files - install the dump in Vita3K, then choose Vita3K's folder"
+msgstr ""
+
+#: src/viewer/setup.cpp src/viewer/viewer_gfx.cpp
+msgid "{0}: {1}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "an entry it can't read (after the start)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "an entry it can't read (after {0})"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"this build can't open archives - unpack it first, then choose its folder"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "no fan translation in it (its rePatch/{0}/)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "not a SELF"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a broken SELF"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a broken SELF (a segment past its end)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a SELF of a kind (or key revision) the port has no key for"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "its key doesn't open it (its licence isn't its own?)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a broken SELF (no metadata)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a broken SELF (its metadata)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a broken SELF (its keys)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a broken SELF (an encrypted segment without its key)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "a segment doesn't inflate"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "built without zlib"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "this build can't decrypt the Vita's programs"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "it needs about {0} GB free in {1}, and there is {2} GB"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Decrypting the Vita release ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copying the Vita release ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Decrypting the game's add-on ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copying the game's add-on ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"{0}: no licence to decrypt it with (the dump's work.bin, Vita3K's ux0/license)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"{0} plays your own copy of {1}. Choose where it is - any one of them; the files it needs are copied into its folder:"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Android - the APK and its {0} (both at once)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Android - the .apks (or the APK and its asset packs, all at once)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "iOS - the .ipa (an unpacked .app: copy it into ios/ over USB)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"Vita - a NoNpDrm dump: packed (.zip, .rar, .vpk), or its folder copied in over USB"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "What is copied into its folder over USB is found with Look again."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "iOS - the .ipa (or its unpacked .app)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"Vita - a NoNpDrm dump: its folder, or packed (.zip, .rar, .7z, .vpk); or Vita3K's ux0"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"What is copied into its folder in the Files app (On My iPhone > Chaos Rings III) is found with Look again."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "iOS - the .ipa (or a file in its unpacked .app)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"Vita - Vita3K's folder with the game installed (or the game's {0} folder)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Its folder: {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "In place:"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "iOS: {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Android: {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Vita: {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Its fan translation: {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"More of them add to it (the Vita's voices and music, Android's art); or Start."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "iOS (.ipa)..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Android (APK + OBB)..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Android (.apks)..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Vita..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Vita / Vita3K..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Start"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "iOS app (.ipa)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Any file (one in an unpacked .app)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"That isn't an .ipa. Choose the .ipa - or copy the unpacked .app into {0} over USB, then Look again."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"That isn't an .ipa. Choose the .ipa or the unpacked .app itself - or copy the .app into ios/ in the Files app, then Look again."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Unpacking {0} ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "No {0} data in {1}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copying {0} ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "can't be written"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0} isn't {1}'s iOS release."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Android (.apk, .obb, .apks)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Choose {0}'s Android release: the APK and its {1}, both at once."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copying the Android release ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Not {0}'s Android release (or not all of it):"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Choose the APK and its {0}, both at once."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The Android release can't be copied into {0} (nor the profile folder's)."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Where is the Vita release?"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"A folder - copied into {0} over USB: a NoNpDrm dump's as it was dumped (its app/, and addcont/ for the Prequel Trilogy), Vita3K's ux0, or the game's own folder"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"An archive - a NoNpDrm dump packed as .zip, .rar or .vpk (a .7z: unpack it on a PC)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copied in..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "An archive..."
+msgstr ""
+
+#: src/viewer/setup.cpp src/viewer/viewer_event.cpp
+msgid "Back"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "A folder - Vita3K's (or its ux0), the game's own, or a NoNpDrm dump's"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "An archive - a NoNpDrm dump packed as .rar, .7z, .zip or .vpk"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "A folder..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "A Vita dump (.rar, .7z, .zip, .vpk)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"Copy the Vita release's folder into\n"
+"  {0}\n"
+"over USB from a PC - a NoNpDrm dump's as it was dumped (its app/, and addcont/ for the Prequel Trilogy), Vita3K's ux0, or the game's own folder -, then Continue."
+msgstr ""
+
+#: src/viewer/setup.cpp src/viewer/viewer_event.cpp
+msgid "Continue"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The Prequel Trilogy keeps {0}'s data in its add-on (addcont/PCSG00457/{1}), and it isn't beside {2} - install the add-on in Vita3K too, or choose a dump with it."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"No {0} ({1}) in {2} - choose Vita3K's folder, its ux0, the game's own folder or a NoNpDrm dump of it."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"No {0} ({1}) in the archive - choose Vita3K's folder, its ux0, the game's own folder or a NoNpDrm dump of it."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The Vita release in {0}: {1}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The Prequel Trilogy keeps {0}'s data in its add-on (addcont/PCSG00457/{1}), and it isn't beside {2} - install it in Vita3K too, or choose the dump with it."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0} isn't {1}'s Vita release as the port reads it."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The Vita release in {0} can't be copied into {1} (nor the profile folder's)."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Choose its folder..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Its archive..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Without it"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"This Vita release is in Japanese. A fan translation puts its text over it - gbatemp's English one or Joseas's Spanish one: its rePatch folder ({0}), or the .rar / .zip it comes in. Is one here too?"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The fan translation (.rar, .zip, .7z)"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Unpacking the fan translation ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"Copy the fan translation's rePatch folder (or the {0} in it) into\n"
+"  {1}\n"
+"over USB from a PC, then Continue."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"No fan translation in {0} - copy its rePatch folder (or the {1} in it)."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"No fan translation in {0} - choose its rePatch folder (or the {1} in it)."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The fan translation can't be moved to {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "Copying the fan translation ..."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The fan translation can't be copied into {0}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0} can't be unpacked: {1}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The Prequel Trilogy keeps {0}'s data in its add-on (addcont/PCSG00457/{1}), and {2} doesn't hold it - pack the dump's addcont folder in too."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0} holds no {1} ({2}) as the port reads it."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The Vita release is unpacked and decrypted into {0}."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The Vita release is unpacked into {0}."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0} isn't needed any more - delete it to get the space back."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The Vita release is decrypted into {0}."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The dump you copied in ({0}) isn't needed any more - delete it to get the space back."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The dump you copied in ({0} and {1}) isn't needed any more - delete it to get the space back."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The Vita dump in {0} can't be decrypted: {1}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "The Vita dump in {0} can't be copied: {1}"
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The Prequel Trilogy keeps {0}'s data in its add-on (addcont/PCSG00457/{1}), and it isn't beside {2} - copy the dump's addcont folder in too, beside its app folder."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The Vita dump can't be decrypted into {0} - it can't be written there."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"{0} is unpacked into {1} - the .ipa isn't needed any more: delete it to get the space back."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid "{0} can't be opened by this build - unpack it into {1} first."
+msgstr ""
+
+#: src/viewer/setup.cpp
+msgid ""
+"The fan translation is unpacked into {0} - {1} isn't needed any more: delete it to get the space back."
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Graphics"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Cheats"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Reset"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Put the sound settings back to their defaults?"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Put the control settings back to their defaults?"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Put the other settings back to their defaults?"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Turn every cheat off?"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Put the graphics settings back to their defaults?"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Menu Language"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Vita Saves"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Title only"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "> {0} <"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Import"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Change graphics settings."
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Import decrypted Vita saves (I). Existing saves are backed up."
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid "Import saves from the title screen's Options."
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid ""
+"The language of the game's text: its own, or a fan translation over it."
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
+msgid ""
+"The language of CR3-U's own menus and messages. Auto: the game text's."
+msgstr ""
+
+#: src/viewer/viewer_event.cpp
+msgid "File {0} is cleared."
+msgstr ""
+
+#: src/viewer/viewer_event.cpp
+msgid "Continue playing or start New Game Plus?"
+msgstr ""
+
+#: src/viewer/viewer_event.cpp
+msgid "New Game Plus keeps your completed save."
+msgstr ""
+
+#: src/viewer/viewer_event.cpp
+msgid "New Game Plus"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Auto ({0})"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "On"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Off"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Camera Cutout"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Avoid"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Ignore"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The menus and buttons kept clear of the camera's notch or punch hole; the picture fills the screen either way"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The menus and buttons reach the screen's edges, under the camera's notch or punch hole too"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Window"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Fullscreen"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Borderless"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Display"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"A window, fullscreen at the display's own mode, or borderless over the desktop"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Resolution"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The frames' size (Window: the window's own), scaled to the window"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "VSync"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Each frame waits for the display's refresh: no tearing"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Frame Rate"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Unlimited"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The most frames drawn a second; the game runs at 20, smoothed between them"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "{0} (next start)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Renderer"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"Vulkan: the upscalers, MSAA and the faster path; OpenGL where Vulkan won't start"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "{0} (n/a)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Upscaler"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The scene renders smaller and is rebuilt at full size; the menus stay sharp"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Native AA"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Quality"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Balanced"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Performance"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Ultra Performance"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The scene at {0}% of the frame per side (DLSS: DLAA)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The scene at {0}% of the frame per side"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Upscale Mode"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Sharpness"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "FSR's sharpening pass (RCAS); DLSS and MetalFX have none"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Anti-aliasing"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Off while an upscaler is on (its own anti-aliasing)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Multisampling: smoother edges"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Anisotropic Filtering"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Textures stay sharp on floors and walls seen at an angle"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Not on this GPU"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Texture Filtering"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Sharp"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Smooth"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Sharp: square texels up close; Smooth: blended"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "HD Textures"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Upscaled textures from {0}"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "None in {0} yet (the README's HD textures)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "HD Models"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Replacement models from {0}, from the next scene"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "None in {0} yet (the README's HD models)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Smoother"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Smooth Models"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"Rounder models (4x / 9x triangles), hard edges kept - from the next scene"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The models as the game built them"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original Card Art"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "On ({0}/3)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"Some originals are missing. Add Vita or iOS card archives to artwork/."
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original art, names and profiles for cards 80, 81 and 86."
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Lock Orientation"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Hold the current landscape direction and restore it on restart"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Field Speed"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"Walking the field 2 to 5 times as fast; scenes, talk and menus as they are"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Battle Speed"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The battles 2 to 5 times as fast"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Swap ○ and ×"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "A controller's × confirms and ○ goes back"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "A controller's ○ confirms and × goes back, as on the Vita"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Infinite HP"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The party's HP whole after every blow, the damage still shown (not in VS)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Infinite MP"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The party's genes and skills cost no MP (not in VS)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "One-Hit Kills"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The party's hits take all of a monster's HP; a boss's last stand holds (not in VS)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "EXP Multiplier"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The genes' EXP from a battle won, 1x to 10x (not in VS)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Always First Strike"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Every battle that can open with a first strike does; never ambushed"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "No Random Battles"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "No random encounters on the field; the story's battles still come"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Max Money"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Your money held at the most"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Full HP/MP Outside Battle"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "The party's MP whole between battles (CR3 restores the HP itself)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Always Full Break Gauge"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The break gauge at the party's full side every turn: art ascendants open (not in VS)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Always Co-op"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"Members picking the same command always join in a co-op attack (not in VS)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Always Drop"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Every monster leaves its item, the rare one by its share (not in VS)"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Full Cheer"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid ""
+"The cheer points full in every battle; your saved points kept (not in VS)"
+msgstr ""

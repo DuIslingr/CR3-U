@@ -37,6 +37,10 @@ void Viewer::loadSettings() {
     while (std::fgets(line, sizeof line, f)) {
         char key[64];
         int v = 0;
+        if (std::strncmp(line, "ui_lang=", 8) == 0) { // (the port's own text: a code, or auto)
+            uiLang = std::string(line + 8, std::strcspn(line + 8, "\r\n "));
+            continue;
+        }
         if (std::sscanf(line, " %63[a-z_] = %d", key, &v) != 2) continue;
         const std::string k = key;
         if (k == "display") {
@@ -103,6 +107,7 @@ void Viewer::saveSettings() const {
     text += "original_card_art=" + std::to_string(int(s.originalCardArt)) + "\n";
     text += "fullscreen_kind=" + std::to_string(s.fullscreenKind) + "\n";
     if (s.language) text += "language=" + std::to_string(s.language) + "\n";
+    if (!uiLang.empty()) text += "ui_lang=" + uiLang + "\n"; // (none: the system's language, until one is picked)
     { // (Options' Cheats: the ones on alone - all off, the file as before)
         const Settings::Cheats& c = s.cheats;
         const std::pair<const char*, int> cheats[] = {{"cheat_hp", c.hp},          {"cheat_mp", c.mp},
@@ -118,6 +123,46 @@ void Viewer::saveSettings() const {
     if (!keepPatch.empty()) text += "patch=" + keepPatch + "\n";
     std::string error;
     if (!crstorage::replaceFile(savePath(settingsFile()), text, &error)) SDL_Log("settings: %s", error.c_str());
+}
+
+// The port's own text (platform/ui_text): Auto is the game text's language - the release's Japanese or English, a fan
+// translation's English or Spanish
+std::string Viewer::uiTextLanguage() const {
+    if (languages.empty()) return optionLanguage == 0 ? "ja" : "en";
+    switch (languages[std::min(languageIndex, languages.size() - 1)].id) {
+    case cr3::Language::Japanese: return "ja";
+    case cr3::Language::FanSpanish: return "es";
+    default: return "en";
+    }
+}
+
+void Viewer::applyUiLanguage() {
+    std::string want = uiLang == "auto" ? uiTextLanguage() : uiLang.empty() ? uitext::systemLanguage() : uiLang;
+    if (const char* forced = SDL_getenv("CR_UI_LANG"); forced && *forced) want = forced; // (tests, captures)
+    if (want == uitext::language()) return;
+    if (!uitext::setLanguage(want)) uitext::setLanguage("en");
+    SDL_Log("menu language: %s (%s)", uitext::language().c_str(), uiLang.empty() ? "the system's" : uiLang.c_str());
+}
+
+// Menu Language's values: Auto, then English and each catalog (built in, or a loose lang/<code>.po); none picked yet,
+// the one in use (the system's) is where a step starts
+void Viewer::stepUiLanguage(int by) {
+    const std::vector<uitext::Language> langs = uitext::languages();
+    std::vector<std::string> codes{"auto"};
+    for (const uitext::Language& l : langs) codes.push_back(l.code);
+    const std::string at = uiLang.empty() ? uitext::language() : uiLang;
+    int i = int(std::find(codes.begin(), codes.end(), at) - codes.begin());
+    if (i >= int(codes.size())) i = 0;
+    const int n = int(codes.size());
+    uiLang = codes[size_t(((i + by) % n + n) % n)];
+    applyUiLanguage();
+    saveSettings();
+}
+
+std::string Viewer::uiLanguageShown() const {
+    if (uiLang == "auto") return trf("Auto ({0})", {uitext::languageName(uitext::language())});
+    const std::string name = uitext::languageName(uiLang.empty() ? uitext::language() : uiLang);
+    return name.empty() ? uiLang : name;
 }
 
 // The settings onto the device, the window and the textures (each only as it changes)
@@ -225,17 +270,17 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
         const int n = int(values.size());
         v = values[size_t(((i < values.size() ? int(i) : 0) + dir + n) % n)];
     };
-    auto onOff = [](bool b) { return std::string(b ? "On" : "Off"); };
+    auto onOff = [](bool b) { return std::string(b ? tr("On") : tr("Off")); };
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
     // (a phone's or tablet's: the whole screen at its own resolution and shape, always - no Display or
     // Resolution; in their place the camera's cutout: the interface kept clear of it, or not)
-    rows.push_back({"Camera Cutout", s.avoidCutout ? "Avoid" : "Ignore",
-                    s.avoidCutout ? "The menus and buttons kept clear of the camera's notch or punch hole; the picture fills the screen either way"
-                                  : "The menus and buttons reach the screen's edges, under the camera's notch or punch hole too",
+    rows.push_back({tr("Camera Cutout"), s.avoidCutout ? tr("Avoid") : tr("Ignore"),
+                    s.avoidCutout ? tr("The menus and buttons kept clear of the camera's notch or punch hole; the picture fills the screen either way")
+                                  : tr("The menus and buttons reach the screen's edges, under the camera's notch or punch hole too"),
                     true, [&s](int) { s.avoidCutout = !s.avoidCutout; }});
 #else
-    static const char* const kDisplay[] = {"Window", "Fullscreen", "Borderless"};
-    rows.push_back({"Display", kDisplay[std::clamp(s.display, 0, 2)], "A window, fullscreen at the display's own mode, or borderless over the desktop",
+    static const char* const kDisplay[] = {N_("Window"), N_("Fullscreen"), N_("Borderless")};
+    rows.push_back({tr("Display"), tr(kDisplay[std::clamp(s.display, 0, 2)]), tr("A window, fullscreen at the display's own mode, or borderless over the desktop"),
                     true, [&s](int d) {
                         s.display = (s.display + d + 3) % 3;
                         if (s.display) s.fullscreenKind = s.display; // (F11's from now on)
@@ -243,30 +288,30 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
     {
         const int r = std::clamp(s.resolution, 0, int(std::size(kResolutions)) - 1);
         const std::string v = s.resolution < 0 ? std::to_string(resW) + " x " + std::to_string(resH) // (--resolution's own)
-                              : r == 0          ? "Window"
+                              : r == 0          ? std::string(tr("Window"))
                                                 : std::to_string(kResolutions[r][0]) + " x " + std::to_string(kResolutions[r][1]);
-        rows.push_back({"Resolution", v, "The frames' size (Window: the window's own), scaled to the window",
+        rows.push_back({tr("Resolution"), v, tr("The frames' size (Window: the window's own), scaled to the window"),
                         true, [&s](int d) { const int n = int(std::size(kResolutions)); s.resolution = s.resolution < 0 ? 0 : (s.resolution + d + n) % n; }});
     }
 #endif
-    rows.push_back({"VSync", onOff(s.vsync), "Each frame waits for the display's refresh: no tearing", true, [&s](int) { s.vsync = !s.vsync; }});
-    rows.push_back({"Frame Rate", s.fps ? std::to_string(s.fps) : std::string("Unlimited"),
-                    "The most frames drawn a second; the game runs at 20, smoothed between them",
+    rows.push_back({tr("VSync"), onOff(s.vsync), tr("Each frame waits for the display's refresh: no tearing"), true, [&s](int) { s.vsync = !s.vsync; }});
+    rows.push_back({tr("Frame Rate"), s.fps ? std::to_string(s.fps) : std::string(tr("Unlimited")),
+                    tr("The most frames drawn a second; the game runs at 20, smoothed between them"),
                     true, [&s, step](int d) { step(s.fps, {30, 60, 120, 144, 165, 240, 0}, d); }});
     {
         static const char* const kRenderer[] = {"Vulkan", "OpenGL"};
         std::string v = kRenderer[std::clamp(s.renderer, 0, 1)];
-        if (s.renderer != rendererInUse) v += " (next start)";
-        rows.push_back({"Renderer", v, "Vulkan: the upscalers, MSAA and the faster path; OpenGL where Vulkan won't start",
+        if (s.renderer != rendererInUse) v = trf("{0} (next start)", {v});
+        rows.push_back({tr("Renderer"), v, tr("Vulkan: the upscalers, MSAA and the faster path; OpenGL where Vulkan won't start"),
                         true, [&s](int) { s.renderer = 1 - s.renderer; }});
     }
     const bool vk = dev && dev->offscreen(); // (the Vulkan device renders offscreen: the upscalers', MSAA's)
-    static const char* const kUpscaler[] = {"Off", "FSR 3.1", "DLSS", "MetalFX", "FSR 4"};
+    static const char* const kUpscaler[] = {N_("Off"), "FSR 3.1", "DLSS", "MetalFX", "FSR 4"};
     {
-        std::string v = kUpscaler[std::clamp(s.upscaler, 0, 4)];
+        std::string v = tr(kUpscaler[std::clamp(s.upscaler, 0, 4)]);
         std::string why = s.upscaler && dev ? dev->upscalerProblem(cr3::Upscaler(s.upscaler)) : std::string();
-        if (!why.empty()) v += " (n/a)";
-        rows.push_back({"Upscaler", v, why.empty() ? "The scene renders smaller and is rebuilt at full size; the menus stay sharp" : kUpscaler[s.upscaler] + std::string(": ") + why,
+        if (!why.empty()) v = trf("{0} (n/a)", {v});
+        rows.push_back({tr("Upscaler"), v, why.empty() ? std::string(tr("The scene renders smaller and is rebuilt at full size; the menus stay sharp")) : trf("{0}: {1}", {kUpscaler[s.upscaler], tr(why)}),
                         vk, [this, &s](int d) {
                             // (the ones this device can run, Off always)
                             for (int k = 1; k <= 5; ++k) {
@@ -279,20 +324,19 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
                         }});
     }
     {
-        static const char* const kModes[] = {"Native AA", "Quality", "Balanced", "Performance", "Ultra Performance"};
+        static const char* const kModes[] = {N_("Native AA"), N_("Quality"), N_("Balanced"), N_("Performance"), N_("Ultra Performance")};
         const int q = std::clamp(s.quality, 0, int(std::size(kQualities)) - 1);
-        char h[96];
-        std::snprintf(h, sizeof h, "The scene at %d%% of the frame per side%s", int(100.0f / kQualities[q].ratio + 0.5f),
-                      q == 0 ? " (DLSS: DLAA)" : "");
-        rows.push_back({"Upscale Mode", q == 0 && s.upscaler == 2 ? "DLAA" : kModes[q], h, vk && s.upscaler != 0,
+        const std::string pct = std::to_string(int(100.0f / kQualities[q].ratio + 0.5f));
+        const std::string h = q == 0 ? trf("The scene at {0}% of the frame per side (DLSS: DLAA)", {pct}) : trf("The scene at {0}% of the frame per side", {pct});
+        rows.push_back({tr("Upscale Mode"), q == 0 && s.upscaler == 2 ? std::string("DLAA") : std::string(tr(kModes[q])), h, vk && s.upscaler != 0,
                         [&s](int d) { const int n = int(std::size(kQualities)); s.quality = (s.quality + d + n) % n; }});
     }
-    rows.push_back({"Sharpness", std::to_string(s.sharpness) + "%", "FSR's sharpening pass (RCAS); DLSS and MetalFX have none",
+    rows.push_back({tr("Sharpness"), std::to_string(s.sharpness) + "%", tr("FSR's sharpening pass (RCAS); DLSS and MetalFX have none"),
                     vk && (s.upscaler == 1 || s.upscaler == 4), [&s](int d) { s.sharpness = std::clamp(s.sharpness + d * 5, 0, 100); }});
     {
         const int most = dev ? dev->maxSamples() : 1;
-        rows.push_back({"Anti-aliasing", s.msaa > 1 ? "MSAA " + std::to_string(s.msaa) + "x" : std::string("Off"),
-                        s.upscaler ? "Off while an upscaler is on (its own anti-aliasing)" : "Multisampling: smoother edges",
+        rows.push_back({tr("Anti-aliasing"), s.msaa > 1 ? "MSAA " + std::to_string(s.msaa) + "x" : std::string(tr("Off")),
+                        s.upscaler ? tr("Off while an upscaler is on (its own anti-aliasing)") : tr("Multisampling: smoother edges"),
                         vk && most > 1 && s.upscaler == 0, [&s, step, most](int d) {
                             std::vector<int> v{1};
                             for (int k = 2; k <= std::min(most, 8); k *= 2) v.push_back(k);
@@ -301,56 +345,56 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
     }
     {
         const int most = dev ? dev->maxAnisotropy() : 1;
-        rows.push_back({"Anisotropic Filtering", s.anisotropy > 1 ? std::to_string(std::min(s.anisotropy, std::max(most, 1))) + "x" : std::string("Off"),
-                        most > 1 ? "Textures stay sharp on floors and walls seen at an angle" : "Not on this GPU",
+        rows.push_back({tr("Anisotropic Filtering"), s.anisotropy > 1 ? std::to_string(std::min(s.anisotropy, std::max(most, 1))) + "x" : std::string(tr("Off")),
+                        most > 1 ? tr("Textures stay sharp on floors and walls seen at an angle") : tr("Not on this GPU"),
                         most > 1, [&s, step](int d) { step(s.anisotropy, {1, 2, 4, 8, 16}, d); }});
     }
-    rows.push_back({"Texture Filtering", s.sharpTextures ? "Sharp" : "Smooth",
-                    "Sharp: square texels up close; Smooth: blended",
+    rows.push_back({tr("Texture Filtering"), s.sharpTextures ? tr("Sharp") : tr("Smooth"),
+                    tr("Sharp: square texels up close; Smooth: blended"),
                     true, [&s](int) { s.sharpTextures = !s.sharpTextures; }});
     {
         SDL_PathInfo info;
         const bool have = !hdDir.empty() && SDL_GetPathInfo(hdDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
-        rows.push_back({"HD Textures", onOff(s.hdTextures),
-                        have ? "Upscaled textures from " + shortDir(hdDir) : "None in " + shortDir(hdDir) + " yet (the README's HD textures)",
+        rows.push_back({tr("HD Textures"), onOff(s.hdTextures),
+                        have ? trf("Upscaled textures from {0}", {shortDir(hdDir)}) : trf("None in {0} yet (the README's HD textures)", {shortDir(hdDir)}),
                         true, [&s](int) { s.hdTextures = !s.hdTextures; }});
     }
     {
         SDL_PathInfo info;
         const bool have = !modelsDir.empty() && SDL_GetPathInfo(modelsDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
-        rows.push_back({"HD Models", onOff(s.hdModels),
-                        have ? "Replacement models from " + shortDir(modelsDir) + ", from the next scene"
-                             : "None in " + shortDir(modelsDir) + " yet (the README's HD models)",
+        rows.push_back({tr("HD Models"), onOff(s.hdModels),
+                        have ? trf("Replacement models from {0}, from the next scene", {shortDir(modelsDir)})
+                             : trf("None in {0} yet (the README's HD models)", {shortDir(modelsDir)}),
                         true, [&s](int) { s.hdModels = !s.hdModels; }});
     }
     {
-        static const char* const kSmooth[] = {"Off", "", "Smooth", "Smoother"};
-        rows.push_back({"Smooth Models", kSmooth[std::clamp(s.smoothModels, 0, 3)],
-                        s.smoothModels ? "Rounder models (4x / 9x triangles), hard edges kept - from the next scene" : "The models as the game built them",
+        static const char* const kSmooth[] = {N_("Off"), "", N_("Smooth"), N_("Smoother")};
+        rows.push_back({tr("Smooth Models"), tr(kSmooth[std::clamp(s.smoothModels, 0, 3)]),
+                        s.smoothModels ? tr("Rounder models (4x / 9x triangles), hard edges kept - from the next scene") : tr("The models as the game built them"),
                         true, [&s](int d) { // (Off, Smooth, Smoother)
                             static const int kOrder[3] = {0, 2, 3};
                             int i = s.smoothModels == 2 ? 1 : s.smoothModels == 3 ? 2 : 0;
                             s.smoothModels = kOrder[(i + (d < 0 ? 2 : 1)) % 3];
                         }});
     }
-    rows.push_back({"Original Card Art", s.originalCardArt && cardArtwork.available() < 3 ? "On (" + std::to_string(cardArtwork.available()) + "/3)" : onOff(s.originalCardArt),
+    rows.push_back({tr("Original Card Art"), s.originalCardArt && cardArtwork.available() < 3 ? trf("On ({0}/3)", {std::to_string(cardArtwork.available())}) : onOff(s.originalCardArt),
                     s.originalCardArt && cardArtwork.available() < 3
-                        ? "Some originals are missing. Add Vita or iOS card archives to artwork/."
-                        : "Original art, names and profiles for cards 80, 81 and 86.",
+                        ? tr("Some originals are missing. Add Vita or iOS card archives to artwork/.")
+                        : tr("Original art, names and profiles for cards 80, 81 and 86."),
                     true, [&s](int) { s.originalCardArt = !s.originalCardArt; }});
-    rows.push_back({"Lock Orientation", onOff(s.lockOrientation),
-                    "Hold the current landscape direction and restore it on restart", true, [this, &s](int) {
+    rows.push_back({tr("Lock Orientation"), onOff(s.lockOrientation),
+                    tr("Hold the current landscape direction and restore it on restart"), true, [this, &s](int) {
                         s.lockOrientation = !s.lockOrientation;
                         mobile::orientation(window, s.lockOrientation, s.landscapeFlipped, s.lockOrientation);
                         orientationApplied = false;
                     }});
-    auto speed = [](int x) { return x > 1 ? std::to_string(x) + "x" : std::string("Off"); };
-    rows.push_back({"Field Speed", speed(s.fieldSpeed), "Walking the field 2 to 5 times as fast; scenes, talk and menus as they are", true,
+    auto speed = [](int x) { return x > 1 ? std::to_string(x) + "x" : std::string(tr("Off")); };
+    rows.push_back({tr("Field Speed"), speed(s.fieldSpeed), tr("Walking the field 2 to 5 times as fast; scenes, talk and menus as they are"), true,
                     [&s](int d) { s.fieldSpeed = (s.fieldSpeed - 1 + d + 5) % 5 + 1; }});
-    rows.push_back({"Battle Speed", speed(s.battleSpeed), "The battles 2 to 5 times as fast", true,
+    rows.push_back({tr("Battle Speed"), speed(s.battleSpeed), tr("The battles 2 to 5 times as fast"), true,
                     [&s](int d) { s.battleSpeed = (s.battleSpeed - 1 + d + 5) % 5 + 1; }});
-    rows.push_back({"Swap \u25cb and \u00d7", onOff(s.padSwap),
-                    s.padSwap ? "A controller's \u00d7 confirms and \u25cb goes back" : "A controller's \u25cb confirms and \u00d7 goes back, as on the Vita",
+    rows.push_back({tr("Swap \u25cb and \u00d7"), onOff(s.padSwap),
+                    s.padSwap ? tr("A controller's \u00d7 confirms and \u25cb goes back") : tr("A controller's \u25cb confirms and \u00d7 goes back, as on the Vita"),
                     true, [&s](int) { s.padSwap = !s.padSwap; }});
     return rows;
 }
@@ -360,24 +404,24 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
 auto Viewer::cheatRows() -> std::vector<SettingRow> {
     Settings::Cheats& c = settings.cheats;
     std::vector<SettingRow> rows;
-    auto onOff = [](bool b) { return std::string(b ? "On" : "Off"); };
+    auto onOff = [](bool b) { return std::string(b ? tr("On") : tr("Off")); };
     auto flag = [&](const char* label, bool& v, const char* help) {
-        rows.push_back({label, onOff(v), help, true, [&v](int) { v = !v; }});
+        rows.push_back({tr(label), onOff(v), tr(help), true, [&v](int) { v = !v; }});
     };
     // (the help on the header's line: short enough for a 4:3 screen; the battles' never in VS)
-    flag("Infinite HP", c.hp, "The party's HP whole after every blow, the damage still shown (not in VS)");
-    flag("Infinite MP", c.mp, "The party's genes and skills cost no MP (not in VS)");
-    flag("One-Hit Kills", c.oneHit, "The party's hits take all of a monster's HP; a boss's last stand holds (not in VS)");
-    rows.push_back({"EXP Multiplier", std::to_string(std::clamp(c.exp, 1, 10)) + "x", "The genes' EXP from a battle won, 1x to 10x (not in VS)", true,
+    flag(N_("Infinite HP"), c.hp, N_("The party's HP whole after every blow, the damage still shown (not in VS)"));
+    flag(N_("Infinite MP"), c.mp, N_("The party's genes and skills cost no MP (not in VS)"));
+    flag(N_("One-Hit Kills"), c.oneHit, N_("The party's hits take all of a monster's HP; a boss's last stand holds (not in VS)"));
+    rows.push_back({tr("EXP Multiplier"), std::to_string(std::clamp(c.exp, 1, 10)) + "x", tr("The genes' EXP from a battle won, 1x to 10x (not in VS)"), true,
                     [&c](int d) { c.exp = (std::clamp(c.exp, 1, 10) - 1 + (d < 0 ? 9 : 1)) % 10 + 1; }});
-    flag("Always First Strike", c.firstStrike, "Every battle that can open with a first strike does; never ambushed");
-    flag("No Random Battles", c.noBattles, "No random encounters on the field; the story's battles still come");
-    flag("Max Money", c.money, "Your money held at the most");
-    flag("Full HP/MP Outside Battle", c.fullOutside, "The party's MP whole between battles (CR3 restores the HP itself)");
-    flag("Always Full Break Gauge", c.gauge, "The break gauge at the party's full side every turn: Finest Arts open (not in VS)");
-    flag("Always Co-op", c.coop, "Members picking the same command always join in a co-op attack (not in VS)");
-    flag("Always Drop", c.drops, "Every monster leaves its item, the rare one by its share (not in VS)");
-    flag("Full Cheer", c.cheer, "The cheer points full in every battle; your saved points kept (not in VS)");
+    flag(N_("Always First Strike"), c.firstStrike, N_("Every battle that can open with a first strike does; never ambushed"));
+    flag(N_("No Random Battles"), c.noBattles, N_("No random encounters on the field; the story's battles still come"));
+    flag(N_("Max Money"), c.money, N_("Your money held at the most"));
+    flag(N_("Full HP/MP Outside Battle"), c.fullOutside, N_("The party's MP whole between battles (CR3 restores the HP itself)"));
+    flag(N_("Always Full Break Gauge"), c.gauge, N_("The break gauge at the party's full side every turn: art ascendants open (not in VS)"));
+    flag(N_("Always Co-op"), c.coop, N_("Members picking the same command always join in a co-op attack (not in VS)"));
+    flag(N_("Always Drop"), c.drops, N_("Every monster leaves its item, the rare one by its share (not in VS)"));
+    flag(N_("Full Cheer"), c.cheer, N_("The cheer points full in every battle; your saved points kept (not in VS)"));
     return rows;
 }
 
@@ -1256,6 +1300,8 @@ void Viewer::grabCrossFade(int fw, int fh, cr3::EventRuntime& ev) {
 // window (GL) - the resolution's shape letterboxed in it. The scene (smaller while an
 // upscaler is on), then the UI over the resolved frame at full size.
 void Viewer::draw(int fw, int fh) {
+    // (the port's own text: a translation the fonts can't draw - Korean without a Hangul fallback - shown in English)
+    if (font.loaded()) uitext::setCoverage([this](const std::string& t) { return font.drawable(t); }, font.generation());
     if (battleMode && glassPending) grabGlass(fw, fh);
     if (cr3BattleRequest.active) startRequestedCr3Battle(fw, fh);
     if (cr3::EventRuntime* ev = activeEvents(); ev && ev->crossFade().capture) grabCrossFade(fw, fh, *ev);
@@ -5627,12 +5673,22 @@ void Viewer::drawCr3ListBar(const UiFig& menu, bool shortList, int top, int n, i
     cr3UiPut("comlistbarcursor", "", 0, cx, cy, view);
 }
 
-void Viewer::cr3UiLabel(const UiFig& panel, const char* joint, const std::string& text, int w, int h, float shade) {
+void Viewer::cr3UiLabel(const UiFig& panel, const char* joint, const std::string& text, int w, int h, float shade, float maxWidth) {
     float tx, ty;
     if (text.empty() || !cr3UiCall(panel, joint, tx, ty)) return;
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
     const float k = cr3UiFocus ? 1.1f : 1.0f, o = k * uiTextScale;
-    drawUiText(text, 26 * k, (tx + 0.075f * o) / 10, (ty - 0.15f * o) / 10, w, h, true, cr3UiFocus ? 1.0f : cr3UiDim ? shade * 0.5f : shade);
+    drawUiText(text, 26 * k, (tx + 0.075f * o) / 10, (ty - 0.15f * o) / 10, w, h, true, cr3UiFocus ? 1.0f : cr3UiDim ? shade * 0.5f : shade,
+               maxWidth > 0 ? std::max(maxWidth - 0.0075f * o, 0.01f) : 0.0f);
+}
+
+// (the room from typeM_L00 to the left arrow's left edge, less a margin: UI units / 10, as drawUiText's; 0 unknown)
+float Viewer::optLabelRoom(const UiFig& panel) {
+    float lx, ly, cx, cy, ax, ay;
+    if (!cr3UiCall(panel, "typeM_L00", lx, ly) || !cr3UiCall(panel, "call_optSltLbtn", cx, cy)) return 0;
+    const UiFig& l = cr3UiPose("optsltlbtn", "", 0, cx, cy);
+    if (!cr3UiCall(l, "tapAreaS01", ax, ay)) return 0;
+    return std::max((std::min(ax, cx) - lx - 0.12f * cr3UiScale) / 10, 0.02f);
 }
 
 // a posed figure's joint's whole transform (its place in the world)

@@ -1,6 +1,7 @@
 #pragma once
 #include "platform/vita_import_ui.hpp"
 #include "platform/atomic_file.hpp"
+#include "platform/ui_text.hpp"
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -58,6 +59,9 @@
 #include "viewer/setup.hpp"
 
 std::string storedSetting(const char* key); // (settings.ini's data= / patch=: below)
+// The port's own text (platform/ui_text.hpp) before the game starts - the first start's setup, its messages: the
+// catalogs' lang/ folders (each game folder's, the profile folder's) and settings.ini's ui_lang= (none: the system's)
+void startUiText(const std::vector<std::string>& gameFolders);
 #include "field/character.hpp"
 #include "field/cr3field.hpp"
 #include "field/fieldmap.hpp"
@@ -68,6 +72,9 @@ std::string storedSetting(const char* key); // (settings.ini's data= / patch=: b
 #include "gfx/text.hpp"
 
 namespace cr3_viewer {
+
+using uitext::tr; // the port's own text in the player's language (platform/ui_text.hpp)
+using uitext::trf;
 
 using cr3::Mat4;
 
@@ -291,6 +298,14 @@ struct Viewer {
         } cheats;
     } settings;
     bool settingsPersist = false;
+    // The port's own text's language (Options > Other > Menu Language; settings.ini's ui_lang=): "auto" the game text's,
+    // or a catalog's code ("en", "ja", "de" ...); "" none picked yet - the system's (SDL_GetPreferredLocales). CR_UI_LANG
+    // over it
+    std::string uiLang;
+    std::string uiTextLanguage() const; // (the code Auto stands for: the game text's language - ja, en, es)
+    void applyUiLanguage();
+    void stepUiLanguage(int by);        // (Auto, then English and each catalog - platform/ui_text's languages())
+    std::string uiLanguageShown() const; // (the Menu Language row's value)
     int rendererInUse = 0;        // (the device that started: the Renderer row's "next start")
     SDL_Window* window = nullptr;
     int appliedDisplay = -1, appliedMsaa = -1;
@@ -3319,7 +3334,8 @@ struct Viewer {
     void drawCr3ListDigits(const UiFig& num, int value, float alpha, const Mat4& view);
     void drawCr3ListEnds(float lx, float ly, int n, int focus, const Mat4& view);
     void drawCr3ListBar(const UiFig& menu, bool shortList, int top, int n, int visible, const Mat4& view, float lowExtra = 0);
-    void cr3UiLabel(const UiFig& panel, const char* joint, const std::string& text, int w, int h, float shade = 1.0f);
+    void cr3UiLabel(const UiFig& panel, const char* joint, const std::string& text, int w, int h, float shade = 1.0f, float maxWidth = 0);
+    float optLabelRoom(const UiFig& panel); // (CR3-U's Options rows: a label's room to the left arrow - a longer one narrowed)
     void drawGenePicks(int w, int h, const Mat4& view);
     void drawGeneAlert(int w, int h, const Mat4& view);
     void geneLabAlert(int id);
@@ -4189,7 +4205,8 @@ struct Viewer {
     vitaimport::Session saveImport;
     struct Cr3CampOptions {
         int tab = 0;
-        int otherRow = 0; // 0 resolution, 1 the language (where there's more than one), 2 Vita save import, 3 Credits, 4 Copyright Notice
+        int otherRow = 0; // 0 resolution, 1 the language (where there's more than one), 2 Vita save import, 3 Credits, 4 Copyright Notice,
+                          // 5 Menu Language (CR3-U's own text)
         int hands = 0; // (Controls: 0 two-handed, 1 one-handed)
         int from = 0;  // (CR3-U's: 0 the camp's, 1 the title's - its own Options button -, 2 a battle's get-set Options)
         int top = 0;   // (Graphics: the first row shown)
@@ -4257,6 +4274,7 @@ struct Viewer {
     static constexpr int kOptionTabs = 5, kTabCheats = 3, kTabGraphics = 4, kGraphicsRows = 4;
     static constexpr int kTapGraphicsRow = 1000, kTapGraphicsUp = 1100, kTapGraphicsDown = 1101, kTapOtherUp = 1102, kTapOtherDown = 1103;
     static constexpr int kTapOptionsReset = 1200, kTapResetYes = 1201, kTapResetNo = 1202;
+    static constexpr int kTapMenuLanguage = 1410; // (Menu Language's left arrow; + 1 its right)
     static constexpr int kTapOptPanel = 1230, kTapTitleYes = 1240, kTapTitleNo = 1241; // (the field's footer panels 0 .. 4; Title Screen's question)
     void drawCr3OptionsFooter(int w, int h, const Mat4& view);    void drawCr3OptionTabs(int chosen, float x, float y, int w, int h, const Mat4& view);
     float cr3OptionsScale(int w, int h) const;

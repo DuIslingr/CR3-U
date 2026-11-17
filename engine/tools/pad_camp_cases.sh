@@ -69,10 +69,20 @@ want camp && run gene-event-disposal "0:until=a_gene_to_discard 1:east 2:right 2
     -- --event d16:s481_d16_00104_evt --page 0.05 $full_box
 
 # OptionMain's Credits / Copyright Notice (round 26: the Other tab's rows, StaffNameListMenu - Staff2's 854 lines,
-# Copyright's 668; ↓ a line, × back to the options)
-want camp && run options-credits "0:until=camp:_options 0.5:r 1:r 1.5:down 2:down 2.5:down 3:east 4:down 4.5:down 5.5:south 6.5:down 7:east 8:quit" \
+# Copyright's 668 - below CR3-U's Menu Language and Vita Saves; ↓ a line, × back to the options)
+want camp && run options-credits "0:until=camp:_options 0.5:r 1:r 1.5:down 2:down 2.5:down 2.8:down 3.2:east 4:down 4.5:down 5.5:south 6.5:down 7:east 8:quit" \
     "options: tab 2|options: other row 3|options: credits (854 lines)|staff list: line 2|staff list: line 3|options: credits closed|options: other row 4|options: copyright notice (668 lines)" \
     -- --area d0301 --flag 26 --input "camp:open camp:button6"
+
+# CR3-U's Menu Language (Options > Other, after the game's Language; platform/ui_text): none picked - the system's, English
+# here -, → German, → Spanish, ← back, ← English, ← Auto (the game text's: English); the row's label in each, as the log says
+if want camp; then
+    CR_UI_LANG= LC_ALL=en_US.UTF-8 LANGUAGE= && export LC_ALL LANGUAGE
+    run options-menu-language "0:until=camp:_options 0.5:r 1:r 1.5:down 2:down 2.5:right 3:right 3.5:left 4:left 4.5:left 5.5:quit" \
+        'options: tab 2|options: other row 1|options: other row 5|menu language de (de) - "Menüsprache"|menu language es (es) - "Idioma de los menús"|menu language de (de) - "Menüsprache"|menu language en (en) - "Menu Language"|menu language en (auto) - "Menu Language"' \
+        -- --area d0301 --flag 26 --input "camp:open camp:button6"
+    unset CR_UI_LANG LC_ALL LANGUAGE
+fi
 
 # CR3-U's Cheats (Options' own tab, the fourth - before Graphics): R R R to it, ↓ Infinite MP, ○ on, ○ off again; R to
 # Graphics, L back - the focus kept -, ○ on, then Reset (R key), ← Yes, ○: every cheat off (the run's settings.ini left as

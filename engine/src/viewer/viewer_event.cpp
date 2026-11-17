@@ -3531,14 +3531,15 @@ bool Viewer::drawNumberedEmptySavePanel(const UiFig& panel, const Mat4& view) {
 // is the file being opened, so there is no separate global restart control.
 void Viewer::drawClearedSaveChoices(int w, int h, const Mat4& view) {
     Cr3SaveMenu& m = saveMenu;
-    drawCr3Told("File " + std::to_string(m.askSlot + 1) + " is cleared.\\nContinue playing or start New Game Plus?\\nNew Game Plus keeps your completed save.",
+    drawCr3Told(trf("File {0} is cleared.", {std::to_string(m.askSlot + 1)}) + "\\n" + tr("Continue playing or start New Game Plus?") + "\\n" +
+                    tr("New Game Plus keeps your completed save."),
                 1.0f, kTapSaveNo, w, h, view, &saveTaps);
     saveTaps.clear();
     float x, y;
     UiFig& pos = cr3UiPut("combtnposition", "", 0, 0, 0, view);
     if (!cr3UiCall(pos, "call_comBtnMenu", x, y, w, h)) return;
     UiFig& menu = cr3UiPut("combtnmenu", "combtnmenu_io", m.askSince, x, y, view, 0);
-    const char* labels[] = {"Continue", "New Game Plus", "Back"};
+    const char* labels[] = {N_("Continue"), N_("New Game Plus"), N_("Back")};
     const int ids[] = {kTapSaveYes, kTapSavePlus, kTapSaveNo};
     for (int b = 0; b < 3; ++b) {
         float px, py, cx, cy, ax, ay, bx, by;
@@ -3570,7 +3571,7 @@ void Viewer::drawClearedSaveChoices(int w, int h, const Mat4& view) {
         cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
         if (right > left && top > bottom)
-            drawUiText(labels[b], 22, (left + labelRight + 0.08f) / 20, (bottom + top) / 20, w, h, false,
+            drawUiText(tr(labels[b]), 22, (left + labelRight + 0.08f) / 20, (bottom + top) / 20, w, h, false,
                        enabled ? (b == m.askFocus ? 0.0f : 0.08f) : 0.6f, (labelRight - left - 0.24f) / 10);
         if (enabled && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by))
             saveTaps.push_back({ax, ay, bx, by, ids[b]});
