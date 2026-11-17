@@ -1,4 +1,4 @@
-# CR3-U v0.8.0
+# CR3-U v0.7.3
 
 Touch play in battle as the original has it, the port's own menus in nine languages, and fan
 translations as loose files. Since [v0.7.2](https://github.com/DuIslingr/CR3-U/releases/tag/v0.7.2);
