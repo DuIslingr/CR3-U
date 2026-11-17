@@ -2862,7 +2862,7 @@ void Viewer::drawCr3PlaceRows(const std::vector<Cr3PlaceRow>& rows, int f, float
             UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view, a);
             if (cr3UiCall(help, "typeM_L01", tx, ty)) {
                 dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                drawUiText(rows[size_t(f)].name, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+                drawUiTicker("place help", rows[size_t(f)].name, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h);
             }
         }
     }
@@ -4769,7 +4769,7 @@ void Viewer::drawGeneSelector(int w, int h) {
         UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view, a);
         if (cr3UiCall(help, "typeM_L01", tx, ty)) {
             dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-            drawUiText(told, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, a);
+            drawUiTicker("vs announce", told, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, a);
         }
     }
     dev->clearDepth();

@@ -2161,6 +2161,11 @@ struct Viewer {
     bool cr3ListItems = false;
     int cr3ItemCategory = 0; // (BtlItemListUI: Items / Gifts)
     int cr3ChosenCommand = -1, cr3ChosenItem = 0;
+    // (the list row the targets came from - BtlSysStateSelect +0x9c: 0x13 / 0x17, the list again on back, its row in
+    // focus - BtlCommandListUI +200 -; below 0 Attack's - 0xe, the commands)
+    int cr3ListChosen = -1;
+    static constexpr int kCr3TapBack = 100; // (ComBackButton::CheckTap's 100 - cr3Taps' id)
+    void backCr3Battle(const char* how);
     bool cr3TargetChanged = false;
     std::string cr3NameOf(const char* file, const char* table, int id);
     bool cr3CommandHasTarget(const cr3::Cr3Command& c) const;
@@ -2677,6 +2682,15 @@ struct Viewer {
     float uiTextScale = 1; // (the text's size times this: CR3's Options scaled to a desktop's window)
     float uiTextWidth(const std::string& text, float size, int w, int h);
     float drawUiText(const std::string& text, float size, float x, float y, int w, int h, bool left = false, float shade = 1, float maxWidth = 0, float border = 0);
+    const TextQuad* uiTextQuad(const std::string& text, float size, int w, int h);
+    // a help / announcement line in btHelpMenu (ProvisionalMenuText's ticker: one wider than its window scrolls -
+    // drawUiTicker), from x (its left) as drawUiText draws it; each window (`site`) its own scroll
+    struct UiTicker {
+        std::string text;
+        float since = 0, drawn = -1; // (uiClock: the line set, last drawn)
+    };
+    std::map<std::string, UiTicker> uiTickers;
+    float drawUiTicker(const std::string& site, const std::string& text, float size, float x, float y, int w, int h, float shade = 1);
 
     // The battle's HUD: the party's windows (BattleStatusMenu: pc01win / pc02win, their HP and MP
     // bars - btlHpBar_per posed at HP x 5 / max seconds, at least 0.07 - the face, the numbers:

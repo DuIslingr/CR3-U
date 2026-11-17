@@ -62,6 +62,17 @@ hundred of the 640-high layout's pixels, the focus moving on past half of one; l
 without a drag is its tap. The Sp Shop's Lucky Boxes swipe: across more than 40 of those pixels, more across than up
 or down, within half a second (LuckyBoxMenu::TouchSimpleRelease) - left the next box, right the one before.
 
+## CR3's battle by touch or the mouse
+
+In a battle's gene and item lists (comListMenu::TouchGestureTap), tapping a row that is not in focus moves the
+focus to it (com_002) and shows its help across the top. Tapping the focused row uses it, or plays com_005 if it
+cannot be used. Tapping off the rows does nothing. The command buttons and the targets act on their first tap, as
+in the game. The commands, the lists and the targets show the game's back button (ComBackButton, at the screen's
+lower right; com_004). It does what Back / Backspace / the Android back key / the controller's × do: the targets
+go back to the list they came from (that row in focus) or to the commands, the list goes back to the commands,
+and the commands go back to the previous fighter's, or from the first fighter to the get-set. The get-set has no
+back button.
+
 ## CR3's camera and field buttons
 
 The camera turns as the iPad's and Android's releases turn it (Fld2TaskTouch::UpdateTouch,

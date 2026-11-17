@@ -1083,7 +1083,7 @@ void Viewer::drawCr3Announce(const Mat4& view, int w, int h) {
     UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view, a);
     if (cr3UiCall(help, "typeM_L01", tx, ty)) {
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-        drawUiText(cr3Announce.text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, a);
+        drawUiTicker("battle announce", cr3Announce.text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, a);
     }
 }
 
@@ -2334,6 +2334,7 @@ void Viewer::chooseCr3ListRow(int k) {
     }
     const Cr3ListRow& row = cr3List[size_t(k)];
     audio.playSe(0x153, false);
+    SDL_Log("battle: list row %d chosen (command %d)", k, row.command);
     cr3ChosenCommand = row.command, cr3ChosenItem = row.item;
     cr3::Cr3Command c;
     cr3Rules.command(row.command, c);
@@ -2342,6 +2343,7 @@ void Viewer::chooseCr3ListRow(int k) {
         cr3Choices.push_back({cr3Chooser, row.command, cr3Chooser});
         nextCr3Chooser();
     } else {
+        cr3ListChosen = k; // (BtlSysStateSelect::VUpdate 0x9d5280 / 0x9d537c: +0x9c 0x13 / 0x17 - back to this list)
         cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0, cr3TargetChanged = false;
         if (cr3Targets().empty() && cr3TargetCanChange()) cr3TargetChanged = true;
     }
@@ -2394,6 +2396,7 @@ void Viewer::chooseCr3Command(int button) {
         nextCr3Chooser();
     } else if (button == 0) { // (Attack: its target next)
         cr3ChosenCommand = cr3Rules.attackCommandOf(cr3Chooser), cr3ChosenItem = 0; // (a transformation's: 8 / 9)
+        cr3ListChosen = -1; // (phaseMenuSelect 0x9d4120: +0x9c 0xe - back to the commands)
         cr3BattleStage = Cr3BattleStage::Target, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0, cr3TargetChanged = false;
     } else if (button == 1 || button == 2) { // (Gene: its commands; Item)
         openCr3List(button == 2);
@@ -4005,25 +4008,39 @@ bool Viewer::cr3BattleKey(SDL_Keycode k) {
     } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Escape) { // (GetHardReturnTap: com_004, back)
         audio.playSe("com_004", false);
         chooseCr3Escape(1);
-    } else if (k == SDLK_BACKSPACE && (cr3BattleStage == Cr3BattleStage::Target || cr3BattleStage == Cr3BattleStage::List)) {
-        audio.playSe("com_004", false);
-        cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
-    } else if (k == SDLK_BACKSPACE && cr3BattleStage == Cr3BattleStage::Command) {
-        audio.playSe("com_004", false);
-        if (cr3Choices.empty()) {
-            beginCr3Turn(false); // (back to the get-set)
-        } else {
-            const int prev = cr3Choices.back()[0];
-            cr3Choices.pop_back();
-            if (const auto it = cr3TurnItems.find(prev); it != cr3TurnItems.end()) {
-                game.cr3Items[it->second] = std::min(game.cr3Items[it->second] + 1, 99);
-                cr3TurnItems.erase(it);
-            }
-            cr3Chooser = prev - 1;
-            nextCr3Chooser();
-        }
+    } else if (k == SDLK_BACKSPACE && (cr3BattleStage == Cr3BattleStage::Target || cr3BattleStage == Cr3BattleStage::List ||
+                                       cr3BattleStage == Cr3BattleStage::Command)) {
+        backCr3Battle("the back key");
     } else return false;
     return true;
+}
+
+// Back - the back key (GetHardReturnTap) or the menu's ComBackButton (CheckTap 100; com_004 - comBtnMenu::TouchSimpleRelease
+// 0xa4d574, TargetSelectMenu::TouchSimpleRelease 0xb48520, InterfaceMain::GetTapListBackID(true) 0x89e240): the targets to
+// where they came from (phaseTargetSelect 0x9d457c: +0x9c's phase - the list, its row in focus, else the commands), the
+// list to the commands (BtlCommandListUI::OnUpdate 0x9a119c: result 0 -> phase 0xe), the commands to the one before
+// (GetCommandSelectResult 0x9a412c's 1: ToPrevMenu) - the first's to the get-set
+void Viewer::backCr3Battle(const char* how) {
+    audio.playSe("com_004", false);
+    SDL_Log("battle: back from the %s (%s)", cr3BattleStage == Cr3BattleStage::Target ? "targets" : cr3BattleStage == Cr3BattleStage::List ? "list" : "commands", how);
+    if (cr3BattleStage == Cr3BattleStage::Target && cr3ListChosen >= 0 && size_t(cr3ListChosen) < cr3List.size()) {
+        cr3BattleStage = Cr3BattleStage::List, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = cr3ListChosen;
+        cr3ListChosen = -1;
+        SDL_Log("battle: the list again, row %d in focus", cr3Focus);
+    } else if (cr3BattleStage == Cr3BattleStage::Target || cr3BattleStage == Cr3BattleStage::List) {
+        cr3BattleStage = Cr3BattleStage::Command, cr3StageStart = cr3MenuStart = cr3BattleClock, cr3Focus = 0;
+    } else if (cr3Choices.empty()) {
+        beginCr3Turn(false); // (back to the get-set)
+    } else {
+        const int prev = cr3Choices.back()[0];
+        cr3Choices.pop_back();
+        if (const auto it = cr3TurnItems.find(prev); it != cr3TurnItems.end()) {
+            game.cr3Items[it->second] = std::min(game.cr3Items[it->second] + 1, 99);
+            cr3TurnItems.erase(it);
+        }
+        cr3Chooser = prev - 1;
+        nextCr3Chooser();
+    }
 }
 
 // a click (fx, fy: the screen's fractions) on a button
@@ -4073,9 +4090,17 @@ bool Viewer::cr3BattleClick(float fx, float fy) {
     const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
     for (const Cr3Tap& t : cr3Taps)
         if (ux >= std::min(t.x0, t.x1) && ux <= std::max(t.x0, t.x1) && uy >= std::min(t.y0, t.y1) && uy <= std::max(t.y0, t.y1)) {
-            if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(t.id);
+            if (t.id == kCr3TapBack) { // (ComBackButton::CheckTap: only once faded in - +0x158 -, 1/6 s)
+                if (cr3BattleClock - cr3MenuStart >= 1.0f / 6) backCr3Battle("the back button");
+            }
+            else if (cr3BattleStage == Cr3BattleStage::Menu) chooseCr3GetSet(t.id);
             else if (cr3BattleStage == Cr3BattleStage::Escape) chooseCr3Escape(t.id);
-            else if (cr3BattleStage == Cr3BattleStage::List) chooseCr3ListRow(t.id);
+            else if (cr3BattleStage == Cr3BattleStage::List) {
+                // (comListMenu::TouchGestureTap 0xa521bc: the focused row's tap uses it - com_005 where it can't be used -,
+                // another's - 1 or 2 away - scrolls it into the focus - AutoScroll 0xa4f954, Pose's com_002 -, its help up)
+                if (t.id == cr3Focus) chooseCr3ListRow(t.id);
+                else cr3Focus = t.id, audio.playSe("com_002", false), SDL_Log("battle: list row %d in focus (tapped)", t.id);
+            }
             else if (cr3BattleStage == Cr3BattleStage::Command) chooseCr3Command(t.id);
             else if (t.id == -2) {
                 cr3TargetChanged = !cr3TargetChanged, cr3Focus = 0;
@@ -4084,7 +4109,9 @@ bool Viewer::cr3BattleClick(float fx, float fy) {
             } else chooseCr3Target(t.id);
             return true;
         }
-    return false;
+    // (comListMenu / comBtnMenu take no tap off their rows and buttons: not the focused one's - the targets' does,
+    // TargetSelectMenu::TouchGestureTap 0xb48a80)
+    return cr3BattleStage == Cr3BattleStage::List || cr3BattleStage == Cr3BattleStage::Command;
 }
 
 // BtlUnit::VGetCameraPoint: its figure's DummyCP joint as last posed (CrxModel::GetPosition),
@@ -4865,7 +4892,7 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                     UiFig& help = cr3UiPut("bthelpmenu", "", 0, hx, hy, view);
                     if (cr3UiCall(help, "typeM_L01", tx, ty)) {
                         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                        drawUiText(text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+                        drawUiTicker("battle target help", text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h);
                     }
                 }
             }
@@ -4922,7 +4949,7 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                                                       : cr3NameOf("command_help.mbe", "CommandHelp", row.command);
                     if (!text.empty() && cr3UiCall(help, "typeM_L01", tx, ty)) {
                         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-                        drawUiText(text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h, true, 1.0f);
+                        drawUiTicker("battle list help", text, 26, (tx + 0.075f) / 10, (ty - 0.15f) / 10, w, h);
                     }
                 }
             }
@@ -4963,6 +4990,22 @@ void Viewer::drawCr3BattleHud(int w, int h) {
                     float ax, ay, bx, by;
                     if (cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, int(k)});
                 }
+        }
+    }
+    if ((cr3BattleStage == Cr3BattleStage::Command || cr3BattleStage == Cr3BattleStage::Target || cr3BattleStage == Cr3BattleStage::List) &&
+        waiting && cr3AutoResult == 0) {
+        // the menu's back button (SetParamNumber 6 - InterfaceMain::SetButtonListBackButton 0x89d850 from EntryCommandSelect
+        // 0x9a405c, SetListMenuBackButton 0x89e138 from the lists' Open, SetTargetListBackButton 0x8a0184 from
+        // OpenTargetSelect -: a ComBackButton each, none on the get-set, comBtnMenu's not with the marker; ComBackButton::Pose
+        // 0x883aec: comBackMenu at comBackPosition's call_comBackMenu + (0.02, -0.01), comBack_fr00 at its call_comBack_fr00,
+        // frame 0 - faded in over 5 frames -; comBackMenu's tap area its tap)
+        UiFig& bp = cr3UiPut("combackposition", "", 0, 0, 0, view);
+        if (cr3UiCall(bp, "call_comBackMenu", x, y, w, h)) {
+            const float alpha = std::clamp((cr3BattleClock - cr3MenuStart) * 6.0f, 0.0f, 1.0f);
+            UiFig& bm = cr3UiPut("combackmenu", "", 0, x + 0.02f, y - 0.01f, view);
+            float cx, cy, ax, ay, bx, by;
+            if (cr3UiCall(bm, "call_comBack_fr00", cx, cy)) cr3UiPut("comback_fr00", "", 0, cx, cy, view, alpha);
+            if (cr3UiCall(bm, "tapAreaS01", ax, ay) && cr3UiCall(bm, "tapAreaE01", bx, by)) cr3Taps.push_back({ax, ay, bx, by, kCr3TapBack});
         }
     }
     // the damage (DamageInfo: btNumMenu - btNumMenu_in over its first 0.53 s - the digits'

@@ -1836,7 +1836,8 @@ int main(int argc, char** argv) {
         // 2:down 3:lx=1 4:lx=0" (a button is held 0.1 s; east / south / north / west, up / down / left /
         // right, l / r, start, back; lx / ly the left stick, rx / ry the right, -1 .. 1, y up positive; blur the window's focus
         // lost; plug another controller connected (pressed from then), unplug the first taken out (with
-        // another left); use=<n> the n-th still connected pressed from then; foreign one not the run's own connected (ignored); key=<name> a key, alt+ with Alt; shot=<file.bmp> the frame then; until=<text> the
+        // another left); use=<n> the n-th still connected pressed from then; foreign one not the run's own connected (ignored); key=<name> a key, alt+ with Alt; tap=<fx>:<fy> a finger's tap
+        // there (the UI screen's fractions); shot=<file.bmp> the frame then; until=<text> the
         // later steps held till a log line has it - '_' a space -, their times from then; quit the end).
         // Each press of a held direction is logged
         struct PadStep {
@@ -2400,6 +2401,22 @@ int main(int argc, char** argv) {
                         if (name.rfind("alt+", 0) == 0) key.key.mod = SDL_KMOD_LALT, name = name.substr(4);
                         key.key.key = SDL_GetKeyFromName(name.c_str());
                         SDL_PushEvent(&key);
+                    } else if (w.rfind("tap=", 0) == 0) { // (a finger's tap - press and release - at the UI screen's fractions: tap=0.5:0.4)
+                        float fx = 0.5f, fy = 0.5f;
+                        std::sscanf(w.c_str() + 4, "%f:%f", &fx, &fy);
+                        int ww = 1, wh = 1, pw = 1, ph = 1; // (screenFraction's inverse)
+                        SDL_GetWindowSize(win, &ww, &wh);
+                        SDL_GetWindowSizeInPixels(win, &pw, &ph);
+                        const float sw = float(v.screenW), sh = float(v.screenH);
+                        const float k = v.dev->offscreen() ? std::min(float(pw) / float(v.frameW), float(ph) / float(v.frameH)) : 1.0f;
+                        const float px = (float(pw) - sw * k) * 0.5f + fx * sw * k, py = (float(ph) - sh * k) * 0.5f + fy * sh * k;
+                        for (const Uint32 type : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                            SDL_Event m{};
+                            m.type = type, m.button.windowID = SDL_GetWindowID(win), m.button.which = SDL_TOUCH_MOUSEID;
+                            m.button.button = SDL_BUTTON_LEFT, m.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN, m.button.clicks = 1;
+                            m.button.x = px * float(ww) / float(std::max(pw, 1)), m.button.y = py * float(wh) / float(std::max(ph, 1));
+                            SDL_PushEvent(&m);
+                        }
                     } else if (w.rfind("shot=", 0) == 0) {
                         padShot = w.substr(5);
                     } else if (w == "quit") {

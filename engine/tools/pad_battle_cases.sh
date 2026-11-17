@@ -16,6 +16,15 @@ want battle && run battle-list-boundaries \
     "test controller: up|test controller: down|battle: cursor 1|test controller: down|test controller: up|battle: cursor 0" \
     -- --battle 2612 --team-level 30 --item 101:3 --item 102:3 --input "battle item"
 
+# Touch in the gene list (comListMenu::TouchGestureTap 0xa521bc, issue #7): a tap off the rows takes nothing, another
+# row's tap only focuses it (its help up), the focused row's tap uses it; the back button (ComBackButton, lower right,
+# com_004) then steps back - the targets to that list, the list to the commands, the first fighter's to the get-set
+# (16:9 at 1280x720: the focused row at y 0.565, the next 0.69, the back button 0.915 / 0.938)
+want battle && run battle-touch-list \
+    "0.1:until=genes: 0.8:tap=0.3:0.5 1.2:tap=0.75:0.69 1.8:tap=0.75:0.565 2.6:tap=0.915:0.938 3.2:tap=0.915:0.938 3.8:tap=0.915:0.938 4.4:quit" \
+    "fighter 0's genes:|battle: list row 1 in focus (tapped)|battle: list row 1 chosen|battle: back from the targets (the back button)|battle: the list again, row 1 in focus|battle: back from the list (the back button)|battle: back from the commands (the back button)" \
+    -- --size 1280x720 --battle 2612 --team-level 30 --cr3-gene 1:3:3704 --input "battle gene"
+
 # The first confirm during the result tally completes it; the second dismisses it.
 want battle && run battle-victory-confirm \
     "0.1:until=victory_camera_ready 0.2:east 1:quit" \

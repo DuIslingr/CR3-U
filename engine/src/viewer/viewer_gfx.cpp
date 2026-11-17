@@ -4494,9 +4494,9 @@ float Viewer::uiTextWidth(const std::string& text, float size, int w, int h) {
     return float(tw) * (size * uiTextScale / 1000.0f / float(px));
 }
 
-// (its width, UI units: 0 none drawn)
-float Viewer::drawUiText(const std::string& text, float size, float x, float y, int w, int h, bool left, float shade, float maxWidth, float border) {
-    if (text.empty() || !font.loaded()) return 0;
+// (a line's texture, made once and kept - the least used let go past kUiTextLimit; null: nothing to draw)
+auto Viewer::uiTextQuad(const std::string& text, float size, int w, int h) -> const TextQuad* {
+    if (text.empty() || !font.loaded()) return nullptr;
     const float k = std::min(float(w) / 0.96f, float(h) / 0.64f);
     const int px = std::max(1, int(size * uiTextScale / 1000.0f * k + 0.5f));
     const std::string key = text + "\n" + std::to_string(px);
@@ -4505,15 +4505,54 @@ float Viewer::drawUiText(const std::string& text, float size, float x, float y, 
         TextQuad q;
         int tw = 0, th = 0;
         cr3::Image img = font.render(text, px, tw, th);
-        if (img.rgba.empty()) return 0;
+        if (img.rgba.empty()) return nullptr;
         q.tex = dev->upload(img);
         const float unitsPerPx = size * uiTextScale / 1000.0f / float(px);
         q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx, q.below = float(img.height - th) * unitsPerPx;
         it = uiTexts.emplace(key, q).first;
     }
     it->second.used = ++uiTextUses;
-    cr3::trimLeastUsed(uiTexts, kUiTextLimit, [this](TextQuad& t) { dev->destroy(t.tex); });
-    const TextQuad& q = it->second;
+    cr3::trimLeastUsed(uiTexts, kUiTextLimit, [this](TextQuad& t) { dev->destroy(t.tex); }); // (not this one: just used)
+    return &it->second;
+}
+
+// ProvisionalMenuText's ticker - SetTextRender 0x888b08's last flag, set by OneHelpMenu::SetListHelpText 0x888640 /
+// SetBtlHelpText 0x888794 (the help and announcement lines in btHelpMenu): a line wider than its window - +0x4d8, 734
+// of the layout's pixels from the constructor 0x888930, the text's width + its size against it (SetTextOffsetData
+// 0x888ec0) - shows that much of itself from its left (Pose 0x88a7f4: the quad that wide, its U window moved), held
+// 2 s, then moved on 1.5 a step (Step 0x88a360; 30 steps a second) - the texture repeated every width + 3 sizes -, at
+// the width + 2.5 sizes back to its start and held again. A new line (each SetListHelpText) starts held. `site`: its
+// window's own (a line not drawn for a moment starts over). Its width (drawUiText's units) drawn.
+float Viewer::drawUiTicker(const std::string& site, const std::string& text, float size, float x, float y, int w, int h, float shade) {
+    constexpr float kWindow = 0.734f, kHold = 2.0f, kSpeed = 0.0015f * 30;
+    UiTicker& t = uiTickers[site];
+    if (t.text != text || uiClock - t.drawn > 0.1f || uiClock < t.drawn) t.text = text, t.since = uiClock;
+    t.drawn = uiClock;
+    const TextQuad* q = uiTextQuad(text, size, w, h);
+    if (!q) return 0;
+    const float s = size * uiTextScale / 1000.0f;
+    if (q->w + s <= kWindow) return drawUiText(text, size, x, y, w, h, true, shade);
+    const float period = q->w + 3 * s, back = q->w + 2.5f * s;
+    const float e = std::fmod(std::max(uiClock - t.since, 0.0f), kHold + back / kSpeed);
+    const float off = std::max(e - kHold, 0.0f) * kSpeed;
+    const float y0 = y - q->h / 2 - q->below, y1 = y + q->h / 2;
+    const Mat4 proj = uiProjection(w, h);
+    const float rgba[4] = {shade, shade, shade, 1};
+    for (const float start : {-off, period - off}) {
+        const float v0 = std::max(start, 0.0f), v1 = std::min(start + q->w, kWindow);
+        if (v1 <= v0) continue;
+        const float u0 = (v0 - start) / q->w, u1 = (v1 - start) / q->w, x0 = x + v0, x1 = x + v1;
+        const float v[24] = {x0, y0, u0, 1, x1, y0, u1, 1, x1, y1, u1, 0, x0, y0, u0, 1, x1, y1, u1, 0, x0, y1, u0, 0};
+        dev->drawQuad(q->tex, v, proj.data(), rgba);
+    }
+    return kWindow;
+}
+
+// (its width, UI units: 0 none drawn)
+float Viewer::drawUiText(const std::string& text, float size, float x, float y, int w, int h, bool left, float shade, float maxWidth, float border) {
+    const TextQuad* found = uiTextQuad(text, size, w, h);
+    if (!found) return 0;
+    const TextQuad& q = *found;
     const float qw = maxWidth > 0 ? std::min(q.w, maxWidth) : q.w;
     const float x0 = left ? x : x - qw / 2, x1 = x0 + qw, y0 = y - q.h / 2 - q.below, y1 = y + q.h / 2;
     const float v[24] = {x0, y0, 0, 1, x1, y0, 1, 1, x1, y1, 1, 0, x0, y0, 0, 1, x1, y1, 1, 0, x0, y1, 0, 0};
