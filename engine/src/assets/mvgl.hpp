@@ -85,7 +85,10 @@ public:
 
     // fan translations over the release (the Vita's: a rePatch folder, PCSG00500 or CR3/resources
     // under it, or the archives' folder): each its archives and loose files, kept apart - the two
-    // translations ship the same files -, the active one's used in place of the release's own
+    // translations ship the same files -, the active one's used in place of the release's own. Or
+    // its files taken out of the archives, loose in the folder: its message files directly in it
+    // (texts.dat ...), or by the archives' folders (message/, images/, script/, data/, shaders/) -
+    // over the archives' entries where it has both
     bool addOverlay(const std::string& path, std::string* error = nullptr);
     bool hasOverlay() const { return !overlays_.empty(); }
     size_t overlayCount() const { return overlays_.size(); }

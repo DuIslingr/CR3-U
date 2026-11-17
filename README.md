@@ -115,6 +115,12 @@ and the translations while you play, and the choice is kept. A Vita copy with a 
 patched into it shows that translation as it is. `--patch <rePatch folder>` gives one from
 elsewhere.
 
+A translation's files work loose too, taken out of its `.psp2.mvgl` archives: its message files
+(`texts.dat`, `announcemenuname.dat` ...) straight in `translation/<code>/`, or with the archives' own
+folders (`translation/<code>/message/`, `images/`, `script/`, `data/`). Where a folder has both, the
+loose files are read over the archives' copies, so a few corrected files can sit beside the whole
+patch.
+
 ### Menu language
 
 The game's own text comes from your copy, in its languages. What the port adds - the Options' rows

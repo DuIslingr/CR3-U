@@ -549,6 +549,50 @@ bool Database::open(const std::string& path, std::string* error) {
     return true;
 }
 
+namespace {
+
+// A fan translation's files loose in its folder - its archives' entries taken out of them: the message files (the text the
+// overlay is chosen for) directly in it, or by their folders as the archives name them (message/, images/, script/, data/,
+// shaders/), a figure's files at the top. Each as (its entry's name - "message\\texts.dat" -, its path)
+std::vector<std::pair<std::string, std::string>> looseOverlayFiles(const std::string& dir) {
+    static const char* const kFolders[] = {"message", "images", "script", "data", "shaders"};
+    static const char* const kTop[] = {".geom", ".skel", ".anim", ".name", ".sprk", ".bson"};
+    std::vector<std::pair<std::string, std::string>> out; // (name, path)
+    for (const std::string& f : walk(dir, 0)) { // (at the top: a message file - its text checked: a .dat that isn't one left)
+        const std::string n = baseName(f);
+        if (endsWith(n, ".dat")) {
+            std::vector<uint8_t> head(12);
+            std::FILE* in = std::fopen(f.c_str(), "rb");
+            const bool read = in && std::fread(head.data(), 1, head.size(), in) == head.size();
+            std::error_code ec;
+            const uint64_t size = fs::file_size(f, ec);
+            if (in) std::fclose(in);
+            const uint32_t records = read ? le32(head.data()) : 0, strings = read ? le32(head.data() + 4) : 0, count = read ? le32(head.data() + 8) : 0;
+            // (TextData's header: the records, then a u32 per language each, then the strings)
+            const bool text = read && !ec && records >= 12 && strings >= records && strings <= size &&
+                              (count == 0 ? strings == records // (an empty one: s450_d15_00501.dat)
+                                          : (strings - records) % (4 * uint64_t(count)) == 0 && (strings - records) / (4 * uint64_t(count)) <= 8);
+            if (text) out.emplace_back("message\\" + n, f);
+        } else {
+            for (const char* ext : kTop)
+                if (endsWith(n, ext)) out.emplace_back(n, f);
+        }
+    }
+    for (const char* folder : kFolders) {
+        const fs::path sub = fs::path(dir) / folder;
+        std::error_code ec;
+        if (!fs::is_directory(sub, ec)) continue;
+        for (const std::string& f : walk(sub, 2)) {
+            std::string rel = fs::path(f).lexically_relative(dir).generic_string(); // ("message/texts.dat")
+            std::replace(rel.begin(), rel.end(), '/', '\\');
+            out.emplace_back(rel, f);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 bool Database::addOverlay(const std::string& path, std::string* error) {
     std::error_code ec;
     if (!fs::exists(path, ec)) return fail(error, path + ": not found");
@@ -561,9 +605,12 @@ bool Database::addOverlay(const std::string& path, std::string* error) {
         const size_t depth = size_t(std::count(f.begin(), f.end(), '/') + std::count(f.begin(), f.end(), '\\'));
         if (depth < best) best = depth, at = fs::path(f).parent_path().string();
     }
-    if (at.empty()) return fail(error, path + ": no translation archives (*.psp2.mvgl) in it");
+    // (and its files loose in the folder - the message files the archives hold, taken out of them: over the archives' own)
+    const std::vector<std::pair<std::string, std::string>> loose = looseOverlayFiles(dir);
+    if (at.empty() && loose.empty()) return fail(error, path + ": no translation archives (*.psp2.mvgl), nor its message files, in it");
     overlays_.push_back({path, {}, {}});
-    for (const std::string& f : walk(at, 3)) {
+    for (const auto& [name, file] : loose) addLoose(file, name, true); // (first: a name the archives have too is the loose file's)
+    for (const std::string& f : at.empty() ? std::vector<std::string>() : walk(at, 3)) {
         if (endsWith(f, ".psp2.mvgl")) {
             std::string why;
             if (!addArchive(f, 0, true, &why) && error) *error = why;
@@ -573,6 +620,12 @@ bool Database::addOverlay(const std::string& path, std::string* error) {
             addLoose(f, "font\\" + baseName(f), true); // (its own font - the Spanish one's: TBGB_0KP.TTC with á, ñ, ¿, ¡ ... - over the release's)
         }
     }
+    if (at.empty()) // (loose files alone: its own font, its subtitles beside them)
+        for (const std::string& f : walk(dir, 1)) {
+            if (endsWith(f, ".srt")) addLoose(f, baseName(f), true);
+            else if (fs::path(f).parent_path().filename() == "font" && (endsWith(lower(f), ".ttc") || endsWith(lower(f), ".ttf") || endsWith(lower(f), ".otf")))
+                addLoose(f, "font\\" + baseName(f), true);
+        }
     if (overlays_.back().entries.empty()) {
         overlays_.pop_back();
         return fail(error, path + ": its archives hold nothing");

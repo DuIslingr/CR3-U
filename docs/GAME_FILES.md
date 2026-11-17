@@ -76,7 +76,11 @@ the program - it finds it by itself. The game folder is:
 ├── translation/
 │   ├── en/                             a fan translation, a folder each (its rePatch/PCSG00500/CR3/resources/*.psp2.mvgl - or
 │   └── es/                             the .rar / .zip / .7z, unpacked into en/ or es/): over an unpatched Vita copy,
-│                                       "English (fan translation)" and "Spanish (fan translation)" in the Options' Language
+│                                       "English (fan translation)" and "Spanish (fan translation)" in the Options' Language;
+│                                       or its files loose, out of the archives: the message files (texts.dat ...) right in
+│                                       en/ - or message/, images/, script/, data/, shaders/ as the archives name them -,
+│                                       read over the archives' copies where there are both
+├── lang/                            optional: <code>.po - a menu language tried without a build (engine/lang/README.md)
 ├── movies/                          cNN.mp4 your release lacks, from another (the iPad lacks c04..c11): "Movies"
 ├── font/                            your own .ttf / .otf / .ttc (optional): the first by name draws the text in every
 │                                    language (after --font / CR3_FONT; a translation's own font doesn't replace it),
