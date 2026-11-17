@@ -1,20 +1,43 @@
-# CR3-U v0.7.2
+# CR3-U v0.8.0
 
-A fix release for [v0.7.1](https://github.com/DuIslingr/CR3-U/releases/tag/v0.7.1): a controller that
-still did nothing, and the player sliding in some scenes. Everything in v0.7.1's notes still applies.
+Touch play in battle as the original has it, the port's own menus in nine languages, and fan
+translations as loose files. Since [v0.7.2](https://github.com/DuIslingr/CR3-U/releases/tag/v0.7.2);
+everything in its notes still applies.
+
+## New
+
+- **Menu Language** (Options > Other): the port's own text - its Options rows and help lines, the first
+  start's setup, the Vita save import - in English, Japanese, French, German, Spanish, Simplified or
+  Traditional Chinese, Korean or Russian. *Auto* follows the game text's language; until you pick one,
+  your system's language is used. The game's own text still comes from your copy. The translations are
+  machine translations (the Russian Options wording is metastigma's), not yet reviewed by native
+  speakers: corrections are welcome, and a `lang/<code>.po` beside the game can be tried without
+  building (`engine/lang/README.md`).
+- **Fan translations as loose files:** a translation's files now also work taken out of its
+  `.psp2.mvgl` archives, in `translation/<code>/` - its message files straight in the folder, or in the
+  archives' own folders (`message/`, `images/` ...). Beside the archives, loose files are read over
+  the archives' copies, so a few corrected files can sit beside the whole patch.
 
 ## Fixed
 
-- **Flydigi controllers, take three:** v0.7.1's SDL update found the Vader 4 Pro, but it shows up as
-  two "Xbox 360 Controller" devices and its input comes on the second, which CR3-U never opened. Now
-  every controller is opened, and the one you press or move takes over, with any make of controller.
-- **The player sliding in scenes:** when a scene walks the player to a spot (such as turning you back
-  at an area's edge), the player slid there in a standing pose. They now walk.
+- **Battle by touch:** tapping a skill or item that isn't highlighted now highlights it and shows its
+  description; a second tap uses it, as in the original. Before, the first tap used it, so the
+  descriptions couldn't be read.
+- **A back button in battle:** while choosing commands, skills or targets, the original's back button is
+  in the bottom-right corner. From the targets it goes back to the skill list with that skill still
+  highlighted, from the list to the commands, from the commands to the previous character or the first
+  menu. Backspace, the Android back key and the pad's × now go back the same way.
+- **Long descriptions:** a help line too long for its box no longer runs off the screen; after a
+  moment it scrolls sideways inside the box, as the original's do.
+- **Linux, AMD graphics:** FSR 4 is a little faster at 4K (about 0.3 ms a frame).
 
-### Thanks to metastigma
+### Thanks
 
-[metastigma](https://github.com/metastigma) sent the log that showed the Vader 4 Pro's second device
-([CRO-U #4](https://github.com/DuIslingr/CRO-U/issues/4)).
+- [ferrervicente14-creator](https://github.com/ferrervicente14-creator) reported the battle's skill
+  descriptions and the missing back button ([#7](https://github.com/DuIslingr/CR3-U/issues/7)).
+- [metastigma](https://github.com/metastigma) asked for the menus in every language
+  ([CRO-U #10](https://github.com/DuIslingr/CRO-U/issues/10)) and for loose translation files
+  ([CRO-U #11](https://github.com/DuIslingr/CRO-U/issues/11)), and wrote the Russian Options wording.
 
 ## Downloads
 
