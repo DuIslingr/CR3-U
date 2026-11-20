@@ -1,7 +1,8 @@
 #pragma once
 // The field maps' table (FldMap::ChangeArea; docs/FORMATS.md): 225 records of 0x18 bytes in the
-// game's executable, not its data - read from your copy's binary (the iPad's executable beside
-// its archive, the Vita's eboot.bin, Android's libChaosRings2.so). Each release has its own.
+// game's executable, not its data - Chaos Rings II's FldMap (cr3view --field). CR3's executables
+// have none: they keep Fld2TaskMap's 12-byte rows (name, camera type), and --field opens CR3's maps
+// as --area (docs/FORMATS.md "Fields").
 
 #include <cstdint>
 #include <string>

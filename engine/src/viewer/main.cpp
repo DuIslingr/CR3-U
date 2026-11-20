@@ -9,7 +9,8 @@
 // unless given) at one of its points (--at; defaultPos), through the map's camera, scrolling to
 // keep the character centred (field/fieldmap.hpp). The maps' table is in the game's executable:
 // found beside the iPad's or the Vita's archive, in the APK beside Android's OBB (its
-// libChaosRings2.so; assets/release.hpp), or given with --binary.
+// libChaosRings2.so; assets/release.hpp), or given with --binary. That is Chaos Rings II's table:
+// no CR3 release has it, and on CR3's data --field opens the map as CR3's field, --area.
 //
 // Events (--event <function> --vista <map>): an event's script played by the runtime (event/
 // runtime.hpp) in its vista - the map's figure (d0151b for the opening's), the scene's models on
@@ -1338,6 +1339,14 @@ int main(int argc, char** argv) {
         if (e.name.size() > 5 && e.name.compare(e.name.size() - 5, 5, ".geom") == 0) v.models.push_back(e.name);
     std::sort(v.models.begin(), v.models.end());
     if (v.models.empty()) return std::fprintf(stderr, "no models in %s\n", data.c_str()), 1;
+    // --field is the painted maps' viewer (FldMap: a table of 0x18-byte rows in the executable - Chaos
+    // Rings II's lineage); no CR3 release has that table (the iPad's, the iPhone's and Android's executables
+    // keep Fld2TaskMap's 12-byte rows), so on CR3's data it opens the map as CR3's own field, --area (GitHub issue 8)
+    if (!fieldName.empty() && playFrom.empty() && areaName.empty() && !continueSave && v.archive.contains("ttlLogoMenu.geom")) {
+        SDL_Log("--field %s: CR3's maps are its 3D areas - opened as --area %s%s", fieldName.c_str(), fieldName.c_str(),
+                at != "defaultPos" || !binary.empty() ? " (--at and --binary aren't used)" : "");
+        areaName = fieldName, fieldName.clear();
+    }
     const bool cr3Continue = continueSave && !v.cr3SavedArea().empty();
     const bool leaderDefaulted = model.empty() && (!fieldName.empty() || !playFrom.empty() || (continueSave && !cr3Continue));
     if (leaderDefaulted) model = "c001"; // (the leader: Darwin - then the field's, refreshLeader)

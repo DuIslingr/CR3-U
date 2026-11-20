@@ -2572,7 +2572,11 @@ named in the battle effect table. The port draws neither.
 
 `FldMap::ChangeArea` builds a map from a table in the **executable** (225 records of 0x18 bytes,
 from `t0101`; the iPad's executable, the Vita's `eboot.bin` and Android's library each have one -
-the iPad's and the Vita's set +0x17 on 8 maps where Android's doesn't):
+the iPad's and the Vita's set +0x17 on 8 maps where Android's doesn't). That is Chaos Rings II's
+FldMap, which `cr3view --field` reads; CR3's releases have no such table - the iPad's and the
+iPhone's 1.2.2 executables and Android's `libcrx.so` hold only Fld2TaskMap's 12-byte rows from
+`t0101` (the name, then the camera type: "The camera" above) - so on CR3's data `--field` opens
+the map as `--area`:
 
 | Record | |
 |---|---|
