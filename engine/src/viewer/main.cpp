@@ -606,6 +606,100 @@ int vsScoreSelfTest() {
     return problems ? 1 : 0;
 }
 
+// F11 / Alt+Enter for this session alone (CRO-U #15): settings.ini's display= stays the Options' Display through a toggle
+// and any save after it (another setting changed), fullscreen_kind= too; the Options' Display row sets both, and F11 goes
+// back to the kind it chose. (A Viewer without a window or device: applySettings does nothing; settings.ini isn't written)
+int fullscreenKeySelfTest() {
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+    return 0;
+#else
+    if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
+    int problems = 0;
+    {
+        Viewer v;
+        auto check = [&](bool ok, const char* what) {
+            if (!ok) { ++problems; std::printf("fullscreen key FAILED: %s\n", what); }
+        };
+        auto saved = [&v](const char* key, int value) { return v.settingsText().find(std::string("\n") + key + "=" + std::to_string(value) + "\n") != std::string::npos; };
+        Viewer::Settings& s = v.settings;
+        s.display = s.savedDisplay = 0, s.fullscreenKind = 2, s.toggleKind = 0;
+        v.toggleFullscreen();
+        check(s.display == 2 && saved("display", 0) && saved("fullscreen_kind", 2), "F11: borderless for the session, settings.ini's display=0 kept");
+        s.vsync = !s.vsync; // (another setting changed: what its save writes)
+        check(saved("display", 0), "a later save: display=0 still");
+        v.toggleFullscreen();
+        check(s.display == 0 && saved("display", 0), "F11 again: windowed");
+        std::vector<Viewer::SettingRow> rows = v.settingRows();
+        check(!rows.empty() && rows[0].label == tr("Display"), "the Graphics tab's first row: Display");
+        if (!rows.empty()) rows[0].change(1); // (the Options: Fullscreen)
+        check(s.display == 1 && saved("display", 1) && saved("fullscreen_kind", 1), "the Options' Display: Fullscreen, saved");
+        v.toggleFullscreen();
+        check(s.display == 0 && saved("display", 1) && saved("fullscreen_kind", 1), "F11: windowed for the session, display=1 still saved");
+        s.vsync = !s.vsync;
+        check(saved("display", 1), "a later save: display=1 still");
+        v.toggleFullscreen();
+        check(s.display == 1, "F11 again: the Options' Fullscreen (exclusive)");
+    }
+    SDL_Quit();
+    std::printf("fullscreen key: %d problems\n", problems);
+    return problems ? 1 : 0;
+#endif
+}
+
+// CR3-U's Quit (a desktop's, CRO-U #16): the Options' Quit Game row - the Sound tab's last, under the keys' focus after Voice
+// - asks "Quit the game?" (No first), Escape answers No and the Options stay; Yes pushes SDL_EVENT_QUIT. The title's Escape
+// asks the same, Escape / Back No, Yes quits. Neither on a phone or tablet
+int quitSelfTest() {
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+    return 0;
+#else
+    if (!SDL_Init(SDL_INIT_EVENTS)) return 1;
+    int problems = 0;
+    {
+        Viewer v;
+        auto check = [&](bool ok, const char* what) {
+            if (!ok) { ++problems; std::printf("quit FAILED: %s\n", what); }
+        };
+        auto quitPushed = []() {
+            SDL_PumpEvents();
+            return SDL_PeepEvents(nullptr, 0, SDL_PEEKEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0;
+        };
+        auto drain = []() { SDL_FlushEvent(SDL_EVENT_QUIT); };
+        drain();
+        v.openCr3OptionsFrom(1); // (the title's Options: the Sound tab first)
+        Viewer::Cr3CampOptions& co = v.campOptions;
+        co.quitRow = true; // (the keys' focus on it: Down past Voice - vitaButtons' path, with a game's data)
+        v.campOptionsKey(SDLK_RETURN);
+        check(co.quitAsk && co.quitFocus == 1, "Return on Quit Game: asked, No first");
+        v.campOptionsKey(SDLK_ESCAPE);
+        check(!co.quitAsk && v.cr3Camp.stage == 9 && !quitPushed(), "Escape: No - the Options stay, no quit");
+        v.campOptionsKey(SDLK_RETURN);
+        v.campOptionsKey(SDLK_RETURN); // (No under the cursor)
+        check(!co.quitAsk && v.cr3Camp.stage == 9 && !quitPushed(), "Return on No: the Options stay");
+        v.chooseCampOptions(Viewer::kTapQuitGame); // (a click on its button)
+        v.campOptionsKey(SDLK_LEFT);                // (Yes)
+        check(co.quitAsk && co.quitFocus == 0, "a click asks; Left on Yes");
+        v.campOptionsKey(SDLK_RETURN);
+        check(!co.quitAsk && quitPushed(), "Yes: SDL_EVENT_QUIT");
+        drain();
+        v.cr3Camp.stage = 0, co.from = 0;
+        v.cr3Title.stage = 2; // (the title waiting for its tap)
+        check(v.cr3TitleKey(SDLK_ESCAPE) && v.cr3Title.quitAsk && v.cr3Title.quitFocus == 1, "the title's Escape asks, No first");
+        check(v.cr3TitleKey(SDLK_ESCAPE) && !v.cr3Title.quitAsk && v.cr3Title.stage == 2 && !quitPushed(), "Escape again: No, the title stays");
+        v.cr3TitleQuit(Viewer::kTapTitleQuit); // (its button)
+        check(v.cr3TitleKey(SDLK_BACKSPACE) && !v.cr3Title.quitAsk && !quitPushed(), "Back: No");
+        v.cr3TitleQuit(Viewer::kTapTitleQuit);
+        v.cr3TitleKey(SDLK_LEFT);
+        v.cr3TitleKey(SDLK_RETURN);
+        check(!v.cr3Title.quitAsk && quitPushed(), "Left and Return: Yes - SDL_EVENT_QUIT");
+        drain();
+    }
+    SDL_Quit();
+    std::printf("quit: %d problems\n", problems);
+    return problems ? 1 : 0;
+#endif
+}
+
 int vistaPauseSelfTest() {
     const char* data = SDL_getenv("CR3_VITA_DATA");
     if (!data || !*data) data = SDL_getenv("CR3_DATA");
@@ -732,6 +826,8 @@ int main(int argc, char** argv) {
     if (argc>1 && std::strcmp(argv[1],"--selftest-vista-pause")==0) return vistaPauseSelfTest();
     if (argc > 1 && std::strcmp(argv[1], "--selftest-quake") == 0) return quakeSelfTest();
     if (argc > 1 && std::strcmp(argv[1], "--selftest-vs-score") == 0) return vsScoreSelfTest();
+    if (argc > 1 && std::strcmp(argv[1], "--selftest-fullscreen-key") == 0) return fullscreenKeySelfTest();
+    if (argc > 1 && std::strcmp(argv[1], "--selftest-quit") == 0) return quitSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-save-slots")==0) return saveSlotSafetySelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-new-session")==0) return newSessionSelfTest();
     if (argc>1 && std::strcmp(argv[1],"--selftest-field-restore")==0) return fieldRestoreSelfTest();
@@ -1388,7 +1484,9 @@ int main(int argc, char** argv) {
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
     const SDL_WindowFlags shown = capture.empty() ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_HIDDEN; // (the system's bars hidden from the start)
 #else
-    const SDL_WindowFlags shown = capture.empty() ? SDL_WINDOW_RESIZABLE : SDL_WINDOW_HIDDEN;
+    // (a game run's window hidden until settings.ini's Display is set on it - applySettings below -, then shown black: no
+    // window first, decorated, before fullscreen - CRO-U #13; settings.ini was read above, not for captures and exports)
+    const SDL_WindowFlags shown = capture.empty() ? SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN : SDL_WINDOW_HIDDEN;
 #endif
     for (const cr3::Backend b : {cr3::Backend::Vulkan, cr3::Backend::OpenGL}) {
         if (b == cr3::Backend::Vulkan && renderer != "vulkan") continue;
@@ -1418,6 +1516,15 @@ int main(int argc, char** argv) {
     v.rendererInUse = dev->offscreen() ? 0 : 1;
     v.settings.upscaler = int(upscale.mode); // (one that can't run here: off)
     v.applySettings();
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+    if (capture.empty()) { // (now in its display mode: shown, black - not whatever the window held - while the game loads)
+        SDL_ShowWindow(win);
+        int pw = 0, ph = 0;
+        SDL_GetWindowSizeInPixels(win, &pw, &ph);
+        dev->beginFrame(std::max(pw, 1), std::max(ph, 1));
+        dev->endFrame(true);
+    }
+#endif
     v.shaders = std::make_unique<cr3::ShaderLibrary>(v.archive);
     // (nothing asked for - the release's own launch -: the title)
     if (model.empty() && animName.empty() && fieldName.empty() && eventName.empty() && areaName.empty() && battleId <= 0 && !continueSave &&

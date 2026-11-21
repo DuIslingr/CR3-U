@@ -43,10 +43,20 @@ where available.
 
 On a desktop (not Android or iOS), **F11** or **Alt+Enter** switches between a
 window and fullscreen, anywhere in the game, the logos included; holding the key
-switches once. This is the Options' Graphics → Display setting itself, saved in
-`settings.ini` and shown there: fullscreen means the kind Display last chose,
-Fullscreen (the display's own mode) or Borderless (borderless at first), kept as
-`fullscreen_kind=`.
+switches once. It lasts for this session: the Options' Graphics → Display shows it,
+but `settings.ini` keeps the Display chosen in the Options (`display=`), whatever is
+saved later, so the next start opens in that. Fullscreen means the kind Display last
+chose, Fullscreen (the display's own mode) or Borderless (borderless at first), kept
+as `fullscreen_kind=`. The window opens hidden and shows once that Display is set on
+it, black until the first frame (no window flashing up before fullscreen).
+
+## Quit (desktop)
+
+The Options' Sound tab ends with CR3-U's **Quit Game** row (Down past Voice, ○ /
+Return or a click on its button); the title has a **Quit** button left of its Options
+button, and Esc there asks too. Both ask "Quit the game?" on the game's Yes / No, No
+first: ← / → choose, ○ / Return answer, × / Esc / Back are No. Yes closes the game as
+the window's close button does. Not on Android or iOS.
 
 ## CR3's field by touch or the mouse
 
@@ -190,7 +200,7 @@ Options → Graphics → Swap ○ and ×. Directions below also accept the left 
 | Gene change | L/R select Gene/Skill; □ cycles six native sorts. Left reaches the lock button; ○ toggles lock. Directions focus the skill grid/help; wearing another member's gene asks first. | FutterMenu `0x81156662`, GeneChangeMenu `0x81159e62` |
 | Gene lab | △ inspects a row's gene; Left reaches the materials/Mix panel; Up/Down move within it. Enhance buttons use Left/Right. □ cycles footer tabs and START confirms. | GeneSynthesisListMenu `0x8116d6b6`, NormalSynthesisMenu `0x8117cf06`, IntensificationSynthesisMenu `0x81178302`, GeneSynthesisFutter `0x811690b6` |
 | Gifts | △ inspects the resulting gene. Left selects Yes, Right selects No. | GiftSynthesizeListMenu `0x81189cf2`, GiftSynthesizeMain `0x8118c40a` |
-| Options | Up/Down move through rows and the footer. Sound Left/Right changes volume by 10, with SE/voice samples; focused controls use cyan. | OptionMenu `0x81203e54`, OptionFooterMenu `0x81201416` |
+| Options | Up/Down move through rows and the footer (on a desktop, CR3-U's Quit Game after Voice). Sound Left/Right changes volume by 10 (none past either end), with the SE (com_003) and voice (j002_110) samples - a click on the bars plays them too, as the touch releases' TouchSimpleRelease; the music bar none; focused controls use cyan. | OptionMenu `0x81203e54`, OptionFooterMenu `0x81201416` |
 | Gene Index | Directions move over the 2×3 cards, then the eight tabs; ○ opens a profile; profile Up/Down selects rarity. | PictureBookMenu `0x81211910` |
 | Premium shop | Spatial focus over Box, Item and VIP; focused scale/color 1/white, others 0.9/0.8. | SShopMenu `0x8124b4e8` |
 | Lucky Box | Left/Right choose buy panels; Up/Down switch to the contents button. L/R change boxes while buying. Focus is cyan; the box enlarges while buying. | LuckyBoxMenu `0x811ea496` |

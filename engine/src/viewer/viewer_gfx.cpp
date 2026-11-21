@@ -44,7 +44,7 @@ void Viewer::loadSettings() {
         if (std::sscanf(line, " %63[a-z_] = %d", key, &v) != 2) continue;
         const std::string k = key;
         if (k == "display") {
-            s.display = std::clamp(v, 0, 2);
+            s.display = s.savedDisplay = std::clamp(v, 0, 2);
             if (s.display) s.fullscreenKind = s.display; // (an older settings.ini, without fullscreen_kind=)
         } else if (k == "fullscreen_kind") s.fullscreenKind = std::clamp(v, 1, 2);
         else if (k == "resolution") s.resolution = std::clamp(v, 0, int(std::size(kResolutions)) - 1);
@@ -85,21 +85,30 @@ void Viewer::loadSettings() {
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
     // (a phone's or tablet's: no resolution or window choice - the whole screen at its own pixels, always; an
     // older version's settings.ini set aside)
-    s.resolution = 0, s.display = 0;
+    s.resolution = 0, s.display = s.savedDisplay = 0;
 #endif
 }
 
 void Viewer::saveSettings() const {
     if (!settingsPersist) return;
+    const std::string text = settingsText();
+    if (text.empty()) return;
+    std::string error;
+    if (!crstorage::replaceFile(savePath(settingsFile()), text, &error)) SDL_Log("settings: %s", error.c_str());
+}
+
+// settings.ini's text (saveSettings; the self-test reads it for what F11 leaves alone): display= the Options' Display
+// (savedDisplay), not F11's for the session (CRO-U #15)
+std::string Viewer::settingsText() const {
     const std::string keepData = storedSetting("data="), keepPatch = storedSetting("patch="); // (the setup's, kept - read before the file is rewritten)
     char* serialized = nullptr;
     const Settings& s = settings;
     if (SDL_asprintf(&serialized, "# CR3-U: the Options' Graphics tab (the command line's flags go over these)\n"
                     "display=%d\nresolution=%d\nvsync=%d\nfps=%d\nrenderer=%d\nupscaler=%d\nquality=%d\nsharpness=%d\n"
                     "msaa=%d\nanisotropy=%d\nsharp_textures=%d\nhd_textures=%d\nhd_models=%d\nsmooth_models=%d\npad_swap=%d\nfield_speed=%d\nbattle_speed=%d\n",
-                 s.display, s.resolution, s.vsync ? 1 : 0, s.fps, s.renderer, s.upscaler, s.quality, s.sharpness, s.msaa,
+                 s.savedDisplay, s.resolution, s.vsync ? 1 : 0, s.fps, s.renderer, s.upscaler, s.quality, s.sharpness, s.msaa,
                  s.anisotropy, s.sharpTextures ? 1 : 0, s.hdTextures ? 1 : 0, s.hdModels ? 1 : 0, s.smoothModels, s.padSwap ? 1 : 0, s.fieldSpeed,
-                 s.battleSpeed) < 0 || !serialized) return;
+                 s.battleSpeed) < 0 || !serialized) return std::string();
     std::string text = serialized;
     SDL_free(serialized);
     text += "lock_orientation=" + std::to_string(int(s.lockOrientation)) + "\nlandscape_flipped=" + std::to_string(int(s.landscapeFlipped)) + "\n";
@@ -121,8 +130,7 @@ void Viewer::saveSettings() const {
     }
     if (!keepData.empty()) text += "data=" + keepData + "\n";
     if (!keepPatch.empty()) text += "patch=" + keepPatch + "\n";
-    std::string error;
-    if (!crstorage::replaceFile(savePath(settingsFile()), text, &error)) SDL_Log("settings: %s", error.c_str());
+    return text;
 }
 
 // The port's own text (platform/ui_text): Auto is the game text's language - the release's Japanese or English, a fan
@@ -211,15 +219,15 @@ void Viewer::applySettings() {
 }
 
 // F11 / Alt+Enter (a desktop's): windowed <-> fullscreen - the kind Display last chose, borderless at
-// first -, the Options' Display setting itself (shown there, applied and saved as it is)
+// first -, for this session only: shown in the Options' Display, but settings.ini keeps the Options' own
+// choice (savedDisplay) and fullscreen_kind=, whatever is saved later (CRO-U #15)
 void Viewer::toggleFullscreen() {
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
     Settings& s = settings;
-    if (s.display) s.fullscreenKind = s.display;
-    s.display = s.display ? 0 : std::clamp(s.fullscreenKind, 1, 2);
-    SDL_Log("display: %s (F11 / Alt+Enter)", s.display == 0 ? "windowed" : s.display == 1 ? "fullscreen" : "borderless");
+    if (s.display) s.toggleKind = s.display;
+    s.display = s.display ? 0 : std::clamp(s.toggleKind ? s.toggleKind : s.fullscreenKind, 1, 2);
+    SDL_Log("display: %s (F11 / Alt+Enter, this session)", s.display == 0 ? "windowed" : s.display == 1 ? "fullscreen" : "borderless");
     applySettings();
-    saveSettings();
 #endif
 }
 
@@ -282,8 +290,8 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
     static const char* const kDisplay[] = {N_("Window"), N_("Fullscreen"), N_("Borderless")};
     rows.push_back({tr("Display"), tr(kDisplay[std::clamp(s.display, 0, 2)]), tr("A window, fullscreen at the display's own mode, or borderless over the desktop"),
                     true, [&s](int d) {
-                        s.display = (s.display + d + 3) % 3;
-                        if (s.display) s.fullscreenKind = s.display; // (F11's from now on)
+                        s.display = s.savedDisplay = (s.display + d + 3) % 3; // (the Options': saved - F11's aren't)
+                        if (s.display) s.fullscreenKind = s.display, s.toggleKind = 0; // (F11's from now on)
                     }});
     {
         const int r = std::clamp(s.resolution, 0, int(std::size(kResolutions)) - 1);
@@ -4573,6 +4581,14 @@ float Viewer::drawUiText(const std::string& text, float size, float x, float y, 
     const float rgba[4] = {shade, shade, shade, 1};
     dev->drawQuad(q.tex, v, proj.data(), rgba);
     return qw;
+}
+
+// (CRO-U #19's button: 13, or max(8, floor(13 x 84 / wide)) where the label is wider than the face's 84 - here the size in
+// that proportion, floored to a whole size, 8/13 of it at least; past that drawUiText's maxWidth narrows the rest)
+float Viewer::fitUiTextSize(const std::string& text, float size, float room, int w, int h) {
+    const TextQuad* q = room > 0 ? uiTextQuad(text, size, w, h) : nullptr;
+    if (!q || q->w <= room) return size;
+    return std::max(size * 8.0f / 13.0f, std::floor(size * room / q->w));
 }
 
 // a point of the battle on the screen in UI units (false: behind the camera)

@@ -220,15 +220,17 @@ code references: [docs/CONTROLS.md](docs/CONTROLS.md).
 | O | Options, on the title; R there resets the open tab |
 | Space | pause |
 | F1 / F2 | cycle output resolution / upscaler mode |
-| F11 or Alt+Enter | window / fullscreen (Options' Display; the fullscreen kind last chosen there, borderless at first; desktop only) |
-| Esc | back in menus; quits from the field |
+| F11 or Alt+Enter | window / fullscreen for this session (the fullscreen kind last chosen in Options' Display, borderless at first; the next start uses the Display set in Options; desktop only) |
+| Esc | back in menus; quits from the field; on the title asks "Quit the game?" (desktop) |
 
 ## Settings
 
 The title's **Options** (lower right, or O), the camp's and a battle's have five tabs: the game's
 own **Sound**, **Controls** and **Other**, then CR3-U's **Cheats** and **Graphics**, saved in
 `settings.ini`. On a desktop the tabs and rows get smaller as the window grows, so more rows fit.
-**Reset** (the round button left of Back, or R) puts the open tab back to its defaults. Most
+**Reset** (the round button left of Back, or R) puts the open tab back to its defaults. On a desktop the
+Sound tab ends with CR3-U's **Quit Game** (it asks "Quit the game?" on the game's Yes / No), and the title has a
+**Quit** button left of Options that asks the same (Esc too; Esc or Back answers No). Most
 settings also have a command-line flag for a single run. The **Graphics** tab:
 
 | Setting | What it does |

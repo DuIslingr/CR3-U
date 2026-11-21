@@ -60,6 +60,10 @@ msgstr "Anciennes sauvegardes mises de côté."
 msgid "Load from the title."
 msgstr "Charger depuis l'écran titre."
 
+#: src/viewer/main.cpp src/viewer/viewer_gfx.cpp
+msgid "Display"
+msgstr "Affichage"
+
 #: src/viewer/main.cpp
 msgid "asset packs (the .apks has them all)"
 msgstr "packs de ressources (le .apks les contient tous)"
@@ -112,7 +116,7 @@ msgstr "Cherché aussi dans :"
 msgid "Look again"
 msgstr "Chercher à nouveau"
 
-#: src/viewer/main.cpp src/viewer/setup.cpp
+#: src/viewer/main.cpp src/viewer/setup.cpp src/viewer/viewer_event.cpp
 msgid "Quit"
 msgstr "Quitter"
 
@@ -770,6 +774,10 @@ msgid "Put the graphics settings back to their defaults?"
 msgstr "Rétablir les réglages graphiques par défaut ?"
 
 #: src/viewer/viewer_camp.cpp
+msgid "Quit Game"
+msgstr "Quitter le jeu"
+
+#: src/viewer/viewer_camp.cpp
 msgid "Menu Language"
 msgstr "Langue des menus"
 
@@ -813,6 +821,10 @@ msgid ""
 "The language of CR3-U's own menus and messages. Auto: the game text's."
 msgstr ""
 "La langue des menus et messages propres à CR3-U. Auto : celle des textes du jeu."
+
+#: src/viewer/viewer_camp.cpp src/viewer/viewer_event.cpp
+msgid "Quit the game?"
+msgstr "Quitter le jeu ?"
 
 #: src/viewer/viewer_event.cpp
 msgid "File {0} is cleared."
@@ -877,10 +889,6 @@ msgstr "Plein écran"
 #: src/viewer/viewer_gfx.cpp
 msgid "Borderless"
 msgstr "Sans bordure"
-
-#: src/viewer/viewer_gfx.cpp
-msgid "Display"
-msgstr "Affichage"
 
 #: src/viewer/viewer_gfx.cpp
 msgid ""

@@ -4,8 +4,9 @@ want camp && run camp-panels "3:left 3.5:left 4:hold=east 4.5:right 5:release=ea
     "camp: open (CR3)|camp: party panel 1|camp: party panel 0|camp: party order moved 0 to 1|camp: party panel -1" \
     -- --area t0101 --flag 26 --cr3-party 1,2 --input "camp:open"
 
-want camp && run camp-sound "3:down 3.5:left 4:down 4.5:left 5:down 5.5:east 7:quit" \
-    "options: sound row 1|options: sound row 2|options: sound row 2 footer" \
+# (a desktop's: CR3-U's Quit Game after Voice, the footer under it)
+want camp && run camp-sound "3:down 3.5:left 4:down 4.5:left 5:down 5.3:down 5.6:east 7:quit" \
+    "options: sound row 1|options: volume 1 at 90|options: sound row 2|options: volume 2 at 90|options: sound row 3|options: sound row 3 footer" \
     -- --area t0101 --flag 26 --input "camp:open camp:button6"
 
 want camp && run camp-equipment "3:west 3.5:west 5:quit" \
@@ -100,6 +101,6 @@ want camp && run quest-clear "$quest_pad" \
 # OptionFooterMenu (round 27: the field's Options - mpMe panels Title Screen, Manual, App Intro, Achievements - round 31: no
 # Download, the four closed up -, CR3-U's Reset left of the back, then the back): ↓ to the footer on the back, ← Reset, ○ asks,
 # ← Yes, ○: the tab's settings back; ← over the panels to Title Screen, ○ asks 0x1a3, ← Yes, ○: the title again (GameMain::Reboot)
-want camp && run options-footer "3:down 3.5:down 4:down 4.5:left 5:east 5.5:left 6:east 7:left 7.5:left 8:left 8.5:left 9:east 9.5:left 10:east 12:quit" \
-    "options: sound row 2 footer|options: footer focus 6|options: tab 0 reset|options: footer focus 4|options: footer focus 3|options: footer focus 2|options: footer focus 0|options: footer panel 0 (0x193)|options: to the title screen (0x1a3 Yes)|title: CR3's" \
+want camp && run options-footer "3:down 3.5:down 3.75:down 4:down 4.5:left 5:east 5.5:left 6:east 7:left 7.5:left 8:left 8.5:left 9:east 9.5:left 10:east 12:quit" \
+    "options: sound row 3 footer|options: footer focus 6|options: tab 0 reset|options: footer focus 4|options: footer focus 3|options: footer focus 2|options: footer focus 0|options: footer panel 0 (0x193)|options: to the title screen (0x1a3 Yes)|title: CR3's" \
     -- --area t0101 --flag 26 --input "camp:open camp:button6"

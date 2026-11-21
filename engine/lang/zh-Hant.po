@@ -60,6 +60,10 @@ msgstr "原有存檔已備份。"
 msgid "Load from the title."
 msgstr "請在標題畫面讀取。"
 
+#: src/viewer/main.cpp src/viewer/viewer_gfx.cpp
+msgid "Display"
+msgstr "顯示"
+
 #: src/viewer/main.cpp
 msgid "asset packs (the .apks has them all)"
 msgstr "資源包（.apks中全部包含）"
@@ -109,7 +113,7 @@ msgstr "也尋找過："
 msgid "Look again"
 msgstr "重新尋找"
 
-#: src/viewer/main.cpp src/viewer/setup.cpp
+#: src/viewer/main.cpp src/viewer/setup.cpp src/viewer/viewer_event.cpp
 msgid "Quit"
 msgstr "結束"
 
@@ -734,6 +738,10 @@ msgid "Put the graphics settings back to their defaults?"
 msgstr "要將圖形設定恢復為預設嗎？"
 
 #: src/viewer/viewer_camp.cpp
+msgid "Quit Game"
+msgstr "結束遊戲"
+
+#: src/viewer/viewer_camp.cpp
 msgid "Menu Language"
 msgstr "介面語言"
 
@@ -774,6 +782,10 @@ msgstr "遊戲文字的語言：遊戲原本的，或覆蓋其上的愛好者翻
 msgid ""
 "The language of CR3-U's own menus and messages. Auto: the game text's."
 msgstr "CR3-U自身選單和訊息的語言。自動：與遊戲文字相同。"
+
+#: src/viewer/viewer_camp.cpp src/viewer/viewer_event.cpp
+msgid "Quit the game?"
+msgstr "要結束遊戲嗎？"
 
 #: src/viewer/viewer_event.cpp
 msgid "File {0} is cleared."
@@ -836,10 +848,6 @@ msgstr "全螢幕"
 #: src/viewer/viewer_gfx.cpp
 msgid "Borderless"
 msgstr "無邊框"
-
-#: src/viewer/viewer_gfx.cpp
-msgid "Display"
-msgstr "顯示"
 
 #: src/viewer/viewer_gfx.cpp
 msgid ""

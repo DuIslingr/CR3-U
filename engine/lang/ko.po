@@ -60,6 +60,10 @@ msgstr "이전 세이브를 백업했습니다."
 msgid "Load from the title."
 msgstr "타이틀 화면에서 불러오세요."
 
+#: src/viewer/main.cpp src/viewer/viewer_gfx.cpp
+msgid "Display"
+msgstr "화면"
+
 #: src/viewer/main.cpp
 msgid "asset packs (the .apks has them all)"
 msgstr "에셋 팩(.apks에 모두 들어 있음)"
@@ -109,7 +113,7 @@ msgstr "다음 위치도 찾아봤습니다:"
 msgid "Look again"
 msgstr "다시 찾기"
 
-#: src/viewer/main.cpp src/viewer/setup.cpp
+#: src/viewer/main.cpp src/viewer/setup.cpp src/viewer/viewer_event.cpp
 msgid "Quit"
 msgstr "종료"
 
@@ -741,6 +745,10 @@ msgid "Put the graphics settings back to their defaults?"
 msgstr "그래픽 설정을 기본값으로 되돌리시겠습니까?"
 
 #: src/viewer/viewer_camp.cpp
+msgid "Quit Game"
+msgstr "게임 종료"
+
+#: src/viewer/viewer_camp.cpp
 msgid "Menu Language"
 msgstr "메뉴 언어"
 
@@ -781,6 +789,10 @@ msgstr "게임 텍스트의 언어: 게임 원래의 것, 또는 그 위에 얹�
 msgid ""
 "The language of CR3-U's own menus and messages. Auto: the game text's."
 msgstr "CR3-U 자체 메뉴와 메시지의 언어. 자동: 게임 텍스트와 같음."
+
+#: src/viewer/viewer_camp.cpp src/viewer/viewer_event.cpp
+msgid "Quit the game?"
+msgstr "게임을 종료하시겠습니까?"
 
 #: src/viewer/viewer_event.cpp
 msgid "File {0} is cleared."
@@ -843,10 +855,6 @@ msgstr "전체 화면"
 #: src/viewer/viewer_gfx.cpp
 msgid "Borderless"
 msgstr "테두리 없음"
-
-#: src/viewer/viewer_gfx.cpp
-msgid "Display"
-msgstr "화면"
 
 #: src/viewer/viewer_gfx.cpp
 msgid ""

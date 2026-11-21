@@ -59,6 +59,10 @@ msgstr ""
 msgid "Load from the title."
 msgstr ""
 
+#: src/viewer/main.cpp src/viewer/viewer_gfx.cpp
+msgid "Display"
+msgstr ""
+
 #: src/viewer/main.cpp
 msgid "asset packs (the .apks has them all)"
 msgstr ""
@@ -106,7 +110,7 @@ msgstr ""
 msgid "Look again"
 msgstr ""
 
-#: src/viewer/main.cpp src/viewer/setup.cpp
+#: src/viewer/main.cpp src/viewer/setup.cpp src/viewer/viewer_event.cpp
 msgid "Quit"
 msgstr ""
 
@@ -716,6 +720,10 @@ msgid "Put the graphics settings back to their defaults?"
 msgstr ""
 
 #: src/viewer/viewer_camp.cpp
+msgid "Quit Game"
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp
 msgid "Menu Language"
 msgstr ""
 
@@ -755,6 +763,10 @@ msgstr ""
 #: src/viewer/viewer_camp.cpp
 msgid ""
 "The language of CR3-U's own menus and messages. Auto: the game text's."
+msgstr ""
+
+#: src/viewer/viewer_camp.cpp src/viewer/viewer_event.cpp
+msgid "Quit the game?"
 msgstr ""
 
 #: src/viewer/viewer_event.cpp
@@ -817,10 +829,6 @@ msgstr ""
 
 #: src/viewer/viewer_gfx.cpp
 msgid "Borderless"
-msgstr ""
-
-#: src/viewer/viewer_gfx.cpp
-msgid "Display"
 msgstr ""
 
 #: src/viewer/viewer_gfx.cpp

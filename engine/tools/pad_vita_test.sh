@@ -58,6 +58,11 @@ want choice && run choice "1.5:hold=west 3.2:release=west 3.5:down 4:down 4.5:do
 want shoulders && run options-tabs "3:r 3.5:r 4:r 4.5:r 5:r 5.5:l 6.5:quit" \
     "options: tab 1|options: tab 2|options: tab 3|options: tab 4|test controller: r|test controller: l|options: tab 3" \
     -- --area t0101 --flag 26 --input "camp:open camp:button6"
+# OptionMenu's Sound tab (the Vita's 0x81203e54): ← a bar's step of 10 (the effects' com_003, the voices' j002_110), ↓ past
+# Voice to CR3-U's Quit Game (a desktop's), ○ asks "Quit the game?", ○ on No - the Options stay
+want camp && run options-quit "3:left 3.5:down 4:left 4.5:down 5:left 5.5:down 6:east 7:east 8:quit" \
+    "options: volume 0 at 90|options: sound row 1|options: volume 1 at 90|options: sound row 2|options: volume 2 at 90|options: sound row 3|options: quit the game? (asked)|options: quit the game - no" \
+    -- --area t0101 --flag 26 --input "camp:open camp:button6"
 want shoulders && run gift-categories "3:r 3.5:r 4:l 6:quit" \
     "camp: gifts, category 1|camp: gifts, category 2|camp: gifts, category 1" \
     -- --area t0101 --flag 26 --input "camp:open camp:button3"
@@ -76,6 +81,9 @@ want camera && run right-stick "6:rx=1 7:rx=0 8:ry=-0.4 9:ry=0 10:quit" \
 # TitleMenu (0x81256cde): ○ or START its tap
 # (LogoMenu first: START - any key or tap - ends the logos, then the title's own)
 want title && run title-start "1:start 3:start 5:quit" "title: the logos|title: the logos skipped|title: START|title: tapped" -- --title
+# CR3-U's title Quit (a desktop's): Escape asks "Quit the game?", × (Back) is No - the title waits on; ○ on No the same
+want title && run title-quit "1:start 4:key=Escape 4.5:south 5:key=Escape 5.5:east 6.5:quit" \
+    "title: the logos skipped|title: quit the game? (asked)|title: quit the game - no|title: quit the game? (asked)|title: quit the game - no" -- --title
 
 # Fld2CameraOrtho (CreateArea2D: e0015): s111_d02_00202's SetMode(1), Scroll(0, -1), ScrollTo(0, 0.8, 400) - the picture
 # panned up to the castle

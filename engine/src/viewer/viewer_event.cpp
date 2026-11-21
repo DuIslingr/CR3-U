@@ -1571,6 +1571,7 @@ bool Viewer::startCr3Title(bool logos, bool music) {
     initEventDrawing();
     t.stage = 1, t.clock = t.stageClock = 0, t.shot = 0, t.shotClock = 0, t.lightsOf = -1;
     t.boot = 0, t.mode = 0;
+    t.quitAsk = false;
     fieldMode = eventMode = areaMode = false;
     if (logos) { // (LogoMenu: the CESA notice in Japanese alone - GameSystem+0x198 0 -, then the logos)
         t.stage = 6, t.boot = optionLanguage == 0 ? 1 : 2;
@@ -1869,8 +1870,18 @@ void Viewer::cr3ModeChoose(int id) {
 bool Viewer::cr3TitleKey(SDL_Keycode k) {
     Cr3Title& t = cr3Title;
     if (t.stage == 6) return cr3TitleTap();
-    if (t.stage != 7 || cr3Camp.stage != 0) return false;
     const bool enter = k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE, back = k == SDLK_ESCAPE || k == SDLK_BACKSPACE;
+    if (kQuitHere && t.stage == 2 && cr3Camp.stage == 0) { // (CR3-U's Quit - a desktop's -: Escape asks; its question ← → Yes or No,
+        // Return it, Escape / Back No)
+        if (t.quitAsk) {
+            if (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_UP || k == SDLK_DOWN) t.quitFocus = k == SDLK_LEFT ? 0 : k == SDLK_RIGHT ? 1 : t.quitFocus ^ 1, audio.playSe("com_002", false);
+            else if (enter) cr3TitleQuit(t.quitFocus == 0 ? kTapQuitYes : kTapQuitNo);
+            else if (back) cr3TitleQuit(kTapQuitNo);
+            return true;
+        }
+        if (k == SDLK_ESCAPE) return cr3TitleQuit(kTapTitleQuit), true;
+    }
+    if (t.stage != 7 || cr3Camp.stage != 0) return false;
     if (t.mode == 0) {
         if (k == SDLK_LEFT || k == SDLK_RIGHT) t.modeFocus = t.modeFocus == 2 ? 0 : (k == SDLK_LEFT ? 0 : 1), audio.playSe("com_002", false);
         else if (k == SDLK_DOWN && t.modeFocus != 2) t.modeFocus = 2, audio.playSe("com_002", false);
@@ -1920,7 +1931,37 @@ void Viewer::drawCr3TitleOptions() {
     if (cr3UiCall(panel, "call_comBtnBg_fr00", cx, cy)) cr3UiPut("combtnbg_fr00", "", 0, cx, cy, view);
     if (cr3UiCall(panel, "call_comBtnIconS_fr00", cx, cy)) cr3UiPut("combtnicons_fr00", "", 6.0f / 30, cx, cy, view);
     float ax, ay, ex, ey;
-    if (cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, kTapTitleOptions));
+    if (cr3UiCall(panel, "tapAreaCP01", ax, ay) && cr3UiCall(panel, "tapAreaAP01", ex, ey)) {
+        cr3CampTaps.push_back(circleTap(ax, ay, ex, ey, kTapTitleOptions));
+        if (kQuitHere) { // (a desktop's Quit left of it: the same round button - CR3-U's Reset's, comBtnIcon_fr00's back
+            // arrow, frame 11 - "Quit" under it; it asks first, CRO-U #16)
+            const float r = std::hypot(ex - ax, ey - ay), qx = ax - 2 * r - 0.2f;
+            drawCr3ResetButton(qx, ay, r, true, w, h, view, 11, tr("Quit"));
+            cr3CampTaps.push_back(circleTap(qx, ay, qx + r, ay, kTapTitleQuit));
+        }
+    }
+    if (cr3Title.quitAsk) { // ("Quit the game?" on the game's Yes / No - the Options' Quit Game's -, its two the only taps)
+        cr3CampTaps.clear();
+        drawCr3Asked(tr("Quit the game?"), uiClock - cr3Title.quitAt, cr3Title.quitFocus, true, kTapQuitYes, kTapQuitNo, w, h, view);
+    }
+}
+
+// CR3-U's title Quit (a desktop's): its button asks "Quit the game?" (No first); Yes closes the app, as its window's close
+// button does - No, Escape or Back the title again
+void Viewer::cr3TitleQuit(int id) {
+    Cr3Title& t = cr3Title;
+    if (!kQuitHere || t.stage != 2 || cr3Camp.stage != 0) return;
+    if (id == kTapTitleQuit && !t.quitAsk) {
+        t.quitAsk = true, t.quitFocus = 1, t.quitAt = uiClock;
+        audio.playSe("com_003", false);
+        SDL_Log("title: quit the game? (asked)");
+    } else if (t.quitAsk && (id == kTapQuitYes || id == kTapQuitNo)) {
+        const bool yes = id == kTapQuitYes;
+        t.quitAsk = false;
+        audio.playSe(yes ? "com_003" : "com_004", false);
+        SDL_Log("title: quit the game - %s", yes ? "yes" : "no");
+        if (yes) pushQuit();
+    }
 }
 
 void Viewer::loadMapNameParts() {
@@ -3570,9 +3611,11 @@ void Viewer::drawClearedSaveChoices(int w, int h, const Mat4& view) {
         if (cr3UiCall(panel, "call_comBtnR", cx, cy)) cr3UiPut("combtnr", "", 0, cx, cy, view);
         cr3UiTint[0] = cr3UiTint[1] = cr3UiTint[2] = 1;
         dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-        if (right > left && top > bottom)
-            drawUiText(tr(labels[b]), 22, (left + labelRight + 0.08f) / 20, (bottom + top) / 20, w, h, false,
-                       enabled ? (b == m.askFocus ? 0.0f : 0.08f) : 0.6f, (labelRight - left - 0.24f) / 10);
+        if (right > left && top > bottom) { // (a longer word - another language's - smaller to fit the pill: fitUiTextSize)
+            const float room = (labelRight - left - 0.24f) / 10;
+            drawUiText(tr(labels[b]), fitUiTextSize(tr(labels[b]), 22, room, w, h), (left + labelRight + 0.08f) / 20, (bottom + top) / 20, w, h, false,
+                       enabled ? (b == m.askFocus ? 0.0f : 0.08f) : 0.6f, room);
+        }
         if (enabled && cr3UiCall(panel, "tapAreaS01", ax, ay) && cr3UiCall(panel, "tapAreaE01", bx, by))
             saveTaps.push_back({ax, ay, bx, by, ids[b]});
     }

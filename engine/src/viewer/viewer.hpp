@@ -257,8 +257,11 @@ struct Viewer {
     // settings.ini in the profile folder: read at the start, written on each change (a capture
     // neither reads nor writes it); the command line's flags over them
     struct Settings {
-        int display = 0;          // 0 a window, 1 fullscreen (the display's own mode), 2 borderless (the desktop)
+        int display = 0;          // 0 a window, 1 fullscreen (the display's own mode), 2 borderless (the desktop) - this session's
         int fullscreenKind = 2;   // F11 / Alt+Enter's fullscreen: the one Display last chose (1 or 2; borderless at first)
+        int savedDisplay = 0;     // settings.ini's display=: the Options' Display alone - F11 / Alt+Enter change display for the
+                                  // session only (CRO-U #15)
+        int toggleKind = 0;       // F11's fullscreen this session (0: fullscreenKind's)
         int resolution = 0;       // kResolutions: 0 the window's own size
         bool vsync = true;
 #ifdef SDL_PLATFORM_IOS
@@ -314,8 +317,9 @@ struct Viewer {
     static const char* settingsFile();
     void loadSettings();
     void saveSettings() const;
+    std::string settingsText() const; // (settings.ini's text as saveSettings writes it - the self-test reads it)
     void applySettings();
-    void toggleFullscreen(); // (F11 / Alt+Enter: Display windowed <-> the fullscreen last chosen; a desktop's)
+    void toggleFullscreen(); // (F11 / Alt+Enter: windowed <-> the fullscreen last chosen, for this session; a desktop's)
     // The HD replacement for a picture; one that doesn't fit it is left out, said once
     std::set<std::string> hdRefused;
     bool loadHd(const cr3::Image& img, cr3::Image& hd);
@@ -2546,6 +2550,9 @@ struct Viewer {
         std::array<cr3::CameraFigure, 6> cameras;
         Cr3Part logo;
         int lightsOf = -1; // (the map whose lights are on)
+        bool quitAsk = false; // (CR3-U's Quit beside the title's Options - a desktop's -: "Quit the game?" up)
+        int quitFocus = 1;    // (0 Yes, 1 No)
+        float quitAt = 0;     // (its uiClock: the board's slide-in)
     } cr3Title;
     struct DemoShot {
         float seconds;
@@ -2568,6 +2575,7 @@ struct Viewer {
     void drawCr3TitleScene(int w, int h);
     void drawCr3TitleUi();
     void drawCr3TitleOptions();
+    void cr3TitleQuit(int id); // (CR3-U's title Quit - a desktop's -: kTapTitleQuit asks, kTapQuitYes / kTapQuitNo answer)
 
     // CR3's map name (MapNameMenu): feNameMenu at feNamePosition's call_feNameMenu_fit3, its _in
     // animator (slot 1, over its base) 0 .. 0.967 s in, held 2 s, then on to 1.333 s out; on it
@@ -2682,6 +2690,9 @@ struct Viewer {
     float uiTextScale = 1; // (the text's size times this: CR3's Options scaled to a desktop's window)
     float uiTextWidth(const std::string& text, float size, int w, int h);
     float drawUiText(const std::string& text, float size, float x, float y, int w, int h, bool left = false, float shade = 1, float maxWidth = 0, float border = 0);
+    // CR3-U's own words on a button's face: `size`, or smaller - in proportion, to 8/13 of it at least - where they'd be wider
+    // than `room` (drawUiText's units; what's still too wide is narrowed by its maxWidth) - CRO-U #19's 13 x 84 / wide
+    float fitUiTextSize(const std::string& text, float size, float room, int w, int h);
     const TextQuad* uiTextQuad(const std::string& text, float size, int w, int h);
     // a help / announcement line in btHelpMenu (ProvisionalMenuText's ticker: one wider than its window scrolls -
     // drawUiTicker), from x (its left) as drawUiText draws it; each window (`site`) its own scroll
@@ -4228,6 +4239,9 @@ struct Viewer {
         int footerAt = 5;    // (the footer's focus: 0, 2, 3, 4 the mpMe panels - the field's alone -, 6 CR3-U's Reset, 5 the back)
         bool titleAsk = false; // (Title Screen's question, 0x1a3)
         int titleFocus = 1;
+        bool quitRow = false;  // (CR3-U's Quit Game row - the Sound tab's last, a desktop's - under the keys' / the pad's focus)
+        bool quitAsk = false;  // (its question, "Quit the game?")
+        int quitFocus = 1;     // (0 Yes, 1 No)
         bool asking = false; // (CR3-U's Reset: its question up)
         int askFocus = 1;    // (0 Yes, 1 No)
         float askSince = 0;
@@ -4276,7 +4290,15 @@ struct Viewer {
     bool cr3OptionsOver() const;
     void drawCr3OptionsOver(int w, int h);
     bool cr3OptionsClick(float fx, float fy);
-    static constexpr int kTapTitleOptions = 7000;
+    static constexpr int kTapTitleOptions = 7000, kTapTitleQuit = 7001; // (CR3-U's title buttons: Options; Quit - a desktop's)
+    static constexpr int kTapQuitGame = 1250, kTapQuitYes = 1251, kTapQuitNo = 1252; // (CR3-U's Quit Game row - a desktop's - and its question)
+    static constexpr bool kQuitHere = // (the Quit Game row and the title's Quit: a desktop's - a phone's or tablet's apps aren't quit)
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+        false;
+#else
+        true;
+#endif
+    void pushQuit(); // (Quit's Yes: SDL_EVENT_QUIT, as the window's close button)
     void cr3OptionsInput();
     void openCampOptions();
     // CR3-U's fourth and fifth tabs, Cheats and Graphics: the game's three-tab bar (optTab_fr00) drawn
@@ -4299,7 +4321,7 @@ struct Viewer {
     float optionsBackDrop(int w, int h); // (the field's Options: the back taken down onto its footer's bar)
     static constexpr int kOptPanels = 4, kOptPanel[kOptPanels] = {0, 2, 3, 4}; // (the field's footer panels: the game's numbers - no Download, 1)
     static constexpr int kFooterReset = 6; // (footerAt: CR3-U's Reset, the pad's stop just before the back, 5)
-    void drawCr3ResetButton(float x, float y, float radius, bool label, int w, int h, const Mat4& view);
+    void drawCr3ResetButton(float x, float y, float radius, bool label, int w, int h, const Mat4& view, int icon = 1, const std::string& text = std::string());
     std::string cr3OptionsResetAsk() const;
     void cr3OptionsReset();
     void saveImportAnswer(bool yes);

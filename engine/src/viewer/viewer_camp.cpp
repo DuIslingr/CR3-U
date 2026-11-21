@@ -352,7 +352,7 @@ void Viewer::drawOptions(const Mat4& view, const Mat4& proj, int w, int h) {
             c.fig.place.m[3] = ox, c.fig.place.m[7] = oy;
             poseUi(c, "circlebtn_fr", 0);
             drawFigure(c.fig, view.data());
-            drawUiText(tr("Graphics"), 26, cx, cy, w, h, false, 1.0f, bw * 0.9f);
+            drawUiText(tr("Graphics"), fitUiTextSize(tr("Graphics"), 26, bw * 0.9f, w, h), cx, cy, w, h, false, 1.0f, bw * 0.9f); // (smaller to fit: another language's)
             tapRects.push_back({3110, sx + ox, sy + oy, ex + ox, ey + oy});
             break;
         }
@@ -4418,11 +4418,12 @@ bool Viewer::cr3OptionsClick(float fx, float fy) {
     const float ux = (fx - 0.5f) * float(screenW) / k, uy = (0.5f - fy) * float(screenH) / k;
     for (auto it = cr3CampTaps.rbegin(); it != cr3CampTaps.rend(); ++it)
         if (ux >= std::min(it->x0, it->x1) && ux <= std::max(it->x0, it->x1) && uy >= std::min(it->y0, it->y1) && uy <= std::max(it->y0, it->y1)) {
-            if (it->id == kTapTitleOptions) openCr3OptionsFrom(1);
+            if (it->id == kTapTitleOptions && !cr3Title.quitAsk) openCr3OptionsFrom(1);
+            else if (title && (it->id == kTapTitleQuit || it->id == kTapQuitYes || it->id == kTapQuitNo)) cr3TitleQuit(it->id); // (CR3-U's title Quit)
             else chooseCr3Camp(it->id);
             return true;
         }
-    return over;
+    return over || (title && cr3Title.quitAsk); // (the title's Quit asking: a tap elsewhere taken, not the title's own)
 }
 
 // (tests: --input camp:cat<n> / id<n> / back over the title or a battle, as the camp's)
@@ -4613,8 +4614,8 @@ void Viewer::drawCr3GraphicsTab(const UiFig& menu, int w, int h, const Mat4& vie
 
 // CR3-U's Reset: the game's round button (comBtnSPanel, its comBtnBg_fr00) with comBtnIcon_fr00's circling arrows
 // (frame 1), centred at (x, y), its circle `radius` across - "Reset" under the arrows when `label`; it asks, then puts the
-// tab's settings back
-void Viewer::drawCr3ResetButton(float x, float y, float radius, bool label, int w, int h, const Mat4& view) {
+// tab's settings back. (`icon` / `text`: another of comBtnIcon_fr00's frames and words - the title's Quit's)
+void Viewer::drawCr3ResetButton(float x, float y, float radius, bool label, int w, int h, const Mat4& view, int icon, const std::string& text) {
     float cx, cy, ex, ey;
     cr3UiScale = 1;
     UiFig& probe = cr3UiPose("combtnspanel", "", 0, 0, 0);
@@ -4626,12 +4627,21 @@ void Viewer::drawCr3ResetButton(float x, float y, float radius, bool label, int 
     if (cr3UiCall(panel, "call_comBtnBg_fr00", ix, iy)) cr3UiPut("combtnbg_fr00", "", 0, ix, iy, view);
     if (cr3UiCall(panel, "call_comBtnIconS_fr00", ix, iy)) {
         cr3UiScale = k * 0.82f;
-        cr3UiPut("combtnicon_fr00", "", 1.0f / 30, ix, iy + (label ? radius * 0.2f : 0.0f), view);
+        cr3UiPut("combtnicon_fr00", "", float(icon) / 30, ix, iy + (label ? radius * 0.2f : 0.0f), view);
     }
     cr3UiScale = 1;
     if (!label) return;
     dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
-    drawUiText(tr("Reset"), 11, x / 10, (y - radius * 0.5f) / 10, w, h, false, 1.0f, radius * 1.3f / 10);
+    const std::string word = text.empty() ? std::string(tr("Reset")) : text;
+    const float room = radius * 1.3f / 10; // (a longer word - another language's - smaller to fit: fitUiTextSize)
+    drawUiText(word, fitUiTextSize(word, 11, room, w, h), x / 10, (y - radius * 0.5f) / 10, w, h, false, 1.0f, room);
+}
+
+// Quit's Yes (the Options' Quit Game, the title's Quit - a desktop's): the app closes, as its window's close button does
+void Viewer::pushQuit() {
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quit);
 }
 
 // The field's Options: its footer's bar (mpMePosition's call_mpMeMenu_fit1) the screen's foot's, lower than the comFtr bars
@@ -4695,11 +4705,13 @@ void Viewer::cr3OptionsReset() {
     else if (co.tab == kTabCheats) { // (Cheats: every one off)
         settings.cheats = Settings::Cheats();
         saveSettings();
-    } else { // (the window's type - F11's fullscreen kind with it - and resolution kept; the cheats their own tab's)
-        const int display = settings.display, kind = settings.fullscreenKind, resolution = settings.resolution;
+    } else { // (the window's type - F11's fullscreen kind with it, the saved one and this session's - and resolution kept; the cheats their own tab's)
+        const int display = settings.display, saved = settings.savedDisplay, kind = settings.fullscreenKind, toggle = settings.toggleKind,
+                  resolution = settings.resolution;
         const Settings::Cheats cheats = settings.cheats;
         settings = Settings();
-        settings.display = display, settings.fullscreenKind = kind, settings.resolution = resolution, settings.cheats = cheats;
+        settings.display = display, settings.savedDisplay = saved, settings.fullscreenKind = kind, settings.toggleKind = toggle;
+        settings.resolution = resolution, settings.cheats = cheats;
         applySettings();
         saveSettings();
     }
@@ -4774,7 +4786,7 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
         for (int k = 0; k < 3; ++k) {
             float px, py;
             if (!cr3UiCall(menu, "call_optSltPanel_00" + std::to_string(k + 1), px, py)) continue;
-            if (vitaButtons() && !co.footer && k == optionFocus) cr3UiTintMaterial = "mat_opt_btn_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+            if (vitaButtons() && !co.footer && !co.quitRow && k == optionFocus) cr3UiTintMaterial = "mat_opt_btn_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
             UiFig& panel = cr3UiPut("optsltpanel", "", 0, px, py, view);
             cr3UiTintMaterial.clear();
             cr3UiLabel(panel, "typeM_L00", menuAnnounce(0x198 + k), w, h, 0.26f);
@@ -4791,6 +4803,29 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
                     const float sx = from + (to - from) * float(step) / 10.0f;
                     cr3CampTaps.push_back({sx - (to - from) / 20.0f, uy, sx + (to - from) / 20.0f, ly, 800 + k * 20 + step});
                 }
+            }
+        }
+        float p2x, p2y, p3x, p3y;
+        if (kQuitHere && cr3UiCall(menu, "call_optSltPanel_002", p2x, p2y) && cr3UiCall(menu, "call_optSltPanel_003", p3x, p3y)) {
+            // CR3-U's Quit Game (a desktop's, CRO-U #16): the tab's last row - an optSltPanel a row's pitch under Voice, its
+            // comListLLBtn_fr00 at call_optSltBtn_fr00 + (2, 0) with "Confirm" 0xb1 on it, as the Other tab's Credits row
+            // (SetModeParts(2) 0xaefb3c) -; it asks "Quit the game?" on the game's Yes / No (drawCr3Asked)
+            const float qx = 2 * p3x - p2x, qy = 2 * p3y - p2y;
+            if (vitaButtons() && !co.footer && co.quitRow) cr3UiTintMaterial = "mat_opt_btn_01", cr3UiMaterialTint[0] = 0.5f, cr3UiMaterialTint[1] = 1, cr3UiMaterialTint[2] = 1.5f;
+            UiFig& row = cr3UiPut("optsltpanel", "", 0, qx, qy, view);
+            cr3UiTintMaterial.clear();
+            float lx, ly, tx, ty;
+            const bool button = cr3UiCall(row, "call_optSltBtn_fr00", cx, cy);
+            cx += 2.0f * s;
+            const float room = button && cr3UiCall(row, "typeM_L00", lx, ly) ? std::max((cx - lx - 0.12f * s) / 10, 0.02f) : 0.0f;
+            cr3UiLabel(row, "typeM_L00", tr("Quit Game"), w, h, 0.26f, room);
+            if (button) {
+                UiFig& btn = cr3UiPut("comlistllbtn_fr00", "", 0, cx, cy, view);
+                if (cr3UiCall(btn, "typeM_C00", tx, ty)) {
+                    dev->setViewport(float(screenX), float(screenY), float(screenW), float(screenH));
+                    drawUiText(menuAnnounce(0xb1), 24, tx / 10, (ty - 0.03f * s) / 10, w, h, false, 1.0f);
+                }
+                cr3CampTaps.push_back({cx, cy, cx + 1.43f * s, cy - 0.45f * s, kTapQuitGame}); // (the button's own bounds)
             }
         }
     }
@@ -4978,6 +5013,10 @@ void Viewer::drawCampOptions(int w, int h, const Mat4& view) {
         cr3CampTaps.clear();
         drawCr3Asked(menuAnnounce(0x1a3), co.askSince, co.titleFocus, true, kTapTitleYes, kTapTitleNo, w, h, view);
     }
+    if (co.quitAsk) { // (CR3-U's Quit Game's question over all, as Title Screen's)
+        cr3CampTaps.clear();
+        drawCr3Asked(tr("Quit the game?"), co.askSince, co.quitFocus, true, kTapQuitYes, kTapQuitNo, w, h, view);
+    }
     if (saveImport.state == vitaimport::Session::Confirm || saveImport.state == vitaimport::Session::Result) {
         cr3CampTaps.clear();
         std::string message = saveImport.message;
@@ -5018,6 +5057,20 @@ void Viewer::chooseCampOptions(int id) {
             if (scriptSaves) writeSystem();
             cr3Camp.stage = 0, cr3Camp.since = 0, cr3Reboot = true;
         }
+        return;
+    }
+    if (co.quitAsk) { // (CR3-U's Quit Game's question: Yes - the app closes, as its window's close button does)
+        if (id != kTapQuitYes && id != kTapQuitNo && id != -1) return;
+        co.quitAsk = false;
+        audio.playSe(id == kTapQuitYes ? "com_003" : "com_004", false);
+        SDL_Log("options: quit the game - %s", id == kTapQuitYes ? "yes" : "no");
+        if (id == kTapQuitYes) pushQuit();
+        return;
+    }
+    if (id == kTapQuitGame && kQuitHere) {
+        co.quitAsk = true, co.askSince = 0, co.quitFocus = 1, co.quitRow = true; // (No first)
+        audio.playSe("com_003", false);
+        SDL_Log("options: quit the game? (asked)");
         return;
     }
     if (id >= kTapOptPanel && id < kTapOptPanel + 5) {
@@ -5088,9 +5141,15 @@ void Viewer::chooseCampOptions(int id) {
         SDL_Log("options: menu language %s (%s) - \"%s\"", uitext::language().c_str(), uiLang.c_str(), tr("Menu Language")); // (the label in it)
     }
     if (id >= 800 && id < 860) {
-        optionVolume[(id - 800) / 20] = (id - 800) % 20 * 10;
+        const int bar = (id - 800) / 20;
+        optionVolume[bar] = (id - 800) % 20 * 10;
         audio.setVolumes(float(optionVolume[0]) / 100.0f, float(optionVolume[1]) / 100.0f, float(optionVolume[2]) / 100.0f);
-        audio.playSe("com_002", false);
+        // (the bar's sample - a tap's, as the touch releases' OptionMenu::TouchSimpleRelease 0xaf1244, and a key's or the pad's
+        // step, as the Vita's OptionMenu 0x81203e54: the effects' com_003, the voices' j002_110 after SoundStopVoiceAll; the
+        // music's none - CRO-U #20)
+        if (bar == 1) audio.playSe("com_003", false);
+        else if (bar == 2) audio.stopAllVoices(0), audio.playVoice("j002_110");
+        SDL_Log("options: volume %d at %d", bar, optionVolume[bar]);
     }
 }
 
@@ -5109,6 +5168,12 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
         if (key == SDLK_LEFT || key == SDLK_RIGHT) co.askFocus = key == SDLK_LEFT ? 0 : 1, audio.playSe("com_002", false);
         else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(co.askFocus == 0 ? kTapResetYes : kTapResetNo);
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCampOptions(kTapResetNo);
+        return;
+    }
+    if (co.quitAsk) { // (Quit Game's question: left / right Yes or No, Return that, Escape / Back No)
+        if (key == SDLK_LEFT || key == SDLK_RIGHT) co.quitFocus = key == SDLK_LEFT ? 0 : 1, audio.playSe("com_002", false);
+        else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) chooseCampOptions(co.quitFocus == 0 ? kTapQuitYes : kTapQuitNo);
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) chooseCampOptions(kTapQuitNo);
         return;
     }
     if (staffList.kind != 0) { // (the list: back; CR3-U's - up / down a line)
@@ -5147,12 +5212,16 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
         return;
     }
     if (vitaButtons() && co.tab == 0 && (key == SDLK_UP || key == SDLK_DOWN)) {
-        if (key == SDLK_DOWN && optionFocus == 2) co.footer = true;
+        // (the desktop's Quit Game row after Voice, then the footer)
+        if (key == SDLK_DOWN && (co.quitRow || (optionFocus == 2 && !kQuitHere))) co.footer = true;
+        else if (key == SDLK_DOWN && optionFocus == 2) co.quitRow = true;
+        else if (key == SDLK_UP && co.quitRow) co.quitRow = false;
         else optionFocus = std::clamp(optionFocus + (key == SDLK_DOWN ? 1 : -1), 0, 2);
         audio.playSe("com_002", false);
-        SDL_Log("options: sound row %d%s", optionFocus, co.footer ? " footer" : "");
+        SDL_Log("options: sound row %d%s", co.quitRow ? 3 : optionFocus, co.footer ? " footer" : "");
         return;
     }
+    if (co.tab == 0 && co.quitRow && (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE)) return chooseCampOptions(kTapQuitGame);
     if (vitaButtons() && co.tab == 1 && key == SDLK_DOWN) { co.footer = true; audio.playSe("com_002", false); return; }
     if (co.tab >= kTabCheats) { // (Cheats or Graphics: up / down a row, left / right / Return change it)
         if (vitaButtons() && key == SDLK_DOWN && campRowAt() + 1 >= int(campTabRows().size())) { co.footer = true; audio.playSe("com_002", false); return; }
@@ -5161,13 +5230,12 @@ void Viewer::campOptionsKey(SDL_Keycode key) {
             return chooseCampOptions(kTapGraphicsRow + campRowAt() * 2 + (key == SDLK_LEFT ? 0 : 1));
         return;
     }
-    if (co.tab == 0 && (key == SDLK_LEFT || key == SDLK_RIGHT)) {
-        chooseCampOptions(800 + optionFocus * 20 + std::clamp(optionVolume[optionFocus] / 10 + (key == SDLK_RIGHT ? 1 : -1), 0, 10));
-        if (vitaButtons() && optionFocus == 1) audio.playSe("com_003", false);
-        else if (vitaButtons() && optionFocus == 2) audio.playVoice("j002_110");
+    if (co.tab == 0 && !co.quitRow && (key == SDLK_LEFT || key == SDLK_RIGHT)) { // (a step of 10 - none past either end, as the Vita's)
+        const int step = std::clamp(optionVolume[optionFocus] / 10 + (key == SDLK_RIGHT ? 1 : -1), 0, 10);
+        if (step * 10 != optionVolume[optionFocus]) chooseCampOptions(800 + optionFocus * 20 + step); // (its sample there, as a tap's)
         return;
     }
-    if (co.tab == 0 && key >= SDLK_1 && key <= SDLK_3) optionFocus = int(key - SDLK_1);
+    if (co.tab == 0 && key >= SDLK_1 && key <= SDLK_3) optionFocus = int(key - SDLK_1), co.quitRow = false;
     if (co.tab == 1 && (key == SDLK_LEFT || key == SDLK_RIGHT)) chooseCampOptions(500 + (key == SDLK_RIGHT ? 1 : 0));
     if (co.tab == 2) {
         if (key == SDLK_UP || key == SDLK_DOWN) { // (the Language row only where there are languages to pick)
