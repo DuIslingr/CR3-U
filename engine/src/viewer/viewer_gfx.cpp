@@ -307,11 +307,13 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
                     tr("The most frames drawn a second; the game runs at 20, smoothed between them"),
                     true, [&s, step](int d) { step(s.fps, {30, 60, 120, 144, 165, 240, 0}, d); }});
     {
+#ifdef CR_HAVE_VULKAN // (Android: OpenGL ES only - no choice to offer)
         static const char* const kRenderer[] = {"Vulkan", "OpenGL"};
         std::string v = kRenderer[std::clamp(s.renderer, 0, 1)];
         if (s.renderer != rendererInUse) v = trf("{0} (next start)", {v});
         rows.push_back({tr("Renderer"), v, tr("Vulkan: the upscalers, MSAA and the faster path; OpenGL where Vulkan won't start"),
                         true, [&s](int) { s.renderer = 1 - s.renderer; }});
+#endif
     }
     const bool vk = dev && dev->offscreen(); // (the Vulkan device renders offscreen: the upscalers', MSAA's)
     static const char* const kUpscaler[] = {N_("Off"), "FSR 3.1", "DLSS", "MetalFX", "FSR 4"};

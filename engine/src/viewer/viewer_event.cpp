@@ -4047,8 +4047,8 @@ void Viewer::drawEventUi() {
     if (cr3BattleMode && cr3GameOverAt >= 0) drawCr3GameOver(screenW, screenH);
     cr3::EventRuntime* ev = activeEvents();
     if (!ev || !eventDrawingReady) return;
-    if (vitaButtons() && eventMode && (ev->vistaPaused || (ev->windowOpen(cr3::EventRuntime::Vista) && (ev->vistaPauseEnabled || uiClock < vistaControlsUntil))))
-        drawUiText(ev->vistaPaused ? "Paused" : "Triangle: Pause", 22, 0.33f, 0.27f, screenW, screenH, false);
+    // (no "Triangle: Pause" / "Paused" line over the scene: CR3-U's own, not the release's - English in the
+    // system's font over every event, a Japanese copy's too; the triangle pauses and resumes as before)
     struct YesNoLast { // (the buttons over everything else the event shows)
         Viewer* v; cr3::EventRuntime* ev;
         ~YesNoLast() { v->dev->clearDepth(), v->drawClearQuest(*ev, v->screenW, v->screenH), v->drawLevelUp(*ev, v->screenW, v->screenH), v->drawKeyBuy(v->screenW, v->screenH), v->drawYesNo(*ev, v->screenW, v->screenH), v->drawChoice(*ev, v->screenW, v->screenH), v->drawInputDialog(v->screenW, v->screenH); }

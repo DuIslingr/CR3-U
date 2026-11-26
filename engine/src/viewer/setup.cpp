@@ -4,12 +4,14 @@
 #include "viewer/setup.hpp"
 #include "platform/dialogs.hpp"
 #include "platform/ui_text.hpp"
+#include "gfx/text.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <functional>
 #include <cstdint>
 #include <cstdio>
@@ -277,6 +279,303 @@ std::string pickFolder() {
     return p.empty() ? std::string() : p.front();
 }
 
+// ---- the setup's own screen (a desktop's: Linux, Windows, macOS): its progress and its questions in a
+// window of its own, answered with the mouse, the keys or a gamepad - a system message box takes the
+// mouse alone, and in a Steam Deck's Gaming Mode (gamescope: every window full screen) the pad had no
+// way past it. The text in a system font through FreeType, sized to the window (gamescope stretches a
+// small window: SDL's 8x8 debug font, which the progress window drew in, came out a blur); SDL's
+// debug font, scaled up whole, only where no font file is found. Phones keep the system's boxes
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+#define CR_SETUP_SCREEN 1
+#endif
+
+#ifdef CR_SETUP_SCREEN
+TextRasterizer& setupFont() { // (loaded once, the first window's)
+    static TextRasterizer font;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        const char* windir = SDL_getenv("WINDIR");
+        const std::string win = std::string(windir ? windir : "C:/Windows") + "/Fonts/";
+        for (const std::string& path : {std::string("/usr/share/fonts/noto/NotoSans-Regular.ttf"), std::string("/usr/share/fonts/TTF/DejaVuSans.ttf"),
+                                        std::string("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), std::string("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+                                        std::string("/usr/share/fonts/liberation/LiberationSans-Regular.ttf"), std::string("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+                                        std::string("/usr/share/fonts/google-noto/NotoSans-Regular.ttf"), win + "segoeui.ttf", win + "arial.ttf",
+                                        std::string("/System/Library/Fonts/Supplemental/Arial.ttf"), std::string("/System/Library/Fonts/Helvetica.ttc")})
+            if (font.load(path)) break;
+        if (font.loaded()) // (the menus' Japanese, Chinese, Korean, Cyrillic: a CJK font after it)
+            for (const std::string& path : {std::string("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc"), std::string("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+                                            std::string("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"), win + "meiryo.ttc", win + "msgothic.ttc",
+                                            std::string("/System/Library/Fonts/Hiragino Sans GB.ttc")})
+                if (font.addFallback(path)) break;
+        SDL_Log("setup: its text in %s", font.loaded() ? font.path().c_str() : "SDL's debug font (no font file found)");
+    }
+    return font;
+}
+
+class Screen {
+public:
+    explicit Screen(const char* title, int w, int h) {
+        SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD); // (before the game's window: SDL may not be up yet)
+        // (gamescope - a Steam Deck's Gaming Mode -: the whole screen, its text sized to it; gamescope showed a
+        // resizable window as it was, small in a corner)
+        const bool gamescope = SDL_getenv("GAMESCOPE_WAYLAND_DISPLAY") != nullptr;
+        const SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | (gamescope ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_RESIZABLE);
+        if (!SDL_CreateWindowAndRenderer(title, w, h, flags, &win_, &r_)) {
+            SDL_Log("setup: no window (%s)", SDL_GetError());
+            return;
+        }
+        SDL_SetRenderVSync(r_, 1);
+        SDL_SetRenderDrawBlendMode(r_, SDL_BLENDMODE_BLEND);
+        int n = 0;
+        if (SDL_JoystickID* ids = SDL_GetGamepads(&n)) {
+            for (int k = 0; k < n; ++k)
+                if (SDL_Gamepad* p = SDL_OpenGamepad(ids[k])) pads_.push_back(p);
+            SDL_free(ids);
+        }
+    }
+    ~Screen() {
+        if (quit_) { // (seen here, swallowed with the rest: handed on)
+            SDL_Event q{};
+            q.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&q);
+        }
+        for (auto& [key, t] : cache_) SDL_DestroyTexture(t.tex);
+        for (SDL_Gamepad* p : pads_) SDL_CloseGamepad(p);
+        if (r_) SDL_DestroyRenderer(r_);
+        if (win_) SDL_DestroyWindow(win_);
+    }
+    Screen(const Screen&) = delete;
+    Screen& operator=(const Screen&) = delete;
+    bool ok() const { return r_ != nullptr; }
+
+    // the bar: `label` over it, `f` 0 .. 1 of it; `notes` (what the setup told meanwhile) under it
+    void progress(const std::string& label, double f, const std::vector<std::string>& notes) {
+        if (!r_) return;
+        pump();
+        begin();
+        const float u = unit(), x = pad(), wid = width() - 2 * x;
+        float y = height() * 0.30f;
+        y = paragraph(label, x, y, wid, 1.15f) + 0.6f * u;
+        const SDL_FRect track{x, y, wid, 0.9f * u}, bar{x, y, float(wid * std::clamp(f, 0.0, 1.0)), 0.9f * u};
+        SDL_SetRenderDrawColor(r_, 50, 60, 72, 255);
+        SDL_RenderFillRect(r_, &track);
+        SDL_SetRenderDrawColor(r_, 90, 200, 200, 255);
+        SDL_RenderFillRect(r_, &bar);
+        y += 2.0f * u;
+        for (const std::string& n : notes) y = paragraph(n, x, y, wid, 0.8f, 170) + 0.4f * u;
+        SDL_RenderPresent(r_);
+    }
+
+    // the question: `text`, the buttons (id, label) along its foot; the first focused. Left / right (the
+    // d-pad, the stick, the arrows, Tab) move, A or B / Return or Space press the one focused, a click
+    // one under it; Escape (or the window closed) the button with id `escape` (none: -1, nothing)
+    int ask(const std::string& text, const std::vector<std::pair<int, std::string>>& buttons, int escape) {
+        if (!r_ || buttons.empty()) return -1;
+        SDL_RaiseWindow(win_);
+        size_t focus = 0;
+        bool stickHeld = false;
+        for (;;) {
+            std::vector<SDL_FRect> rects;
+            begin();
+            const float u = unit(), x = pad(), wid = width() - 2 * x;
+            // (the text shrunk to fit above the buttons: a long list of folders)
+            float scale = 1.0f, bottom = 0;
+            for (; scale > 0.45f; scale *= 0.88f)
+                if ((bottom = measure(text, wid, scale)) <= height() - 4.6f * u - pad()) break;
+            paragraph(text, x, pad(), wid, scale);
+            const float bh = 1.9f * u, gap = 0.6f * u;
+            float bw = 5.5f * u;
+            for (const auto& b : buttons) bw = std::max(bw, lineWidth(b.second, 1.0f) + 2 * u);
+            bw = std::min(bw, (wid - gap * float(buttons.size() - 1)) / float(buttons.size()));
+            float bx = width() - x - (bw * float(buttons.size()) + gap * float(buttons.size() - 1));
+            const float by = height() - pad() - bh;
+            for (size_t k = 0; k < buttons.size(); ++k, bx += bw + gap) {
+                const SDL_FRect rc{bx, by, bw, bh};
+                rects.push_back(rc);
+                const bool on = k == focus;
+                SDL_SetRenderDrawColor(r_, on ? 90 : 52, on ? 200 : 60, on ? 200 : 72, 255);
+                SDL_RenderFillRect(r_, &rc);
+                const float lw = lineWidth(buttons[k].second, 1.0f);
+                line(buttons[k].second, bx + (bw - lw) / 2, by + (bh - u) / 2, 1.0f, on ? 16 : 230);
+            }
+            SDL_RenderPresent(r_);
+
+            SDL_Event e;
+            if (!SDL_WaitEventTimeout(&e, 250)) continue;
+            int pick = -2;
+            int move = 0;
+            do {
+                switch (e.type) {
+                case SDL_EVENT_QUIT: // (the program asked to end - SIGTERM, a logout -: the question left, the
+                    // request kept for the game's own loop, which ends on it)
+                    quit_ = true;
+                    pick = escape >= 0 ? escape : -1;
+                    break;
+                case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                    if (escape >= 0) pick = escape;
+                    break;
+                case SDL_EVENT_KEY_DOWN:
+                    if (e.key.key == SDLK_LEFT || e.key.key == SDLK_UP || (e.key.key == SDLK_TAB && (e.key.mod & SDL_KMOD_SHIFT))) move = -1;
+                    else if (e.key.key == SDLK_RIGHT || e.key.key == SDLK_DOWN || e.key.key == SDLK_TAB) move = 1;
+                    else if (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER || e.key.key == SDLK_SPACE) pick = buttons[focus].first;
+                    else if (e.key.key == SDLK_ESCAPE && escape >= 0) pick = escape;
+                    break;
+                case SDL_EVENT_GAMEPAD_ADDED:
+                    if (SDL_Gamepad* p = SDL_OpenGamepad(e.gdevice.which)) pads_.push_back(p);
+                    break;
+                case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+                    // (A or B, × or ○ - which confirms differs by region, and nothing here can't be undone:
+                    // each presses the button focused)
+                    const auto b = SDL_GamepadButton(e.gbutton.button);
+                    if (b == SDL_GAMEPAD_BUTTON_DPAD_LEFT || b == SDL_GAMEPAD_BUTTON_DPAD_UP) move = -1;
+                    else if (b == SDL_GAMEPAD_BUTTON_DPAD_RIGHT || b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) move = 1;
+                    else if (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_EAST || b == SDL_GAMEPAD_BUTTON_START) pick = buttons[focus].first;
+                    break;
+                }
+                case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                    if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) {
+                        const bool out = std::abs(int(e.gaxis.value)) > 20000;
+                        if (out && !stickHeld) move = e.gaxis.value < 0 ? -1 : 1;
+                        stickHeld = out;
+                    }
+                    break;
+                case SDL_EVENT_MOUSE_MOTION:
+                case SDL_EVENT_MOUSE_BUTTON_UP: {
+                    const float mx = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.x : e.button.x, my = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.y : e.button.y;
+                    float px = mx, py = my;
+                    SDL_RenderCoordinatesFromWindow(r_, mx, my, &px, &py);
+                    for (size_t k = 0; k < rects.size(); ++k)
+                        if (px >= rects[k].x && px <= rects[k].x + rects[k].w && py >= rects[k].y && py <= rects[k].y + rects[k].h) {
+                            focus = k;
+                            if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) pick = buttons[k].first;
+                        }
+                    break;
+                }
+                default:
+                    break;
+                }
+            } while (pick == -2 && SDL_PollEvent(&e));
+            if (pick != -2) return pick;
+            if (move) focus = (focus + buttons.size() + size_t(move + int(buttons.size()))) % buttons.size();
+        }
+    }
+
+private:
+    struct Tex {
+        SDL_Texture* tex = nullptr;
+        float w = 0, h = 0;
+    };
+    SDL_Window* win_ = nullptr;
+    SDL_Renderer* r_ = nullptr;
+    std::vector<SDL_Gamepad*> pads_;
+    std::vector<std::pair<std::string, Tex>> cache_; // (lines drawn: their size in the key)
+    int ow_ = 0, oh_ = 0;
+    bool quit_ = false; // (SDL_EVENT_QUIT seen: pushed again as the screen goes)
+
+    void pump() {
+        SDL_Event e;
+        while (SDL_PollEvent(&e))
+            if (e.type == SDL_EVENT_QUIT) quit_ = true;
+            else if (e.type == SDL_EVENT_GAMEPAD_ADDED)
+                if (SDL_Gamepad* p = SDL_OpenGamepad(e.gdevice.which)) pads_.push_back(p);
+    }
+    void begin() {
+        SDL_GetCurrentRenderOutputSize(r_, &ow_, &oh_);
+        SDL_SetRenderDrawColor(r_, 18, 22, 30, 255);
+        SDL_RenderClear(r_);
+    }
+    float width() const { return float(ow_); }
+    float height() const { return float(oh_); }
+    // the text's line height at scale 1: a 720-line screen's 30 px, never under 18
+    float unit() const { return std::max(18.0f, std::min(float(ow_) / 1280.0f, float(oh_) / 720.0f) * 30.0f); }
+    float pad() const { return unit() * 1.2f; }
+    int px(float scale) const { return std::max(10, int(unit() * 0.78f * scale)); }
+
+    const Tex* text(const std::string& s, float scale) {
+        if (s.empty()) return nullptr;
+        TextRasterizer& f = setupFont();
+        if (!f.loaded()) return nullptr;
+        const std::string key = std::to_string(px(scale)) + "|" + s;
+        for (auto& [k, t] : cache_)
+            if (k == key) return &t;
+        int w = 0, h = 0;
+        const Image img = f.render(s, px(scale), w, h);
+        Tex t;
+        if (img.width > 0 && img.height > 0) {
+            if (SDL_Surface* surf = SDL_CreateSurfaceFrom(img.width, img.height, SDL_PIXELFORMAT_RGBA32, const_cast<uint8_t*>(img.rgba.data()), img.width * 4)) {
+                t.tex = SDL_CreateTextureFromSurface(r_, surf);
+                SDL_DestroySurface(surf);
+            }
+            t.w = float(img.width), t.h = float(img.height);
+        }
+        if (cache_.size() > 400) {
+            for (auto& [k, old] : cache_) SDL_DestroyTexture(old.tex);
+            cache_.clear();
+        }
+        cache_.push_back({key, t});
+        return &cache_.back().second;
+    }
+    float lineWidth(const std::string& s, float scale) {
+        if (const Tex* t = text(s, scale)) return t->w;
+        if (setupFont().loaded()) return 0;
+        return float(s.size()) * 8.0f * debugScale(scale);
+    }
+    float debugScale(float scale) const { return std::max(1.0f, std::floor(unit() * 0.78f * scale / 8.0f)); }
+    void line(const std::string& s, float x, float y, float scale, Uint8 grey = 225) {
+        if (const Tex* t = text(s, scale)) {
+            if (!t->tex) return;
+            SDL_SetTextureColorMod(t->tex, grey, Uint8(std::min(255, grey + 10)), Uint8(std::min(255, grey + 15)));
+            const SDL_FRect dst{std::floor(x), std::floor(y), t->w, t->h};
+            SDL_RenderTexture(r_, t->tex, nullptr, &dst);
+        } else if (!setupFont().loaded()) {
+            const float k = debugScale(scale);
+            SDL_SetRenderScale(r_, k, k);
+            SDL_SetRenderDrawColor(r_, grey, grey, grey, 255);
+            SDL_RenderDebugText(r_, x / k, y / k, s.c_str());
+            SDL_SetRenderScale(r_, 1, 1);
+        }
+    }
+    // the text's lines, each paragraph's words wrapped to `wid`
+    std::vector<std::string> wrap(const std::string& all, float wid, float scale) {
+        std::vector<std::string> out;
+        size_t at = 0;
+        for (;;) {
+            const size_t nl = all.find('\n', at);
+            const std::string para = all.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+            std::string cur;
+            size_t w = 0;
+            while (w <= para.size()) {
+                size_t e = para.find(' ', w);
+                if (e == std::string::npos) e = para.size();
+                const std::string word = para.substr(w, e - w);
+                const std::string tryLine = cur.empty() ? word : cur + " " + word;
+                if (!cur.empty() && lineWidth(tryLine, scale) > wid) out.push_back(cur), cur = word;
+                else cur = tryLine;
+                w = e + 1;
+            }
+            out.push_back(cur);
+            if (nl == std::string::npos) break;
+            at = nl + 1;
+        }
+        return out;
+    }
+    float measure(const std::string& s, float wid, float scale) { return pad() + float(wrap(s, wid, scale).size()) * unit() * scale; }
+    float paragraph(const std::string& s, float x, float y, float wid, float scale, Uint8 grey = 225) {
+        for (const std::string& l : wrap(s, wid, scale)) line(l, x, y, scale, grey), y += unit() * scale;
+        return y;
+    }
+};
+
+// what the setup told while it worked (an archive unpacked, "it can be deleted"): on the bar of what
+// follows - not a box to close, the next step (the .ipa's unpacking) left waiting behind it -, and all of
+// it in the next question, or once the setup is through (showSetupNotes)
+std::vector<std::string>& pendingNotes() {
+    static std::vector<std::string> n;
+    return n;
+}
+#endif
+
 int ask(const SetupGame& g, const std::string& text, const std::vector<std::pair<int, const char*>>& buttons, SDL_MessageBoxFlags flags) {
     if (script().on) {
         std::string shown = text + "\n  [";
@@ -285,6 +584,23 @@ int ask(const SetupGame& g, const std::string& text, const std::vector<std::pair
         const std::string a = answer("the choice");
         return a.empty() ? 0 : std::atoi(a.c_str());
     }
+#ifdef CR_SETUP_SCREEN
+    {
+        std::string all;
+        for (const std::string& n : pendingNotes()) all += n + "\n\n";
+        pendingNotes().clear();
+        std::vector<std::pair<int, std::string>> b;
+        int escape = -1;
+        for (const auto& [id, label] : buttons) {
+            b.push_back({id, label});
+            if (id == 0) escape = 0; // (Quit, No, Cancel)
+        }
+        Screen screen(g.title, 900, 560);
+        if (screen.ok()) return screen.ask(all + text, b, escape);
+        (void)flags;
+        return -1;
+    }
+#else
     std::vector<SDL_MessageBoxButtonData> b;
     for (const auto& [id, label] : buttons) b.push_back({0, id, label});
     SDL_MessageBoxData box{};
@@ -296,10 +612,15 @@ int ask(const SetupGame& g, const std::string& text, const std::vector<std::pair
     int hit = -1;
     if (!SDL_ShowMessageBox(&box, &hit)) return -1;
     return hit;
+#endif
 }
 void tell(const SetupGame& g, const std::string& text) {
     if (script().on) return (void)SDL_Log("setup tells: %s", text.c_str());
+#ifdef CR_SETUP_SCREEN
+    ask(g, text, {{0, tr("OK")}}, SDL_MESSAGEBOX_WARNING); // (id 0: Escape, the window closed, too)
+#else
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, g.title, text.c_str(), nullptr);
+#endif
 }
 
 // ---- the .ipa (a zip): its central directory, then Payload/<name>.app/'s files
@@ -406,10 +727,15 @@ bool unpackEntry(std::FILE* f, const ZipEntry& e, const std::string& path, std::
     return ok || fail(error, trf("{0}: can't be unpacked", {e.name}), Failed::CantBe);
 }
 
-// a small window over the unpacking: the .ipa's name, a bar
+// a window over the unpacking: what is unpacked, a bar (a desktop's: the setup's own screen, what the
+// setup told meanwhile under it; a phone's: SDL's debug font, the screen its own)
 struct Progress {
+#ifdef CR_SETUP_SCREEN
+    std::unique_ptr<Screen> screen;
+#else
     SDL_Window* win = nullptr;
     SDL_Renderer* r = nullptr;
+#endif
     std::string label;
     Uint64 last = 0;
     Progress(const char* title, const std::string& what) : label(what) {
@@ -417,13 +743,27 @@ struct Progress {
             SDL_Log("setup: %s", what.c_str());
             return;
         }
+#ifdef CR_SETUP_SCREEN
+        screen = std::make_unique<Screen>(title, 760, 300);
+        show(0, true);
+#else
         if (SDL_CreateWindowAndRenderer(title, 520, 120, 0, &win, &r)) show(0, true);
+#endif
     }
+#ifndef CR_SETUP_SCREEN
     ~Progress() {
         if (r) SDL_DestroyRenderer(r);
         if (win) SDL_DestroyWindow(win);
     }
+#endif
     void show(double f, bool now = false) {
+#ifdef CR_SETUP_SCREEN
+        if (!screen) return;
+        const Uint64 t = SDL_GetTicks();
+        if (!now && t - last < 50) return;
+        last = t;
+        screen->progress(label, f, pendingNotes());
+#else
         if (!r) return;
         const Uint64 t = SDL_GetTicks();
         if (!now && t - last < 50) return;
@@ -445,14 +785,20 @@ struct Progress {
         SDL_SetRenderDrawColor(r, 90, 200, 200, 255);
         SDL_RenderFillRect(r, &bar);
         SDL_RenderPresent(r);
+#endif
     }
 };
 
-// a message: shown, or (`quiet`, a test's) logged alone
+// a message: (a desktop's) kept for the next step's bar and the next question - the setup carries on -,
+// (a phone's) shown; or (`quiet`, a test's) logged alone
 void note(const SetupGame& g, const std::string& text, bool quiet) {
     SDL_Log("setup: %s", text.c_str());
     if (script().on) tell(g, text);
+#ifdef CR_SETUP_SCREEN
+    else if (!quiet) pendingNotes().push_back(text);
+#else
     else if (!quiet) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, g.title, text.c_str(), nullptr);
+#endif
 }
 
 // ---- a picked file the system hands over as a content:// URI (Android's document picker): copied
@@ -628,6 +974,22 @@ std::string findVitaGame(const std::string& picked, const SetupGame& g) {
 }
 
 bool setupScripted() { return script().on; }
+
+int setupAsk(const SetupGame& g, const std::string& text, const std::vector<std::pair<int, const char*>>& buttons) {
+    return ask(g, text, buttons, SDL_MESSAGEBOX_INFORMATION);
+}
+void setupTell(const SetupGame& g, const std::string& text) { tell(g, text); }
+void showSetupNotes(const SetupGame& g) {
+#ifdef CR_SETUP_SCREEN
+    if (pendingNotes().empty()) return;
+    std::string all;
+    for (const std::string& n : pendingNotes()) all += (all.empty() ? "" : "\n\n") + n;
+    pendingNotes().clear();
+    ask(g, all, {{0, tr("OK")}}, SDL_MESSAGEBOX_INFORMATION);
+#else
+    (void)g;
+#endif
+}
 
 std::function<void(const std::string&, double)> progressWindow(const SetupGame& g, const std::string& what) {
     // (opened at the first call - nothing to do, no window -, closed with the last copy of the function)

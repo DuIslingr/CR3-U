@@ -1138,11 +1138,7 @@ int main(int argc, char** argv) {
         for (size_t k = 1; k < searched.size(); ++k) msg += "\n" + searched[k];
         msg += std::string("\n\n") + tr("The README's \"Your copy\" has the details.");
 #endif
-        const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, tr("Look again")},
-                                                    {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, tr("Quit")}};
-        const SDL_MessageBoxData box{SDL_MESSAGEBOX_ERROR, nullptr, "Chaos Rings III", msg.c_str(), 2, buttons, nullptr};
-        int choice = 0;
-        if (!SDL_ShowMessageBox(&box, &choice) || choice != 1) return 2;
+        if (cr3::setupAsk(cr3SetupGame(), msg, {{1, tr("Look again")}, {0, tr("Quit")}}) != 1) return 2; // (a gamepad answers it too)
         // (Look again: what was put in meanwhile decrypted / unpacked and found - no restart)
         searched = dataPlaces();
         for (const std::string& place : searched) {
@@ -1226,6 +1222,7 @@ int main(int argc, char** argv) {
         s.sharpness = int(std::lround(upscale.sharpness * 100.0f));
         s.hdTextures = hdArg == 1;
     }
+    cr3::showSetupNotes(cr3SetupGame()); // (what the setup told on its way - an archive it unpacked can go -: once, now it is through)
     std::string err;
     // (a repacked .apks: its asset packs - ~1.3 GB - unpacked on the first start before any window; a progress
     // window over it, else the game seems to hang - GitHub issue 6. Not for captures and exports: logged)
@@ -1236,7 +1233,7 @@ int main(int argc, char** argv) {
     if (!opened) {
         std::fprintf(stderr, "%s\n", err.c_str());
         if (argc <= 1) // (opened with nothing - a double-click -: said in a window, not only to a terminal)
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chaos Rings III", trf("The copy of the game in\n{0}\ncan't be read: {1}", {data, err}).c_str(), nullptr);
+            cr3::setupTell(cr3SetupGame(), trf("The copy of the game in\n{0}\ncan't be read: {1}", {data, err}));
         return 1;
     }
     SDL_Log("data: %s", data.c_str());
@@ -1279,13 +1276,10 @@ int main(int argc, char** argv) {
         for (const std::string& n : v.archive.unpackFailed()) names += (names.empty() ? "" : ", ") + n;
         SDL_Log("asset packs not unpacked: %s", names.c_str());
         if (capture.empty())
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Chaos Rings III",
-                                     (trf("Couldn't unpack the game's asset packs from the .apks ({0}) into the assetpacks folder beside it - is "
+            cr3::setupTell(cr3SetupGame(), (trf("Couldn't unpack the game's asset packs from the .apks ({0}) into the assetpacks folder beside it - is "
                                           "there about 1.3 GB free?",
                                           {names}) +
-                                      "\n\n" + tr("The game will run without its sound, voices and movies."))
-                                         .c_str(),
-                                     nullptr);
+                                      "\n\n" + tr("The game will run without its sound, voices and movies.")));
     }
     {
         std::vector<std::string> sources;
@@ -1528,8 +1522,10 @@ int main(int argc, char** argv) {
     v.shaders = std::make_unique<cr3::ShaderLibrary>(v.archive);
     // (nothing asked for - the release's own launch -: the title)
     if (model.empty() && animName.empty() && fieldName.empty() && eventName.empty() && areaName.empty() && battleId <= 0 && !continueSave &&
-        gameSavePath.empty() && playFrom.empty() && creditsArg < 0 && bgmArg.empty() && seArg.empty() && voiceArg.empty())
+        gameSavePath.empty() && playFrom.empty() && creditsArg < 0 && bgmArg.empty() && seArg.empty() && voiceArg.empty()) {
         titleScreen = true;
+        if (win) SDL_SetWindowTitle(win, "Chaos Rings III"); // (made as the viewer's: the game's now)
+    }
     const bool cr3Title = titleScreen && v.archive.contains("ttlLogoMenu.geom"); // (CR3's title: its own flow, into the prologue)
     if (titleScreen && playFrom.empty() && !cr3Title) playFrom = "d1020"; // (the title's New Game: --play's start)
     if (!playFrom.empty()) fieldName = playFrom, v.playMode = true;
@@ -2051,6 +2047,21 @@ int main(int argc, char** argv) {
             }
             while (SDL_PollEvent(&e)) {
                 const bool cancelled = inputCancel.note(e);
+#if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_ANDROID)
+                // (a phone's keyboard, its view's size, its app's comings and goings: logged - GitHub issue 9, the screen
+                // black from the name entry's keyboard on an iPhone SE: what happened then, from the player's cr3view.log)
+                switch (e.type) {
+                case SDL_EVENT_SCREEN_KEYBOARD_SHOWN: SDL_Log("phone: the keyboard shown"); break;
+                case SDL_EVENT_SCREEN_KEYBOARD_HIDDEN: SDL_Log("phone: the keyboard hidden"); break;
+                case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: SDL_Log("phone: the view %dx%d px", e.window.data1, e.window.data2); break;
+                case SDL_EVENT_WINDOW_METAL_VIEW_RESIZED: SDL_Log("phone: the Metal view resized"); break;
+                case SDL_EVENT_WINDOW_FOCUS_LOST: SDL_Log("phone: focus lost"); break;
+                case SDL_EVENT_WINDOW_FOCUS_GAINED: SDL_Log("phone: focus back"); break;
+                case SDL_EVENT_WILL_ENTER_BACKGROUND: SDL_Log("lifecycle: going into the background"); break;
+                case SDL_EVENT_DID_ENTER_FOREGROUND: SDL_Log("lifecycle: in front again"); break;
+                default: break;
+                }
+#endif
                 consumeInputCancel();
                 if (cancelled) continue;
                 if (e.type == SDL_EVENT_MOUSE_MOTION && dragging && v.vs.screen == 11) { // (the Lucky Box's swipe: TouchSimpleMove)
@@ -2621,8 +2632,9 @@ int main(int argc, char** argv) {
             }
             if (v.fig.animLoaded && v.time > v.fig.anim.duration()) v.time = std::fmod(v.time, std::max(v.fig.anim.duration(), 0.05f));
             v.pose();
-            SDL_SetWindowTitle(win, ("CR3-U viewer (" + std::string(cr3::backendName(dev->windowFlags() & SDL_WINDOW_VULKAN ? cr3::Backend::Vulkan : cr3::Backend::OpenGL)) + ", " +
-                                     describe() + ", " + std::to_string(int(measured + 0.5f)) + " fps) - " + v.status + v.animStatus()).c_str());
+            if (!titleScreen) // (the viewer's: what it shows; the game's own title stays "Chaos Rings III", set once)
+                SDL_SetWindowTitle(win, ("CR3-U viewer (" + std::string(cr3::backendName(dev->windowFlags() & SDL_WINDOW_VULKAN ? cr3::Backend::Vulkan : cr3::Backend::OpenGL)) + ", " +
+                                         describe() + ", " + std::to_string(int(measured + 0.5f)) + " fps) - " + v.status + v.animStatus()).c_str());
             int w = 0, h = 0;
             frameSize(w, h);
             if (!padShot.empty()) { // (CR3_PAD_SCRIPT's shot=: this frame to a file, as --capture writes one)

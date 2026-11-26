@@ -1307,7 +1307,7 @@ private:
             if (portability) ext.push_back("VK_KHR_portability_enumeration");
         }
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        app.pApplicationName = "Chaos Rings Omega";
+        app.pApplicationName = "Chaos Rings III"; // (what gamescope, the Steam overlay and driver profiles see)
         app.apiVersion = VK_API_VERSION_1_3;
         VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         ci.pApplicationInfo = &app;
@@ -2225,6 +2225,8 @@ private:
         VkSwapchainKHR sc = VK_NULL_HANDLE;
         if (!ok(vkCreateSwapchainKHR(device_, &ci, nullptr, &sc))) return;
         destroySwapchain();
+        if (extent.width != swapExtent_.width || extent.height != swapExtent_.height) // (a new size: logged - GitHub issue 9)
+            SDL_Log("Vulkan: swapchain %ux%u (the window %dx%d px)", extent.width, extent.height, w, h);
         swapchain_ = sc;
         swapExtent_ = extent;
         vkGetSwapchainImagesKHR(device_, swapchain_, &n, nullptr);

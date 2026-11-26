@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(CR3U LANGUAGES C CXX)
 # (the iOS bundle's version - numbers alone, as Apple asks: CI passes the tag's)
-set(CR_VERSION "0.7.3" CACHE STRING "The iOS app's version (x.y.z)")
+set(CR_VERSION "0.7.3" CACHE STRING "The release's version (x.y.z): the iPhone and macOS apps', and Android's (android/app/build.gradle reads it here)")
 if(WIN32)
     enable_language(RC) # (the .exe's icon: cmake/app-icon.cmake)
 endif()
@@ -287,31 +287,20 @@ if(NOT IOS) # (the command-line tool: not on a phone)
     target_link_libraries(cr3tool PRIVATE cr3core)
 endif()
 
-# The viewer: SDL3 (the system's when present, else built from source as CR1:U does) and OpenGL 3.3
-# Windows always builds its own, from SDL's development branch at 59ccf612 (2026-11-14): the Flydigi Vader 4
-# Pro, wired and through its receiver, isn't found with 3.4.20 - not with its HIDAPI Flydigi driver off either
-# (CRO-U #4) -, and works with that commit, as the metastigma fork has it and its user verified
-# (metastigma/CRO-U-metastigma#42, #45): the Flydigi XInput detection and ignored-devices fixes after 3.4.20 are
-# there. Back to a release once one carries them
-if(NOT WIN32)
-    find_package(SDL3 CONFIG QUIET)
-endif()
-if(NOT SDL3_FOUND)
-    include(FetchContent)
-    if(WIN32)
-        FetchContent_Declare(SDL3
-            GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-            GIT_TAG 59ccf612c1ee00e3845947503ead7da3f46f6615)
-    else()
-        FetchContent_Declare(SDL3
-            GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-            GIT_TAG release-3.4.20  # the stable SDL3 of 2026-11 (as the Linux packages carry): its controller hot-plug fixes
-            GIT_SHALLOW TRUE)
-    endif()
-    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-    set(SDL_STATIC ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(SDL3)
-endif()
+# The viewer: SDL3 and OpenGL 3.3. SDL3 is built from source on every platform, from SDL's development branch at 59ccf612
+# (2026-11-14, SDL 3.5.0): the Flydigi Vader 4 Pro, wired and through its receiver, isn't found with 3.4.20 - not
+# with its HIDAPI Flydigi driver off either (CRO-U #4) -, and works with that commit, as the metastigma fork has it
+# and its user verified (metastigma/CRO-U-metastigma#42, #45): SDL's Flydigi XInput detection and ignored-devices
+# fixes after 3.4.20. Windows since 2026-11-14, every platform since 2026-11-20, so all controllers get the same
+# SDL; the system's package isn't used (Linux distributions carry 3.4). Android's Java glue comes from the same
+# commit (android/SDL, which needs compileSdk 36). Back to a release once one carries the fixes
+include(FetchContent)
+FetchContent_Declare(SDL3
+    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+    GIT_TAG 59ccf612c1ee00e3845947503ead7da3f46f6615)
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(SDL3)
 # Vulkan back end: the loader + headers and glslc (shaders are compiled to SPIR-V at build time
 # and embedded). Without them the game builds with OpenGL only.
 # iOS: MoltenVK linked into the app - a MoltenVK release's static xcframework (CR_MOLTENVK: the folder
@@ -475,7 +464,7 @@ target_link_libraries(cr3core PUBLIC SDL3::SDL3) # (platform/ui_text: its catalo
 # archive copied into the Files app's vita/, or picked in the setup, is decrypted there as on a
 # desktop or a phone
 target_compile_definitions(cr3view PRIVATE CR_HAVE_VITA_DECRYPT=1)
-# (a phone's setup too: a dump or the fan translation picked as its archive - Android's libarchive without LZMA: no .7z)
+# (a phone's setup too: a dump or the fan translation picked as its archive - .7z through liblzma, the system's or xz's built here)
 find_package(LibArchive QUIET)
 if(NOT LibArchive_FOUND AND CR_FETCH_DEPS)
     include(FetchContent)
@@ -491,9 +480,15 @@ if(NOT LibArchive_FOUND AND CR_FETCH_DEPS)
             set(${have} 1 CACHE INTERNAL "")
         endforeach()
     endif()
-    # (7z's LZMA - the CR3 fan translation comes as one -: the system's liblzma, else xz's built here)
-    find_package(LibLZMA QUIET)
-    if(NOT LIBLZMA_FOUND)
+    # (7z's LZMA - the CR3 fan translation comes as one -: the system's liblzma, else xz's built here. Once
+    # xz is built here the cache holds LIBLZMA_LIBRARY as its target's name, and a later configure's find
+    # took that for a system library: xz not built again, its bare name handed to the linker as -lliblzma -
+    # GitHub issue 8, Android's NDK 27 (no liblzma of its own) after any re-configure. So xz's own name in
+    # the cache means xz again, never "found")
+    if(NOT "${LIBLZMA_LIBRARY}" STREQUAL "liblzma")
+        find_package(LibLZMA QUIET)
+    endif()
+    if("${LIBLZMA_LIBRARY}" STREQUAL "liblzma" OR NOT LIBLZMA_FOUND)
         foreach(off XZ_TOOL_XZ XZ_TOOL_XZDEC XZ_TOOL_LZMADEC XZ_TOOL_LZMAINFO XZ_TOOL_SCRIPTS XZ_TOOL_SYMLINKS XZ_TOOL_SYMLINKS_LZMA XZ_NLS XZ_DOXYGEN BUILD_TESTING)
             set(${off} OFF CACHE BOOL "" FORCE)
         endforeach()
@@ -509,6 +504,9 @@ if(NOT LibArchive_FOUND AND CR_FETCH_DEPS)
     endif()
     FetchContent_Declare(libarchive GIT_REPOSITORY https://github.com/libarchive/libarchive.git GIT_TAG v3.8.11 GIT_SHALLOW TRUE ${CR_FETCH_EXCLUDE})
     FetchContent_MakeAvailable(libarchive)
+    if(TARGET liblzma) # (xz's, built here: before libarchive - its link names that target)
+        add_dependencies(archive_static liblzma)
+    endif()
     target_include_directories(archive_static INTERFACE ${libarchive_SOURCE_DIR}/libarchive)
     target_compile_definitions(archive_static INTERFACE LIBARCHIVE_STATIC)
     add_library(LibArchive::LibArchive ALIAS archive_static)
@@ -524,13 +522,13 @@ else()
 endif()
 set_target_properties(cr3view PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "Chaos Rings III"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "local.preservation.chaosrings3")
+    MACOSX_BUNDLE_GUI_IDENTIFIER "local.preservation.chaosrings3"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${CR_VERSION}" # (the macOS .app's too, not only the iPhone's)
+    MACOSX_BUNDLE_BUNDLE_VERSION "${CR_VERSION}")
 if(IOS) # iPhone and iPad (packaging/ios/Info.plist.in): the app's Documents its game folder (Files, Finder),
     # landscape, 120 Hz; built unsigned - the .ipa is signed by whoever sideloads it
     set_target_properties(cr3view PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/ios/Info.plist.in
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${CR_VERSION}"
-        MACOSX_BUNDLE_BUNDLE_VERSION "${CR_VERSION}"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "local.preservation.chaosrings3"
         XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO")

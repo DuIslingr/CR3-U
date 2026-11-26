@@ -149,6 +149,10 @@ msgid "Any file"
 msgstr "Tout fichier"
 
 #: src/viewer/setup.cpp
+msgid "OK"
+msgstr "OK"
+
+#: src/viewer/setup.cpp
 msgid "can't be read"
 msgstr "illisible"
 

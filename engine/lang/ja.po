@@ -145,6 +145,10 @@ msgid "Any file"
 msgstr "すべてのファイル"
 
 #: src/viewer/setup.cpp
+msgid "OK"
+msgstr "OK"
+
+#: src/viewer/setup.cpp
 msgid "can't be read"
 msgstr "読み込めません"
 

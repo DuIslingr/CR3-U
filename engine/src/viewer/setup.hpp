@@ -23,6 +23,8 @@
 
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace cr3 {
 
@@ -80,6 +82,15 @@ bool installDroppedPatch(const SetupGame& game, const std::string& folder, bool 
 
 // whether CRU_SETUP_ANSWERS answers it (a test's run: no windows)
 bool setupScripted();
+
+// A question or a message in the setup's own way (a desktop's: its own screen - the mouse, the keys or
+// a gamepad answer it -; a phone's: the system's box; CRU_SETUP_ANSWERS: logged, answered from there).
+// setupAsk: the button's id chosen (Escape: id 0's, where there is one), -1 no window
+int setupAsk(const SetupGame& game, const std::string& text, const std::vector<std::pair<int, const char*>>& buttons);
+void setupTell(const SetupGame& game, const std::string& text);
+// What the setup told along the way (an archive unpacked: "it can be deleted") - kept, not a box to close
+// between its steps -: shown now, once, with an OK; nothing kept, nothing shown
+void showSetupNotes(const SetupGame& game);
 
 // A progress window for a long step outside the setup (a repacked .apks' asset packs unpacked on the
 // first start): called with the item in course and 0 .. 1 of the whole, it opens at the first call
