@@ -2670,8 +2670,8 @@ int main(int argc, char** argv) {
     for (auto& d : v.mapNameParts.digits) v.unload(d);
     for (auto* p : {&v.messageButton, &v.vistaPageCursor, &v.announcePageCursor, &v.vistaFastButton, &v.vistaStopButton, &v.tutorialMenuPicture})
         v.unload(p->position), v.unload(p->fig);
-    for (auto& q : v.textQuads) dev->destroy(q.tex);
-    for (auto& q : v.nameQuads) dev->destroy(q.tex);
+    for (auto& q : v.textQuads) dev->destroy(q.tex), dev->destroy(q.edge);
+    for (auto& q : v.nameQuads) dev->destroy(q.tex), dev->destroy(q.edge);
     for (ViewFigure& g : v.eventFigures) v.unload(g);
     for (ViewFigure& g : v.eventHeads) v.unload(g);
     for (auto& slots : v.eventAttachments)
@@ -2681,7 +2681,7 @@ int main(int argc, char** argv) {
     if (v.cr3GlassTexture.id) dev->destroy(v.cr3GlassTexture);
     if (v.glassTexture.id) dev->destroy(v.glassTexture);
     for (ViewFigure& g : v.gimmicks) v.unload(g);
-    for (auto& [k, q] : v.uiTexts) dev->destroy(q.tex);
+    for (auto& [k, q] : v.uiTexts) dev->destroy(q.tex), dev->destroy(q.edge);
     for (auto& [k, t] : v.textures) dev->destroy(t);
     dev->shutdown();
     SDL_DestroyWindow(win);

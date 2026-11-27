@@ -998,6 +998,22 @@ msgid "Sharp: square texels up close; Smooth: blended"
 msgstr "シャープ：近くでテクセルが四角く見える。なめらか：補間"
 
 #: src/viewer/viewer_gfx.cpp
+msgid "Text Outline"
+msgstr "文字の縁取り"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Fixed"
+msgstr "修正版"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original"
+msgstr "オリジナル"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original: eight offset draws; Fixed: one antialiased pass."
+msgstr "元の方式は8回ずらして描画し、修正版はアンチエイリアス付きで1回描画します。"
+
+#: src/viewer/viewer_gfx.cpp
 msgid "HD Textures"
 msgstr "HDテクスチャ"
 

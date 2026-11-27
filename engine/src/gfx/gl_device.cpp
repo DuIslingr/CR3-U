@@ -315,7 +315,8 @@ public:
     void setFiltering(const TextureFiltering& f) override {
         if (f == filtering_) return;
         filtering_ = f;
-        for (unsigned id : mipmapped_) filter(textureName(id));
+        for (unsigned id : mipmapped_)
+            if (!textures_[id].ui) filter(textureName(id)); // (the menus' art: never Sharp)
     }
     int maxAnisotropy() const override {
         if (anisoLimit_ < 0) {
@@ -341,6 +342,7 @@ public:
         rec.width = img.width;
         rec.height = img.height;
         rec.mipmaps = img.mipmaps;
+        rec.ui = img.ui;
         rec.pixels.store(img.rgba);
         createTexture(rec, img.rgba);
         if (img.mipmaps) mipmapped_.insert(t.id);
@@ -641,6 +643,7 @@ private:
         unsigned name = 0;
         int width = 0, height = 0;
         bool mipmaps = false;
+        bool ui = false; // (Image::ui: the Sharp filter not on it)
         crgl::Backup pixels;
     };
     struct MeshRec {
@@ -670,7 +673,7 @@ private:
         }
         gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, rec.mipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        if (rec.mipmaps) filter(rec.name);
+        if (rec.mipmaps && !rec.ui) filter(rec.name);
         gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }

@@ -79,8 +79,8 @@ constexpr int kFrames = 2;                      // frames in flight
 constexpr VkDeviceSize kBlockSize = 64u << 20;  // memory blocks / buffer arenas
 constexpr VkDeviceSize kRingSize = 16u << 20;   // per-frame dynamic vertices, grows as needed
 constexpr VkDeviceSize kShadingRing = 1u << 20; // per-frame Material blocks (shading.glsl), grows too
-constexpr unsigned kSamplers = 128;             // sampler variants: 1/2 clamp S/T, 4 min / 8 mag linear,
-                                                 // 16 mipmapped, 32/64 mirrored S/T
+constexpr unsigned kSamplers = 256;             // sampler variants: 1/2 clamp S/T, 4 min / 8 mag linear,
+                                                 // 16 mipmapped, 32/64 mirrored S/T, 128 interface art (no Sharp)
 constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat kMotionFormat = VK_FORMAT_R16G16_SFLOAT; // scene: motion vectors
 constexpr VkFormat kReactiveFormat = VK_FORMAT_R8_UNORM;    // scene: reactive mask
@@ -174,6 +174,7 @@ struct TextureRec {
     Alloc mem;
     std::array<VkDescriptorSet, kSamplers> sets{}; // per sampler variant (kSamplers)
     uint32_t mips = 1;
+    bool ui = false; // (Image::ui: sampled with bit 128 - the Sharp filter not on it)
     bool live = false;
 };
 
@@ -312,6 +313,7 @@ public:
         ii.format = kColorFormat;
         ii.extent = {uint32_t(img.width), uint32_t(img.height), 1};
         rec.mips = img.mipmaps ? 1 + uint32_t(std::floor(std::log2(float(std::max(img.width, img.height))))) : 1;
+        rec.ui = img.ui;
         ii.mipLevels = rec.mips;
         ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1009,7 +1011,7 @@ public:
         ii.imageType = VK_IMAGE_TYPE_2D, ii.format = kColorFormat, ii.extent = {uint32_t(w), uint32_t(h), 1};
         ii.mipLevels = 1, ii.arrayLayers = 1, ii.samples = VK_SAMPLE_COUNT_1_BIT, ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-        rec.view = VK_NULL_HANDLE, rec.mips = 1;
+        rec.view = VK_NULL_HANDLE, rec.mips = 1, rec.ui = false;
         if (!ok(vkCreateImage(device_, &ii, nullptr, &rec.image))) return rec.live = false, rec.image = VK_NULL_HANDLE, t = {}, false;
         VkMemoryRequirements req;
         vkGetImageMemoryRequirements(device_, rec.image, &req);
@@ -1761,7 +1763,7 @@ private:
             }
     }
 
-    // Samplers by bits: 1 clamp S, 2 clamp T, 4 linear min, 8 linear mag, 16 blend mips (HD)
+    // Samplers by bits: 1 clamp S, 2 clamp T, 4 linear min, 8 linear mag, 16 blend mips (HD), 128 interface art
     bool createSamplers() {
         for (unsigned bits = 0; bits < kSamplers; ++bits) {
             VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -1779,7 +1781,7 @@ private:
             if (bits & 16) { // (the mipmapped textures: the options' filtering)
                 const float aniso = std::min(float(filtering_.anisotropy), anisotropy_);
                 if (aniso > 1.0f) si.anisotropyEnable = VK_TRUE, si.maxAnisotropy = aniso; // (sharp at an angle)
-                if (filtering_.sharp) si.magFilter = VK_FILTER_NEAREST;
+                if (filtering_.sharp && !(bits & 128)) si.magFilter = VK_FILTER_NEAREST; // (the menus' art stays smooth)
                 si.mipLodBias = filtering_.lodBias;
             }
             if (!ok(vkCreateSampler(device_, &si, nullptr, &samplers_[bits]))) return false;
@@ -1799,7 +1801,7 @@ private:
         if (index >= textures_.size()) return;
         TextureRec& t = textures_[index];
         if (!t.image) return;
-        samplerBits = (samplerBits & ~16u & (kSamplers - 1)) | (t.mips > 1 ? 16u : 0u);
+        samplerBits = (samplerBits & ~(16u | 128u) & (kSamplers - 1)) | (t.mips > 1 ? 16u : 0u) | (t.ui ? 128u : 0u);
         VkDescriptorSet& set = t.sets[samplerBits];
         if (!set) {
             VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};

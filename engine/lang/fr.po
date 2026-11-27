@@ -1041,6 +1041,23 @@ msgid "Sharp: square texels up close; Smooth: blended"
 msgstr "Net : texels carrés de près ; Lisse : fondus"
 
 #: src/viewer/viewer_gfx.cpp
+msgid "Text Outline"
+msgstr "Contour du texte"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Fixed"
+msgstr "Corrigé"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original"
+msgstr "D'origine"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original: eight offset draws; Fixed: one antialiased pass."
+msgstr ""
+"Original : huit dessins décalés ; corrigé : un seul passage anticrénelé."
+
+#: src/viewer/viewer_gfx.cpp
 msgid "HD Textures"
 msgstr "Textures HD"
 

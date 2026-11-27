@@ -825,6 +825,7 @@ void Viewer::drawEvent(int w, int h) {
 }
 
 void Viewer::loadWindow(WindowLayout& w, const char* figure) {
+    const UiLoading ui(*this); // (interface figures: their textures never Sharp)
     std::string err;
     if (!loadFigure(std::string(figure) + ".geom", w.fig, &err)) SDL_Log("window %s: %s", figure, err.c_str());
     std::vector<uint8_t> d;
@@ -835,6 +836,7 @@ void Viewer::loadWindow(WindowLayout& w, const char* figure) {
 
 // a window's Position figure (CR3) and the joint it places the window at
 void Viewer::loadPosition(WindowLayout& w, const char* figure, const char* call, float y) {
+    const UiLoading ui(*this); // (interface figures: their textures never Sharp)
     std::string err;
     if (!loadFigure(std::string(figure) + ".geom", w.positionFig, &err)) {
         SDL_Log("window position %s: %s", figure, err.c_str());
@@ -981,8 +983,11 @@ void Viewer::loadMessageWindow(const std::string& fontPath, std::vector<uint8_t>
         loadCr3Part(vistaStopButton, "commsgfbposition", "commsgstmenu", "call_comMsgSTMenu", "");
     }
     std::string err;
-    if (!loadFigure("sendcsr_loop.geom", pageCursor, &err)) SDL_Log("page cursor: %s", err.c_str());
-    if (!loadFigure("msgcsr_loop.geom", conversationCursor, &err)) SDL_Log("page cursor: %s", err.c_str());
+    {
+        const UiLoading ui(*this); // (the page cursors: interface figures)
+        if (!loadFigure("sendcsr_loop.geom", pageCursor, &err)) SDL_Log("page cursor: %s", err.c_str());
+        if (!loadFigure("msgcsr_loop.geom", conversationCursor, &err)) SDL_Log("page cursor: %s", err.c_str());
+    }
     if (!fontPath.empty() && !font.load(fontPath, &err)) SDL_Log("font: %s", err.c_str());
     else if (fontPath.empty() && !fontBytes.empty() && !font.loadMemory(std::move(fontBytes), fontName, &err, fontFace)) SDL_Log("font: %s", err.c_str());
     // (the code points the game's font lacks - Hangul, simplified Chinese - from the system's, as
@@ -1229,7 +1234,7 @@ void Viewer::drawWindow(WindowLayout& wl, bool showsMessage, int w, int h) {
     for (const cr3::TextLine& ln : ev->message().pages[size_t(ev->page())].lines)
         key += std::string(ln.centred ? "C:" : "L:") + std::to_string(ln.colour) + ":" + ln.text + "\n";
     if (key != shownText || px != shownPx) {
-        for (TextQuad& q : textQuads) dev->destroy(q.tex);
+        for (TextQuad& q : textQuads) dev->destroy(q.tex), dev->destroy(q.edge);
         textQuads.clear();
         shownText = key, shownPx = px;
         int typedBefore = 0; // (the page's characters before the line: it types after them)
@@ -1277,6 +1282,7 @@ void Viewer::drawWindow(WindowLayout& wl, bool showsMessage, int w, int h) {
             }
             q.joint = joint, q.dx = q.x - jx, q.dy = q.y - jy;
             if (whole && wl.speakerOnly) q.border = 2 / pxUnit; // (the vista's name: Initialize type 2 - bordered black, 2 pixels where the UI isn't the iPhone's)
+            if (q.border > 0 && settings.cleanTextOutline) makeTextEdge(q, img, q.border); // (Text Outline: Fixed)
             if (whole && wl.nameTag && wl.lineSize) // (CR3's conversation name: MessageWindowMenu::SetStringData's type 3, (0.361, 0.349, 0.380) behind)
                 q.shadow = true, q.shadowRgb[0] = 0.361f, q.shadowRgb[1] = 0.349f, q.shadowRgb[2] = 0.380f;
             if (!whole && wl.lineShadow)
@@ -1324,7 +1330,9 @@ void Viewer::drawWindow(WindowLayout& wl, bool showsMessage, int w, int h) {
         const float u1 = q.w > 0 ? tw / q.w : 1;
         const float x0 = q.x, x1 = q.x + tw, y0 = q.y - q.h / 2 - q.below, y1 = q.y + q.h / 2; // (rows top first: v 0 at the top)
         const float v[24] = {x0, y0, 0, 1, x1, y0, u1, 1, x1, y1, u1, 0, x0, y0, 0, 1, x1, y1, u1, 0, x0, y1, 0, 0};
-        if (q.border > 0) { // (its outline: the text in black, around it)
+        if (q.border > 0 && settings.cleanTextOutline && q.edge.id) // (Text Outline: Fixed - one outline, drawn once)
+            drawTextEdge(q, v, u1, proj.data());
+        else if (q.border > 0) { // (its outline: the text in black, around it - Text Outline: Original, eight copies)
             static const float kRound[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {0.7071f, 0.7071f}, {-0.7071f, 0.7071f}, {0.7071f, -0.7071f}, {-0.7071f, -0.7071f}};
             const float black[4] = {0, 0, 0, 1};
             for (const auto& d : kRound) {
@@ -1355,6 +1363,7 @@ void Viewer::drawWindow(WindowLayout& wl, bool showsMessage, int w, int h) {
 }
 
 void Viewer::loadCr3CutIns() {
+    const UiLoading ui(*this); // (interface figures: their textures never Sharp)
     static const char* kSide[3] = {"R", "", "L"};
     const float keep = time;
     for (int k : {0, 2}) {
@@ -1502,6 +1511,7 @@ void Viewer::drawCr3CutIns(int w, int h) {
 }
 
 bool Viewer::loadCr3Part(Cr3Part& p, const std::string& position, const std::string& figure, const std::string& call, const std::string& loop) {
+    const UiLoading ui(*this); // (interface figures: their textures never Sharp)
     std::string err;
     if (!loadFigure(position + ".geom", p.position, &err) || !loadFigure(figure + ".geom", p.fig, &err)) {
         SDL_Log("%s: %s", figure.c_str(), err.c_str());
@@ -1965,6 +1975,7 @@ void Viewer::cr3TitleQuit(int id) {
 }
 
 void Viewer::loadMapNameParts() {
+    const UiLoading ui(*this); // (interface figures: their textures never Sharp)
     MapNameParts& m = mapNameParts;
     std::string err;
     if (!loadFigure("fenameposition.geom", m.position, &err) || !loadFigure("fenamemenu.geom", m.menu, &err) ||

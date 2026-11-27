@@ -976,6 +976,22 @@ msgid "Sharp: square texels up close; Smooth: blended"
 msgstr ""
 
 #: src/viewer/viewer_gfx.cpp
+msgid "Text Outline"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Fixed"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original"
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original: eight offset draws; Fixed: one antialiased pass."
+msgstr ""
+
+#: src/viewer/viewer_gfx.cpp
 msgid "HD Textures"
 msgstr ""
 

@@ -1001,6 +1001,22 @@ msgid "Sharp: square texels up close; Smooth: blended"
 msgstr "선명: 가까이서 텍셀이 네모나게. 부드럽게: 보간"
 
 #: src/viewer/viewer_gfx.cpp
+msgid "Text Outline"
+msgstr "텍스트 윤곽선"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Fixed"
+msgstr "수정됨"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original"
+msgstr "원본"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original: eight offset draws; Fixed: one antialiased pass."
+msgstr "기존 방식은 8번 오프셋 렌더링하고 수정 방식은 안티앨리어싱된 윤곽선을 한 번 그립니다."
+
+#: src/viewer/viewer_gfx.cpp
 msgid "HD Textures"
 msgstr "HD 텍스처"
 

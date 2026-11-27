@@ -21,6 +21,7 @@ struct Image {
     bool bottomUp = false;     // the first row is the picture's bottom (PVR's flip flag / orientation)
     std::string format;        // for tools: "PVR2 PVRTC4", "PVR3 ETC1", "GXT UBC2", ...
     bool mipmaps = false;      // upload with a mip chain
+    bool ui = false;           // 2D interface art: the Options' Sharp texture filter left off it (the world's alone)
     int logicalW = 0, logicalH = 0; // an HD replacement's: the original's size (the texture reports it)
 };
 

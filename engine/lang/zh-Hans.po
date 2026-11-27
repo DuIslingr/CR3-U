@@ -994,6 +994,22 @@ msgid "Sharp: square texels up close; Smooth: blended"
 msgstr "锐利：近看时纹素呈方块；平滑：过渡混合"
 
 #: src/viewer/viewer_gfx.cpp
+msgid "Text Outline"
+msgstr "文字描边"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Fixed"
+msgstr "已修复"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original"
+msgstr "原版"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original: eight offset draws; Fixed: one antialiased pass."
+msgstr "原始方式绘制八次偏移副本；修复方式只绘制一次抗锯齿描边。"
+
+#: src/viewer/viewer_gfx.cpp
 msgid "HD Textures"
 msgstr "高清纹理"
 

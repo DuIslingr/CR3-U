@@ -1025,6 +1025,23 @@ msgid "Sharp: square texels up close; Smooth: blended"
 msgstr "Чёткая: квадратные тексели вблизи; Сглаженная: размытые"
 
 #: src/viewer/viewer_gfx.cpp
+msgid "Text Outline"
+msgstr "Обводка текста"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Fixed"
+msgstr "Исправленная"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original"
+msgstr "Оригинал"
+
+#: src/viewer/viewer_gfx.cpp
+msgid "Original: eight offset draws; Fixed: one antialiased pass."
+msgstr ""
+"Оригинал рисует обводку восемью смещёнными проходами; исправление использует один сглаженный проход."
+
+#: src/viewer/viewer_gfx.cpp
 msgid "HD Textures"
 msgstr "Текстуры HD"
 

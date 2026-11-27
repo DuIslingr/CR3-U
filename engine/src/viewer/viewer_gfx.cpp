@@ -1,4 +1,5 @@
 #include "viewer/viewer.hpp"
+#include "gfx/font_outline.hpp"
 
 namespace cr3_viewer {
 
@@ -57,6 +58,7 @@ void Viewer::loadSettings() {
         else if (k == "msaa") s.msaa = v >= 8 ? 8 : v >= 4 ? 4 : v >= 2 ? 2 : 1;
         else if (k == "anisotropy") s.anisotropy = v >= 16 ? 16 : v >= 8 ? 8 : v >= 4 ? 4 : v >= 2 ? 2 : 1;
         else if (k == "sharp_textures") s.sharpTextures = v != 0;
+        else if (k == "clean_text_outline") s.cleanTextOutline = v != 0;
         else if (k == "hd_textures") s.hdTextures = v != 0, s.hdSet = true;
         else if (k == "hd_models") s.hdModels = v != 0;
         else if (k == "smooth_models") s.smoothModels = v == 2 || v == 3 ? v : 0;
@@ -114,6 +116,7 @@ std::string Viewer::settingsText() const {
     text += "lock_orientation=" + std::to_string(int(s.lockOrientation)) + "\nlandscape_flipped=" + std::to_string(int(s.landscapeFlipped)) + "\n";
     text += "avoid_cutout=" + std::to_string(int(s.avoidCutout)) + "\n";
     text += "original_card_art=" + std::to_string(int(s.originalCardArt)) + "\n";
+    text += "clean_text_outline=" + std::to_string(int(s.cleanTextOutline)) + "\n";
     text += "fullscreen_kind=" + std::to_string(s.fullscreenKind) + "\n";
     if (s.language) text += "language=" + std::to_string(s.language) + "\n";
     if (!uiLang.empty()) text += "ui_lang=" + uiLang + "\n"; // (none: the system's language, until one is picked)
@@ -247,6 +250,7 @@ void Viewer::reloadTexture(const std::string& name, cr3::Texture& t) {
         else ++hdMissing;
     }
     img.mipmaps = textureMips.count(name) ? textureMips[name] : true;
+    img.ui = uiTextures.count(name) != 0;
     cr3::Texture old = t;
     t = dev->upload(img);
     dev->destroy(old);
@@ -362,6 +366,9 @@ auto Viewer::settingRows() -> std::vector<SettingRow> {
     rows.push_back({tr("Texture Filtering"), s.sharpTextures ? tr("Sharp") : tr("Smooth"),
                     tr("Sharp: square texels up close; Smooth: blended"),
                     true, [&s](int) { s.sharpTextures = !s.sharpTextures; }});
+    rows.push_back({tr("Text Outline"), s.cleanTextOutline ? tr("Fixed") : tr("Original"),
+                    tr("Original: eight offset draws; Fixed: one antialiased pass."), true,
+                    [&s](int) { s.cleanTextOutline = !s.cleanTextOutline; }});
     {
         SDL_PathInfo info;
         const bool have = !hdDir.empty() && SDL_GetPathInfo(hdDir.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY;
@@ -534,6 +541,7 @@ cr3::Texture* Viewer::texture(const std::string& name, bool mipmaps) {
     }
     img.mipmaps = mipmaps;
     textureMips[name] = mipmaps;
+    if (loadingUi) img.ui = true, uiTextures.insert(name); // (an interface figure's: the Sharp filter not on it)
     t = dev->upload(img);
     return t.id ? &t : nullptr;
 }
@@ -4302,9 +4310,10 @@ auto Viewer::uiFig(const std::string& name) -> UiFig& {
         u.loaded = true;
         std::string err;
         const float keep = time;
-        loadingUi = true; // (the menus' parts as built: Smooth Models is the world's)
-        if (!loadFigure(name + ".geom", u.fig, &err)) SDL_Log("ui %s: %s", name.c_str(), err.c_str());
-        loadingUi = false;
+        {
+            const UiLoading ui(*this); // (the menus' parts as built: Smooth Models and Sharp textures are the world's)
+            if (!loadFigure(name + ".geom", u.fig, &err)) SDL_Log("ui %s: %s", name.c_str(), err.c_str());
+        }
         time = keep;
         std::vector<uint8_t> d;
         if (archive.read(name + ".name", d)) u.joints = cr3::parseJointNames(d), u.materials = cr3::parseMaterialNames(d);
@@ -4505,7 +4514,7 @@ float Viewer::uiTextWidth(const std::string& text, float size, int w, int h) {
 }
 
 // (a line's texture, made once and kept - the least used let go past kUiTextLimit; null: nothing to draw)
-auto Viewer::uiTextQuad(const std::string& text, float size, int w, int h) -> const TextQuad* {
+auto Viewer::uiTextQuad(const std::string& text, float size, int w, int h, float border) -> const TextQuad* {
     if (text.empty() || !font.loaded()) return nullptr;
     const float k = std::min(float(w) / 0.96f, float(h) / 0.64f);
     const int px = std::max(1, int(size * uiTextScale / 1000.0f * k + 0.5f));
@@ -4521,9 +4530,43 @@ auto Viewer::uiTextQuad(const std::string& text, float size, int w, int h) -> co
         q.w = float(tw) * unitsPerPx, q.h = float(th) * unitsPerPx, q.below = float(img.height - th) * unitsPerPx;
         it = uiTexts.emplace(key, q).first;
     }
+    if (border > 0 && settings.cleanTextOutline && it->second.edgeFor != border) { // (Fixed's outline: made once it's asked for)
+        int tw = 0, th = 0;
+        const cr3::Image img = font.render(text, px, tw, th);
+        if (!img.rgba.empty()) makeTextEdge(it->second, img, border);
+    }
     it->second.used = ++uiTextUses;
-    cr3::trimLeastUsed(uiTexts, kUiTextLimit, [this](TextQuad& t) { dev->destroy(t.tex); }); // (not this one: just used)
+    cr3::trimLeastUsed(uiTexts, kUiTextLimit, [this](TextQuad& t) { dev->destroy(t.tex), dev->destroy(t.edge); }); // (not this one: just used)
     return &it->second;
+}
+
+// Text Outline: Fixed - the line's outline `border` UI units wide in one image (gfx/font_outline.hpp), from its
+// bitmap `img` (the quad's own: q.w by q.h + q.below over it)
+void Viewer::makeTextEdge(TextQuad& q, const cr3::Image& img, float border) {
+    dev->destroy(q.edge);
+    q.edge = {}, q.edgeFor = 0;
+    if (img.width <= 0 || img.height <= 0 || q.w <= 0) return;
+    const float pxPerUnit = float(img.width) / q.w;
+    const int radius = std::clamp(int(border * pxPerUnit + 0.5f), 1, 16);
+    cr3::Image edge;
+    if (!cr3::makeGlyphOutline(img, radius, edge)) return;
+    q.edge = dev->upload(edge);
+    q.edgeFor = border;
+    q.edgeX = float(radius) * q.w / float(img.width);
+    q.edgeY = float(radius) * (q.h + q.below) / float(img.height);
+}
+
+// it, black, under the text's quad `v` (drawUiText's corners: x0 y0, x1 y0, x1 y1, x0 y0, x1 y1, x0 y1) whose
+// texture shows u 0 .. u1 (a line typing out: the outline as far as it has come)
+void Viewer::drawTextEdge(const TextQuad& q, const float* v, float u1, const float* proj) {
+    if (!q.edge.id) return;
+    const float x0 = v[0], y0 = v[1], x1 = v[4], y1 = v[9];
+    const float sx = u1 > 0 ? (x1 - x0) / (u1 * q.w) : 1; // (a line narrowed to fit: its outline too)
+    const float ex = q.edgeX * sx, ex0 = x0 - ex, ex1 = x1 + ex, ey0 = y0 - q.edgeY, ey1 = y1 + q.edgeY;
+    const float eu1 = (u1 * q.w + 2 * q.edgeX) / (q.w + 2 * q.edgeX);
+    const float e[24] = {ex0, ey0, 0, 1, ex1, ey0, eu1, 1, ex1, ey1, eu1, 0, ex0, ey0, 0, 1, ex1, ey1, eu1, 0, ex0, ey1, 0, 0};
+    const float black[4] = {0, 0, 0, 1};
+    dev->drawQuad(q.edge, e, proj, black);
 }
 
 // ProvisionalMenuText's ticker - SetTextRender 0x888b08's last flag, set by OneHelpMenu::SetListHelpText 0x888640 /
@@ -4560,14 +4603,16 @@ float Viewer::drawUiTicker(const std::string& site, const std::string& text, flo
 
 // (its width, UI units: 0 none drawn)
 float Viewer::drawUiText(const std::string& text, float size, float x, float y, int w, int h, bool left, float shade, float maxWidth, float border) {
-    const TextQuad* found = uiTextQuad(text, size, w, h);
+    const TextQuad* found = uiTextQuad(text, size, w, h, border);
     if (!found) return 0;
     const TextQuad& q = *found;
     const float qw = maxWidth > 0 ? std::min(q.w, maxWidth) : q.w;
     const float x0 = left ? x : x - qw / 2, x1 = x0 + qw, y0 = y - q.h / 2 - q.below, y1 = y + q.h / 2;
     const float v[24] = {x0, y0, 0, 1, x1, y0, 1, 1, x1, y1, 1, 0, x0, y0, 0, 1, x1, y1, 1, 0, x0, y1, 0, 0};
     const Mat4 proj = uiProjection(w, h);
-    if (border > 0) { // ProvisionalMenuText type 1: eight black copies around white text.
+    if (border > 0 && settings.cleanTextOutline && q.edge.id) // (Text Outline: Fixed - one outline, drawn once)
+        drawTextEdge(q, v, 1, proj.data());
+    else if (border > 0) { // ProvisionalMenuText type 1: eight black copies around white text (Text Outline: Original).
         static const float directions[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1},
             {0.7071f, 0.7071f}, {-0.7071f, 0.7071f}, {0.7071f, -0.7071f}, {-0.7071f, -0.7071f}};
         const float black[4] = {0, 0, 0, 1};

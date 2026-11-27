@@ -126,10 +126,10 @@ void Viewer::useLanguage(size_t i, bool live) {
     for (const std::string& name : changed) reloadTexture(name, textures[name]);
     ++textGeneration;
     messageFiles.clear();
-    for (auto& [k, q] : uiTexts) dev->destroy(q.tex);
+    for (auto& [k, q] : uiTexts) dev->destroy(q.tex), dev->destroy(q.edge);
     uiTexts.clear();
-    for (TextQuad& q : textQuads) dev->destroy(q.tex);
-    for (TextQuad& q : nameQuads) dev->destroy(q.tex);
+    for (TextQuad& q : textQuads) dev->destroy(q.tex), dev->destroy(q.edge);
+    for (TextQuad& q : nameQuads) dev->destroy(q.tex), dev->destroy(q.edge);
     textQuads.clear(), nameQuads.clear(), shownText.clear(), nameText.clear();
     if (!archiveFont.empty()) { // (the Spanish translation's own font - its á, ñ, ¿ - while it's in use)
         std::vector<uint8_t> bytes;

@@ -252,6 +252,7 @@ struct Viewer {
     std::vector<std::string> hdReplaced(const std::string& wearer);
     bool addonOwnModel(const cr3::Cr3Addon& a);
     std::map<std::string, bool> textureMips; // (each cached texture's mip chain: a reload's)
+    std::set<std::string> uiTextures;        // (the interface figures' textures: Options' Sharp is the world's alone)
 
     // CR3-U's own settings - CR3's Options' Graphics tab (the inherited options' list: settingsOpen), kept in
     // settings.ini in the profile folder: read at the start, written on each change (a capture
@@ -284,6 +285,7 @@ struct Viewer {
         bool lockOrientation = false, landscapeFlipped = false;
         bool avoidCutout = true;  // the interface kept clear of a camera's notch / punch hole (safeInsets; Options' Camera Cutout, a phone's)
         bool padSwap = false;     // a controller's: × (south) confirms, ○ (east) goes back - else as the Vita
+        bool cleanTextOutline = true; // Text Outline: Fixed - one antialiased outline -, else Original (eight offset copies)
         int fieldSpeed = 1;       // the field while the player walks it (nothing running there), this many times as fast: 1, 2 .. 5
         int battleSpeed = 1;      // the battles, this many times as fast: 1, 2 .. 5
         int language = 0;         // the options' language: cr3::Language + 1 (0: none picked yet)
@@ -2456,6 +2458,9 @@ struct Viewer {
         uint64_t used = 0;                // (uiTexts: when last drawn)
         float border = 0;                 // (a black outline this wide, UI units: ProvisionalMenuText type 2's SetBordering)
         float below = 0;                  // (the bitmap's rows under the line's box: its descenders, UI units)
+        cr3::Texture edge;                // (Text Outline: Fixed - its outline in one image, gfx/font_outline.hpp)
+        float edgeFor = 0;                // (the border it was made for, UI units; 0 none)
+        float edgeX = 0, edgeY = 0;       // (its padding past the text's quad, UI units)
         bool shadow = false;              // (a drop shadow: ProvisionalMenuText type 3's copy at (0.01, -0.0172), its back colour)
         float shadowRgb[3] = {0, 0, 0};
     };
@@ -2607,7 +2612,13 @@ struct Viewer {
         bool loaded = false;
     };
     std::map<std::string, UiFig> uiFigs;
-    bool loadingUi = false; // (uiFig loading its figure: left unsmoothed)
+    bool loadingUi = false; // (an interface figure loading - uiFig's, a window's -: left unsmoothed, its textures never Sharp)
+    struct UiLoading { // (loadingUi for a scope)
+        Viewer& v;
+        bool was;
+        explicit UiLoading(Viewer& viewer) : v(viewer), was(viewer.loadingUi) { v.loadingUi = true; }
+        ~UiLoading() { v.loadingUi = was; }
+    };
     UiFig& uiFig(const std::string& name);
     void poseUi(UiFig& u, const std::string& anim, float t, bool loop = false);
     static float uiRight(const UiFig& u);
@@ -2693,7 +2704,9 @@ struct Viewer {
     // CR3-U's own words on a button's face: `size`, or smaller - in proportion, to 8/13 of it at least - where they'd be wider
     // than `room` (drawUiText's units; what's still too wide is narrowed by its maxWidth) - CRO-U #19's 13 x 84 / wide
     float fitUiTextSize(const std::string& text, float size, float room, int w, int h);
-    const TextQuad* uiTextQuad(const std::string& text, float size, int w, int h);
+    const TextQuad* uiTextQuad(const std::string& text, float size, int w, int h, float border = 0);
+    void makeTextEdge(TextQuad& q, const cr3::Image& img, float border); // (Fixed's outline for a line `border` wide)
+    void drawTextEdge(const TextQuad& q, const float* v, float u1, const float* proj); // (it under the text's quad v, u 0..u1 shown)
     // a help / announcement line in btHelpMenu (ProvisionalMenuText's ticker: one wider than its window scrolls -
     // drawUiTicker), from x (its left) as drawUiText draws it; each window (`site`) its own scroll
     struct UiTicker {
