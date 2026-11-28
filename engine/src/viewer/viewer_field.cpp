@@ -3510,6 +3510,11 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
     if (eventMode || !areaMode) return;
     const bool scripted = areaEvents && areaEvents->running();
     if (scripted || areaMoveTo.on || areaHeld) sx = sy = 0; // (PauseMove: the player held while the area's script runs - its MoveTo, SetEncount's hold)
+    // (the camp and the field's other menus over the area: the player still - the stick and the arrows theirs; without
+    // this the player walked on behind the menu, off the map or into an event's trigger)
+    if (cr3Camp.stage != 0 || optionsOpen || settingsOpen || mapOpen || saveStage || shop.stage != 0 || world.stage != 0 || party.stage != 0 ||
+        town.stage != 0 || vs.screen != 0 || titleMenu.stage || (areaEvents && areaEvents->geneLab().open))
+        sx = sy = 0, run = false;
     // (the gene lab: its clock since it opened, the screen's; --input lab:talk / combine / sell /
     // repository / back / normal / enhance - its buttons -, lab:card<n> / row<n> / tab<n> / mix /
     // ok / yes / no / down / up, for tests)
@@ -3939,6 +3944,7 @@ void Viewer::updateArea(float dt, float sx, float sy, bool run) {
     }
     // (Fld2Main::SM_Camp 5: the camp closed, the area script's evt001 - the story's steps that
     // wait on the camp: s101_d02_00606_set, a gift merged)
+    if (cr3CampWasOpen && cr3Camp.stage == 0) checkBlackJacket(); // (~CampTopMenu's, before the area's evt001)
     if (cr3CampWasOpen && cr3Camp.stage == 0 && !scripted) runAreaFunction("evt001");
     cr3CampWasOpen = cr3Camp.stage != 0;
     if (game.cr3BoxBattle >= 0 && areaEvents && !areaEvents->running() && !cr3BattleRequest.active && areaWalker) { // (a box's monsters: Fld2TaskEncount, its coupling)

@@ -1584,6 +1584,17 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
         drawCr3Asked(menuAnnounce(0x1f0), uiClock - campTopAskAt, vitaButtons() ? campTopAskFocus : 0, true, 503, 504, w, h, view);
 }
 
+// (InterfaceMain::CheckBlackJacket 0x8f9b28, from ~CampTopMenu - the camp closed: flag 24 once the hero
+// wears the Black Jacket, item 200001. t01's stairs, evt102_00, keep him upstairs till it's set, and its
+// evt001 - c111_s100_t01_00106_set - has his sister notice the jacket)
+void Viewer::checkBlackJacket() {
+    if (game.flag(24)) return;
+    if (const auto it = game.cr3Armour.find(1); it != game.cr3Armour.end() && it->second == 1) {
+        game.setFlag(24, true);
+        SDL_Log("camp: the hero wears the Black Jacket - flag 24");
+    }
+}
+
 // (CampTopMenu::Update 0xa38130 state 2: 0.23333 s after Yes - InterfaceMain +0x98, the event mode's
 // DeleteBattleAnnouncementMenu and GameMain::BuildUnitModel(true) -, 0x1c: the header, footer and
 // buttons closed, RePauseFieldInterface; CheckAliveCampWindowParty false. No Cr3FadeIn: +0x13b
@@ -1591,6 +1602,7 @@ void Viewer::drawCr3Camp(int w, int h, const Mat4& view) {
 void Viewer::closeCampTopEvent() {
     campTopAsk = 0, campTopStalled = false;
     cr3Camp.stage = 0, cr3Camp.since = 0;
+    checkBlackJacket();
     cr3RebuildLeader();
     SDL_Log("camp: closed (CR3)");
 }
@@ -2656,6 +2668,7 @@ void Viewer::chooseCampItems(int id) {
         ci.step = 0;
         if (id == 501) return;
         cr3Camp.stage = 0, cr3CampWasOpen = false;
+        checkBlackJacket();
         SDL_Log("camp: the Microcommunicator - %s's DungeonExit", area.name.c_str());
         runAreaFunction("DungeonExit");
         return;

@@ -2177,13 +2177,15 @@ void Viewer::chooseCr3GetSet(int b) {
     }
     if (b == 2) return openCr3OptionsFrom(2); // (the Options: CR3-U's - the camp's Options screen over the battle)
     if (b == 0) {
-        audio.playSe(0x153, false);
+        // (comBtnMenu::TouchSimpleRelease 0xa4d574: a button's com_003 - com_004 a back button's. The 0x153
+        // here and below was CR2-U's clip number; in CR3's sound list it's bt_527, a battle effect's)
+        audio.playSe("com_003", false);
         nextCr3Chooser();
     } else if (b == 1 && cr3EscapeAllowed()) {
         // (BtlSystem::Escape: sure with the gauge's advantage, else a random byte under 240 -
         // the party's level below the monsters' -, 244, or 252 twenty levels above; failed,
         // the monsters act - phaseEscapeFailure)
-        audio.playSe(0x153, false);
+        audio.playSe("com_003", false);
         int partyLevel = 1, monsterLevel = 1;
         for (const cr3::Cr3Fighter& f : cr3Rules.fighters) (f.player ? partyLevel : monsterLevel) = std::max(f.player ? partyLevel : monsterLevel, f.level);
         const int diff = partyLevel - monsterLevel;
@@ -2203,7 +2205,7 @@ void Viewer::chooseCr3Escape(int b) {
     cr3EscapeAsk = false;
     cr3Announce = Cr3Announce(); // (BtlAnnounceUI::Close)
     if (b != 0) return beginCr3Turn(false);
-    audio.playSe(0x153, false);
+    audio.playSe("com_003", false);
     if (vs.screen == 5) { // (phaseColosseumEscapeSelect 0x9d4dac: VS - PlayGameOverCamera, PlayRetire 0x9a9434's cut 0x85, result 2)
         cutInVsComment(0x85);
         vs.retired = true;
@@ -2333,7 +2335,7 @@ void Viewer::chooseCr3ListRow(int k) {
         return;
     }
     const Cr3ListRow& row = cr3List[size_t(k)];
-    audio.playSe(0x153, false);
+    audio.playSe("com_003", false);
     SDL_Log("battle: list row %d chosen (command %d)", k, row.command);
     cr3ChosenCommand = row.command, cr3ChosenItem = row.item;
     cr3::Cr3Command c;
@@ -2390,7 +2392,7 @@ void Viewer::chooseCr3Command(int button) {
         SDL_Log("battle: unavailable command %d", button);
         return;
     }
-    audio.playSe(0x153, false);
+    audio.playSe("com_003", false);
     if (button == 3) { // (Guard)
         cr3Choices.push_back({cr3Chooser, -1, -1});
         nextCr3Chooser();
@@ -2430,7 +2432,7 @@ std::vector<int> Viewer::cr3Targets() {
 void Viewer::chooseCr3Target(int n) {
     const std::vector<int> alive = cr3Targets();
     if (alive.empty() || cr3Chooser < 0) return;
-    audio.playSe(0x153, false);
+    audio.playSe("com_003", false);
     const int target = alive[size_t(std::clamp(n, 0, int(alive.size()) - 1))];
     if (cr3ChosenItem) game.cr3Items[cr3ChosenItem] = std::max(game.cr3Items[cr3ChosenItem] - 1, 0), cr3TurnItems[cr3Chooser] = cr3ChosenItem;
     cr3Choices.push_back({cr3Chooser, cr3ChosenCommand >= 0 ? cr3ChosenCommand : cr3Rules.attackCommandOf(cr3Chooser), target});

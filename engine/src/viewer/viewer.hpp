@@ -1621,6 +1621,7 @@ struct Viewer {
     float campTopAskAt = 0;
     bool campTopStalled = false;
     void closeCampTopEvent();
+    void checkBlackJacket();
     std::array<bool, 5> cr3PanelLock{};
     bool cr3PanelLocked(int member) const; // (a panel - the party's members in order - its slot's lock)
     // An event's gene windows (round 9). InterfaceWindow.CreateGeneStatusSCModalMenu(gene, level, skills)
